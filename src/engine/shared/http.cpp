@@ -394,7 +394,7 @@ void CHttpRequest::OnCompletionInternal(void *pHandle, unsigned int Result)
 	{
 		if(g_Config.m_DbgCurl || m_LogProgress >= HTTPLOG::ALL)
 		{
-			log_info("http", "task done: %s", m_aUrl);
+			// log_info("http", "task done: %s", m_aUrl);
 		}
 		State = EHttpState::DONE;
 	}

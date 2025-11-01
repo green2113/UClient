@@ -67,6 +67,10 @@
 #include "components/statboard.h"
 #include "components/tooltips.h"
 #include "components/touch_controls.h"
+#include "components/under/autochat.h"
+#include "components/under/autoreply.h"
+#include "components/under/chatskin.h"
+#include "components/under/skinswitch.h"
 #include "components/voting.h"
 
 #include <vector>
@@ -185,6 +189,12 @@ public:
 	CTooltips m_Tooltips;
 
 	CLocalServer m_LocalServer;
+
+	// under client
+	CAutochat m_AutoChat;
+	CAutoreply m_AutoReply;
+	CChatskin m_ChatSkin;
+	CSkinswitch m_SkinSwitch;
 
 private:
 	std::vector<class CComponent *> m_vpAll;

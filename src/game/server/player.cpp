@@ -96,7 +96,7 @@ void CPlayer::Reset()
 		}
 		else if(Season == SEASON_HALLOWEEN)
 		{
-			m_DefEmote = EMOTE_ANGRY;
+			m_DefEmote = EMOTE_SURPRISE;
 			m_Halloween = true;
 		}
 		else

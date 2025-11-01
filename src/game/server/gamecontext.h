@@ -53,6 +53,7 @@ class CUnpacker;
 class IAntibot;
 class IGameController;
 class IEngine;
+class IHttp;
 class IStorage;
 struct CAntibotRoundData;
 struct CScoreRandomMapResult;
@@ -109,6 +110,7 @@ class CGameContext : public IGameServer
 	CConfig *m_pConfig;
 	IConsole *m_pConsole;
 	IEngine *m_pEngine;
+	IHttp *m_pHttp;
 	IStorage *m_pStorage;
 	IAntibot *m_pAntibot;
 	CLayers m_Layers;
@@ -565,6 +567,17 @@ private:
 
 	CMutes m_Mutes;
 	CMutes m_VoteMutes;
+	std::map<int, std::map<std::string, int64_t>> m_ReportTargets;
+	std::map<std::string, std::map<int, int64_t>> m_ReportCooldown;
+	void HandleAutoPunish(int ReporterId, const char *pReporterAddr, int TargetId, const char *pReason, bool &OutDuplicate, int &OutAction, int &OutDurationSeconds);
+
+	enum
+	{
+		REPORT_ACTION_NONE = 0,
+		REPORT_ACTION_MUTE,
+		REPORT_ACTION_BAN
+	};
+
 	void MuteWithMessage(const NETADDR *pAddr, int Seconds, const char *pReason, const char *pDisplayName);
 	void VoteMuteWithMessage(const NETADDR *pAddr, int Seconds, const char *pReason, const char *pDisplayName);
 
@@ -583,6 +596,7 @@ private:
 	static void ConVoteUnmuteId(IConsole::IResult *pResult, void *pUserData);
 	static void ConVoteUnmuteIp(IConsole::IResult *pResult, void *pUserData);
 	static void ConVoteMutes(IConsole::IResult *pResult, void *pUserData);
+	static void ConReport(IConsole::IResult *pResult, void *pUserData);
 
 	void Whisper(int ClientId, char *pStr);
 	void WhisperId(int ClientId, int VictimId, const char *pMessage);
@@ -632,6 +646,7 @@ public:
 
 	void SendRecord(int ClientId);
 	void SendFinish(int ClientId, float Time, float PreviousBestTime);
+	void SendFinishWebhook(int ClientId, const char *pTimeText, bool IsServerRecord);
 	void SendSaveCode(int Team, int TeamSize, int State, const char *pError, const char *pSaveRequester, const char *pServerName, const char *pGeneratedCode, const char *pCode);
 	void OnSetAuthed(int ClientId, int Level) override;
 

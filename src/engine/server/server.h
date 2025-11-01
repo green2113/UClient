@@ -200,6 +200,7 @@ public:
 		// DNSBL
 		EDnsblState m_DnsblState;
 		std::shared_ptr<CHostLookup> m_pDnsblLookup;
+		bool m_DnsblBanPending;
 
 		bool m_Sixup;
 
@@ -313,6 +314,7 @@ public:
 	int Init();
 
 	void SendLogLine(const CLogMessage *pMessage);
+	void SendBanWebhook(const char *pTargetName, const char *pTargetAddr, int Seconds, const char *pReason);
 	void SetRconCid(int ClientId) override;
 	int GetAuthedState(int ClientId) const override;
 	bool IsRconAuthed(int ClientId) const override;

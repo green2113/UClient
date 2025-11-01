@@ -819,6 +819,80 @@ bool CScoreWorker::SaveTeamScore(IDbConnection *pSqlServer, const ISqlData *pGam
 	return true;
 }
 
+bool CScoreWorker::AddReportEntry(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize)
+{
+	const auto *pData = dynamic_cast<const CSqlReportEntry *>(pGameData);
+	if(!pData)
+	{
+		str_copy(pError, "invalid report entry data", ErrorSize);
+		return false;
+	}
+
+	if(w == Write::NORMAL_FAILED)
+	{
+		// keep the backup entry when the primary write failed
+		return true;
+	}
+
+	if(w == Write::NORMAL_SUCCEEDED)
+	{
+		char aBuf[512];
+		str_format(aBuf, sizeof(aBuf),
+			"DELETE FROM %s_reports_backup WHERE Reporter=? AND ReporterAddr=? AND Target=? AND TargetAddr=? AND Reason=? AND Map=? AND Server=? AND AutoAction=? AND AutoDuration=? AND Timestamp=%s",
+			pSqlServer->GetPrefix(), pSqlServer->InsertTimestampAsUtc());
+		if(!pSqlServer->PrepareStatement(aBuf, pError, ErrorSize))
+		{
+			return false;
+		}
+		pSqlServer->BindString(1, pData->m_aReporter);
+		pSqlServer->BindString(2, pData->m_aReporterAddr);
+		pSqlServer->BindString(3, pData->m_aTarget);
+		pSqlServer->BindString(4, pData->m_aTargetAddr);
+		pSqlServer->BindString(5, pData->m_aReason);
+		pSqlServer->BindString(6, pData->m_aMap);
+		pSqlServer->BindString(7, pData->m_aServer);
+		pSqlServer->BindInt(8, pData->m_AutoAction);
+		pSqlServer->BindInt(9, pData->m_AutoDuration);
+		pSqlServer->BindInt64(10, pData->m_Timestamp);
+		pSqlServer->Print();
+		int NumDeleted = 0;
+		if(!pSqlServer->ExecuteUpdate(&NumDeleted, pError, ErrorSize))
+		{
+			return false;
+		}
+		return true;
+	}
+
+	const bool BackupWrite = w == Write::BACKUP_FIRST;
+
+	char aBuf[512];
+	str_format(aBuf, sizeof(aBuf),
+		"INSERT INTO %s_reports%s("
+		"Reporter, ReporterAddr, Target, TargetAddr, Reason, Map, Server, AutoAction, AutoDuration, Timestamp"
+		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, %s)",
+		pSqlServer->GetPrefix(), BackupWrite ? "_backup" : "",
+		pSqlServer->InsertTimestampAsUtc());
+	if(!pSqlServer->PrepareStatement(aBuf, pError, ErrorSize))
+	{
+		return false;
+	}
+
+	pSqlServer->BindString(1, pData->m_aReporter);
+	pSqlServer->BindString(2, pData->m_aReporterAddr);
+	pSqlServer->BindString(3, pData->m_aTarget);
+	pSqlServer->BindString(4, pData->m_aTargetAddr);
+	pSqlServer->BindString(5, pData->m_aReason);
+	pSqlServer->BindString(6, pData->m_aMap);
+	pSqlServer->BindString(7, pData->m_aServer);
+	pSqlServer->BindInt(8, pData->m_AutoAction);
+	pSqlServer->BindInt(9, pData->m_AutoDuration);
+	pSqlServer->BindInt64(10, pData->m_Timestamp);
+	pSqlServer->Print();
+
+	int NumInserted = 0;
+	return pSqlServer->ExecuteUpdate(&NumInserted, pError, ErrorSize);
+}
+
 bool CScoreWorker::ShowRank(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize)
 {
 	const auto *pData = dynamic_cast<const CSqlPlayerRequest *>(pGameData);

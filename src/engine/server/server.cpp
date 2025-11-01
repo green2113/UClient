@@ -26,6 +26,8 @@
 #include <engine/shared/host_lookup.h>
 #include <engine/shared/http.h>
 #include <engine/shared/json.h>
+#include <memory>
+#include <type_traits>
 #include <engine/shared/jsonwriter.h>
 #include <engine/shared/linereader.h>
 #include <engine/shared/masterserver.h>
@@ -108,6 +110,38 @@ int CServerBan::BanExt(T *pBanPool, const typename T::CDataType *pData, int Seco
 	if(Result != 0)
 		return Result;
 
+	char aTargetName[MAX_NAME_LENGTH] = {0};
+	char aTargetAddr[NETADDR_MAXSTRSIZE] = {0};
+	if(Server())
+	{
+		using TDataType = typename T::CDataType;
+		if constexpr(std::is_same_v<TDataType, NETADDR>)
+		{
+			const NETADDR *pAddr = static_cast<const NETADDR *>(pData);
+			for(int i = 0; i < MAX_CLIENTS; ++i)
+			{
+				if(Server()->m_aClients[i].m_State == CServer::CClient::STATE_EMPTY)
+					continue;
+
+				if(NetMatch(pAddr, Server()->ClientAddr(i)))
+				{
+					if(Server()->m_aClients[i].m_aName[0])
+						str_copy(aTargetName, Server()->m_aClients[i].m_aName);
+					else
+						str_copy(aTargetName, Server()->ClientName(i));
+					break;
+				}
+			}
+		}
+		else if constexpr(std::is_same_v<TDataType, CNetRange>)
+		{
+			const CNetRange *pRange = pData;
+			(void)pRange;
+		}
+
+		Server()->SendBanWebhook(aTargetName[0] ? aTargetName : nullptr, aTargetAddr[0] ? aTargetAddr : nullptr, Seconds, pReason);
+	}
+
 	// drop banned clients
 	typename T::CDataType Data = *pData;
 	for(int i = 0; i < MAX_CLIENTS; ++i)
@@ -125,6 +159,51 @@ int CServerBan::BanExt(T *pBanPool, const typename T::CDataType *pData, int Seco
 	}
 
 	return Result;
+}
+
+void CServer::SendBanWebhook(const char *pTargetName, const char *pTargetAddr, int Seconds, const char *pReason)
+{
+	if(g_Config.m_SvBanWebhookUrl[0] == '\0')
+	{
+		return;
+	}
+
+	(void)Seconds;
+
+	const char *pDisplayName = (pTargetName && pTargetName[0]) ? pTargetName : ((pTargetAddr && pTargetAddr[0]) ? pTargetAddr : "Unknown player");
+	const char *pReasonText = (pReason && pReason[0]) ? pReason : "no reason specified";
+
+	char aEscDisplayName[192];
+	char aEscReason[256];
+	EscapeJson(aEscDisplayName, sizeof(aEscDisplayName), pDisplayName);
+	EscapeJson(aEscReason, sizeof(aEscReason), pReasonText);
+
+	char aMessage[768];
+	str_format(aMessage, sizeof(aMessage), "%s was banned. (Reason: %s)", aEscDisplayName, aEscReason);
+
+	if(pTargetAddr && pTargetAddr[0])
+	{
+		char aEscAddr[256];
+		EscapeJson(aEscAddr, sizeof(aEscAddr), pTargetAddr);
+		str_append(aMessage, " (IP: ", sizeof(aMessage));
+		str_append(aMessage, aEscAddr, sizeof(aMessage));
+		str_append(aMessage, ")", sizeof(aMessage));
+	}
+
+	char aJson[896];
+	str_format(aJson, sizeof(aJson), "{\"content\":\"%s\"}", aMessage);
+
+	auto pUniqueReq = HttpPostJson(g_Config.m_SvBanWebhookUrl, aJson);
+	if(!pUniqueReq)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "ban_webhook", "Failed to create ban webhook request.");
+		return;
+	}
+
+	std::shared_ptr<IHttpRequest> pReq(
+		pUniqueReq.release(),
+		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
+	m_Http.Run(pReq);
 }
 
 int CServerBan::BanAddr(const NETADDR *pAddr, int Seconds, const char *pReason, bool VerbatimReason)

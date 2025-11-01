@@ -47,6 +47,15 @@ MACRO_CONFIG_INT(ClNamePlatesFriendMark, cl_nameplates_friendmark, 0, 0, 1, CFGF
 MACRO_CONFIG_INT(ClNamePlatesStrong, cl_nameplates_strong, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show strong/weak in name plates (0 - off, 1 - icons, 2 - icons + numbers)")
 MACRO_CONFIG_INT(ClNamePlatesStrongSize, cl_nameplates_strong_size, 30, -50, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Size of strong/weak state icons and numbers")
 
+MACRO_CONFIG_INT(ClTagReply, uc_tag_reply, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable automatic reply when your name is tagged")
+MACRO_CONFIG_STR(ClTagReplyMessage, uc_tag_reply_message, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Message to send when automatic tag reply triggers")
+MACRO_CONFIG_STR(ClTagDiscordWebHookUrl, uc_tag_discord_webhook_url, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Discord webhook URL used when automatic tag reply triggers")
+MACRO_CONFIG_STR(ClChatDiscordWebHookUrl, uc_chat_discord_webhook_url, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Discord webhook URL used to send chat logs")
+MACRO_CONFIG_STR(ClChatSkinMessage, uc_chat_skin_message, 128, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Keyword that triggers automatic skin change")
+MACRO_CONFIG_STR(ClSkinSwitchSkinName, uc_skin_switch_skin_name, 64, "default", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Skin name to switch to when using /skin command")
+MACRO_CONFIG_STR(ClSkinSwitchBodyColor, uc_skin_switch_body_color, 9, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Body color to use when switching skin")
+MACRO_CONFIG_STR(ClSkinSwitchFeetColor, uc_skin_switch_feet_color, 9, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Feet color to use when switching skin")
+
 MACRO_CONFIG_INT(ClAfkEmote, cl_afk_emote, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show zzz emote next to afk players")
 MACRO_CONFIG_INT(ClTextEntities, cl_text_entities, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Render textual entity data")
 MACRO_CONFIG_INT(ClTextEntitiesSize, cl_text_entities_size, 100, 20, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Size of textual entity data from 20 to 100%")
@@ -570,6 +579,17 @@ MACRO_CONFIG_INT(SvTeam0Mode, sv_team0mode, 1, 0, 1, CFGFLAG_SERVER, "Enables /t
 MACRO_CONFIG_INT(SvUseSql, sv_use_sql, 0, 0, 1, CFGFLAG_SERVER, "Enables MySQL backend instead of SQLite backend (sv_sqlite_file is still used as fallback write server when no MySQL server is reachable)")
 MACRO_CONFIG_INT(SvSqlQueriesDelay, sv_sql_queries_delay, 1, 0, 20, CFGFLAG_SERVER, "Delay in seconds between SQL queries of a single player")
 MACRO_CONFIG_STR(SvSqliteFile, sv_sqlite_file, 64, "ddnet-server.sqlite", CFGFLAG_SERVER, "File to store ranks in case sv_use_sql is turned off or used as backup sql server")
+MACRO_CONFIG_INT(SvReportAutopunish, sv_report_autopunish, 1, 0, 1, CFGFLAG_SERVER, "Enable automatic punishments triggered by player reports")
+MACRO_CONFIG_INT(SvReportAutopunishWindow, sv_report_autopunish_window, 600, 10, 7200, CFGFLAG_SERVER, "Time window in seconds used to aggregate unique reports against a player")
+MACRO_CONFIG_INT(SvReportDuplicateCooldown, sv_report_duplicate_cooldown, 600, 10, 7200, CFGFLAG_SERVER, "Seconds a player must wait before reporting the same target again")
+MACRO_CONFIG_INT(SvReportMinPlayers, sv_report_min_players, 6, 0, MAX_CLIENTS, CFGFLAG_SERVER, "Minimum number of active players required before automatic punishments can trigger")
+MACRO_CONFIG_INT(SvReportAutopunishMutePercent, sv_report_autopunish_mute_percent, 30, 1, 100, CFGFLAG_SERVER, "Percent of active players that must report a target to trigger an automatic mute")
+MACRO_CONFIG_INT(SvReportAutopunishMuteMinutes, sv_report_autopunish_mute_minutes, 30, 1, 240, CFGFLAG_SERVER, "Mute duration in minutes applied by automatic report handling")
+MACRO_CONFIG_INT(SvReportAutopunishBanPercent, sv_report_autopunish_ban_percent, 60, 1, 100, CFGFLAG_SERVER, "Percent of active players that must report a target to trigger an automatic ban")
+MACRO_CONFIG_INT(SvReportAutopunishBanMinutes, sv_report_autopunish_ban_minutes, 60, 1, 1440, CFGFLAG_SERVER, "Ban duration in minutes applied by automatic report handling")
+MACRO_CONFIG_STR(SvReportWebhookUrl, sv_report_webhook_url, 256, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "Discord webhook URL for /report chat command")
+MACRO_CONFIG_STR(SvFinishWebhookUrl, sv_finish_webhook_url, 256, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "Discord webhook URL for finish notifications")
+MACRO_CONFIG_STR(SvBanWebhookUrl, sv_ban_webhook_url, 256, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "Discord webhook URL for ban notifications")
 
 #if defined(CONF_UPNP)
 MACRO_CONFIG_INT(SvUseUPnP, sv_use_upnp, 0, 0, 1, CFGFLAG_SERVER, "Enables UPnP support. (Requires -DCONF_UPNP=ON when compiling)")
@@ -782,3 +802,4 @@ MACRO_CONFIG_INT(ClVideoRecorderFPS, cl_video_recorder_fps, 60, 1, 1000, CFGFLAG
 /*
  * Add config variables for mods below this comment to avoid merge conflicts.
  */
+

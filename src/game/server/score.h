@@ -71,6 +71,8 @@ public:
 	void SaveTeam(int ClientId, const char *pCode, const char *pServer);
 	void LoadTeam(const char *pCode, int ClientId);
 	void GetSaves(int ClientId);
+
+	void AddReportEntry(const char *pReporterName, const char *pReporterAddr, const char *pTargetName, const char *pTargetAddr, const char *pReason, const char *pMap, const char *pServer, int AutoAction, int AutoDurationSeconds);
 };
 
 #endif // GAME_SERVER_SCORE_H

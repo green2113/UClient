@@ -17,10 +17,12 @@
 
 #include <engine/console.h>
 #include <engine/engine.h>
+#include <engine/http.h>
 #include <engine/map.h>
 #include <engine/server/server.h>
 #include <engine/shared/config.h>
 #include <engine/shared/datafile.h>
+#include <engine/shared/http.h>
 #include <engine/shared/json.h>
 #include <engine/shared/linereader.h>
 #include <engine/shared/memheap.h>
@@ -28,6 +30,9 @@
 #include <engine/storage.h>
 
 #include <generated/protocol.h>
+#include <algorithm>
+#include <limits>
+#include <memory>
 #include <generated/protocol7.h>
 #include <generated/protocolglue.h>
 
@@ -97,6 +102,7 @@ void CGameContext::Construct(int Resetting)
 	m_SqlRandomMapResult = nullptr;
 
 	m_pScore = nullptr;
+	m_pHttp = nullptr;
 
 	m_VoteCreator = -1;
 	m_VoteType = VOTE_TYPE_UNKNOWN;
@@ -1843,6 +1849,16 @@ void CGameContext::OnClientDrop(int ClientId, const char *pReason)
 
 	m_aTeamMapping[ClientId] = -1;
 
+	m_ReportTargets.erase(ClientId);
+	for(auto it = m_ReportCooldown.begin(); it != m_ReportCooldown.end();)
+	{
+		it->second.erase(ClientId);
+		if(it->second.empty())
+			it = m_ReportCooldown.erase(it);
+		else
+			++it;
+	}
+
 	if(g_Config.m_SvTeam == SV_TEAM_FORCED_SOLO && PracticeByDefault())
 		m_pController->Teams().SetPractice(GetDDRaceTeam(ClientId), true);
 
@@ -1873,6 +1889,96 @@ void CGameContext::OnClientDrop(int ClientId, const char *pReason)
 	Server()->SendPackMsg(&Msg, MSGFLAG_VITAL | MSGFLAG_NORECORD, -1);
 
 	Server()->ExpireServerInfo();
+}
+
+void CGameContext::HandleAutoPunish(int ReporterId, const char *pReporterAddr, int TargetId, const char *pReason, bool &OutDuplicate, int &OutAction, int &OutDurationSeconds)
+{
+	OutDuplicate = false;
+	OutAction = REPORT_ACTION_NONE;
+	OutDurationSeconds = 0;
+
+	if(!g_Config.m_SvReportAutopunish)
+		return;
+	if(TargetId < 0 || TargetId >= MAX_CLIENTS)
+		return;
+	if(!m_apPlayers[TargetId] || m_apPlayers[TargetId]->GetTeam() == TEAM_SPECTATORS)
+		return;
+
+	std::string ReporterKey = pReporterAddr && pReporterAddr[0] ? pReporterAddr : "";
+	if(ReporterKey.empty())
+		return;
+
+	const int64_t Now = time_get();
+	const int64_t DuplicateTicks = static_cast<int64_t>(g_Config.m_SvReportDuplicateCooldown) * time_freq();
+	const int64_t WindowTicks = static_cast<int64_t>(g_Config.m_SvReportAutopunishWindow) * time_freq();
+
+	auto &ReporterTargets = m_ReportCooldown[ReporterKey];
+	for(auto it = ReporterTargets.begin(); it != ReporterTargets.end();)
+	{
+		if(Now - it->second > DuplicateTicks)
+			it = ReporterTargets.erase(it);
+		else
+			++it;
+	}
+
+	auto CooldownIt = ReporterTargets.find(TargetId);
+	if(CooldownIt != ReporterTargets.end() && Now - CooldownIt->second < DuplicateTicks)
+	{
+		OutDuplicate = true;
+		return;
+	}
+	ReporterTargets[TargetId] = Now;
+
+	if(ReporterTargets.empty())
+		m_ReportCooldown.erase(ReporterKey);
+
+	auto &TargetReporters = m_ReportTargets[TargetId];
+	for(auto it = TargetReporters.begin(); it != TargetReporters.end();)
+	{
+		if(Now - it->second > WindowTicks)
+			it = TargetReporters.erase(it);
+		else
+			++it;
+	}
+	TargetReporters[ReporterKey] = Now;
+
+	const int UniqueReporters = static_cast<int>(TargetReporters.size());
+
+	int ActivePlayers = 0;
+	for(int i = 0; i < MAX_CLIENTS; ++i)
+	{
+		CPlayer *pPlayer = m_apPlayers[i];
+		if(!pPlayer || pPlayer->GetTeam() == TEAM_SPECTATORS)
+			continue;
+		ActivePlayers++;
+	}
+
+	if(ActivePlayers < g_Config.m_SvReportMinPlayers || ActivePlayers <= 0)
+		return;
+
+	auto CalcThreshold = [ActivePlayers](int Percent) -> int {
+		if(Percent <= 0)
+			return std::numeric_limits<int>::max();
+		const int Threshold = (ActivePlayers * Percent + 99) / 100;
+		return std::max(1, Threshold);
+	};
+
+	const int BanThreshold = CalcThreshold(g_Config.m_SvReportAutopunishBanPercent);
+	const int MuteThreshold = CalcThreshold(g_Config.m_SvReportAutopunishMutePercent);
+
+	if(g_Config.m_SvReportAutopunishBanMinutes > 0 && UniqueReporters >= BanThreshold)
+	{
+		OutAction = REPORT_ACTION_BAN;
+		OutDurationSeconds = g_Config.m_SvReportAutopunishBanMinutes * 60;
+	}
+	else if(g_Config.m_SvReportAutopunishMuteMinutes > 0 && UniqueReporters >= MuteThreshold)
+	{
+		OutAction = REPORT_ACTION_MUTE;
+		OutDurationSeconds = g_Config.m_SvReportAutopunishMuteMinutes * 60;
+	}
+
+	if(TargetReporters.empty())
+		m_ReportTargets.erase(TargetId);
 }
 
 void CGameContext::TeehistorianRecordAntibot(const void *pData, int DataSize)
@@ -3838,6 +3944,7 @@ void CGameContext::OnConsoleInit()
 	m_pConfig = m_pConfigManager->Values();
 	m_pConsole = Kernel()->RequestInterface<IConsole>();
 	m_pEngine = Kernel()->RequestInterface<IEngine>();
+	m_pHttp = Kernel()->RequestInterface<IHttp>();
 	m_pStorage = Kernel()->RequestInterface<IStorage>();
 
 	Console()->Register("tune", "s[tuning] ?f[value]", CFGFLAG_SERVER | CFGFLAG_GAME, ConTuneParam, this, "Tune variable to value or show current value");
@@ -3971,6 +4078,7 @@ void CGameContext::RegisterChatCommands()
 	Console()->Register("help", "?r[command]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConHelp, this, "Shows help to command r, general help if left blank");
 	Console()->Register("info", "", CFGFLAG_CHAT | CFGFLAG_SERVER, ConInfo, this, "Shows info about this server");
 	Console()->Register("list", "?s[filter]", CFGFLAG_CHAT, ConList, this, "List connected players with optional case-insensitive substring matching filter");
+	Console()->Register("report", "s[player name] r[reason]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConReport, this, "Report a player to the moderators");
 	Console()->Register("w", "s[player name] r[message]", CFGFLAG_CHAT | CFGFLAG_SERVER | CFGFLAG_NONTEEHISTORIC, ConWhisper, this, "Whisper something to someone (private message)");
 	Console()->Register("whisper", "s[player name] r[message]", CFGFLAG_CHAT | CFGFLAG_SERVER | CFGFLAG_NONTEEHISTORIC, ConWhisper, this, "Whisper something to someone (private message)");
 	Console()->Register("c", "r[message]", CFGFLAG_CHAT | CFGFLAG_SERVER | CFGFLAG_NONTEEHISTORIC, ConConverse, this, "Converse with the last person you whispered to (private message)");
@@ -4072,6 +4180,7 @@ void CGameContext::OnInit(const void *pPersistentData)
 	m_pConfig = m_pConfigManager->Values();
 	m_pConsole = Kernel()->RequestInterface<IConsole>();
 	m_pEngine = Kernel()->RequestInterface<IEngine>();
+	m_pHttp = Kernel()->RequestInterface<IHttp>();
 	m_pStorage = Kernel()->RequestInterface<IStorage>();
 	m_pAntibot = Kernel()->RequestInterface<IAntibot>();
 	m_World.SetGameServer(this);
@@ -4801,6 +4910,60 @@ void CGameContext::SendFinish(int ClientId, float Time, float PreviousBestTime)
 	Server()->SendPackMsg(&RaceFinishMsg, MSGFLAG_VITAL | MSGFLAG_NORECORD, -1);
 }
 
+void CGameContext::SendFinishWebhook(int ClientId, const char *pTimeText, bool IsServerRecord)
+{
+	char aDebug[256];
+	str_format(aDebug, sizeof(aDebug), "finish_webhook check: url=%s http=%p", g_Config.m_SvFinishWebhookUrl, m_pHttp);
+	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "finish_webhook", aDebug);
+
+	if(!g_Config.m_SvFinishWebhookUrl[0] || m_pHttp == nullptr)
+		return;
+
+	const char *pName = Server()->ClientName(ClientId);
+	const char *pMapName = Server()->GetMapName();
+	const char *pTime = pTimeText ? pTimeText : "unknown";
+
+	char aEscName[192];
+	char aEscMap[192];
+	char aEscTime[128];
+	EscapeJson(aEscName, sizeof(aEscName), pName);
+	EscapeJson(aEscMap, sizeof(aEscMap), pMapName);
+	EscapeJson(aEscTime, sizeof(aEscTime), pTime);
+
+	char aMessage[640];
+	if(IsServerRecord)
+	{
+		str_format(aMessage, sizeof(aMessage),
+			"%s set a new server record on %s in %s.",
+			aEscName[0] ? aEscName : "unknown player",
+			aEscMap[0] ? aEscMap : "unknown map",
+			aEscTime[0] ? aEscTime : "unknown time");
+	}
+	else
+	{
+		str_format(aMessage, sizeof(aMessage),
+			"%s finished %s in %s.",
+			aEscName[0] ? aEscName : "unknown player",
+			aEscMap[0] ? aEscMap : "unknown map",
+			aEscTime[0] ? aEscTime : "unknown time");
+	}
+
+	char aJson[768];
+	str_format(aJson, sizeof(aJson), "{\"content\":\"%s\"}", aMessage);
+
+	auto pUniqueReq = HttpPostJson(g_Config.m_SvFinishWebhookUrl, aJson);
+	if(!pUniqueReq)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "finish_webhook", "Failed to create webhook request");
+		return;
+	}
+
+	std::shared_ptr<IHttpRequest> pReq(
+		pUniqueReq.release(),
+		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
+	m_pHttp->Run(pReq);
+}
+
 void CGameContext::SendSaveCode(int Team, int TeamSize, int State, const char *pError, const char *pSaveRequester, const char *pServerName, const char *pGeneratedCode, const char *pCode)
 {
 	char aBuf[512];
@@ -5109,7 +5272,7 @@ void CGameContext::WhisperId(int ClientId, int VictimId, const char *pMessage)
 	}
 	else
 	{
-		str_format(aBuf, sizeof(aBuf), "[→ %s] %s", Server()->ClientName(VictimId), aCensoredMessage);
+		str_format(aBuf, sizeof(aBuf), "[??%s] %s", Server()->ClientName(VictimId), aCensoredMessage);
 		SendChatTarget(ClientId, aBuf);
 	}
 
@@ -5142,7 +5305,7 @@ void CGameContext::WhisperId(int ClientId, int VictimId, const char *pMessage)
 	}
 	else
 	{
-		str_format(aBuf, sizeof(aBuf), "[← %s] %s", Server()->ClientName(ClientId), aCensoredMessage);
+		str_format(aBuf, sizeof(aBuf), "[??%s] %s", Server()->ClientName(ClientId), aCensoredMessage);
 		SendChatTarget(VictimId, aBuf);
 	}
 }

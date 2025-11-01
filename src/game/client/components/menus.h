@@ -658,6 +658,7 @@ public:
 		SETTINGS_SOUND,
 		SETTINGS_DDNET,
 		SETTINGS_ASSETS,
+		SETTINGS_UCLIENT,
 
 		SETTINGS_LENGTH,
 	};
@@ -806,5 +807,8 @@ private:
 	void RenderSettingsDDNet(CUIRect MainView);
 	void RenderSettingsAppearance(CUIRect MainView);
 	bool RenderHslaScrollbars(CUIRect *pRect, unsigned int *pColor, bool Alpha, float DarkestLight);
+
+	// found in menus_uclient.cpp
+	void RenderSettingsUClient(CUIRect MainView);
 };
 #endif

@@ -2,13 +2,20 @@
 #include "gamecontext.h"
 
 #include <engine/antibot.h>
+#include <engine/http.h>
 #include <engine/shared/config.h>
+#include <engine/shared/http.h>
+#include <engine/shared/json.h>
 
 #include <game/server/entities/character.h>
 #include <game/server/gamemodes/DDRace.h>
 #include <game/server/player.h>
+#include <game/server/score.h>
 #include <game/server/save.h>
 #include <game/server/teams.h>
+
+#include <memory>
+#include <algorithm>
 
 void CGameContext::ConGoLeft(IConsole::IResult *pResult, void *pUserData)
 {
@@ -593,6 +600,205 @@ void CGameContext::ConAntibot(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
 	pSelf->Antibot()->ConsoleCommand(pResult->GetString(0));
+}
+
+void CGameContext::ConReport(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = static_cast<CGameContext *>(pUserData);
+
+	if(!CheckClientId(pResult->m_ClientId))
+		return;
+
+	if(pResult->NumArguments() < 2)
+	{
+		pSelf->SendChatTarget(pResult->m_ClientId, "Usage: /report <player name> <reason>");
+		return;
+	}
+
+	if(g_Config.m_SvReportWebhookUrl[0] == '\0')
+	{
+		pSelf->SendChatTarget(pResult->m_ClientId, "Reporting is disabled on this server.");
+		return;
+	}
+
+	const char *pTargetNameArg = pResult->GetString(0);
+	const char *pReasonArg = pResult->GetString(1);
+
+	if(!pTargetNameArg || !pTargetNameArg[0] || !pReasonArg || !pReasonArg[0])
+	{
+		pSelf->SendChatTarget(pResult->m_ClientId, "Usage: /report <player name> <reason>");
+		return;
+	}
+
+	int TargetId = -1;
+	for(int i = 0; i < MAX_CLIENTS; ++i)
+	{
+		if(!pSelf->m_apPlayers[i])
+			continue;
+
+		if(str_utf8_comp_nocase(pSelf->Server()->ClientName(i), pTargetNameArg) == 0)
+		{
+			TargetId = i;
+			break;
+		}
+	}
+
+	if(TargetId < 0)
+	{
+		pSelf->SendChatTarget(pResult->m_ClientId, "Player not found.");
+		return;
+	}
+
+	if(TargetId == pResult->m_ClientId)
+	{
+		pSelf->SendChatTarget(pResult->m_ClientId, "You cannot report yourself.");
+		return;
+	}
+
+	char aReporterAddr[NETADDR_MAXSTRSIZE];
+	str_copy(aReporterAddr, pSelf->Server()->ClientAddrString(pResult->m_ClientId, false), sizeof(aReporterAddr));
+	char aTargetAddr[NETADDR_MAXSTRSIZE];
+	str_copy(aTargetAddr, pSelf->Server()->ClientAddrString(TargetId, false), sizeof(aTargetAddr));
+	char aReason[256];
+	str_copy(aReason, pReasonArg, sizeof(aReason));
+
+	bool DuplicateReport = false;
+	int AutoAction = REPORT_ACTION_NONE;
+	int AutoDurationSeconds = 0;
+	pSelf->HandleAutoPunish(pResult->m_ClientId, aReporterAddr, TargetId, aReason, DuplicateReport, AutoAction, AutoDurationSeconds);
+	if(DuplicateReport)
+	{
+		pSelf->SendChatTarget(pResult->m_ClientId, "You have already reported this player recently.");
+		return;
+	}
+
+	char aTimestamp[64];
+	str_timestamp_format(aTimestamp, sizeof(aTimestamp), FORMAT_SPACE);
+
+	const char *pReporterName = pSelf->Server()->ClientName(pResult->m_ClientId);
+	const char *pTargetName = pSelf->Server()->ClientName(TargetId);
+	const char *pServerName = g_Config.m_SvName[0] ? g_Config.m_SvName : g_Config.m_SvSqlServerName;
+
+	if(pSelf->m_pHttp != nullptr)
+	{
+		char aEscReporter[192];
+		char aEscTarget[192];
+		char aEscReason[1024];
+		char aEscTimestamp[96];
+		char aEscReporterAddr[192];
+		char aEscTargetAddr[192];
+		char aEscMap[96];
+		char aEscServer[192];
+
+		EscapeJson(aEscReporter, sizeof(aEscReporter), pReporterName);
+		EscapeJson(aEscTarget, sizeof(aEscTarget), pTargetName);
+		EscapeJson(aEscReason, sizeof(aEscReason), aReason);
+		EscapeJson(aEscTimestamp, sizeof(aEscTimestamp), aTimestamp);
+		EscapeJson(aEscReporterAddr, sizeof(aEscReporterAddr), aReporterAddr);
+		EscapeJson(aEscTargetAddr, sizeof(aEscTargetAddr), aTargetAddr);
+		EscapeJson(aEscMap, sizeof(aEscMap), pSelf->Server()->GetMapName());
+		EscapeJson(aEscServer, sizeof(aEscServer), pServerName ? pServerName : "");
+
+		char aJson[1536];
+		str_format(aJson, sizeof(aJson),
+			"{\"content\":\"**New player report received!**\\nServer: %s\\nReporter: %s (%s)\\nTarget: %s (%s)\\nReason: %s\\nTime: %s\\nMap: %s\"}",
+			aEscServer[0] ? aEscServer : "unknown",
+			aEscReporter[0] ? aEscReporter : "unknown",
+			aEscReporterAddr[0] ? aEscReporterAddr : "unknown",
+			aEscTarget[0] ? aEscTarget : "unknown",
+			aEscTargetAddr[0] ? aEscTargetAddr : "unknown",
+			aEscReason[0] ? aEscReason : "(empty)",
+			aEscTimestamp[0] ? aEscTimestamp : "unknown",
+			aEscMap[0] ? aEscMap : "unknown");
+
+		auto pUniqueReq = HttpPostJson(g_Config.m_SvReportWebhookUrl, aJson);
+		if(pUniqueReq)
+		{
+			std::shared_ptr<IHttpRequest> pReq(
+				pUniqueReq.release(),
+				[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
+
+			pSelf->m_pHttp->Run(pReq);
+		}
+		else
+		{
+			pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "chatresp", "Report recorded, but the webhook rejected the payload.");
+		}
+	}
+	else
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "chatresp", "Report recorded, but the webhook service is unavailable.");
+	}
+
+	pSelf->SendChatTarget(pResult->m_ClientId, "Your report has been forwarded, thank you.");
+	pSelf->SendChatTarget(pResult->m_ClientId, "False reports may lead to penalties.");
+
+	char aLog[512];
+	if(AutoAction == REPORT_ACTION_MUTE)
+	{
+		const int DurationMinutes = AutoDurationSeconds / 60;
+		str_format(aLog, sizeof(aLog), "Report '%s' (%s) -> '%s' (%s): %s [auto mute %d minute%s]",
+			pReporterName,
+			aReporterAddr[0] ? aReporterAddr : "unknown",
+			pTargetName,
+			aTargetAddr[0] ? aTargetAddr : "unknown",
+			aReason,
+			DurationMinutes,
+			DurationMinutes == 1 ? "" : "s");
+	}
+	else if(AutoAction == REPORT_ACTION_BAN)
+	{
+		const int DurationMinutes = AutoDurationSeconds / 60;
+		str_format(aLog, sizeof(aLog), "Report '%s' (%s) -> '%s' (%s): %s [auto ban %d minute%s]",
+			pReporterName,
+			aReporterAddr[0] ? aReporterAddr : "unknown",
+			pTargetName,
+			aTargetAddr[0] ? aTargetAddr : "unknown",
+			aReason,
+			DurationMinutes,
+			DurationMinutes == 1 ? "" : "s");
+	}
+	else
+	{
+		str_format(aLog, sizeof(aLog), "Report '%s' (%s) -> '%s' (%s): %s",
+			pReporterName,
+			aReporterAddr[0] ? aReporterAddr : "unknown",
+			pTargetName,
+			aTargetAddr[0] ? aTargetAddr : "unknown",
+			aReason);
+	}
+	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "report", aLog);
+
+	if(CScore *pScore = pSelf->Score())
+	{
+		pScore->AddReportEntry(pReporterName, aReporterAddr, pTargetName, aTargetAddr, aReason, pSelf->Server()->GetMapName(), pServerName, AutoAction, AutoDurationSeconds);
+	}
+
+	if(AutoAction == REPORT_ACTION_MUTE)
+	{
+		const NETADDR *pTargetNetAddr = pSelf->Server()->ClientAddr(TargetId);
+		if(pTargetNetAddr)
+		{
+			pSelf->MuteWithMessage(pTargetNetAddr, AutoDurationSeconds, "Automatic report mute", pSelf->Server()->ClientName(TargetId));
+			const int DurationMinutes = std::max(1, AutoDurationSeconds / 60);
+			char aMsg[256];
+			str_format(aMsg, sizeof(aMsg), "'%s' has been automatically muted for %d minute%s due to player reports.",
+				pTargetName, DurationMinutes, DurationMinutes == 1 ? "" : "s");
+			pSelf->SendChat(-1, TEAM_ALL, aMsg);
+		}
+	}
+	else if(AutoAction == REPORT_ACTION_BAN)
+	{
+		const int DurationMinutes = std::max(1, AutoDurationSeconds / 60);
+		char aCmd[256];
+		str_format(aCmd, sizeof(aCmd), "ban %s %d Automatic report ban", aTargetAddr, DurationMinutes);
+		pSelf->Console()->ExecuteLine(aCmd);
+
+		char aMsg[256];
+		str_format(aMsg, sizeof(aMsg), "'%s' has been automatically banned for %d minute%s due to player reports.",
+			pTargetName, DurationMinutes, DurationMinutes == 1 ? "" : "s");
+		pSelf->SendChat(-1, TEAM_ALL, aMsg);
+	}
 }
 
 void CGameContext::ConDumpLog(IConsole::IResult *pResult, void *pUserData)
