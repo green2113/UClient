@@ -803,3 +803,5 @@ MACRO_CONFIG_INT(ClVideoRecorderFPS, cl_video_recorder_fps, 60, 1, 1000, CFGFLAG
  * Add config variables for mods below this comment to avoid merge conflicts.
  */
 
+// uclient and userver
+MACRO_CONFIG_STR(UServerNewYearMessage, userver_newyear_message, 256, "새해 복 많이 받으세요! / Happy New Year!", CFGFLAG_SERVER | CFGFLAG_SAVE, "새해 인사 메세지를 설정합니다. (단, 시즌날에만 메세지를 전송합니다)")
