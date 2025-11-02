@@ -179,7 +179,7 @@ void CServer::SendBanWebhook(const char *pTargetName, const char *pTargetAddr, i
 	EscapeJson(aEscReason, sizeof(aEscReason), pReasonText);
 
 	char aMessage[768];
-	str_format(aMessage, sizeof(aMessage), "%s was banned. (Reason: %s)", aEscDisplayName, aEscReason);
+	str_format(aMessage, sizeof(aMessage), "%s 님이 밴을 당하셨습니다 (사유: %s)", aEscDisplayName, aEscReason);
 
 	if(pTargetAddr && pTargetAddr[0])
 	{

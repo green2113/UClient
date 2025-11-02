@@ -701,15 +701,15 @@ void CGameContext::ConReport(IConsole::IResult *pResult, void *pUserData)
 
 		char aJson[1536];
 		str_format(aJson, sizeof(aJson),
-			"{\"content\":\"**New player report received!**\\nServer: %s\\nReporter: %s (%s)\\nTarget: %s (%s)\\nReason: %s\\nTime: %s\\nMap: %s\"}",
-			aEscServer[0] ? aEscServer : "unknown",
-			aEscReporter[0] ? aEscReporter : "unknown",
-			aEscReporterAddr[0] ? aEscReporterAddr : "unknown",
-			aEscTarget[0] ? aEscTarget : "unknown",
-			aEscTargetAddr[0] ? aEscTargetAddr : "unknown",
-			aEscReason[0] ? aEscReason : "(empty)",
-			aEscTimestamp[0] ? aEscTimestamp : "unknown",
-			aEscMap[0] ? aEscMap : "unknown");
+			"{\"content\":\"**새로운 신고가 접수되었어요!**\\nServer: %s\\신고자: %s (%s)\\n신고 대상: %s (%s)\\n사유: %s\\n시간: %s\\n맵: %s\"}",
+			aEscServer[0] ? aEscServer : "알 수 없음",
+			aEscReporter[0] ? aEscReporter : "알 수 없음",
+			aEscReporterAddr[0] ? aEscReporterAddr : "알 수 없음",
+			aEscTarget[0] ? aEscTarget : "알 수 없음",
+			aEscTargetAddr[0] ? aEscTargetAddr : "알 수 없음",
+			aEscReason[0] ? aEscReason : "(비어있음)",
+			aEscTimestamp[0] ? aEscTimestamp : "알 수 없음",
+			aEscMap[0] ? aEscMap : "알 수 없음");
 
 		auto pUniqueReq = HttpPostJson(g_Config.m_SvReportWebhookUrl, aJson);
 		if(pUniqueReq)
@@ -730,18 +730,18 @@ void CGameContext::ConReport(IConsole::IResult *pResult, void *pUserData)
 		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "chatresp", "Report recorded, but the webhook service is unavailable.");
 	}
 
-	pSelf->SendChatTarget(pResult->m_ClientId, "Your report has been forwarded, thank you.");
-	pSelf->SendChatTarget(pResult->m_ClientId, "False reports may lead to penalties.");
+	pSelf->SendChatTarget(pResult->m_ClientId, "신고가 접수되었습니다.");
+	pSelf->SendChatTarget(pResult->m_ClientId, "반복 신고 또는 허위 신고 등은 제재 사유가 될 수 있습니다. 주의해 주세요.");
 
 	char aLog[512];
 	if(AutoAction == REPORT_ACTION_MUTE)
 	{
 		const int DurationMinutes = AutoDurationSeconds / 60;
-		str_format(aLog, sizeof(aLog), "Report '%s' (%s) -> '%s' (%s): %s [auto mute %d minute%s]",
+		str_format(aLog, sizeof(aLog), "신고 '%s' (%s) -> '%s' (%s): %s [auto mute %d minute%s]",
 			pReporterName,
-			aReporterAddr[0] ? aReporterAddr : "unknown",
+			aReporterAddr[0] ? aReporterAddr : "알 수 없음",
 			pTargetName,
-			aTargetAddr[0] ? aTargetAddr : "unknown",
+			aTargetAddr[0] ? aTargetAddr : "알 수 없음",
 			aReason,
 			DurationMinutes,
 			DurationMinutes == 1 ? "" : "s");
@@ -749,22 +749,22 @@ void CGameContext::ConReport(IConsole::IResult *pResult, void *pUserData)
 	else if(AutoAction == REPORT_ACTION_BAN)
 	{
 		const int DurationMinutes = AutoDurationSeconds / 60;
-		str_format(aLog, sizeof(aLog), "Report '%s' (%s) -> '%s' (%s): %s [auto ban %d minute%s]",
+		str_format(aLog, sizeof(aLog), "신고 '%s' (%s) -> '%s' (%s): %s [auto ban %d minute%s]",
 			pReporterName,
-			aReporterAddr[0] ? aReporterAddr : "unknown",
+			aReporterAddr[0] ? aReporterAddr : "알 수 없음",
 			pTargetName,
-			aTargetAddr[0] ? aTargetAddr : "unknown",
+			aTargetAddr[0] ? aTargetAddr : "알 수 없음",
 			aReason,
 			DurationMinutes,
 			DurationMinutes == 1 ? "" : "s");
 	}
 	else
 	{
-		str_format(aLog, sizeof(aLog), "Report '%s' (%s) -> '%s' (%s): %s",
+		str_format(aLog, sizeof(aLog), "신고 '%s' (%s) -> '%s' (%s): %s",
 			pReporterName,
-			aReporterAddr[0] ? aReporterAddr : "unknown",
+			aReporterAddr[0] ? aReporterAddr : "알 수 없음",
 			pTargetName,
-			aTargetAddr[0] ? aTargetAddr : "unknown",
+			aTargetAddr[0] ? aTargetAddr : "알 수 없음",
 			aReason);
 	}
 	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "report", aLog);

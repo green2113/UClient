@@ -2924,7 +2924,7 @@ ETimeSeason time_season()
 	time(&time_data);
 	struct tm *time_info = time_localtime_threadlocal(&time_data);
 
-	if((time_info->tm_mon == 11 && time_info->tm_mday == 31) || (time_info->tm_mon == 0 && time_info->tm_mday == 1))
+	if(time_info->tm_mon == 0 && time_info->tm_mday >= 1 && time_info->tm_mday <= 3)
 	{
 		return SEASON_NEWYEAR;
 	}
@@ -2935,6 +2935,10 @@ ETimeSeason time_season()
 	else if((time_info->tm_mon == 9 && time_info->tm_mday == 31) || (time_info->tm_mon == 10 && time_info->tm_mday == 1))
 	{
 		return SEASON_HALLOWEEN;
+	}
+	else if(time_info->tm_mon == 1 && time_info->tm_mday == 14)
+	{
+		return SEASON_VALENTINE;
 	}
 	else if(time_iseasterday(time_data, time_info))
 	{

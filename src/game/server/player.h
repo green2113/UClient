@@ -41,6 +41,7 @@ public:
 	uint32_t GetUniqueCid() const { return m_UniqueClientId; }
 	int GetClientVersion() const;
 	bool SetTimerType(int TimerType);
+	bool IsNewYear() const { return m_NewYear; }
 
 	void Tick();
 	void PostTick();
@@ -147,6 +148,8 @@ private:
 	int m_OverrideEmote;
 	int m_OverrideEmoteReset;
 	bool m_Halloween;
+	bool m_NewYear;
+	bool m_Valentine;
 
 public:
 	enum

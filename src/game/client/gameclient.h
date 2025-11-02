@@ -44,7 +44,6 @@
 #include "components/freezebars.h"
 #include "components/ghost.h"
 #include "components/hud.h"
-#include "components/important_alert.h"
 #include "components/infomessages.h"
 #include "components/items.h"
 #include "components/key_binder.h"
@@ -157,7 +156,6 @@ public:
 	CCountryFlags m_CountryFlags;
 	CFlow m_Flow;
 	CHud m_Hud;
-	CImportantAlert m_ImportantAlert;
 	CDebugHud m_DebugHud;
 	CControls m_Controls;
 	CEffects m_Effects;

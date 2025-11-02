@@ -149,7 +149,6 @@ void CGameClient::OnConsoleInit()
 					      &m_InfoMessages,
 					      &m_Chat,
 					      &m_Broadcast,
-					      &m_ImportantAlert,
 					      &m_DebugHud,
 					      &m_TouchControls,
 					      &m_Scoreboard,
@@ -176,7 +175,6 @@ void CGameClient::OnConsoleInit()
 						  &m_Motd, // for pressing esc to remove it
 						  &m_Spectator,
 						  &m_Emoticon,
-						  &m_ImportantAlert,
 						  &m_Menus,
 						  &m_Controls,
 						  &m_TouchControls,

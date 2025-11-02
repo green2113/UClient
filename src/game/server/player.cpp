@@ -84,6 +84,8 @@ void CPlayer::Reset()
 	m_TuneZoneOld = m_TuneZone;
 	m_Halloween = false;
 	m_FirstPacket = true;
+	m_NewYear = false;
+	m_Valentine =false;
 
 	m_SendVoteIndex = -1;
 
@@ -93,11 +95,17 @@ void CPlayer::Reset()
 		if(Season == SEASON_NEWYEAR)
 		{
 			m_DefEmote = EMOTE_HAPPY;
+			m_NewYear = true;
 		}
 		else if(Season == SEASON_HALLOWEEN)
 		{
-			m_DefEmote = EMOTE_SURPRISE;
+			m_DefEmote = EMOTE_NORMAL;
 			m_Halloween = true;
+		}
+		else if(Season == SEASON_VALENTINE)
+		{
+			m_DefEmote = EMOTE_PAIN;
+			m_Valentine = true;
 		}
 		else
 		{
@@ -274,6 +282,14 @@ void CPlayer::Tick()
 		if(1200 - ((Server()->Tick() - m_pCharacter->GetLastAction()) % (1200)) < 5)
 		{
 			GameServer()->SendEmoticon(GetCid(), EMOTICON_GHOST, -1);
+		}
+	}
+
+	if(m_Valentine && m_pCharacter && !m_pCharacter->IsPaused())
+	{
+		if(1200 - ((Server()->Tick() - m_pCharacter->GetLastAction()) % (1200)) < 5)
+		{
+			GameServer()->SendEmoticon(GetCid(), EMOTICON_HEARTS, -1);
 		}
 	}
 }
