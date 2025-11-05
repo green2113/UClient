@@ -4,6 +4,7 @@
 
 #include "entities/character.h"
 #include "gamemodes/DDRace.h"
+#include "gamemodes/gores.h"
 #include "gamemodes/mod.h"
 #include "player.h"
 #include "score.h"
@@ -4208,6 +4209,8 @@ void CGameContext::OnInit(const void *pPersistentData)
 
 	if(!str_comp(Config()->m_SvGametype, "mod"))
 		m_pController = new CGameControllerMod(this);
+	else if(!str_comp(Config()->m_SvGametype, "gores"))
+		m_pController = new CGameControllerGores(this);
 	else
 		m_pController = new CGameControllerDDRace(this);
 
