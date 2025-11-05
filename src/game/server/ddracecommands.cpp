@@ -849,3 +849,28 @@ void CGameContext::LogEvent(const char *Description, int ClientId)
 		str_copy(pNewEntry->m_aClientName, Server()->ClientName(ClientId));
 	}
 }
+
+void CGameContext::ConNet(IConsole::IResult *pResult, void *pUserData)
+{
+	auto *pSelf = static_cast<CGameContext *>(pUserData);
+	const int ClientId = pResult->m_ClientId;
+
+	if(!CheckClientId(ClientId))
+		return;
+
+	if(!pSelf->m_apPlayers[ClientId])
+		return;
+
+	int Seconds = 10;
+	if(pResult->NumArguments() >= 1)
+		Seconds = std::clamp(pResult->GetInteger(0), 1, 30);
+
+	char aBuf[128];
+	if(pSelf->m_apPlayers[ClientId]->IsNetStatsMeasurementActive())
+		str_format(aBuf, sizeof(aBuf), "네트워크 상태를 %d초 동안 다시 측정중이에요. 잠시만 기다려주세요...", Seconds);
+	else
+		str_format(aBuf, sizeof(aBuf), "%d초 동안 네트워크 상태를 측정하고 알려드릴게요. 잠시만 기다려주세요...", Seconds);
+	pSelf->SendChatTarget(ClientId, aBuf);
+
+	pSelf->m_apPlayers[ClientId]->StartNetStatsMeasurement(Seconds);
+}

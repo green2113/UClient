@@ -16,6 +16,9 @@
 #include <game/gamecore.h>
 #include <game/teamscore.h>
 
+#include <cstdlib>
+#include <limits>
+
 MACRO_ALLOC_POOL_ID_IMPL(CPlayer, MAX_CLIENTS)
 
 IServer *CPlayer::Server() const { return m_pGameServer->Server(); }
@@ -88,6 +91,7 @@ void CPlayer::Reset()
 	m_Valentine =false;
 
 	m_SendVoteIndex = -1;
+	m_NetStats.Reset();
 
 	if(g_Config.m_Events)
 	{
@@ -202,11 +206,22 @@ void CPlayer::Tick()
 	// do latency stuff
 	{
 		IServer::CClientInfo Info;
-		if(Server()->GetClientInfo(m_ClientId, &Info))
-		{
-			m_Latency.m_Accum += Info.m_Latency;
-			m_Latency.m_AccumMax = maximum(m_Latency.m_AccumMax, Info.m_Latency);
-			m_Latency.m_AccumMin = minimum(m_Latency.m_AccumMin, Info.m_Latency);
+			if(Server()->GetClientInfo(m_ClientId, &Info))
+			{
+				m_Latency.m_Accum += Info.m_Latency;
+				m_Latency.m_AccumMax = maximum(m_Latency.m_AccumMax, Info.m_Latency);
+				m_Latency.m_AccumMin = minimum(m_Latency.m_AccumMin, Info.m_Latency);
+				if(m_NetStats.m_Active && Info.m_Latency > 0)
+				{
+					m_NetStats.m_LatencySum += Info.m_Latency;
+					m_NetStats.m_SampleCount++;
+					m_NetStats.m_LatencyMin = minimum(m_NetStats.m_LatencyMin, Info.m_Latency);
+					m_NetStats.m_LatencyMax = maximum(m_NetStats.m_LatencyMax, Info.m_Latency);
+				if(m_NetStats.m_HaveLastLatency)
+					m_NetStats.m_JitterAccum += std::abs(Info.m_Latency - m_NetStats.m_LastLatency);
+				m_NetStats.m_LastLatency = Info.m_Latency;
+				m_NetStats.m_HaveLastLatency = true;
+			}
 		}
 		// each second
 		if(Server()->Tick() % Server()->TickSpeed() == 0)
@@ -218,6 +233,24 @@ void CPlayer::Tick()
 			m_Latency.m_AccumMin = 1000;
 			m_Latency.m_AccumMax = 0;
 		}
+	}
+
+	if(m_NetStats.m_Active && Server()->Tick() >= m_NetStats.m_EndTick)
+	{
+		if(m_NetStats.m_SampleCount > 0)
+		{
+			const float Avg = static_cast<float>(m_NetStats.m_LatencySum) / m_NetStats.m_SampleCount;
+			const float Jitter = m_NetStats.m_SampleCount > 1 ? static_cast<float>(m_NetStats.m_JitterAccum) / (m_NetStats.m_SampleCount - 1) : 0.0f;
+			char aBuf[192];
+			str_format(aBuf, sizeof(aBuf), "네트워크 상태 결과가 나왔어요. 지난 %d초간의 평균 지연 시간: %.1fms(최소: %dms, 최대: %dms), 지터: %.1fms (샘플: %d개)",
+				m_NetStats.m_Seconds, Avg, m_NetStats.m_LatencyMin, m_NetStats.m_LatencyMax, Jitter, m_NetStats.m_SampleCount);
+			GameServer()->SendChatTarget(m_ClientId, aBuf);
+		}
+		else
+		{
+			GameServer()->SendChatTarget(m_ClientId, "네트워크 상태 측정을 실패했어요.");
+		}
+		m_NetStats.Reset();
 	}
 
 	if(Server()->GetNetErrorString(m_ClientId)[0])
@@ -923,6 +956,20 @@ int CPlayer::IsPaused() const
 bool CPlayer::IsPlaying() const
 {
 	return m_pCharacter && m_pCharacter->IsAlive();
+}
+
+void CPlayer::StartNetStatsMeasurement(int Seconds)
+{
+	m_NetStats.m_Active = true;
+	m_NetStats.m_Seconds = Seconds;
+	m_NetStats.m_EndTick = Server()->Tick() + Seconds * Server()->TickSpeed();
+	m_NetStats.m_SampleCount = 0;
+	m_NetStats.m_LatencySum = 0;
+	m_NetStats.m_LatencyMin = std::numeric_limits<int>::max();
+	m_NetStats.m_LatencyMax = 0;
+	m_NetStats.m_JitterAccum = 0;
+	m_NetStats.m_LastLatency = 0;
+	m_NetStats.m_HaveLastLatency = false;
 }
 
 void CPlayer::SpectatePlayerName(const char *pName)

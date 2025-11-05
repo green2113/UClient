@@ -121,6 +121,34 @@ public:
 		int m_Max;
 	} m_Latency;
 
+	struct CNetStatsTracker
+	{
+		bool m_Active;
+		int m_Seconds;
+		int64_t m_EndTick;
+		int m_SampleCount;
+		int64_t m_LatencySum;
+		int m_LatencyMin;
+		int m_LatencyMax;
+		int64_t m_JitterAccum;
+		int m_LastLatency;
+		bool m_HaveLastLatency;
+
+		void Reset()
+		{
+			m_Active = false;
+			m_Seconds = 0;
+			m_EndTick = 0;
+			m_SampleCount = 0;
+			m_LatencySum = 0;
+			m_LatencyMin = 0;
+			m_LatencyMax = 0;
+			m_JitterAccum = 0;
+			m_LastLatency = 0;
+			m_HaveLastLatency = false;
+		}
+	} m_NetStats;
+
 private:
 	const uint32_t m_UniqueClientId;
 	CCharacter *m_pCharacter;
@@ -181,6 +209,8 @@ public:
 	bool CanSpec() const;
 
 	bool IsPlaying() const;
+	void StartNetStatsMeasurement(int Seconds);
+	bool IsNetStatsMeasurementActive() const { return m_NetStats.m_Active; }
 	int64_t m_LastKickVote;
 	int64_t m_LastDDRaceTeamChange;
 	int m_ShowOthers;

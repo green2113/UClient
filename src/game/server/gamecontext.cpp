@@ -4002,6 +4002,7 @@ void CGameContext::RegisterChatCommands()
 	Console()->Register("settings", "?s[configname]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConSettings, this, "Shows gameplay information for this server");
 	Console()->Register("help", "?r[command]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConHelp, this, "Shows help to command r, general help if left blank");
 	Console()->Register("info", "", CFGFLAG_CHAT | CFGFLAG_SERVER, ConInfo, this, "Shows info about this server");
+	Console()->Register("net", "?i[seconds]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConNet, this, "Measure your latency over the next seconds (default 10, max 30)");
 	Console()->Register("list", "?s[filter]", CFGFLAG_CHAT, ConList, this, "List connected players with optional case-insensitive substring matching filter");
 	Console()->Register("report", "s[player name] r[reason]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConReport, this, "Report a player to the moderators");
 	Console()->Register("w", "s[player name] r[message]", CFGFLAG_CHAT | CFGFLAG_SERVER | CFGFLAG_NONTEEHISTORIC, ConWhisper, this, "Whisper something to someone (private message)");
