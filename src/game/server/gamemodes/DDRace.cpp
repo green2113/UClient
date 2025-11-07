@@ -137,7 +137,7 @@ void CGameControllerDDRace::OnPlayerConnect(CPlayer *pPlayer)
 		GameServer()->SendChat(-1, TEAM_ALL, aBuf, -1, CGameContext::FLAG_SIX);
 
 		GameServer()->SendChatTarget(ClientId, "Gores Mod. Version: " GAME_VERSION);
-		GameServer()->SendChatTarget(ClientId, "please visit discord.gg/PNpxPxvcws to review map finish logs or announcements!");
+		GameServer()->SendChatTarget(ClientId, "Join discord.gg/PNpxPxvcws to check out the map finish logs and announcements!");
 	}
 }
 
