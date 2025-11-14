@@ -170,7 +170,14 @@ void CServer::SendBanWebhook(const char *pTargetName, const char *pTargetAddr, i
 
 	(void)Seconds;
 
-	const char *pDisplayName = (pTargetName && pTargetName[0]) ? pTargetName : ((pTargetAddr && pTargetAddr[0]) ? pTargetAddr : "Unknown player");
+	const bool HasTargetName = pTargetName && pTargetName[0];
+	const bool HasTargetAddr = pTargetAddr && pTargetAddr[0];
+	if(!HasTargetName)
+	{
+		return;
+	}
+
+	const char *pDisplayName = pTargetName;
 	const char *pReasonText = (pReason && pReason[0]) ? pReason : "no reason specified";
 
 	char aEscDisplayName[192];
