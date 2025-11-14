@@ -591,6 +591,8 @@ MACRO_CONFIG_STR(SvReportWebhookUrl, sv_report_webhook_url, 256, "", CFGFLAG_SER
 MACRO_CONFIG_STR(SvFinishWebhookUrl, sv_finish_webhook_url, 256, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "Discord webhook URL for finish notifications")
 MACRO_CONFIG_STR(SvBanWebhookUrl, sv_ban_webhook_url, 256, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "Discord webhook URL for ban notifications")
 
+MACRO_CONFIG_INT(SvVoteKickReasonRequired, sv_vote_kick_reason_required, 1, 0, 1, CFGFLAG_SERVER, "투표 사유 입력")
+
 #if defined(CONF_UPNP)
 MACRO_CONFIG_INT(SvUseUPnP, sv_use_upnp, 0, 0, 1, CFGFLAG_SERVER, "Enables UPnP support. (Requires -DCONF_UPNP=ON when compiling)")
 #endif
@@ -706,6 +708,7 @@ MACRO_CONFIG_INT(SvSpamMuteDuration, sv_spam_mute_duration, 60, 0, 3600, CFGFLAG
 MACRO_CONFIG_INT(SvShutdownWhenEmpty, sv_shutdown_when_empty, 0, 0, 1, CFGFLAG_SERVER, "Shutdown server as soon as no one is on it anymore")
 MACRO_CONFIG_INT(SvReloadWhenEmpty, sv_reload_when_empty, 0, 0, 2, CFGFLAG_SERVER, "Reload map when server is empty (1 = reload once, 2 = reload every time server gets empty)")
 MACRO_CONFIG_INT(SvKillProtection, sv_kill_protection, 20, 0, 9999, CFGFLAG_SERVER, "0 - Disable, 1-9999 minutes")
+MACRO_CONFIG_INT(SvForceSeason, sv_force_season, -1, -1, SEASON_COUNT - 1, CFGFLAG_SERVER | CFGFLAG_SAVE, "Force the world season (-1 = automatic real date)")
 MACRO_CONFIG_INT(SvSoloServer, sv_solo_server, 0, 0, 1, CFGFLAG_SERVER | CFGFLAG_GAME, "Set server to solo mode (no player interactions, has to be set before loading the map)")
 MACRO_CONFIG_STR(SvClientSuggestion, sv_client_suggestion, 128, "Get DDNet client from DDNet.org to use all features on DDNet!", CFGFLAG_SERVER, "Broadcast to display to players without DDNet client")
 MACRO_CONFIG_STR(SvClientSuggestionOld, sv_client_suggestion_old, 128, "Your DDNet client is old, update it on DDNet.org!", CFGFLAG_SERVER, "Broadcast to display to players with an old version of DDNet client")

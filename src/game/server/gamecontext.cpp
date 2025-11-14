@@ -2427,7 +2427,7 @@ void CGameContext::OnCallVoteNetMessage(const CNetMsg_Cl_CallVote *pMsg, int Cli
 	{
 		str_copy(aReason, pMsg->m_pReason, sizeof(aReason));
 	}
-
+	
 	if(str_comp_nocase(pMsg->m_pType, "option") == 0)
 	{
 		CVoteOptionServer *pOption = m_pVoteOptionFirst;
@@ -2444,11 +2444,11 @@ void CGameContext::OnCallVoteNetMessage(const CNetMsg_Cl_CallVote *pMsg, int Cli
 				{
 					return;
 				}
-
+				
 				str_format(aChatmsg, sizeof(aChatmsg), "'%s' called vote to change server option '%s' (%s)", Server()->ClientName(ClientId),
-					pOption->m_aDescription, aReason);
+				pOption->m_aDescription, aReason);
 				str_copy(aDesc, pOption->m_aDescription);
-
+				
 				if((str_endswith(pOption->m_aCommand, "random_map") || str_endswith(pOption->m_aCommand, "random_unfinished_map")))
 				{
 					if(str_length(aReason) == 1 && aReason[0] >= '0' && aReason[0] <= '5')
@@ -2471,14 +2471,14 @@ void CGameContext::OnCallVoteNetMessage(const CNetMsg_Cl_CallVote *pMsg, int Cli
 				{
 					str_copy(aCmd, pOption->m_aCommand);
 				}
-
+				
 				m_LastMapVote = time_get();
 				break;
 			}
-
+			
 			pOption = pOption->m_pNext;
 		}
-
+		
 		if(!pOption)
 		{
 			if(!Server()->IsRconAuthedAdmin(ClientId)) // allow admins to call any vote they want
@@ -2494,11 +2494,16 @@ void CGameContext::OnCallVoteNetMessage(const CNetMsg_Cl_CallVote *pMsg, int Cli
 				str_copy(aCmd, pMsg->m_pValue);
 			}
 		}
-
+		
 		m_VoteType = VOTE_TYPE_OPTION;
 	}
 	else if(str_comp_nocase(pMsg->m_pType, "kick") == 0)
 	{
+		if(g_Config.m_SvVoteKickReasonRequired && !Server()->IsRconAuthed(ClientId))
+		{
+			SendChatTarget(ClientId, "추방 투표를 하려면 추방 사유를 입력해야 합니다. / You must enter a reason when calling a kick vote");
+			return;
+		}
 		if(!g_Config.m_SvVoteKick && !Server()->IsRconAuthed(ClientId)) // allow admins to call kick votes even if they are forbidden
 		{
 			SendChatTarget(ClientId, "Server does not allow voting to kick players");
@@ -3864,6 +3869,17 @@ void CGameContext::ConchainPracticeByDefaultUpdate(IConsole::IResult *pResult, v
 	}
 }
 
+void CGameContext::ConchainForceSeasonUpdate(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
+{
+	pfnCallback(pResult, pCallbackUserData);
+
+	if(!pResult->NumArguments())
+		return;
+
+	const int Season = std::clamp(g_Config.m_SvForceSeason, -1, SEASON_COUNT - 1);
+	time_set_season_override(Season);
+}
+
 void CGameContext::OnConsoleInit()
 {
 	m_pServer = Kernel()->RequestInterface<IServer>();
@@ -3991,6 +4007,8 @@ void CGameContext::RegisterDDRaceCommands()
 	Console()->Register("dump_log", "?i[seconds]", CFGFLAG_SERVER, ConDumpLog, this, "Show logs of the last i seconds");
 
 	Console()->Chain("sv_practice_by_default", ConchainPracticeByDefaultUpdate, this);
+	Console()->Chain("sv_force_season", ConchainForceSeasonUpdate, this);
+	time_set_season_override(std::clamp(g_Config.m_SvForceSeason, -1, SEASON_COUNT - 1));
 }
 
 void CGameContext::RegisterChatCommands()

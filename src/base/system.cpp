@@ -125,6 +125,8 @@ struct NETSOCKET_INTERNAL
 };
 static NETSOCKET_INTERNAL invalid_socket = {NETTYPE_INVALID, -1, -1, -1, -1};
 
+static std::atomic<int> gs_TimeSeasonOverride(-1);
+
 std::atomic_bool dbg_assert_failing = false;
 DBG_ASSERT_HANDLER dbg_assert_handler;
 
@@ -2888,6 +2890,21 @@ int time_houroftheday()
 	return time_info->tm_hour;
 }
 
+void time_set_season_override(int Season)
+{
+	if(Season < -1)
+		Season = -1;
+	else if(Season >= SEASON_COUNT)
+		Season = SEASON_COUNT - 1;
+
+	gs_TimeSeasonOverride.store(Season, std::memory_order_relaxed);
+}
+
+int time_get_season_override()
+{
+	return gs_TimeSeasonOverride.load(std::memory_order_relaxed);
+}
+
 static bool time_iseasterday(time_t time_data, struct tm *time_info)
 {
 	// compute Easter day (Sunday) using https://en.wikipedia.org/w/index.php?title=Computus&oldid=890710285#Anonymous_Gregorian_algorithm
@@ -2920,6 +2937,12 @@ static bool time_iseasterday(time_t time_data, struct tm *time_info)
 
 ETimeSeason time_season()
 {
+	const int OverrideSeason = time_get_season_override();
+	if(OverrideSeason >= 0 && OverrideSeason < SEASON_COUNT)
+	{
+		return static_cast<ETimeSeason>(OverrideSeason);
+	}
+
 	time_t time_data;
 	time(&time_data);
 	struct tm *time_info = time_localtime_threadlocal(&time_data);
