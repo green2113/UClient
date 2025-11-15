@@ -4891,8 +4891,8 @@ void CGameContext::SendFinishWebhook(int ClientId, const char *pTimeText, bool I
 			aEscTime[0] ? aEscTime : "알 수 없음");
 	}
 
-	char aJson[768];
-	str_format(aJson, sizeof(aJson), "{\"content\":\"%s\"}", aMessage);
+	char aJson[896];
+	str_format(aJson, sizeof(aJson), "{\"content\":\"%s\",\"allowed_mentions\":{\"parse\":[]}}", aMessage);
 
 	auto pUniqueReq = HttpPostJson(g_Config.m_SvFinishWebhookUrl, aJson);
 	if(!pUniqueReq)
@@ -4905,6 +4905,25 @@ void CGameContext::SendFinishWebhook(int ClientId, const char *pTimeText, bool I
 		pUniqueReq.release(),
 		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
 	m_pHttp->Run(pReq);
+}
+
+void CGameContext::OnHookSpamDetected(CPlayer *pPlayer, float HooksPerSecond)
+{
+	if(!pPlayer)
+		return;
+
+	char aMsg[256];
+	str_copy(aMsg, "지금 갈고리를 너무 빨리 쓰시는 것 같아요. 확인을 위해 로그를 관리자에게 전송했어요! / We detected unusually fast hook usage and sent the log to the administrators for review.", sizeof(aMsg));
+	SendChatTarget(pPlayer->GetCid(), aMsg);
+
+	char aAddr[NETADDR_MAXSTRSIZE];
+	const char *pAddr = Server()->ClientAddrString(pPlayer->GetCid(), false);
+	if(pAddr)
+		str_copy(aAddr, pAddr, sizeof(aAddr));
+	else
+		aAddr[0] = '\0';
+
+	Server()->SendHookSpamWebhook(pPlayer->GetCid(), HooksPerSecond, aAddr);
 }
 
 void CGameContext::SendSaveCode(int Team, int TeamSize, int State, const char *pError, const char *pSaveRequester, const char *pServerName, const char *pGeneratedCode, const char *pCode)

@@ -804,9 +804,14 @@ void CCharacter::Tick()
 		PreTick();
 	}
 
-	if(!m_PrevInput.m_Hook && m_Input.m_Hook && !(m_Core.m_TriggeredEvents & COREEVENT_HOOK_ATTACH_PLAYER))
+	if(!m_PrevInput.m_Hook && m_Input.m_Hook)
 	{
-		Antibot()->OnHookAttach(m_pPlayer->GetCid(), false);
+		if(m_pPlayer)
+			m_pPlayer->OnHookFired();
+		if(!(m_Core.m_TriggeredEvents & COREEVENT_HOOK_ATTACH_PLAYER))
+		{
+			Antibot()->OnHookAttach(m_pPlayer->GetCid(), false);
+		}
 	}
 
 	// handle Weapons

@@ -160,6 +160,10 @@ void CPlayer::Reset()
 	m_RescueMode = RESCUEMODE_AUTO;
 
 	m_CameraInfo.Reset();
+
+	m_HookSpamWindowStartTick = 0;
+	m_HookSpamCount = 0;
+	m_HookSpamWarned = false;
 }
 
 static int PlayerFlags_SixToSeven(int Flags)
@@ -984,6 +988,35 @@ void CPlayer::SpectatePlayerName(const char *pName)
 			SetSpectatorId(i);
 			return;
 		}
+	}
+}
+
+void CPlayer::OnHookFired()
+{
+	if(!g_Config.m_SvAntiHookMonitor)
+		return;
+
+	const int64_t Now = Server()->Tick();
+	const int64_t TickSpeed = Server()->TickSpeed();
+
+	if(m_HookSpamWindowStartTick == 0 || Now > m_HookSpamWindowStartTick + TickSpeed)
+	{
+		m_HookSpamWindowStartTick = Now;
+		m_HookSpamCount = 0;
+		m_HookSpamWarned = false;
+	}
+
+	++m_HookSpamCount;
+
+	const int HookSpamThreshold = g_Config.m_SvAntiHookClick > 0 ? g_Config.m_SvAntiHookClick : 20;
+	if(!m_HookSpamWarned && m_HookSpamCount >= HookSpamThreshold)
+	{
+		m_HookSpamWarned = true;
+		float Duration = (Now - m_HookSpamWindowStartTick) / static_cast<float>(TickSpeed);
+		if(Duration <= 0.0f)
+			Duration = 1.0f;
+		const float HooksPerSecond = m_HookSpamCount / Duration;
+		GameServer()->OnHookSpamDetected(this, HooksPerSecond);
 	}
 }
 

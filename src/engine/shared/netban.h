@@ -5,6 +5,9 @@
 
 #include <engine/console.h>
 
+#include <map>
+#include <string>
+
 inline int NetComp(const NETADDR *pAddr1, const NETADDR *pAddr2)
 {
 	return mem_comp(pAddr1, pAddr2, pAddr1->type == NETTYPE_IPV4 ? 8 : 20);
@@ -160,6 +163,11 @@ protected:
 	class IStorage *m_pStorage;
 	CBanAddrPool m_BanAddrPool;
 	CBanRangePool m_BanRangePool;
+	bool m_LoadingPersistentBans = false;
+	bool m_SyncingPersistentBans = false;
+	std::map<std::string, std::string> m_PersistentBans;
+	time_t m_PersistentFileLastWrite = 0;
+	int64_t m_NextPersistentSync = 0;
 	NETADDR m_LocalhostIpV4, m_LocalhostIpV6;
 
 public:
@@ -184,6 +192,7 @@ public:
 	int UnbanByRange(const CNetRange *pRange);
 	int UnbanByIndex(int Index);
 	void UnbanAll();
+	void SyncPersistentBans(bool Force);
 	bool IsBanned(const NETADDR *pOrigAddr, char *pBuf, unsigned BufferSize) const;
 
 	static void ConBan(class IConsole::IResult *pResult, void *pUser);
@@ -194,6 +203,17 @@ public:
 	static void ConBans(class IConsole::IResult *pResult, void *pUser);
 	static void ConBansFind(class IConsole::IResult *pResult, void *pUser);
 	static void ConBansSave(class IConsole::IResult *pResult, void *pUser);
+
+protected:
+	void AppendPersistentBan(const NETADDR *pAddr, const char *pReason);
+	void RemovePersistentBan(const NETADDR *pAddr);
+	bool ResolvePersistentBanPath(char *pPath, unsigned PathSize) const;
+	bool RewritePersistentBanFile();
+	void UpdatePersistentBanTimestamp(const char *pPath);
+	void EnsurePersistentDir(const char *pPath) const;
+	void ScheduleNextPersistentSync();
+	void SanitizeReason(const char *pReason, char *pOut, int OutSize) const;
+	void HandlePersistentBan(const NETADDR *pAddr, int Seconds, const char *pReason, int Result);
 };
 
 template<class T>

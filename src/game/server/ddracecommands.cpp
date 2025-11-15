@@ -701,7 +701,7 @@ void CGameContext::ConReport(IConsole::IResult *pResult, void *pUserData)
 
 		char aJson[1536];
 		str_format(aJson, sizeof(aJson),
-			"{\"content\":\"**새로운 신고가 접수되었어요!**\\nServer: %s\\신고자: %s (%s)\\n신고 대상: %s (%s)\\n사유: %s\\n시간: %s\\n맵: %s\"}",
+			"{\"content\":\"**새로운 신고가 접수되었어요!**\\n서버: %s\\신고자: %s (%s)\\n신고 대상: %s (%s)\\n사유: %s\\n시간: %s\\n맵: %s\",\"allowed_mentions\":{\"parse\":[]}}",
 			aEscServer[0] ? aEscServer : "알 수 없음",
 			aEscReporter[0] ? aEscReporter : "알 수 없음",
 			aEscReporterAddr[0] ? aEscReporterAddr : "알 수 없음",

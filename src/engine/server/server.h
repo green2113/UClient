@@ -315,6 +315,7 @@ public:
 
 	void SendLogLine(const CLogMessage *pMessage);
 	void SendBanWebhook(const char *pTargetName, const char *pTargetAddr, int Seconds, const char *pReason);
+	void SendHookSpamWebhook(int ClientId, float HooksPerSecond, const char *pAddr) override;
 	void SetRconCid(int ClientId) override;
 	int GetAuthedState(int ClientId) const override;
 	bool IsRconAuthed(int ClientId) const override;

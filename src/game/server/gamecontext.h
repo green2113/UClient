@@ -202,6 +202,7 @@ public:
 	IAntibot *Antibot() { return m_pAntibot; }
 	CTeeHistorian *TeeHistorian() { return &m_TeeHistorian; }
 	bool TeeHistorianActive() const { return m_TeeHistorianActive; }
+	void OnHookSpamDetected(class CPlayer *pPlayer, float HooksPerSecond);
 	CNetObjHandler *GetNetObjHandler() override { return &m_NetObjHandler; }
 	protocol7::CNetObjHandler *GetNetObjHandler7() override { return &m_NetObjHandler7; }
 

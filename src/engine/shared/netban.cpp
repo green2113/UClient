@@ -1,10 +1,19 @@
 #include "netban.h"
 
 #include <base/math.h>
+#include <base/str.h>
 
 #include <engine/console.h>
 #include <engine/shared/config.h>
+#include <engine/shared/linereader.h>
 #include <engine/storage.h>
+
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
+
+static constexpr const char *PERSISTENT_REASON_SUFFIX = " (discord.gg/PNpxPxvcws)";
 
 CNetBan::CNetHash::CNetHash(const NETADDR *pAddr)
 {
@@ -171,6 +180,11 @@ void CNetBan::UnbanAll()
 {
 	m_BanAddrPool.Reset();
 	m_BanRangePool.Reset();
+	if(!m_PersistentBans.empty())
+	{
+		m_PersistentBans.clear();
+		RewritePersistentBanFile();
+	}
 }
 
 template<class T, int HashCount>
@@ -288,6 +302,9 @@ void CNetBan::Init(IConsole *pConsole, IStorage *pStorage)
 	Console()->Register("bans", "?i[page]", CFGFLAG_SERVER | CFGFLAG_MASTER, ConBans, this, "Show banlist (page 1 by default, 20 entries per page)");
 	Console()->Register("bans_find", "s[ip]", CFGFLAG_SERVER | CFGFLAG_MASTER, ConBansFind, this, "Find all ban records for the specified IP address");
 	Console()->Register("bans_save", "s[file]", CFGFLAG_SERVER | CFGFLAG_MASTER | CFGFLAG_STORE, ConBansSave, this, "Save banlist in a file");
+
+	m_NextPersistentSync = 0;
+	SyncPersistentBans(true);
 }
 
 void CNetBan::Update()
@@ -308,11 +325,21 @@ void CNetBan::Update()
 		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "net_ban", aBuf);
 		m_BanRangePool.Remove(m_BanRangePool.First());
 	}
+
+	if(time_get() >= m_NextPersistentSync)
+	{
+		SyncPersistentBans(false);
+	}
 }
 
 int CNetBan::BanAddr(const NETADDR *pAddr, int Seconds, const char *pReason, bool VerbatimReason)
 {
-	return Ban(&m_BanAddrPool, pAddr, Seconds, pReason, VerbatimReason);
+	int Result = Ban(&m_BanAddrPool, pAddr, Seconds, pReason, VerbatimReason);
+	if(Result == 0 && Seconds <= 0 && !m_LoadingPersistentBans && !m_SyncingPersistentBans)
+	{
+		AppendPersistentBan(pAddr, pReason);
+	}
+	return Result;
 }
 
 int CNetBan::BanRange(const CNetRange *pRange, int Seconds, const char *pReason)
@@ -326,7 +353,12 @@ int CNetBan::BanRange(const CNetRange *pRange, int Seconds, const char *pReason)
 
 int CNetBan::UnbanByAddr(const NETADDR *pAddr)
 {
-	return Unban(&m_BanAddrPool, pAddr);
+	int Result = Unban(&m_BanAddrPool, pAddr);
+	if(Result == 0 && !m_SyncingPersistentBans)
+	{
+		RemovePersistentBan(pAddr);
+	}
+	return Result;
 }
 
 int CNetBan::UnbanByRange(const CNetRange *pRange)
@@ -625,4 +657,293 @@ void CNetBan::ConBansSave(IConsole::IResult *pResult, void *pUser)
 	io_close(File);
 	str_format(aBuf, sizeof(aBuf), "saved banlist to '%s'", pResult->GetString(0));
 	pThis->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "net_ban", aBuf);
+}
+
+void CNetBan::ScheduleNextPersistentSync()
+{
+	m_NextPersistentSync = time_get() + time_freq();
+}
+
+bool CNetBan::ResolvePersistentBanPath(char *pPath, unsigned PathSize) const
+{
+	if(!m_pStorage)
+		return false;
+
+	const char *pConfigPath = g_Config.m_SvPersistentBansFile;
+	if(pConfigPath[0] == '\0')
+		return false;
+
+	if(fs_is_relative_path(pConfigPath))
+	{
+		m_pStorage->GetCompletePath(IStorage::TYPE_SAVE, pConfigPath, pPath, PathSize);
+	}
+	else
+	{
+		str_copy(pPath, pConfigPath, PathSize);
+	}
+	return true;
+}
+
+void CNetBan::EnsurePersistentDir(const char *pPath) const
+{
+	fs_makedir_rec_for(pPath);
+}
+
+void CNetBan::UpdatePersistentBanTimestamp(const char *pPath)
+{
+	time_t Created = 0, Modified = 0;
+	if(fs_file_time(pPath, &Created, &Modified) == 0)
+		m_PersistentFileLastWrite = Modified;
+	else
+		m_PersistentFileLastWrite = 0;
+}
+
+void CNetBan::SyncPersistentBans(bool Force)
+{
+	if(g_Config.m_SvPersistentBansFile[0] == '\0')
+	{
+		ScheduleNextPersistentSync();
+		return;
+	}
+
+	char aPath[IO_MAX_PATH_LENGTH];
+	if(!ResolvePersistentBanPath(aPath, sizeof(aPath)))
+	{
+		ScheduleNextPersistentSync();
+		return;
+	}
+
+	time_t Created = 0, Modified = 0;
+	const bool HasFile = fs_file_time(aPath, &Created, &Modified) == 0;
+	if(!Force && HasFile && m_PersistentFileLastWrite != 0 && Modified <= m_PersistentFileLastWrite)
+	{
+		ScheduleNextPersistentSync();
+		return;
+	}
+
+	std::map<std::string, std::string> Parsed;
+	if(HasFile)
+	{
+		IOHANDLE File = io_open(aPath, IOFLAG_READ);
+		if(File)
+		{
+			CLineReader Reader;
+			if(Reader.OpenFile(File))
+			{
+				while(const char *pLine = Reader.Get())
+				{
+					if(!pLine || pLine[0] == 0 || pLine[0] == '#')
+						continue;
+					char aLine[1024];
+					str_copy(aLine, pLine, sizeof(aLine));
+					char aIp[NETADDR_MAXSTRSIZE];
+					const char *pRest = str_next_token(aLine, " \t", aIp, sizeof(aIp));
+					if(aIp[0] == 0)
+						continue;
+					const char *pReason = pRest ? str_skip_whitespaces_const(pRest) : nullptr;
+					char aReason[CBanInfo::REASON_LENGTH];
+					if(pReason && pReason[0])
+						str_copy(aReason, pReason, sizeof(aReason));
+					else
+						str_copy(aReason, "No reason given", sizeof(aReason));
+					str_sanitize_cc(aReason);
+					Parsed[aIp] = aReason;
+				}
+			}
+			else
+				io_close(File);
+		}
+	}
+
+	std::vector<std::pair<std::string, std::string>> Added;
+	std::vector<std::pair<std::string, std::string>> Updated;
+	std::vector<std::string> Removed;
+
+	for(const auto &Entry : Parsed)
+	{
+		auto ItOld = m_PersistentBans.find(Entry.first);
+		if(ItOld == m_PersistentBans.end())
+			Added.push_back(Entry);
+		else if(ItOld->second != Entry.second)
+			Updated.push_back(Entry);
+	}
+	for(const auto &Entry : m_PersistentBans)
+	{
+		if(!Parsed.count(Entry.first))
+			Removed.push_back(Entry.first);
+	}
+
+	if(!Added.empty() || !Updated.empty())
+	{
+		m_LoadingPersistentBans = true;
+		for(const auto &Entry : Added)
+		{
+			NETADDR Addr;
+			if(net_addr_from_str(&Addr, Entry.first.c_str()) == 0)
+				BanAddr(&Addr, 0, Entry.second.c_str(), false);
+		}
+		for(const auto &Entry : Updated)
+		{
+			NETADDR Addr;
+			if(net_addr_from_str(&Addr, Entry.first.c_str()) == 0)
+				BanAddr(&Addr, 0, Entry.second.c_str(), false);
+		}
+		m_LoadingPersistentBans = false;
+	}
+
+	if(!Removed.empty())
+	{
+		m_SyncingPersistentBans = true;
+		for(const auto &Ip : Removed)
+		{
+			NETADDR Addr;
+			if(net_addr_from_str(&Addr, Ip.c_str()) == 0)
+				UnbanByAddr(&Addr);
+		}
+		m_SyncingPersistentBans = false;
+	}
+
+	m_PersistentBans = std::move(Parsed);
+	if(HasFile)
+		UpdatePersistentBanTimestamp(aPath);
+	else
+		m_PersistentFileLastWrite = 0;
+
+	ScheduleNextPersistentSync();
+}
+
+bool CNetBan::RewritePersistentBanFile()
+{
+	if(g_Config.m_SvPersistentBansFile[0] == '\0')
+		return false;
+
+	char aPath[IO_MAX_PATH_LENGTH];
+	if(!ResolvePersistentBanPath(aPath, sizeof(aPath)))
+		return false;
+
+	EnsurePersistentDir(aPath);
+	IOHANDLE File = io_open(aPath, IOFLAG_WRITE);
+	if(!File)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "net_ban", "failed to open persistent ban file for writing");
+		return false;
+	}
+
+	for(const auto &Entry : m_PersistentBans)
+	{
+		char aLine[NETADDR_MAXSTRSIZE + CBanInfo::REASON_LENGTH + 2];
+		str_format(aLine, sizeof(aLine), "%s %s", Entry.first.c_str(), Entry.second.c_str());
+		io_write(File, aLine, str_length(aLine));
+		io_write_newline(File);
+	}
+
+	io_close(File);
+	UpdatePersistentBanTimestamp(aPath);
+	return true;
+}
+
+void CNetBan::AppendPersistentBan(const NETADDR *pAddr, const char *pReason)
+{
+	if(g_Config.m_SvPersistentBansFile[0] == '\0')
+		return;
+
+	char aPath[IO_MAX_PATH_LENGTH];
+	if(!ResolvePersistentBanPath(aPath, sizeof(aPath)))
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "net_ban", "failed to resolve persistent ban file path");
+		return;
+	}
+
+	char aIp[NETADDR_MAXSTRSIZE];
+	net_addr_str(pAddr, aIp, sizeof(aIp), false);
+
+	char aReason[CBanInfo::REASON_LENGTH];
+	SanitizeReason(pReason, aReason, sizeof(aReason));
+
+	auto It = m_PersistentBans.find(aIp);
+	if(It != m_PersistentBans.end() && It->second == aReason)
+		return;
+
+	m_PersistentBans[aIp] = aReason;
+
+	EnsurePersistentDir(aPath);
+	IOHANDLE File = io_open(aPath, IOFLAG_APPEND);
+	if(!File)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "net_ban", "failed to open persistent ban file for append");
+		m_PersistentBans.erase(aIp);
+		return;
+	}
+
+	char aLine[NETADDR_MAXSTRSIZE + CBanInfo::REASON_LENGTH + 2];
+	str_format(aLine, sizeof(aLine), "%s %s", aIp, aReason);
+	io_write(File, aLine, str_length(aLine));
+	io_write_newline(File);
+	io_close(File);
+
+	UpdatePersistentBanTimestamp(aPath);
+	char aLog[256];
+	str_format(aLog, sizeof(aLog), "persistent ban file updated at '%s'", aPath);
+	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "net_ban", aLog);
+}
+
+void CNetBan::RemovePersistentBan(const NETADDR *pAddr)
+{
+	if(g_Config.m_SvPersistentBansFile[0] == '\0')
+		return;
+	if(m_SyncingPersistentBans)
+		return;
+
+	char aIp[NETADDR_MAXSTRSIZE];
+	net_addr_str(pAddr, aIp, sizeof(aIp), false);
+	auto It = m_PersistentBans.find(aIp);
+	if(It == m_PersistentBans.end())
+		return;
+
+	m_PersistentBans.erase(It);
+	RewritePersistentBanFile();
+}
+
+void CNetBan::SanitizeReason(const char *pReason, char *pOut, int OutSize) const
+{
+	if(pReason && pReason[0])
+		str_copy(pOut, pReason, OutSize);
+	else
+		str_copy(pOut, "No reason given", OutSize);
+	str_sanitize_cc(pOut);
+	if(!str_find(pOut, PERSISTENT_REASON_SUFFIX))
+		str_append(pOut, PERSISTENT_REASON_SUFFIX, OutSize);
+}
+
+void CNetBan::HandlePersistentBan(const NETADDR *pAddr, int Seconds, const char *pReason, int Result)
+{
+	if(Result < 0 || Seconds > 0 || m_LoadingPersistentBans || m_SyncingPersistentBans)
+		return;
+	if(g_Config.m_SvPersistentBansFile[0] == '\0')
+		return;
+
+	char aReason[CBanInfo::REASON_LENGTH];
+	SanitizeReason(pReason, aReason, sizeof(aReason));
+
+	if(Result == 0)
+	{
+		AppendPersistentBan(pAddr, aReason);
+		return;
+	}
+
+	char aIp[NETADDR_MAXSTRSIZE];
+	net_addr_str(pAddr, aIp, sizeof(aIp), false);
+	auto It = m_PersistentBans.find(aIp);
+	if(It == m_PersistentBans.end())
+	{
+		m_PersistentBans[aIp] = aReason;
+		RewritePersistentBanFile();
+		return;
+	}
+
+	if(It->second != aReason)
+	{
+		It->second = aReason;
+		RewritePersistentBanFile();
+	}
 }

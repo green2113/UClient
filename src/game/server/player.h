@@ -61,6 +61,7 @@ public:
 	const CCharacter *GetCharacter() const;
 
 	void SpectatePlayerName(const char *pName);
+	void OnHookFired();
 
 	//---------------------------------------------------------
 	// this is used for snapping so we know how we can clip the view for the player
@@ -254,6 +255,10 @@ public:
 
 	bool m_EyeEmoteEnabled;
 	int m_TimerType;
+
+	int64_t m_HookSpamWindowStartTick = 0;
+	int m_HookSpamCount = 0;
+	bool m_HookSpamWarned = false;
 
 	int GetDefaultEmote() const;
 	void OverrideDefaultEmote(int Emote, int Tick);

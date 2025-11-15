@@ -56,9 +56,8 @@ extern std::vector<std::string> FetchAndroidServerCommandQueue();
 
 void CServerBan::InitServerBan(IConsole *pConsole, IStorage *pStorage, CServer *pServer)
 {
-	CNetBan::Init(pConsole, pStorage);
-
 	m_pServer = pServer;
+	CNetBan::Init(pConsole, pStorage);
 
 	// overwrites base command, todo: improve this
 	Console()->Register("ban", "s[ip|id] ?i[minutes] r[reason]", CFGFLAG_SERVER | CFGFLAG_STORE, ConBanExt, this, "Ban player with ip/client id for x minutes for any reason");
@@ -171,7 +170,6 @@ void CServer::SendBanWebhook(const char *pTargetName, const char *pTargetAddr, i
 	(void)Seconds;
 
 	const bool HasTargetName = pTargetName && pTargetName[0];
-	const bool HasTargetAddr = pTargetAddr && pTargetAddr[0];
 	if(!HasTargetName)
 	{
 		return;
@@ -197,8 +195,8 @@ void CServer::SendBanWebhook(const char *pTargetName, const char *pTargetAddr, i
 		str_append(aMessage, ")", sizeof(aMessage));
 	}
 
-	char aJson[896];
-	str_format(aJson, sizeof(aJson), "{\"content\":\"%s\"}", aMessage);
+	char aJson[1024];
+	str_format(aJson, sizeof(aJson), "{\"content\":\"%s\",\"allowed_mentions\":{\"parse\":[]}}", aMessage);
 
 	auto pUniqueReq = HttpPostJson(g_Config.m_SvBanWebhookUrl, aJson);
 	if(!pUniqueReq)
@@ -213,9 +211,53 @@ void CServer::SendBanWebhook(const char *pTargetName, const char *pTargetAddr, i
 	m_Http.Run(pReq);
 }
 
+void CServer::SendHookSpamWebhook(int ClientId, float HooksPerSecond, const char *pAddr)
+{
+	if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')
+		return;
+
+	const char *pName = (ClientId >= 0 && ClientId < MAX_CLIENTS) ? ClientName(ClientId) : "Unknown player";
+	const char *pServerName = g_Config.m_SvName[0] ? g_Config.m_SvName : "DDNet Server";
+	const char *pAddrStr = (pAddr && pAddr[0]) ? pAddr : "알 수 없음";
+
+	char aDesc[512];
+	str_format(aDesc, sizeof(aDesc),
+		"%s님이 초당 %.1f번의 갈고리를 사용하셨어요.\n서버: %s%s%s",
+		pName && pName[0] ? pName : "알 수 없음",
+		HooksPerSecond,
+		pServerName,
+		pAddrStr[0] ? "\nIP: " : "",
+		pAddrStr[0] ? pAddrStr : "");
+
+	char aEscDesc[768];
+	EscapeJson(aEscDesc, sizeof(aEscDesc), aDesc);
+
+	char aJson[1152];
+	str_format(aJson, sizeof(aJson),
+		"{\"username\":\"안티치트 로그\",\"embeds\":[{\"title\":\"비정상적인 갈고리 사용이 감지되었어요.\",\"description\":\"%s\",\"color\":16737792}],\"allowed_mentions\":{\"parse\":[]}}",
+		aEscDesc);
+
+	auto pUniqueReq = HttpPostJson(g_Config.m_SvAntiHookWebhookUrl, aJson);
+	if(!pUniqueReq)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "anti_hook_webhook", "Failed to create anti-hook webhook request.");
+		return;
+	}
+
+	std::shared_ptr<IHttpRequest> pReq(
+		pUniqueReq.release(),
+		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
+	m_Http.Run(pReq);
+}
+
 int CServerBan::BanAddr(const NETADDR *pAddr, int Seconds, const char *pReason, bool VerbatimReason)
 {
-	return BanExt(&m_BanAddrPool, pAddr, Seconds, pReason, VerbatimReason);
+	int Result = BanExt(&m_BanAddrPool, pAddr, Seconds, pReason, VerbatimReason);
+	if(Result == 0 && Seconds <= 0 && !m_LoadingPersistentBans && !m_SyncingPersistentBans)
+	{
+		AppendPersistentBan(pAddr, pReason);
+	}
+	return Result;
 }
 
 int CServerBan::BanRange(const CNetRange *pRange, int Seconds, const char *pReason)
