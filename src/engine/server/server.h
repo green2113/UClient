@@ -281,6 +281,18 @@ public:
 
 	size_t m_AnnouncementLastLine;
 	std::vector<std::string> m_vAnnouncements;
+	struct CHookDemoSession
+	{
+		std::unique_ptr<CDemoRecorder> m_pRecorder;
+		int m_ClientId = -1;
+		int64_t m_EndTick = 0;
+		char m_aFilename[IO_MAX_PATH_LENGTH];
+		char m_aUploadName[IO_MAX_PATH_LENGTH];
+		float m_HooksPerSecond = 0.f;
+		char m_aPlayerName[64];
+		char m_aPlayerAddr[NETADDR_MAXSTRSIZE];
+	};
+	std::vector<CHookDemoSession> m_vHookDemoSessions;
 
 	std::shared_ptr<ILogger> m_pFileLogger = nullptr;
 	std::shared_ptr<ILogger> m_pStdoutLogger = nullptr;
@@ -316,6 +328,7 @@ public:
 	void SendLogLine(const CLogMessage *pMessage);
 	void SendBanWebhook(const char *pTargetName, const char *pTargetAddr, int Seconds, const char *pReason);
 	void SendHookSpamWebhook(int ClientId, float HooksPerSecond, const char *pAddr) override;
+	bool StartHookSpamDemoRecord(int ClientId, float HooksPerSecond) override;
 	void SetRconCid(int ClientId) override;
 	int GetAuthedState(int ClientId) const override;
 	bool IsRconAuthed(int ClientId) const override;
@@ -530,6 +543,12 @@ public:
 	bool IsSixup(int ClientId) const override { return ClientId != SERVER_DEMO_CLIENT && m_aClients[ClientId].m_Sixup; }
 
 	void SetLoggers(std::shared_ptr<ILogger> &&pFileLogger, std::shared_ptr<ILogger> &&pStdoutLogger);
+	bool HookDemoRecordingActive() const;
+	void RecordHookDemoSnapshot(int Tick, const char *pData, int Size);
+	void RecordHookDemoMessage(const void *pData, int Size);
+	void ProcessHookDemoSessions();
+	void AbortHookDemoSessions();
+	bool QueueHookDemoUpload(const CHookDemoSession &Session);
 
 #ifdef CONF_FAMILY_UNIX
 	enum CONN_LOGGING_CMD

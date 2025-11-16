@@ -38,6 +38,7 @@
 #include <engine/shared/protocol7.h>
 #include <engine/shared/protocol_ex.h>
 #include <engine/shared/rust_version.h>
+#include <algorithm>
 #include <engine/shared/snapshot.h>
 #include <engine/storage.h>
 
@@ -47,6 +48,8 @@
 
 #include <chrono>
 #include <vector>
+
+static std::unique_ptr<CHttpRequest> CreateWebhookFileRequest(const char *pUrl, const char *pJsonPayload, const char *pFilename, const unsigned char *pFileData, size_t FileSize);
 
 using namespace std::chrono_literals;
 
@@ -248,6 +251,269 @@ void CServer::SendHookSpamWebhook(int ClientId, float HooksPerSecond, const char
 		pUniqueReq.release(),
 		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
 	m_Http.Run(pReq);
+}
+
+bool CServer::StartHookSpamDemoRecord(int ClientId, float HooksPerSecond)
+{
+	if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')
+	{
+		return false;
+	}
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+	{
+		return false;
+	}
+	if(m_aClients[ClientId].m_State != CClient::STATE_INGAME)
+	{
+		return false;
+	}
+
+	Storage()->CreateFolder("demos", IStorage::TYPE_SAVE);
+	Storage()->CreateFolder("demos/hook", IStorage::TYPE_SAVE);
+
+	const char *pClientName = ClientName(ClientId);
+	char aSanitizedName[64];
+	str_copy(aSanitizedName, pClientName && pClientName[0] ? pClientName : "player", sizeof(aSanitizedName));
+	str_sanitize_filename(aSanitizedName);
+	if(aSanitizedName[0] == '\0')
+	{
+		str_copy(aSanitizedName, "player", sizeof(aSanitizedName));
+	}
+
+	char aTimestamp[20];
+	str_timestamp(aTimestamp, sizeof(aTimestamp));
+
+	char aFilename[IO_MAX_PATH_LENGTH];
+	str_format(aFilename, sizeof(aFilename), "demos/hook/%s_%s_cid%d.demo", aSanitizedName, aTimestamp, ClientId);
+
+	auto pRecorder = std::make_unique<CDemoRecorder>(&m_SnapshotDelta, false);
+	if(pRecorder->Start(
+		   Storage(),
+		   Console(),
+		   aFilename,
+		   GameServer()->NetVersion(),
+		   GetMapName(),
+		   m_aCurrentMapSha256[MAP_TYPE_SIX],
+		   m_aCurrentMapCrc[MAP_TYPE_SIX],
+		   "server",
+		   m_aCurrentMapSize[MAP_TYPE_SIX],
+		   m_apCurrentMapData[MAP_TYPE_SIX],
+		   nullptr,
+		   nullptr,
+		   nullptr) == -1)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Failed to start hook demo recorder.");
+		return false;
+	}
+
+	CHookDemoSession Session;
+	Session.m_pRecorder = std::move(pRecorder);
+	Session.m_ClientId = ClientId;
+	Session.m_EndTick = Tick() + TickSpeed() * 20;
+	str_copy(Session.m_aFilename, aFilename, sizeof(Session.m_aFilename));
+	const char *pBase = strrchr(aFilename, '/');
+	if(!pBase)
+		pBase = aFilename;
+	else
+		pBase++;
+	str_copy(Session.m_aUploadName, pBase, sizeof(Session.m_aUploadName));
+	const char *pName = (pClientName && pClientName[0]) ? pClientName : "알 수 없음";
+	str_copy(Session.m_aPlayerName, pName, sizeof(Session.m_aPlayerName));
+	const char *pAddr = ClientAddrString(ClientId, false);
+	if(pAddr)
+		str_copy(Session.m_aPlayerAddr, pAddr, sizeof(Session.m_aPlayerAddr));
+	else
+		Session.m_aPlayerAddr[0] = '\0';
+	Session.m_HooksPerSecond = HooksPerSecond;
+
+	m_vHookDemoSessions.push_back(std::move(Session));
+	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Started hook demo recording session.");
+	return true;
+}
+
+bool CServer::HookDemoRecordingActive() const
+{
+	for(const auto &Session : m_vHookDemoSessions)
+	{
+		if(Session.m_pRecorder && Session.m_pRecorder->IsRecording())
+			return true;
+	}
+	return false;
+}
+
+void CServer::RecordHookDemoSnapshot(int Tick, const char *pData, int Size)
+{
+	for(auto &Session : m_vHookDemoSessions)
+	{
+		if(Session.m_pRecorder && Session.m_pRecorder->IsRecording())
+			Session.m_pRecorder->RecordSnapshot(Tick, pData, Size);
+	}
+}
+
+void CServer::RecordHookDemoMessage(const void *pData, int Size)
+{
+	for(auto &Session : m_vHookDemoSessions)
+	{
+		if(Session.m_pRecorder && Session.m_pRecorder->IsRecording())
+			Session.m_pRecorder->RecordMessage(pData, Size);
+	}
+}
+
+void CServer::ProcessHookDemoSessions()
+{
+	if(m_vHookDemoSessions.empty())
+		return;
+
+	const int64_t Now = Tick();
+	auto RemoveIt = std::remove_if(m_vHookDemoSessions.begin(), m_vHookDemoSessions.end(), [&](CHookDemoSession &Session) {
+		if(Session.m_pRecorder && Now >= Session.m_EndTick)
+		{
+			Session.m_pRecorder->Stop(IDemoRecorder::EStopMode::KEEP_FILE);
+			Session.m_pRecorder.reset();
+			QueueHookDemoUpload(Session);
+			return true;
+		}
+		return false;
+	});
+	m_vHookDemoSessions.erase(RemoveIt, m_vHookDemoSessions.end());
+}
+
+void CServer::AbortHookDemoSessions()
+{
+	if(m_vHookDemoSessions.empty())
+		return;
+
+	for(auto &Session : m_vHookDemoSessions)
+	{
+		if(Session.m_pRecorder && Session.m_pRecorder->IsRecording())
+		{
+			Session.m_pRecorder->Stop(IDemoRecorder::EStopMode::REMOVE_FILE);
+		}
+		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+	}
+	m_vHookDemoSessions.clear();
+}
+
+bool CServer::QueueHookDemoUpload(const CHookDemoSession &Session)
+{
+	if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')
+	{
+		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+		return false;
+	}
+
+	IOHANDLE File = Storage()->OpenFile(Session.m_aFilename, IOFLAG_READ, IStorage::TYPE_SAVE);
+	if(!File)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Failed to open hook demo for upload.");
+		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+		return false;
+	}
+
+	const int64_t FileSize = io_length(File);
+	if(FileSize <= 0 || FileSize > 25LL * 1024 * 1024)
+	{
+		char aBuf[160];
+		str_format(aBuf, sizeof(aBuf), "Skipping hook demo upload, invalid size (%lld bytes).", (long long)FileSize);
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", aBuf);
+		io_close(File);
+		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+		return false;
+	}
+
+	std::vector<unsigned char> vData(static_cast<size_t>(FileSize));
+	const int BytesRead = io_read(File, vData.data(), static_cast<unsigned>(vData.size()));
+	io_close(File);
+	if(BytesRead != (int)vData.size())
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Failed to read hook demo for upload.");
+		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+		return false;
+	}
+
+	const char *pServerName = g_Config.m_SvName[0] ? g_Config.m_SvName : "DDNet Server";
+	const char *pAddr = Session.m_aPlayerAddr[0] ? Session.m_aPlayerAddr : "알 수 없음";
+
+	char aEscName[192];
+	char aEscServer[192];
+	char aEscAddr[192];
+	EscapeJson(aEscName, sizeof(aEscName), Session.m_aPlayerName[0] ? Session.m_aPlayerName : "알 수 없음");
+	EscapeJson(aEscServer, sizeof(aEscServer), pServerName);
+	EscapeJson(aEscAddr, sizeof(aEscAddr), pAddr);
+
+	char aJson[1024];
+	str_format(aJson, sizeof(aJson),
+		"{\"content\":\"%s님의 비정상적인 갈고리 사용에 대한 서버 데모가 도착했어요. 관리자분들은 확인 후 처리 부탁드립니다.\",\"username\":\"안티치트 로그\",\"allowed_mentions\":{\"parse\":[]}}",
+		aEscName[0] ? aEscName : "알 수 없음");
+
+	const char *pUploadName = Session.m_aUploadName[0] ? Session.m_aUploadName : "hook-demo.demo";
+	auto pUniqueReq = CreateWebhookFileRequest(g_Config.m_SvAntiHookWebhookUrl, aJson, pUploadName, vData.data(), vData.size());
+	if(!pUniqueReq)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Failed to create webhook request for hook demo upload.");
+		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+		return false;
+	}
+
+	std::shared_ptr<IHttpRequest> pReq(
+		pUniqueReq.release(),
+		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
+	m_Http.Run(pReq);
+
+	Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Queued hook demo upload.");
+	return true;
+}
+
+static std::unique_ptr<CHttpRequest> CreateWebhookFileRequest(const char *pUrl, const char *pJsonPayload, const char *pFilename, const unsigned char *pFileData, size_t FileSize)
+{
+	if(!pUrl || !pJsonPayload || !pFilename || !pFileData || FileSize == 0)
+	{
+		return nullptr;
+	}
+
+	unsigned char aRandom[8];
+	secure_random_fill(aRandom, sizeof(aRandom));
+	char aBoundary[64];
+	str_format(aBoundary, sizeof(aBoundary), "------------------------DDNetHookDemo-%02x%02x%02x%02x", aRandom[0], aRandom[1], aRandom[2], aRandom[3]);
+
+	std::vector<unsigned char> vBody;
+	vBody.reserve(FileSize + 512);
+
+	const auto AppendString = [&vBody](const char *pStr) {
+		const size_t Length = str_length(pStr);
+		vBody.insert(vBody.end(), pStr, pStr + Length);
+	};
+	const auto AppendData = [&vBody](const unsigned char *pData, size_t Size) {
+		vBody.insert(vBody.end(), pData, pData + Size);
+	};
+
+	AppendString("--");
+	AppendString(aBoundary);
+	AppendString("\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n");
+	AppendString(pJsonPayload);
+	AppendString("\r\n--");
+	AppendString(aBoundary);
+	AppendString("\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"");
+	AppendString(pFilename);
+	AppendString("\"\r\nContent-Type: application/octet-stream\r\n\r\n");
+	AppendData(pFileData, FileSize);
+	AppendString("\r\n--");
+	AppendString(aBoundary);
+	AppendString("--\r\n");
+
+	auto pRequest = std::make_unique<CHttpRequest>(pUrl);
+	if(!pRequest)
+	{
+		return nullptr;
+	}
+
+	pRequest->Post(vBody.data(), vBody.size());
+	char aHeader[128];
+	str_format(aHeader, sizeof(aHeader), "Content-Type: multipart/form-data; boundary=%s", aBoundary);
+	pRequest->Header(aHeader);
+	pRequest->Timeout(CTimeout{4000, 30000, 500, 5});
+	return pRequest;
 }
 
 int CServerBan::BanAddr(const NETADDR *pAddr, int Seconds, const char *pReason, bool VerbatimReason)
@@ -1026,6 +1292,7 @@ int CServer::SendMsg(CMsgPacker *pMsg, int Flags, int ClientId)
 			for(auto &Recorder : m_aDemoRecorder)
 				if(Recorder.IsRecording())
 					Recorder.RecordMessage(Pack6.Data(), Pack6.Size());
+			RecordHookDemoMessage(Pack6.Data(), Pack6.Size());
 		}
 
 		if(!(Flags & MSGFLAG_NOSEND))
@@ -1071,6 +1338,7 @@ int CServer::SendMsg(CMsgPacker *pMsg, int Flags, int ClientId)
 				m_aDemoRecorder[RECORDER_MANUAL].RecordMessage(Pack.Data(), Pack.Size());
 			if(m_aDemoRecorder[RECORDER_AUTO].IsRecording())
 				m_aDemoRecorder[RECORDER_AUTO].RecordMessage(Pack.Data(), Pack.Size());
+			RecordHookDemoMessage(Pack.Data(), Pack.Size());
 		}
 
 		if(!(Flags & MSGFLAG_NOSEND))
@@ -1103,7 +1371,7 @@ void CServer::DoSnapshot()
 {
 	bool IsGlobalSnap = Config()->m_SvHighBandwidth || (m_CurrentGameTick % 2) == 0;
 
-	if(m_aDemoRecorder[RECORDER_MANUAL].IsRecording() || m_aDemoRecorder[RECORDER_AUTO].IsRecording())
+	if(m_aDemoRecorder[RECORDER_MANUAL].IsRecording() || m_aDemoRecorder[RECORDER_AUTO].IsRecording() || HookDemoRecordingActive())
 	{
 		// create snapshot for demo recording
 		char aData[CSnapshot::MAX_SIZE];
@@ -1118,6 +1386,8 @@ void CServer::DoSnapshot()
 			m_aDemoRecorder[RECORDER_MANUAL].RecordSnapshot(Tick(), aData, SnapshotSize);
 		if(m_aDemoRecorder[RECORDER_AUTO].IsRecording())
 			m_aDemoRecorder[RECORDER_AUTO].RecordSnapshot(Tick(), aData, SnapshotSize);
+		if(HookDemoRecordingActive())
+			RecordHookDemoSnapshot(Tick(), aData, SnapshotSize);
 	}
 
 	// create snapshots for all clients
@@ -3274,6 +3544,7 @@ int CServer::Run()
 			if(m_MapReload || m_SameMapReload || m_CurrentGameTick >= MAX_TICK) // force reload to make sure the ticks stay within a valid range
 			{
 				const bool SameMapReload = m_SameMapReload;
+				AbortHookDemoSessions();
 				// load map
 				if(LoadMap(Config()->m_SvMap))
 				{
@@ -3414,6 +3685,7 @@ int CServer::Run()
 				UpdateClientMaplistEntries(CommandSendingClientId);
 
 				m_Fifo.Update();
+				ProcessHookDemoSessions();
 
 #if defined(CONF_PLATFORM_ANDROID)
 				std::vector<std::string> vAndroidCommandQueue = FetchAndroidServerCommandQueue();
@@ -3539,6 +3811,7 @@ int CServer::Run()
 			}
 		}
 	}
+	AbortHookDemoSessions();
 	const char *pDisconnectReason = "Server shutdown";
 	if(m_aShutdownReason[0])
 		pDisconnectReason = m_aShutdownReason;

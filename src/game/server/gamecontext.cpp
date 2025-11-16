@@ -4912,6 +4912,9 @@ void CGameContext::OnHookSpamDetected(CPlayer *pPlayer, float HooksPerSecond)
 	if(!pPlayer)
 		return;
 
+	const int64_t Now = Server()->Tick();
+	const int64_t CooldownTicks = Server()->TickSpeed() * 30;
+
 	char aMsg[256];
 	str_copy(aMsg, "지금 갈고리를 너무 빨리 쓰시는 것 같아요. 확인을 위해 로그를 관리자에게 전송했어요! / We detected unusually fast hook usage and sent the log to the administrators for review.", sizeof(aMsg));
 	SendChatTarget(pPlayer->GetCid(), aMsg);
@@ -4924,6 +4927,14 @@ void CGameContext::OnHookSpamDetected(CPlayer *pPlayer, float HooksPerSecond)
 		aAddr[0] = '\0';
 
 	Server()->SendHookSpamWebhook(pPlayer->GetCid(), HooksPerSecond, aAddr);
+
+	if(Now >= pPlayer->m_NextHookDemoRecordTick)
+	{
+		if(Server()->StartHookSpamDemoRecord(pPlayer->GetCid(), HooksPerSecond))
+		{
+			pPlayer->m_NextHookDemoRecordTick = Now + CooldownTicks;
+		}
+	}
 }
 
 void CGameContext::SendSaveCode(int Team, int TeamSize, int State, const char *pError, const char *pSaveRequester, const char *pServerName, const char *pGeneratedCode, const char *pCode)
