@@ -187,7 +187,7 @@ void CServer::SendBanWebhook(const char *pTargetName, const char *pTargetAddr, i
 	EscapeJson(aEscReason, sizeof(aEscReason), pReasonText);
 
 	char aMessage[768];
-	str_format(aMessage, sizeof(aMessage), "%s 님이 밴을 당하셨습니다 (사유: %s)", aEscDisplayName, aEscReason);
+	str_format(aMessage, sizeof(aMessage), "%s님이 밴을 당하셨습니다. (사유: %s)", aEscDisplayName, aEscReason);
 
 	if(pTargetAddr && pTargetAddr[0])
 	{
@@ -307,6 +307,7 @@ bool CServer::StartHookSpamDemoRecord(int ClientId, float HooksPerSecond)
 	}
 
 	CHookDemoSession Session;
+	Session.m_Type = CHookDemoSession::EType::HOOK_SPAM;
 	Session.m_pRecorder = std::move(pRecorder);
 	Session.m_ClientId = ClientId;
 	Session.m_EndTick = Tick() + TickSpeed() * 20;
@@ -323,11 +324,107 @@ bool CServer::StartHookSpamDemoRecord(int ClientId, float HooksPerSecond)
 	if(pAddr)
 		str_copy(Session.m_aPlayerAddr, pAddr, sizeof(Session.m_aPlayerAddr));
 	else
-		Session.m_aPlayerAddr[0] = '\0';
+	Session.m_aPlayerAddr[0] = '\0';
 	Session.m_HooksPerSecond = HooksPerSecond;
+	Session.m_aReporterName[0] = '\0';
+	Session.m_aReporterAddr[0] = '\0';
+	Session.m_aReportReason[0] = '\0';
 
 	m_vHookDemoSessions.push_back(std::move(Session));
 	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Started hook demo recording session.");
+	return true;
+}
+
+bool CServer::StartReportDemoRecord(int ReporterId, int TargetId, const char *pReason)
+{
+	if(g_Config.m_SvReportWebhookUrl[0] == '\0')
+	{
+		return false;
+	}
+	if(TargetId < 0 || TargetId >= MAX_CLIENTS)
+	{
+		return false;
+	}
+	if(m_aClients[TargetId].m_State != CClient::STATE_INGAME)
+	{
+		return false;
+	}
+
+	Storage()->CreateFolder("demos", IStorage::TYPE_SAVE);
+	Storage()->CreateFolder("demos/report", IStorage::TYPE_SAVE);
+
+	const char *pClientName = ClientName(TargetId);
+	char aSanitizedName[64];
+	str_copy(aSanitizedName, pClientName && pClientName[0] ? pClientName : "player", sizeof(aSanitizedName));
+	str_sanitize_filename(aSanitizedName);
+	if(aSanitizedName[0] == '\0')
+	{
+		str_copy(aSanitizedName, "player", sizeof(aSanitizedName));
+	}
+
+	char aTimestamp[20];
+	str_timestamp(aTimestamp, sizeof(aTimestamp));
+
+	char aFilename[IO_MAX_PATH_LENGTH];
+	str_format(aFilename, sizeof(aFilename), "demos/report/%s_%s_cid%d.demo", aSanitizedName, aTimestamp, TargetId);
+
+	auto pRecorder = std::make_unique<CDemoRecorder>(&m_SnapshotDelta, false);
+	if(pRecorder->Start(
+		   Storage(),
+		   Console(),
+		   aFilename,
+		   GameServer()->NetVersion(),
+		   GetMapName(),
+		   m_aCurrentMapSha256[MAP_TYPE_SIX],
+		   m_aCurrentMapCrc[MAP_TYPE_SIX],
+		   "server",
+		   m_aCurrentMapSize[MAP_TYPE_SIX],
+		   m_apCurrentMapData[MAP_TYPE_SIX],
+		   nullptr,
+		   nullptr,
+		   nullptr) == -1)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "report_demo", "Failed to start report demo recorder.");
+		return false;
+	}
+
+	CHookDemoSession Session;
+	Session.m_Type = CHookDemoSession::EType::REPORT;
+	Session.m_pRecorder = std::move(pRecorder);
+	Session.m_ClientId = TargetId;
+	Session.m_EndTick = Tick() + TickSpeed() * 20;
+	str_copy(Session.m_aFilename, aFilename, sizeof(Session.m_aFilename));
+	const char *pBase = strrchr(aFilename, '/');
+	if(!pBase)
+		pBase = aFilename;
+	else
+		pBase++;
+	str_copy(Session.m_aUploadName, pBase, sizeof(Session.m_aUploadName));
+
+	const char *pTargetName = (pClientName && pClientName[0]) ? pClientName : "알 수 없음";
+	str_copy(Session.m_aPlayerName, pTargetName, sizeof(Session.m_aPlayerName));
+	const char *pTargetAddr = ClientAddrString(TargetId, false);
+	if(pTargetAddr)
+		str_copy(Session.m_aPlayerAddr, pTargetAddr, sizeof(Session.m_aPlayerAddr));
+	else
+		Session.m_aPlayerAddr[0] = '\0';
+
+	const char *pReporterName = (ReporterId >= 0 && ReporterId < MAX_CLIENTS) ? ClientName(ReporterId) : nullptr;
+	str_copy(Session.m_aReporterName, (pReporterName && pReporterName[0]) ? pReporterName : "알 수 없음", sizeof(Session.m_aReporterName));
+	const char *pReporterAddr = (ReporterId >= 0 && ReporterId < MAX_CLIENTS) ? ClientAddrString(ReporterId, false) : nullptr;
+	if(pReporterAddr)
+		str_copy(Session.m_aReporterAddr, pReporterAddr, sizeof(Session.m_aReporterAddr));
+	else
+		Session.m_aReporterAddr[0] = '\0';
+
+	if(pReason && pReason[0])
+		str_copy(Session.m_aReportReason, pReason, sizeof(Session.m_aReportReason));
+	else
+		Session.m_aReportReason[0] = '\0';
+
+	Session.m_HooksPerSecond = 0.f;
+	m_vHookDemoSessions.push_back(std::move(Session));
+	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "report_demo", "Started report demo recording session.");
 	return true;
 }
 
@@ -396,10 +493,24 @@ void CServer::AbortHookDemoSessions()
 
 bool CServer::QueueHookDemoUpload(const CHookDemoSession &Session)
 {
-	if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')
+	const char *pWebhookUrl = nullptr;
+	if(Session.m_Type == CHookDemoSession::EType::HOOK_SPAM)
 	{
-		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
-		return false;
+		if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')
+		{
+			Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+			return false;
+		}
+		pWebhookUrl = g_Config.m_SvAntiHookWebhookUrl;
+	}
+	else
+	{
+		if(g_Config.m_SvReportWebhookUrl[0] == '\0')
+		{
+			Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+			return false;
+		}
+		pWebhookUrl = g_Config.m_SvReportWebhookUrl;
 	}
 
 	IOHANDLE File = Storage()->OpenFile(Session.m_aFilename, IOFLAG_READ, IStorage::TYPE_SAVE);
@@ -434,20 +545,41 @@ bool CServer::QueueHookDemoUpload(const CHookDemoSession &Session)
 	const char *pServerName = g_Config.m_SvName[0] ? g_Config.m_SvName : "DDNet Server";
 	const char *pAddr = Session.m_aPlayerAddr[0] ? Session.m_aPlayerAddr : "알 수 없음";
 
-	char aEscName[192];
-	char aEscServer[192];
-	char aEscAddr[192];
-	EscapeJson(aEscName, sizeof(aEscName), Session.m_aPlayerName[0] ? Session.m_aPlayerName : "알 수 없음");
-	EscapeJson(aEscServer, sizeof(aEscServer), pServerName);
-	EscapeJson(aEscAddr, sizeof(aEscAddr), pAddr);
+	char aJson[1472];
+	if(Session.m_Type == CHookDemoSession::EType::HOOK_SPAM)
+	{
+		char aEscName[192];
+		EscapeJson(aEscName, sizeof(aEscName), Session.m_aPlayerName[0] ? Session.m_aPlayerName : "알 수 없음");
 
-	char aJson[1024];
-	str_format(aJson, sizeof(aJson),
-		"{\"content\":\"%s님의 비정상적인 갈고리 사용에 대한 서버 데모가 도착했어요. 관리자분들은 확인 후 처리 부탁드립니다.\",\"username\":\"안티치트 로그\",\"allowed_mentions\":{\"parse\":[]}}",
-		aEscName[0] ? aEscName : "알 수 없음");
+		str_format(aJson, sizeof(aJson),
+			"{\"content\":\"%s님의 비정상적인 갈고리 사용에 대한 서버 데모가 도착했어요. 관리자분들은 확인 후 처리 부탁드립니다.\",\"username\":\"안티치트 로그\",\"allowed_mentions\":{\"parse\":[]}}",
+			aEscName[0] ? aEscName : "알 수 없음");
+	}
+	else
+	{
+		const char *pReporterName = Session.m_aReporterName[0] ? Session.m_aReporterName : "알 수 없음";
+		const char *pReporterAddr = Session.m_aReporterAddr[0] ? Session.m_aReporterAddr : "알 수 없음";
+		const char *pReason = Session.m_aReportReason[0] ? Session.m_aReportReason : "(사유 미입력)";
+
+		char aMessage[768];
+		str_format(aMessage, sizeof(aMessage),
+			"서버: %s\\n신고 대상: %s (%s)\\n신고자: %s (%s)\\n사유: %s",
+			pServerName,
+			Session.m_aPlayerName[0] ? Session.m_aPlayerName : "알 수 없음",
+			pAddr,
+			pReporterName,
+			pReporterAddr,
+			pReason);
+		char aEscMessage[1024];
+		EscapeJson(aEscMessage, sizeof(aEscMessage), aMessage);
+
+		str_format(aJson, sizeof(aJson),
+			"{\"content\":\"신고 데모가 도착했어요!\\n%s\",\"allowed_mentions\":{\"parse\":[]}}",
+			aEscMessage);
+	}
 
 	const char *pUploadName = Session.m_aUploadName[0] ? Session.m_aUploadName : "hook-demo.demo";
-	auto pUniqueReq = CreateWebhookFileRequest(g_Config.m_SvAntiHookWebhookUrl, aJson, pUploadName, vData.data(), vData.size());
+	auto pUniqueReq = CreateWebhookFileRequest(pWebhookUrl, aJson, pUploadName, vData.data(), vData.size());
 	if(!pUniqueReq)
 	{
 		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Failed to create webhook request for hook demo upload.");
@@ -618,6 +750,7 @@ void CServer::CClient::Reset()
 	m_NextMapChunk = 0;
 	m_Flags = 0;
 	m_RedirectDropTime = 0;
+	m_DnsblBanPending = false;
 }
 
 CServer::CServer()
@@ -3281,6 +3414,12 @@ int CServer::LoadMap(const char *pMapName)
 	str_copy(m_aCurrentMap, pMapName);
 	m_pCurrentMapName = fs_filename(m_aCurrentMap);
 
+	// Execute server-configured auto cfg on every map change, if set.
+	if(g_Config.m_SvMapAutoCfg[0] != '\0')
+	{
+		Console()->ExecuteFile(g_Config.m_SvMapAutoCfg, IConsole::CLIENT_ID_UNSPECIFIED, true, IStorage::TYPE_ALL);
+	}
+
 	// load complete map into memory for download
 	{
 		free(m_apCurrentMapData[MAP_TYPE_SIX]);
@@ -3737,9 +3876,27 @@ int CServer::Run()
 
 								if(Config()->m_SvDnsblBan)
 								{
-									m_NetServer.NetBan()->BanAddr(ClientAddr(ClientId), 60, Config()->m_SvDnsblBanReason, true);
+									if(m_aClients[ClientId].m_State >= CClient::STATE_READY)
+									{
+										m_NetServer.NetBan()->BanAddr(ClientAddr(ClientId), 60, Config()->m_SvDnsblBanReason, true);
+									}
+									else
+									{
+										m_aClients[ClientId].m_DnsblBanPending = true;
+									}
 								}
 							}
+						}
+					}
+				}
+				if(Config()->m_SvDnsblBan)
+				{
+					for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+					{
+						if(m_aClients[ClientId].m_DnsblBanPending && m_aClients[ClientId].m_State >= CClient::STATE_READY)
+						{
+							m_aClients[ClientId].m_DnsblBanPending = false;
+							m_NetServer.NetBan()->BanAddr(ClientAddr(ClientId), 60, Config()->m_SvDnsblBanReason, true);
 						}
 					}
 				}

@@ -70,6 +70,7 @@
 #include "components/under/autoreply.h"
 #include "components/under/chatskin.h"
 #include "components/under/skinswitch.h"
+#include "components/under/translator.h"
 #include "components/voting.h"
 
 #include <vector>
@@ -193,6 +194,7 @@ public:
 	CAutoreply m_AutoReply;
 	CChatskin m_ChatSkin;
 	CSkinswitch m_SkinSwitch;
+	CUcTranslator m_UcTranslator;
 
 private:
 	std::vector<class CComponent *> m_vpAll;

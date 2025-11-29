@@ -17,8 +17,11 @@
 
 constexpr auto SAVES_FILE = "ddnet-saves.txt";
 
+class CUcTranslator;
+
 class CChat : public CComponent
 {
+	friend class CUcTranslator;
 	static constexpr float CHAT_HEIGHT_FULL = 200.0f;
 	static constexpr float CHAT_HEIGHT_MIN = 50.0f;
 	static constexpr float CHAT_FONTSIZE_WIDTH_RATIO = 2.5f;
@@ -26,7 +29,8 @@ class CChat : public CComponent
 	enum
 	{
 		MAX_LINES = 64,
-		MAX_LINE_LENGTH = 256
+		MAX_LINE_LENGTH = 256,
+		MAX_TRANSLATED_LENGTH = 512,
 	};
 
 	CLineInputBuffered<MAX_LINE_LENGTH> m_Input;
@@ -46,8 +50,12 @@ class CChat : public CComponent
 		int m_NameColor;
 		char m_aName[64];
 		char m_aText[MAX_LINE_LENGTH];
+		char m_aTranslation[MAX_TRANSLATED_LENGTH];
+		int64_t m_LineId;
 		bool m_Friend;
 		bool m_Highlighted;
+		bool m_HasTranslation;
+		bool m_TranslationPending;
 		std::optional<ColorRGBA> m_CustomColor;
 
 		STextContainerIndex m_TextContainerIndex;
@@ -142,6 +150,8 @@ class CChat : public CComponent
 	bool m_EditingNewLine;
 
 	bool m_ServerSupportsCommandInfo;
+	int64_t m_LineSequence;
+	int64_t m_ManualTranslateCursor;
 
 	static void ConSay(IConsole::IResult *pResult, void *pUserData);
 	static void ConSayTeam(IConsole::IResult *pResult, void *pUserData);
@@ -149,6 +159,7 @@ class CChat : public CComponent
 	static void ConShowChat(IConsole::IResult *pResult, void *pUserData);
 	static void ConEcho(IConsole::IResult *pResult, void *pUserData);
 	static void ConClearChat(IConsole::IResult *pResult, void *pUserData);
+	static void ConTranslateMessage(IConsole::IResult *pResult, void *pUserData);
 
 	static void ConchainChatOld(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainChatFontSize(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
@@ -156,6 +167,10 @@ class CChat : public CComponent
 
 	bool LineShouldHighlight(const char *pLine, const char *pName);
 	void StoreSave(const char *pText);
+	void RequestManualTranslation();
+	void HandleManualTranslation(int64_t LineId, const char *pTranslation, bool Success);
+	CLine *FindLineBySequence(int64_t LineId);
+	int64_t NewestLineSequence() const;
 
 public:
 	CChat();
@@ -201,6 +216,7 @@ public:
 	// @param Team MODE_ALL=0 MODE_TEAM=1
 	// @param pLine the chat message
 	void SendChat(int Team, const char *pLine);
+	void SendChatTranslated(int Team, const char *pLine);
 
 	// Sends a chat message to the server.
 	//
@@ -210,5 +226,8 @@ public:
 	//
 	// It uses team or public chat depending on m_Mode.
 	void SendChatQueued(const char *pLine);
+
+private:
+	void SendChatImpl(int Team, const char *pLine, bool AllowTranslation);
 };
 #endif

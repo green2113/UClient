@@ -283,6 +283,13 @@ public:
 	std::vector<std::string> m_vAnnouncements;
 	struct CHookDemoSession
 	{
+		enum class EType
+		{
+			HOOK_SPAM,
+			REPORT,
+		};
+
+		EType m_Type = EType::HOOK_SPAM;
 		std::unique_ptr<CDemoRecorder> m_pRecorder;
 		int m_ClientId = -1;
 		int64_t m_EndTick = 0;
@@ -291,6 +298,9 @@ public:
 		float m_HooksPerSecond = 0.f;
 		char m_aPlayerName[64];
 		char m_aPlayerAddr[NETADDR_MAXSTRSIZE];
+		char m_aReporterName[64];
+		char m_aReporterAddr[NETADDR_MAXSTRSIZE];
+		char m_aReportReason[256];
 	};
 	std::vector<CHookDemoSession> m_vHookDemoSessions;
 
@@ -329,6 +339,7 @@ public:
 	void SendBanWebhook(const char *pTargetName, const char *pTargetAddr, int Seconds, const char *pReason);
 	void SendHookSpamWebhook(int ClientId, float HooksPerSecond, const char *pAddr) override;
 	bool StartHookSpamDemoRecord(int ClientId, float HooksPerSecond) override;
+	bool StartReportDemoRecord(int ReporterId, int TargetId, const char *pReason) override;
 	void SetRconCid(int ClientId) override;
 	int GetAuthedState(int ClientId) const override;
 	bool IsRconAuthed(int ClientId) const override;

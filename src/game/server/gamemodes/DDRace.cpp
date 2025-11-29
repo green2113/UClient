@@ -138,6 +138,11 @@ void CGameControllerDDRace::OnPlayerConnect(CPlayer *pPlayer)
 
 		GameServer()->SendChatTarget(ClientId, "Gores Mod. Version: " GAME_VERSION);
 		GameServer()->SendChatTarget(ClientId, "Join discord.gg/PNpxPxvcws to check out the map finish logs and announcements!");
+		
+		if(g_Config.m_SvIsFunServer)
+		{
+			GameServer()->SendChatTarget(ClientId, "This is a fun server! Records are not saved, so just have fun!");
+		}
 	}
 }
 

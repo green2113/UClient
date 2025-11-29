@@ -164,7 +164,8 @@ void CGameClient::OnConsoleInit()
 						  &m_AutoChat,
 						  &m_AutoReply,
 						  &m_ChatSkin,
-						  &m_SkinSwitch
+						  &m_SkinSwitch,
+						  &m_UcTranslator
 						});
 
 	// build the input stack

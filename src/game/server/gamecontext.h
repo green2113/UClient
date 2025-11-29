@@ -127,6 +127,7 @@ class CGameContext : public IGameServer
 	CUuid m_GameUuid;
 	CMapBugs m_MapBugs;
 	CPrng m_Prng;
+	int m_LastSvMaintenance; // last known value of sv_maintenance (0/1) to detect toggles
 
 	bool m_Resetting;
 

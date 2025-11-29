@@ -701,7 +701,7 @@ void CGameContext::ConReport(IConsole::IResult *pResult, void *pUserData)
 
 		char aJson[1536];
 		str_format(aJson, sizeof(aJson),
-			"{\"content\":\"**새로운 신고가 접수되었어요!**\\n서버: %s\\신고자: %s (%s)\\n신고 대상: %s (%s)\\n사유: %s\\n시간: %s\\n맵: %s\",\"allowed_mentions\":{\"parse\":[]}}",
+			"{\"content\":\"**새로운 신고가 접수되었어요!**\\n서버: %s\\n신고자: %s (%s)\\n신고 대상: %s (%s)\\n사유: %s\\n시간: %s\\n맵: %s\",\"allowed_mentions\":{\"parse\":[]}}",
 			aEscServer[0] ? aEscServer : "알 수 없음",
 			aEscReporter[0] ? aEscReporter : "알 수 없음",
 			aEscReporterAddr[0] ? aEscReporterAddr : "알 수 없음",
@@ -772,6 +772,21 @@ void CGameContext::ConReport(IConsole::IResult *pResult, void *pUserData)
 	if(CScore *pScore = pSelf->Score())
 	{
 		pScore->AddReportEntry(pReporterName, aReporterAddr, pTargetName, aTargetAddr, aReason, pSelf->Server()->GetMapName(), pServerName, AutoAction, AutoDurationSeconds);
+	}
+
+	CPlayer *pTargetPlayer = pSelf->m_apPlayers[TargetId];
+	if(pTargetPlayer)
+	{
+		const int64_t Now = pSelf->Server()->Tick();
+		const int64_t Cooldown = pSelf->Server()->TickSpeed() * 30;
+		if(Now >= pTargetPlayer->m_NextHookDemoRecordTick)
+		{
+			if(pSelf->Server()->StartReportDemoRecord(pResult->m_ClientId, TargetId, aReason))
+			{
+				pTargetPlayer->m_NextHookDemoRecordTick = Now + Cooldown;
+				pSelf->SendChatTarget(pResult->m_ClientId, "신고 대상의 플레이를 기록 중이에요. 잠시만 기다려주세요.");
+			}
+		}
 	}
 
 	if(AutoAction == REPORT_ACTION_MUTE)

@@ -2431,6 +2431,8 @@ if(CLIENT)
     components/under/menus_uclient.cpp
     components/under/skinswitch.cpp
     components/under/skinswitch.h
+    components/under/translator.cpp
+    components/under/translator.h
     components/voting.cpp
     components/voting.h
     gameclient.cpp

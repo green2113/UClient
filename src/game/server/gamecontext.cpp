@@ -120,6 +120,9 @@ void CGameContext::Construct(int Resetting)
 	m_LatestLog = 0;
 	mem_zero(&m_aLogs, sizeof(m_aLogs));
 
+	// remember current maintenance state so we can detect changes later
+	m_LastSvMaintenance = g_Config.m_SvMaintenance;
+
 	if(Resetting == NO_RESET)
 	{
 		for(auto &pSavedTee : m_apSavedTees)
@@ -1046,6 +1049,14 @@ void CGameContext::OnTick()
 	// check tuning
 	CheckPureTuning();
 
+	// Broadcast once to all players when maintenance mode is enabled.
+	if(g_Config.m_SvMaintenance && !m_LastSvMaintenance)
+	{
+		SendChat(-1, TEAM_ALL, "서버 점검 모드가 실행되었어요. 서버를 나가면 점검이 끝날 때까지 다시 접속할 수 없어요. (discord.gg/PNpxPxvcws)");
+		SendChat(-1, TEAM_ALL, "Server maintenance mode has been enabled. If you leave the server, you won’t be able to reconnect until the maintenance is over. (discord.gg/PNpxPxvcws)");
+	}
+	m_LastSvMaintenance = g_Config.m_SvMaintenance;
+
 	if(m_TeeHistorianActive)
 	{
 		int Error = aio_error(m_pTeeHistorianFile);
@@ -1785,6 +1796,25 @@ void CGameContext::OnClientConnected(int ClientId, void *pData)
 	SendMotd(ClientId);
 	SendSettings(ClientId);
 
+	if(g_Config.m_SvMaintenance)
+	{
+		bool Bypass = false;
+		if(g_Config.m_SvMaintenanceBypassIp[0] != '\0')
+		{
+			char aAddr[NETADDR_MAXSTRSIZE];
+			str_copy(aAddr, Server()->ClientAddrString(ClientId, false), sizeof(aAddr));
+			if(str_comp(aAddr, g_Config.m_SvMaintenanceBypassIp) == 0)
+				Bypass = true;
+		}
+
+		if(!Bypass)
+		{
+			const char *pMsg = g_Config.m_SvMaintenanceMessage[0] ? g_Config.m_SvMaintenanceMessage : "현재 서버가 점검 중입니다. (discord.gg/PNpxPxvcws)";
+			Server()->Kick(ClientId, pMsg);
+			return;
+		}
+	}
+
 	Server()->ExpireServerInfo();
 }
 
@@ -2501,8 +2531,12 @@ void CGameContext::OnCallVoteNetMessage(const CNetMsg_Cl_CallVote *pMsg, int Cli
 	{
 		if(g_Config.m_SvVoteKickReasonRequired && !Server()->IsRconAuthed(ClientId))
 		{
-			SendChatTarget(ClientId, "추방 투표를 하려면 추방 사유를 입력해야 합니다. / You must enter a reason when calling a kick vote");
-			return;
+			const char *pTrimmedReason = pMsg->m_pReason ? str_utf8_skip_whitespaces(pMsg->m_pReason) : "";
+			if(pTrimmedReason[0] == '\0')
+			{
+				SendChatTarget(ClientId, "추방 투표를 하려면 추방 사유를 입력해야 합니다. / You must enter a reason when calling a kick vote");
+				return;
+			}
 		}
 		if(!g_Config.m_SvVoteKick && !Server()->IsRconAuthed(ClientId)) // allow admins to call kick votes even if they are forbidden
 		{
@@ -2601,7 +2635,7 @@ void CGameContext::OnCallVoteNetMessage(const CNetMsg_Cl_CallVote *pMsg, int Cli
 			}
 			else
 			{
-				str_format(aCmd, sizeof(aCmd), "ban %s %d Banned by vote", Server()->ClientAddrString(KickId, false), g_Config.m_SvVoteKickBantime);
+				str_format(aCmd, sizeof(aCmd), "ban %s %d Banned by vote (%s)", Server()->ClientAddrString(KickId, false), g_Config.m_SvVoteKickBantime, aReason);
 				str_format(aDesc, sizeof(aDesc), "Ban '%s'", Server()->ClientName(KickId));
 			}
 		}
@@ -4861,6 +4895,9 @@ void CGameContext::SendFinishWebhook(int ClientId, const char *pTimeText, bool I
 	if(!g_Config.m_SvFinishWebhookUrl[0] || m_pHttp == nullptr)
 		return;
 
+	if(g_Config.m_SvIsFunServer)
+		return;
+
 	const char *pName = Server()->ClientName(ClientId);
 	const char *pMapName = Server()->GetMapName();
 	const char *pTime = pTimeText ? pTimeText : "unknown";
@@ -4873,23 +4910,23 @@ void CGameContext::SendFinishWebhook(int ClientId, const char *pTimeText, bool I
 	EscapeJson(aEscTime, sizeof(aEscTime), pTime);
 
 	char aMessage[640];
-	if(IsServerRecord)
-	{
-		str_format(aMessage, sizeof(aMessage),
-			"%s님이 %s 를(을) %s만에 클리어 하셨습니다.",
-			aEscName[0] ? aEscName : "알 수 없음",
-			aEscMap[0] ? aEscMap : "알 수 없음",
-			aEscTime[0] ? aEscTime : "알 수 없음");
-		str_append(aMessage, " 현재 맵 1등이에요! 🎉", sizeof(aMessage));
-	}
-	else
-	{
-		str_format(aMessage, sizeof(aMessage),
-			"%s님이 %s 를(을) %s만에 클리어 하셨습니다.",
-			aEscName[0] ? aEscName : "알 수 없음",
-			aEscMap[0] ? aEscMap : "알 수 없음",
-			aEscTime[0] ? aEscTime : "알 수 없음");
-	}
+		if(IsServerRecord)
+		{
+			str_format(aMessage, sizeof(aMessage),
+				"%s님이 %s 를(을) %s만에 클리어 하셨습니다.",
+				aEscName[0] ? aEscName : "알 수 없음",
+				aEscMap[0] ? aEscMap : "알 수 없음",
+				aEscTime[0] ? aEscTime : "알 수 없음");
+			str_append(aMessage, " 현재 맵 1등이에요! 🎉", sizeof(aMessage));
+		}
+		else
+		{
+			str_format(aMessage, sizeof(aMessage),
+				"%s님이 %s 를(을) %s만에 클리어 하셨습니다.",
+				aEscName[0] ? aEscName : "알 수 없음",
+				aEscMap[0] ? aEscMap : "알 수 없음",
+				aEscTime[0] ? aEscTime : "알 수 없음");
+		}
 
 	char aJson[896];
 	str_format(aJson, sizeof(aJson), "{\"content\":\"%s\",\"allowed_mentions\":{\"parse\":[]}}", aMessage);

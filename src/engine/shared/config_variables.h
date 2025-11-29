@@ -96,6 +96,11 @@ MACRO_CONFIG_INT(ClShowVotesAfterVoting, cl_show_votes_after_voting, 0, 0, 1, CF
 MACRO_CONFIG_INT(ClShowLocalTimeAlways, cl_show_local_time_always, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Always show local time")
 MACRO_CONFIG_INT(ClShowfps, cl_showfps, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show ingame FPS counter")
 MACRO_CONFIG_INT(ClShowpred, cl_showpred, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show ingame prediction time in milliseconds")
+MACRO_CONFIG_INT(UcTranslate, uc_translate, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Automatically translate chat messages before sending")
+MACRO_CONFIG_STR(UcTranslateTarget, uc_translate_target, 8, "en", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Translation target language (ISO 639 code)")
+MACRO_CONFIG_STR(UcTranslateApi, uc_translate_api, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Custom translation API endpoint for chat translator")
+MACRO_CONFIG_STR(UcTranslateKey, uc_translate_key, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "API key for the custom translation endpoint")
+MACRO_CONFIG_STR(UcTranslateMessageTarget, uc_translate_message_target, 8, "en", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Target language for manual chat translations")
 MACRO_CONFIG_INT(ClEyeWheel, cl_eye_wheel, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show eye wheel along together with emotes")
 MACRO_CONFIG_INT(ClEyeDuration, cl_eye_duration, 999999, 1, 999999, CFGFLAG_CLIENT | CFGFLAG_SAVE, "How long the eyes emotes last")
 MACRO_CONFIG_INT(ClFreezeStars, cl_freeze_stars, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show old star particles for frozen tees")
@@ -466,6 +471,7 @@ MACRO_CONFIG_INT(SvIpv4Only, sv_ipv4only, 0, 0, 1, CFGFLAG_SERVER, "Whether to b
 MACRO_CONFIG_INT(SvPort, sv_port, 0, 0, 65535, CFGFLAG_SERVER, "Port to use for the server (Only ports 8303-8310 work in LAN server browser, 0 to automatically find a free port in 8303-8310). See sv_register_port for the external port if you're behind NAT")
 MACRO_CONFIG_STR(SvHostname, sv_hostname, 128, "", CFGFLAG_SERVER, "Server hostname (0.7 only)")
 MACRO_CONFIG_STR(SvMap, sv_map, 128, "Sunny Side Up", CFGFLAG_SERVER, "Map to use on the server")
+MACRO_CONFIG_STR(SvMapAutoCfg, sv_map_auto_cfg, 128, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "CFG file to execute on every map change")
 MACRO_CONFIG_INT(SvMaxClients, sv_max_clients, SERVER_MAX_CLIENTS, 1, SERVER_MAX_CLIENTS, CFGFLAG_SERVER, "Maximum number of clients that are allowed on a server")
 MACRO_CONFIG_INT(SvMaxClientsPerIp, sv_max_clients_per_ip, 4, 1, SERVER_MAX_CLIENTS, CFGFLAG_SERVER, "Maximum number of clients with the same IP that can connect to the server")
 MACRO_CONFIG_INT(SvHighBandwidth, sv_high_bandwidth, 0, 0, 1, CFGFLAG_SERVER, "Use high bandwidth mode. Doubles the bandwidth required for the server. LAN use only")
@@ -592,6 +598,9 @@ MACRO_CONFIG_STR(SvFinishWebhookUrl, sv_finish_webhook_url, 256, "", CFGFLAG_SER
 MACRO_CONFIG_STR(SvBanWebhookUrl, sv_ban_webhook_url, 256, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "Discord webhook URL for ban notifications")
 
 MACRO_CONFIG_INT(SvVoteKickReasonRequired, sv_vote_kick_reason_required, 1, 0, 1, CFGFLAG_SERVER, "투표 사유 입력")
+MACRO_CONFIG_INT(SvMaintenance, sv_maintenance, 0, 0, 1, CFGFLAG_SERVER | CFGFLAG_SAVE, "Enable maintenance mode (block new connections)")
+MACRO_CONFIG_STR(SvMaintenanceMessage, sv_maintenance_message, 256, "현재 서버가 점검 중입니다. (discord.gg/PNpxPxvcws)", CFGFLAG_SERVER | CFGFLAG_SAVE, "Disconnect message shown when maintenance mode is enabled")
+MACRO_CONFIG_STR(SvMaintenanceBypassIp, sv_maintenance_bypass_ip, 64, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "Single IP address allowed to bypass maintenance mode")
 
 #if defined(CONF_UPNP)
 MACRO_CONFIG_INT(SvUseUPnP, sv_use_upnp, 0, 0, 1, CFGFLAG_SERVER, "Enables UPnP support. (Requires -DCONF_UPNP=ON when compiling)")
@@ -812,3 +821,4 @@ MACRO_CONFIG_INT(ClVideoRecorderFPS, cl_video_recorder_fps, 60, 1, 1000, CFGFLAG
 
 // uclient and userver
 MACRO_CONFIG_STR(UServerNewYearMessage, userver_newyear_message, 256, "새해 복 많이 받으세요! / Happy New Year!", CFGFLAG_SERVER | CFGFLAG_SAVE, "새해 인사 메세지를 설정합니다. (단, 시즌날에만 메세지를 전송합니다)")
+MACRO_CONFIG_INT(SvIsFunServer, sv_is_fun_server, 0, 0, 1, CFGFLAG_SERVER | CFGFLAG_GAME, "서버를 재미 서버로 설정합니다.")

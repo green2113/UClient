@@ -18,6 +18,7 @@
 #include <game/client/components/scoreboard.h>
 #include <game/client/components/skins.h>
 #include <game/client/components/sounds.h>
+#include <game/client/components/under/translator.h>
 #include <game/client/gameclient.h>
 #include <game/localization.h>
 #include <game/client/component.h>
@@ -28,6 +29,10 @@ CChat::CLine::CLine()
 {
 	m_TextContainerIndex.Reset();
 	m_QuadContainerIndex = -1;
+	m_LineId = -1;
+	m_aTranslation[0] = '\0';
+	m_HasTranslation = false;
+	m_TranslationPending = false;
 }
 
 void CChat::CLine::Reset(CChat &This)
@@ -37,6 +42,10 @@ void CChat::CLine::Reset(CChat &This)
 	m_Initialized = false;
 	m_Time = 0;
 	m_aText[0] = '\0';
+	m_aTranslation[0] = '\0';
+	m_LineId = -1;
+	m_HasTranslation = false;
+	m_TranslationPending = false;
 	m_aName[0] = '\0';
 	m_Friend = false;
 	m_TimesRepeated = 0;
@@ -117,6 +126,7 @@ void CChat::ClearLines()
 		Line.Reset(*this);
 	m_PrevScoreBoardShowed = false;
 	m_PrevShowChat = false;
+	m_ManualTranslateCursor = -1;
 }
 
 void CChat::OnWindowResize()
@@ -141,6 +151,8 @@ void CChat::Reset()
 	m_IsInputCensored = false;
 	m_EditingNewLine = true;
 	m_ServerSupportsCommandInfo = false;
+	m_LineSequence = 0;
+	m_ManualTranslateCursor = -1;
 	m_ServerCommandsNeedSorting = false;
 	m_aCurrentInputText[0] = '\0';
 	DisableMode();
@@ -200,6 +212,11 @@ void CChat::ConClearChat(IConsole::IResult *pResult, void *pUserData)
 	((CChat *)pUserData)->ClearLines();
 }
 
+void CChat::ConTranslateMessage(IConsole::IResult *pResult, void *pUserData)
+{
+	((CChat *)pUserData)->RequestManualTranslation();
+}
+
 void CChat::ConchainChatOld(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
 {
 	pfnCallback(pResult, pCallbackUserData);
@@ -235,6 +252,7 @@ void CChat::OnConsoleInit()
 	Console()->Register("+show_chat", "", CFGFLAG_CLIENT, ConShowChat, this, "Show chat");
 	Console()->Register("echo", "r[message]", CFGFLAG_CLIENT | CFGFLAG_STORE, ConEcho, this, "Echo the text in chat window");
 	Console()->Register("clear_chat", "", CFGFLAG_CLIENT | CFGFLAG_STORE, ConClearChat, this, "Clear chat messages");
+	Console()->Register("uc_translate_message", "", CFGFLAG_CLIENT, ConTranslateMessage, this, "Translate the most recent chat line");
 }
 
 void CChat::OnInit()
@@ -761,6 +779,90 @@ void CChat::StoreSave(const char *pText)
 	io_close(File);
 }
 
+CChat::CLine *CChat::FindLineBySequence(int64_t LineId)
+{
+	if(LineId < 0)
+		return nullptr;
+
+	for(auto &Line : m_aLines)
+	{
+		if(Line.m_Initialized && Line.m_LineId == LineId)
+			return &Line;
+	}
+
+	return nullptr;
+}
+
+int64_t CChat::NewestLineSequence() const
+{
+	int64_t Result = -1;
+	for(const auto &Line : m_aLines)
+	{
+		if(Line.m_Initialized && Line.m_LineId > Result)
+			Result = Line.m_LineId;
+	}
+	return Result;
+}
+
+void CChat::HandleManualTranslation(int64_t LineId, const char *pTranslation, bool Success)
+{
+	CLine *pLine = FindLineBySequence(LineId);
+	if(!pLine)
+		return;
+
+	pLine->m_TranslationPending = false;
+
+	if(!Success || !pTranslation || !*pTranslation)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "translator", "Failed to translate chat message.");
+		return;
+	}
+
+	pLine->m_HasTranslation = true;
+	str_copy(pLine->m_aTranslation, pTranslation, sizeof(pLine->m_aTranslation));
+	pLine->m_Time = time();
+	RebuildChat();
+}
+
+void CChat::RequestManualTranslation()
+{
+	if(m_ManualTranslateCursor < 0)
+		m_ManualTranslateCursor = NewestLineSequence();
+
+	CLine *pTargetLine = nullptr;
+	while(m_ManualTranslateCursor >= 0)
+	{
+		CLine *pCandidate = FindLineBySequence(m_ManualTranslateCursor);
+		--m_ManualTranslateCursor;
+		if(!pCandidate || !pCandidate->m_Initialized)
+			continue;
+		if(pCandidate->m_aText[0] == '\0')
+			continue;
+		if(pCandidate->m_TranslationPending || pCandidate->m_HasTranslation)
+			continue;
+		pTargetLine = pCandidate;
+		break;
+	}
+
+	if(!pTargetLine)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "translator", "No chat messages left to translate.");
+		return;
+	}
+
+	pTargetLine->m_TranslationPending = true;
+	const char *pTarget = g_Config.m_UcTranslateMessageTarget[0] ? g_Config.m_UcTranslateMessageTarget : nullptr;
+	pTargetLine->m_Time = time();
+	if(!GameClient()->m_UcTranslator.TranslateLineAsync(pTargetLine->m_LineId, pTargetLine->m_aText, pTarget, this))
+	{
+		pTargetLine->m_TranslationPending = false;
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "translator", "Unable to request translation.");
+		return;
+	}
+
+	RebuildChat();
+}
+
 void CChat::AddLine(int ClientId, int Team, const char *pLine)
 {
 	if(*pLine == 0 ||
@@ -881,6 +983,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	CurrentLine.Reset(*this);
 	CurrentLine.m_Initialized = true;
 	CurrentLine.m_Time = time();
+	CurrentLine.m_LineId = ++m_LineSequence;
 	CurrentLine.m_aYOffset[0] = -1.0f;
 	CurrentLine.m_aYOffset[1] = -1.0f;
 	CurrentLine.m_ClientId = ClientId;
@@ -888,7 +991,11 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	CurrentLine.m_Team = Team == 1;
 	CurrentLine.m_Whisper = Team >= 2;
 	CurrentLine.m_NameColor = -2;
+	CurrentLine.m_aTranslation[0] = '\0';
+	CurrentLine.m_HasTranslation = false;
+	CurrentLine.m_TranslationPending = false;
 	CurrentLine.m_CustomColor = CustomColor;
+	m_ManualTranslateCursor = -1;
 
 	// check for highlighted name
 	if(Client()->State() != IClient::STATE_DEMOPLAYBACK)
@@ -1105,6 +1212,15 @@ void CChat::OnPrepareLines(float y)
 			}
 		}
 
+		char aRendered[MAX_LINE_LENGTH + MAX_TRANSLATED_LENGTH + 16];
+		const char *pRenderedText = pText;
+		if(Line.m_HasTranslation || Line.m_TranslationPending)
+		{
+			const char *pSuffix = Line.m_TranslationPending ? Localize("Translating...") : Line.m_aTranslation;
+			str_format(aRendered, sizeof(aRendered), "%s\n-> %s", pText, pSuffix);
+			pRenderedText = aRendered;
+		}
+
 		// get the y offset (calculate it if we haven't done that yet)
 		if(Line.m_aYOffset[OffsetType] < 0.0f)
 		{
@@ -1142,7 +1258,7 @@ void CChat::OnPrepareLines(float y)
 				AppendCursor.m_LineWidth -= MeasureCursor.m_LongestLineWidth;
 			}
 
-			TextRender()->TextEx(&AppendCursor, pText);
+			TextRender()->TextEx(&AppendCursor, pRenderedText);
 
 			Line.m_aYOffset[OffsetType] = AppendCursor.Height() + RealMsgPaddingY;
 		}
@@ -1237,7 +1353,7 @@ void CChat::OnPrepareLines(float y)
 			AppendCursor.m_LineWidth -= LineCursor.m_LongestLineWidth;
 		}
 
-		TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &AppendCursor, pText);
+		TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &AppendCursor, pRenderedText);
 
 		if(!g_Config.m_ClChatOld && (Line.m_aText[0] != '\0' || Line.m_aName[0] != '\0'))
 		{
@@ -1457,9 +1573,25 @@ void CChat::EnsureCoherentWidth() const
 
 void CChat::SendChat(int Team, const char *pLine)
 {
+	SendChatImpl(Team, pLine, true);
+}
+
+void CChat::SendChatTranslated(int Team, const char *pLine)
+{
+	SendChatImpl(Team, pLine, false);
+}
+
+void CChat::SendChatImpl(int Team, const char *pLine, bool AllowTranslation)
+{
 	// don't send empty messages
 	if(*str_utf8_skip_whitespaces(pLine) == '\0')
 		return;
+
+	if(AllowTranslation && pLine[0] != '/' && GameClient()->m_UcTranslator.IsEnabled())
+	{
+		if(GameClient()->m_UcTranslator.TranslateAsync(Team, pLine, this))
+			return;
+	}
 
 	m_LastChatSend = time();
 
