@@ -752,13 +752,16 @@ void CGameTeams::OnFinish(CPlayer *Player, int TimeTicks, const char *pTimestamp
 	const int ClientId = Player->GetCid();
 	CPlayerData *pData = GameServer()->Score()->PlayerData(ClientId);
 
+	char aTimeText[64];
+	str_format(aTimeText, sizeof(aTimeText), "%d minute(s) %5.2f second(s)", (int)Time / 60,
+		Time - ((int)Time / 60 * 60));
+
 	char aBuf[128];
 	SetLastTimeCp(Player, -1);
 	// Note that the "finished in" message is parsed by the client
 	str_format(aBuf, sizeof(aBuf),
-		"%s finished in: %d minute(s) %5.2f second(s)",
-		Server()->ClientName(ClientId), (int)Time / 60,
-		Time - ((int)Time / 60 * 60));
+		"%s finished in: %s",
+		Server()->ClientName(ClientId), aTimeText);
 	if(g_Config.m_SvHideScore)
 		GameServer()->SendChatTarget(ClientId, aBuf, CGameContext::FLAG_SIX);
 	else
@@ -857,6 +860,8 @@ void CGameTeams::OnFinish(CPlayer *Player, int TimeTicks, const char *pTimestamp
 	{
 		GameServer()->SendRecord(ClientId);
 	}
+
+	GameServer()->SendFinishWebhook(ClientId, aTimeText, NeedToSendNewServerRecord);
 
 	int TTime = (int)Time;
 	if(!Player->m_Score.has_value() || TTime < Player->m_Score.value())

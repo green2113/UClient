@@ -105,6 +105,10 @@ CClient::CClient() :
 	m_PredictedTime.Init(0);
 
 	m_Sixup = false;
+	str_copy(m_aUcVersionStr, UCLIENT_VERSION, sizeof(m_aUcVersionStr));
+	m_HasUcInfo = false;
+	m_UcInfoFailed = false;
+	m_CustomUpdateAvailable = false;
 }
 
 // ----- send functions -----
@@ -394,6 +398,31 @@ void CClient::SendInput()
 const char *CClient::LatestVersion() const
 {
 	return m_aVersionStr;
+}
+
+bool CClient::UcInfoRequestRunning() const
+{
+	return m_pUcInfoTask && !m_pUcInfoTask->Done();
+}
+
+bool CClient::UcInfoHasResult() const
+{
+	return m_HasUcInfo;
+}
+
+bool CClient::UcInfoFailed() const
+{
+	return m_UcInfoFailed;
+}
+
+bool CClient::UcUpdateAvailable() const
+{
+	return m_CustomUpdateAvailable;
+}
+
+const char *CClient::UcLatestVersion() const
+{
+	return m_aUcVersionStr[0] ? m_aUcVersionStr : UCLIENT_VERSION;
 }
 
 // TODO: OPT: do this a lot smarter!
@@ -2526,23 +2555,9 @@ void CClient::LoadDDNetInfo()
 	}
 
 	const json_value &DDNetInfo = *pDDNetInfo;
-	const json_value &CurrentVersion = DDNetInfo["version"];
-	if(CurrentVersion.type == json_string)
-	{
-		char aNewVersionStr[64];
-		str_copy(aNewVersionStr, CurrentVersion);
-		char aCurVersionStr[64];
-		str_copy(aCurVersionStr, GAME_RELEASE_VERSION);
-		if(ToVersion(aNewVersionStr) > ToVersion(aCurVersionStr))
-		{
-			str_copy(m_aVersionStr, CurrentVersion);
-		}
-		else
-		{
-			m_aVersionStr[0] = '0';
-			m_aVersionStr[1] = '\0';
-		}
-	}
+	// Ignore DDNet version for update detection; handled by UClient info.
+	m_aVersionStr[0] = '0';
+	m_aVersionStr[1] = '\0';
 
 	const json_value &News = DDNetInfo["news"];
 	if(News.type == json_string)
@@ -2595,10 +2610,70 @@ void CClient::LoadDDNetInfo()
 			log_debug("info", "got global tcp ip address: %s", (const char *)ConnectingIp);
 		}
 	}
-	const json_value &WarnPngliteIncompatibleImages = DDNetInfo["warn-pnglite-incompatible-images"];
-	Graphics()->WarnPngliteIncompatibleImages(WarnPngliteIncompatibleImages.type == json_boolean && (bool)WarnPngliteIncompatibleImages);
-	m_InfoState = EInfoState::SUCCESS;
+const json_value &WarnPngliteIncompatibleImages = DDNetInfo["warn-pnglite-incompatible-images"];
+Graphics()->WarnPngliteIncompatibleImages(WarnPngliteIncompatibleImages.type == json_boolean && (bool)WarnPngliteIncompatibleImages);
+m_InfoState = EInfoState::SUCCESS;
 }
+
+void CClient::ResetUcInfoTask()
+{
+	if(m_pUcInfoTask)
+	{
+		m_pUcInfoTask->Abort();
+		m_pUcInfoTask.reset();
+	}
+}
+
+void CClient::LoadUcInfo()
+{
+	if(!m_pUcInfoTask)
+		return;
+
+	json_value *pJson = m_pUcInfoTask->ResultJson();
+	bool Success = false;
+	if(pJson && pJson->type == json_object)
+	{
+		const json_value &Version = (*pJson)["version"];
+		if(Version.type == json_string)
+		{
+			str_copy(m_aUcVersionStr, Version, sizeof(m_aUcVersionStr));
+			char aRemoteCopy[sizeof(m_aUcVersionStr)];
+			str_copy(aRemoteCopy, Version, sizeof(aRemoteCopy));
+			char aCurrentCopy[64];
+			str_copy(aCurrentCopy, UCLIENT_VERSION, sizeof(aCurrentCopy));
+			const TVersion RemoteVersion = ToVersion(aRemoteCopy);
+			const TVersion CurrentVersion = ToVersion(aCurrentCopy);
+			if(RemoteVersion != gs_InvalidVersion && CurrentVersion != gs_InvalidVersion)
+			{
+				m_CustomUpdateAvailable = RemoteVersion > CurrentVersion;
+				m_HasUcInfo = true;
+				m_UcInfoFailed = false;
+				if(m_CustomUpdateAvailable)
+					str_copy(m_aVersionStr, m_aUcVersionStr, sizeof(m_aVersionStr));
+				else
+				{
+					m_aVersionStr[0] = '0';
+					m_aVersionStr[1] = '\0';
+				}
+				Success = true;
+			}
+		}
+	}
+
+	if(!Success)
+	{
+		m_aUcVersionStr[0] = '\0';
+		m_CustomUpdateAvailable = false;
+		m_HasUcInfo = false;
+		m_UcInfoFailed = true;
+		m_aVersionStr[0] = '0';
+		m_aVersionStr[1] = '\0';
+	}
+
+	if(pJson)
+		json_value_free(pJson);
+}
+
 
 int CClient::ConnectNetTypes() const
 {
@@ -3021,6 +3096,24 @@ void CClient::Update()
 		}
 	}
 
+	if(m_pUcInfoTask)
+	{
+		if(m_pUcInfoTask->State() == EHttpState::DONE)
+		{
+			LoadUcInfo();
+			ResetUcInfoTask();
+		}
+		else if(m_pUcInfoTask->State() == EHttpState::ERROR || m_pUcInfoTask->State() == EHttpState::ABORTED)
+		{
+			ResetUcInfoTask();
+			m_aUcVersionStr[0] = '\0';
+			m_CustomUpdateAvailable = false;
+			m_HasUcInfo = false;
+			m_UcInfoFailed = true;
+		}
+	}
+
+
 	if(State() == IClient::STATE_ONLINE)
 	{
 		if(!m_EditJobs.empty())
@@ -3253,6 +3346,8 @@ void CClient::Run()
 		g_Config.m_ClShowWelcome = 0;
 	else
 		RequestDDNetInfo();
+
+	RequestUcInfo();
 
 	if(SoundInitFailed)
 	{
@@ -5220,6 +5315,25 @@ void CClient::RequestDDNetInfo()
 	Http()->Run(m_pDDNetInfoTask);
 	m_InfoState = EInfoState::LOADING;
 }
+
+void CClient::RequestUcInfo()
+{
+	if(m_pUcInfoTask && !m_pUcInfoTask->Done())
+		return;
+
+	m_HasUcInfo = false;
+	m_UcInfoFailed = false;
+	m_CustomUpdateAvailable = false;
+	str_copy(m_aUcVersionStr, UCLIENT_VERSION, sizeof(m_aUcVersionStr));
+
+	auto pTask = HttpGet(UCLIENT_INFO_URL);
+	pTask->Timeout(CTimeout{10000, 0, 500, 10});
+	pTask->SkipByFileTime(false);
+	pTask->IpResolve(IPRESOLVE::V4);
+	m_pUcInfoTask = std::move(pTask);
+	Http()->Run(m_pUcInfoTask);
+}
+
 
 int CClient::GetPredictionTime()
 {

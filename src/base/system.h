@@ -784,7 +784,9 @@ enum ETimeSeason
 	SEASON_EASTER,
 	SEASON_HALLOWEEN,
 	SEASON_XMAS,
-	SEASON_NEWYEAR
+	SEASON_NEWYEAR,
+	SEASON_VALENTINE,
+	SEASON_COUNT
 };
 
 /**
@@ -797,6 +799,8 @@ enum ETimeSeason
  * @see SEASON_SPRING
  */
 ETimeSeason time_season();
+void time_set_season_override(int Season);
+int time_get_season_override();
 
 /**
  * @defgroup Network Networking

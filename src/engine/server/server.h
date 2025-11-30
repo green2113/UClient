@@ -198,6 +198,7 @@ public:
 		// DNSBL
 		EDnsblState m_DnsblState;
 		std::shared_ptr<CHostLookup> m_pDnsblLookup;
+		bool m_DnsblBanPending;
 
 		bool m_Sixup;
 
@@ -277,6 +278,28 @@ public:
 
 	size_t m_AnnouncementLastLine;
 	std::vector<std::string> m_vAnnouncements;
+	struct CHookDemoSession
+	{
+		enum class EType
+		{
+			HOOK_SPAM,
+			REPORT,
+		};
+
+		EType m_Type = EType::HOOK_SPAM;
+		std::unique_ptr<CDemoRecorder> m_pRecorder;
+		int m_ClientId = -1;
+		int64_t m_EndTick = 0;
+		char m_aFilename[IO_MAX_PATH_LENGTH];
+		char m_aUploadName[IO_MAX_PATH_LENGTH];
+		float m_HooksPerSecond = 0.f;
+		char m_aPlayerName[64];
+		char m_aPlayerAddr[NETADDR_MAXSTRSIZE];
+		char m_aReporterName[64];
+		char m_aReporterAddr[NETADDR_MAXSTRSIZE];
+		char m_aReportReason[256];
+	};
+	std::vector<CHookDemoSession> m_vHookDemoSessions;
 
 	std::shared_ptr<ILogger> m_pFileLogger = nullptr;
 	std::shared_ptr<ILogger> m_pStdoutLogger = nullptr;
@@ -309,6 +332,10 @@ public:
 
 	static bool StrHideIps(const char *pInput, char *pOutputWithIps, int OutputWithIpsSize, char *pOutputWithoutIps, int OutputWithoutIpsSize);
 	void SendLogLine(const CLogMessage *pMessage);
+	void SendBanWebhook(const char *pTargetName, const char *pTargetAddr, int Seconds, const char *pReason);
+	void SendHookSpamWebhook(int ClientId, float HooksPerSecond, const char *pAddr) override;
+	bool StartHookSpamDemoRecord(int ClientId, float HooksPerSecond) override;
+	bool StartReportDemoRecord(int ReporterId, int TargetId, const char *pReason) override;
 	void SetRconCid(int ClientId) override;
 	int GetAuthedState(int ClientId) const override;
 	bool IsRconAuthed(int ClientId) const override;
@@ -525,6 +552,12 @@ public:
 	bool IsSixup(int ClientId) const override { return ClientId != SERVER_DEMO_CLIENT && m_aClients[ClientId].m_Sixup; }
 
 	void SetLoggers(std::shared_ptr<ILogger> &&pFileLogger, std::shared_ptr<ILogger> &&pStdoutLogger);
+	bool HookDemoRecordingActive() const;
+	void RecordHookDemoSnapshot(int Tick, const char *pData, int Size);
+	void RecordHookDemoMessage(const void *pData, int Size);
+	void ProcessHookDemoSessions();
+	void AbortHookDemoSessions();
+	bool QueueHookDemoUpload(const CHookDemoSession &Session);
 
 #ifdef CONF_FAMILY_UNIX
 	enum CONN_LOGGING_CMD

@@ -9,6 +9,7 @@
 #include <game/server/save.h>
 #include <game/voting.h>
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -224,6 +225,35 @@ struct CSqlTeamLoadRequest : ISqlData
 	int m_NumPlayer;
 };
 
+struct CSqlReportEntry : ISqlData
+{
+	CSqlReportEntry() :
+		ISqlData(nullptr),
+		m_AutoAction(0),
+		m_AutoDuration(0),
+		m_Timestamp(0)
+	{
+		m_aReporter[0] = '\0';
+		m_aReporterAddr[0] = '\0';
+		m_aTarget[0] = '\0';
+		m_aTargetAddr[0] = '\0';
+		m_aReason[0] = '\0';
+		m_aMap[0] = '\0';
+		m_aServer[0] = '\0';
+	}
+
+	char m_aReporter[MAX_NAME_LENGTH];
+	char m_aReporterAddr[NETADDR_MAXSTRSIZE];
+	char m_aTarget[MAX_NAME_LENGTH];
+	char m_aTargetAddr[NETADDR_MAXSTRSIZE];
+	char m_aReason[256];
+	char m_aMap[MAX_MAP_LENGTH];
+	char m_aServer[32];
+	int m_AutoAction;
+	int m_AutoDuration;
+	int64_t m_Timestamp;
+};
+
 class CPlayerData
 {
 public:
@@ -313,6 +343,7 @@ struct CScoreWorker
 
 	static bool SaveScore(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
 	static bool SaveTeamScore(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
+	static bool AddReportEntry(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
 };
 
 #endif // GAME_SERVER_SCOREWORKER_H

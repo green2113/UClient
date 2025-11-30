@@ -12,6 +12,20 @@ extern const char *GIT_SHORTREV_HASH;
 #endif
 #define GAME_RELEASE_VERSION STRINGIFY(GAME_RELEASE_VERSION_INTERNAL)
 
+// uclient
+#ifndef UCLIENT_VERSION
+#define UCLIENT_VERSION "1.0"
+#endif
+#ifndef UCLIENT_NAME
+#define UCLIENT_NAME "UClient"
+#endif
+#ifndef UCLIENT_INFO_URL
+#define UCLIENT_INFO_URL "https://ddnet.under1111.com/update/info.json"
+#endif
+#ifndef UCLIENT_UPDATE_BASE_URL
+#define UCLIENT_UPDATE_BASE_URL "https://ddnet.under1111.com/update"
+#endif
+
 // teeworlds
 #define CLIENT_VERSION7 0x0705
 #define GAME_VERSION "0.6.4, " GAME_RELEASE_VERSION

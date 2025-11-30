@@ -4,6 +4,7 @@
 
 #include "entities/character.h"
 #include "gamemodes/DDRace.h"
+#include "gamemodes/gores.h"
 #include "gamemodes/mod.h"
 #include "player.h"
 #include "score.h"
@@ -17,10 +18,12 @@
 
 #include <engine/console.h>
 #include <engine/engine.h>
+#include <engine/http.h>
 #include <engine/map.h>
 #include <engine/server/server.h>
 #include <engine/shared/config.h>
 #include <engine/shared/datafile.h>
+#include <engine/shared/http.h>
 #include <engine/shared/json.h>
 #include <engine/shared/linereader.h>
 #include <engine/shared/memheap.h>
@@ -28,6 +31,9 @@
 #include <engine/storage.h>
 
 #include <generated/protocol.h>
+#include <algorithm>
+#include <limits>
+#include <memory>
 #include <generated/protocol7.h>
 #include <generated/protocolglue.h>
 
@@ -93,6 +99,7 @@ CGameContext::CGameContext(bool Resetting) :
 	m_SqlRandomMapResult = nullptr;
 
 	m_pScore = nullptr;
+	m_pHttp = nullptr;
 
 	m_VoteCreator = -1;
 	m_VoteType = VOTE_TYPE_UNKNOWN;
@@ -748,59 +755,6 @@ void CGameContext::SendSettings(int ClientId) const
 	Server()->SendPackMsg(&Msg, MSGFLAG_VITAL | MSGFLAG_NORECORD, ClientId);
 }
 
-void CGameContext::SendServerAlert(const char *pMessage)
-{
-	for(int ClientId = 0; ClientId < Server()->MaxClients(); ClientId++)
-	{
-		if(!m_apPlayers[ClientId])
-		{
-			continue;
-		}
-
-		if(m_apPlayers[ClientId]->GetClientVersion() >= VERSION_DDNET_IMPORTANT_ALERT)
-		{
-			CNetMsg_Sv_ServerAlert Msg;
-			Msg.m_pMessage = pMessage;
-			Server()->SendPackMsg(&Msg, MSGFLAG_VITAL | MSGFLAG_NORECORD, ClientId);
-		}
-		else
-		{
-			char aBroadcastText[1024 + 32];
-			str_copy(aBroadcastText, "SERVER ALERT\n\n");
-			str_append(aBroadcastText, pMessage);
-			SendBroadcast(aBroadcastText, ClientId, true);
-		}
-	}
-
-	// Record server alert to demos exactly once
-	// TODO: Workaround https://github.com/ddnet/ddnet/issues/11144 by using client ID 0,
-	//       otherwise the message is recorded multiple times.
-	CNetMsg_Sv_ServerAlert Msg;
-	Msg.m_pMessage = pMessage;
-	Server()->SendPackMsg(&Msg, MSGFLAG_NOSEND, 0);
-}
-
-void CGameContext::SendModeratorAlert(const char *pMessage, int ToClientId)
-{
-	dbg_assert(in_range(ToClientId, 0, MAX_CLIENTS - 1), "SendImportantAlert ToClientId invalid: %d", ToClientId);
-	dbg_assert(m_apPlayers[ToClientId] != nullptr, "Client not online: %d", ToClientId);
-
-	if(m_apPlayers[ToClientId]->GetClientVersion() >= VERSION_DDNET_IMPORTANT_ALERT)
-	{
-		CNetMsg_Sv_ModeratorAlert Msg;
-		Msg.m_pMessage = pMessage;
-		Server()->SendPackMsg(&Msg, MSGFLAG_VITAL | MSGFLAG_NORECORD, ToClientId);
-	}
-	else
-	{
-		char aBroadcastText[1024 + 32];
-		str_copy(aBroadcastText, "MODERATOR ALERT\n\n");
-		str_append(aBroadcastText, pMessage);
-		SendBroadcast(aBroadcastText, ToClientId, true);
-		log_info("moderator_alert", "Notice: player uses an old client version and may not see moderator alerts: %s (ID %d)", Server()->ClientName(ToClientId), ToClientId);
-	}
-}
-
 void CGameContext::SendBroadcast(const char *pText, int ClientId, bool IsImportant)
 {
 	CNetMsg_Sv_Broadcast Msg;
@@ -1070,6 +1024,14 @@ void CGameContext::OnTick()
 {
 	// check tuning
 	CheckPureTuning();
+
+	// Broadcast once to all players when maintenance mode is enabled.
+	if(g_Config.m_SvMaintenance && !m_LastSvMaintenance)
+	{
+		SendChat(-1, TEAM_ALL, "서버 점검 모드가 실행되었어요. 서버를 나가면 점검이 끝날 때까지 다시 접속할 수 없어요. (discord.gg/PNpxPxvcws)");
+		SendChat(-1, TEAM_ALL, "Server maintenance mode has been enabled. If you leave the server, you won’t be able to reconnect until the maintenance is over. (discord.gg/PNpxPxvcws)");
+	}
+	m_LastSvMaintenance = g_Config.m_SvMaintenance;
 
 	if(m_TeeHistorianActive)
 	{
@@ -1743,6 +1705,14 @@ void CGameContext::OnClientEnter(int ClientId)
 	}
 
 	LogEvent("Connect", ClientId);
+
+	CPlayer *pPlayer = m_apPlayers[ClientId];
+	if(pPlayer && pPlayer->IsNewYear())
+	{
+		char aBuf[256];
+		str_format(aBuf, sizeof(aBuf), "%s", g_Config.m_UServerNewYearMessage);
+		SendChatTarget(ClientId, aBuf);
+	}
 }
 
 bool CGameContext::OnClientDataPersist(int ClientId, void *pData)
@@ -1804,6 +1774,25 @@ void CGameContext::OnClientConnected(int ClientId, void *pData)
 	SendMotd(ClientId);
 	SendSettings(ClientId);
 
+	if(g_Config.m_SvMaintenance)
+	{
+		bool Bypass = false;
+		if(g_Config.m_SvMaintenanceBypassIp[0] != '\0')
+		{
+			char aAddr[NETADDR_MAXSTRSIZE];
+			str_copy(aAddr, Server()->ClientAddrString(ClientId, false), sizeof(aAddr));
+			if(str_comp(aAddr, g_Config.m_SvMaintenanceBypassIp) == 0)
+				Bypass = true;
+		}
+
+		if(!Bypass)
+		{
+			const char *pMsg = g_Config.m_SvMaintenanceMessage[0] ? g_Config.m_SvMaintenanceMessage : "현재 서버가 점검 중입니다. (discord.gg/PNpxPxvcws)";
+			Server()->Kick(ClientId, pMsg);
+			return;
+		}
+	}
+
 	Server()->ExpireServerInfo();
 }
 
@@ -1823,6 +1812,16 @@ void CGameContext::OnClientDrop(int ClientId, const char *pReason)
 	m_apSavedTees[ClientId] = nullptr;
 
 	m_aTeamMapping[ClientId] = -1;
+
+	m_ReportTargets.erase(ClientId);
+	for(auto it = m_ReportCooldown.begin(); it != m_ReportCooldown.end();)
+	{
+		it->second.erase(ClientId);
+		if(it->second.empty())
+			it = m_ReportCooldown.erase(it);
+		else
+			++it;
+	}
 
 	if(g_Config.m_SvTeam == SV_TEAM_FORCED_SOLO && PracticeByDefault())
 		m_pController->Teams().SetPractice(GetDDRaceTeam(ClientId), true);
@@ -1854,6 +1853,96 @@ void CGameContext::OnClientDrop(int ClientId, const char *pReason)
 	Server()->SendPackMsg(&Msg, MSGFLAG_VITAL | MSGFLAG_NORECORD, -1);
 
 	Server()->ExpireServerInfo();
+}
+
+void CGameContext::HandleAutoPunish(int ReporterId, const char *pReporterAddr, int TargetId, const char *pReason, bool &OutDuplicate, int &OutAction, int &OutDurationSeconds)
+{
+	OutDuplicate = false;
+	OutAction = REPORT_ACTION_NONE;
+	OutDurationSeconds = 0;
+
+	if(!g_Config.m_SvReportAutopunish)
+		return;
+	if(TargetId < 0 || TargetId >= MAX_CLIENTS)
+		return;
+	if(!m_apPlayers[TargetId] || m_apPlayers[TargetId]->GetTeam() == TEAM_SPECTATORS)
+		return;
+
+	std::string ReporterKey = pReporterAddr && pReporterAddr[0] ? pReporterAddr : "";
+	if(ReporterKey.empty())
+		return;
+
+	const int64_t Now = time_get();
+	const int64_t DuplicateTicks = static_cast<int64_t>(g_Config.m_SvReportDuplicateCooldown) * time_freq();
+	const int64_t WindowTicks = static_cast<int64_t>(g_Config.m_SvReportAutopunishWindow) * time_freq();
+
+	auto &ReporterTargets = m_ReportCooldown[ReporterKey];
+	for(auto it = ReporterTargets.begin(); it != ReporterTargets.end();)
+	{
+		if(Now - it->second > DuplicateTicks)
+			it = ReporterTargets.erase(it);
+		else
+			++it;
+	}
+
+	auto CooldownIt = ReporterTargets.find(TargetId);
+	if(CooldownIt != ReporterTargets.end() && Now - CooldownIt->second < DuplicateTicks)
+	{
+		OutDuplicate = true;
+		return;
+	}
+	ReporterTargets[TargetId] = Now;
+
+	if(ReporterTargets.empty())
+		m_ReportCooldown.erase(ReporterKey);
+
+	auto &TargetReporters = m_ReportTargets[TargetId];
+	for(auto it = TargetReporters.begin(); it != TargetReporters.end();)
+	{
+		if(Now - it->second > WindowTicks)
+			it = TargetReporters.erase(it);
+		else
+			++it;
+	}
+	TargetReporters[ReporterKey] = Now;
+
+	const int UniqueReporters = static_cast<int>(TargetReporters.size());
+
+	int ActivePlayers = 0;
+	for(int i = 0; i < MAX_CLIENTS; ++i)
+	{
+		CPlayer *pPlayer = m_apPlayers[i];
+		if(!pPlayer || pPlayer->GetTeam() == TEAM_SPECTATORS)
+			continue;
+		ActivePlayers++;
+	}
+
+	if(ActivePlayers < g_Config.m_SvReportMinPlayers || ActivePlayers <= 0)
+		return;
+
+	auto CalcThreshold = [ActivePlayers](int Percent) -> int {
+		if(Percent <= 0)
+			return std::numeric_limits<int>::max();
+		const int Threshold = (ActivePlayers * Percent + 99) / 100;
+		return std::max(1, Threshold);
+	};
+
+	const int BanThreshold = CalcThreshold(g_Config.m_SvReportAutopunishBanPercent);
+	const int MuteThreshold = CalcThreshold(g_Config.m_SvReportAutopunishMutePercent);
+
+	if(g_Config.m_SvReportAutopunishBanMinutes > 0 && UniqueReporters >= BanThreshold)
+	{
+		OutAction = REPORT_ACTION_BAN;
+		OutDurationSeconds = g_Config.m_SvReportAutopunishBanMinutes * 60;
+	}
+	else if(g_Config.m_SvReportAutopunishMuteMinutes > 0 && UniqueReporters >= MuteThreshold)
+	{
+		OutAction = REPORT_ACTION_MUTE;
+		OutDurationSeconds = g_Config.m_SvReportAutopunishMuteMinutes * 60;
+	}
+
+	if(TargetReporters.empty())
+		m_ReportTargets.erase(TargetId);
 }
 
 void CGameContext::TeehistorianRecordAntibot(const void *pData, int DataSize)
@@ -2338,7 +2427,7 @@ void CGameContext::OnCallVoteNetMessage(const CNetMsg_Cl_CallVote *pMsg, int Cli
 	{
 		str_copy(aReason, pMsg->m_pReason, sizeof(aReason));
 	}
-
+	
 	if(str_comp_nocase(pMsg->m_pType, "option") == 0)
 	{
 		CVoteOptionServer *pOption = m_pVoteOptionFirst;
@@ -2355,11 +2444,11 @@ void CGameContext::OnCallVoteNetMessage(const CNetMsg_Cl_CallVote *pMsg, int Cli
 				{
 					return;
 				}
-
+				
 				str_format(aChatmsg, sizeof(aChatmsg), "'%s' called vote to change server option '%s' (%s)", Server()->ClientName(ClientId),
-					pOption->m_aDescription, aReason);
+				pOption->m_aDescription, aReason);
 				str_copy(aDesc, pOption->m_aDescription);
-
+				
 				if((str_endswith(pOption->m_aCommand, "random_map") || str_endswith(pOption->m_aCommand, "random_unfinished_map")))
 				{
 					if(str_length(aReason) == 1 && aReason[0] >= '0' && aReason[0] <= '5')
@@ -2382,14 +2471,14 @@ void CGameContext::OnCallVoteNetMessage(const CNetMsg_Cl_CallVote *pMsg, int Cli
 				{
 					str_copy(aCmd, pOption->m_aCommand);
 				}
-
+				
 				m_LastMapVote = time_get();
 				break;
 			}
-
+			
 			pOption = pOption->m_pNext;
 		}
-
+		
 		if(!pOption)
 		{
 			if(!Server()->IsRconAuthedAdmin(ClientId)) // allow admins to call any vote they want
@@ -2405,11 +2494,20 @@ void CGameContext::OnCallVoteNetMessage(const CNetMsg_Cl_CallVote *pMsg, int Cli
 				str_copy(aCmd, pMsg->m_pValue);
 			}
 		}
-
+		
 		m_VoteType = VOTE_TYPE_OPTION;
 	}
 	else if(str_comp_nocase(pMsg->m_pType, "kick") == 0)
 	{
+		if(g_Config.m_SvVoteKickReasonRequired && !Server()->IsRconAuthed(ClientId))
+		{
+			const char *pTrimmedReason = pMsg->m_pReason ? str_utf8_skip_whitespaces(pMsg->m_pReason) : "";
+			if(pTrimmedReason[0] == '\0')
+			{
+				SendChatTarget(ClientId, "추방 투표를 하려면 추방 사유를 입력해야 합니다. / You must enter a reason when calling a kick vote");
+				return;
+			}
+		}
 		if(!g_Config.m_SvVoteKick && !Server()->IsRconAuthed(ClientId)) // allow admins to call kick votes even if they are forbidden
 		{
 			SendChatTarget(ClientId, "Server does not allow voting to kick players");
@@ -3319,35 +3417,6 @@ static void UnescapeNewlines(char *pBuf)
 	pBuf[j] = '\0';
 }
 
-void CGameContext::ConServerAlert(IConsole::IResult *pResult, void *pUserData)
-{
-	CGameContext *pSelf = (CGameContext *)pUserData;
-
-	char aBuf[1024];
-	str_copy(aBuf, pResult->GetString(0), sizeof(aBuf));
-	UnescapeNewlines(aBuf);
-
-	pSelf->SendServerAlert(aBuf);
-}
-
-void CGameContext::ConModAlert(IConsole::IResult *pResult, void *pUserData)
-{
-	CGameContext *pSelf = (CGameContext *)pUserData;
-
-	const int Victim = pResult->GetVictim();
-	if(!CheckClientId(Victim) || !pSelf->m_apPlayers[Victim])
-	{
-		log_info("moderator_alert", "Client ID not found: %d", Victim);
-		return;
-	}
-
-	char aBuf[1024];
-	str_copy(aBuf, pResult->GetString(1), sizeof(aBuf));
-	UnescapeNewlines(aBuf);
-
-	pSelf->SendModeratorAlert(aBuf, Victim);
-}
-
 void CGameContext::ConBroadcast(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
@@ -3842,6 +3911,17 @@ void CGameContext::ConchainPracticeByDefaultUpdate(IConsole::IResult *pResult, v
 	}
 }
 
+void CGameContext::ConchainForceSeasonUpdate(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
+{
+	pfnCallback(pResult, pCallbackUserData);
+
+	if(!pResult->NumArguments())
+		return;
+
+	const int Season = std::clamp(g_Config.m_SvForceSeason, -1, SEASON_COUNT - 1);
+	time_set_season_override(Season);
+}
+
 void CGameContext::OnConsoleInit()
 {
 	m_pServer = Kernel()->RequestInterface<IServer>();
@@ -3849,6 +3929,7 @@ void CGameContext::OnConsoleInit()
 	m_pConfig = m_pConfigManager->Values();
 	m_pConsole = Kernel()->RequestInterface<IConsole>();
 	m_pEngine = Kernel()->RequestInterface<IEngine>();
+	m_pHttp = Kernel()->RequestInterface<IHttp>();
 	m_pStorage = Kernel()->RequestInterface<IStorage>();
 
 	Console()->Register("tune", "s[tuning] ?f[value]", CFGFLAG_SERVER | CFGFLAG_GAME, ConTuneParam, this, "Tune variable to value or show current value");
@@ -3867,8 +3948,6 @@ void CGameContext::OnConsoleInit()
 	Console()->Register("random_map", "?i[stars] ?i[max stars]", CFGFLAG_SERVER | CFGFLAG_STORE, ConRandomMap, this, "Random map");
 	Console()->Register("random_unfinished_map", "?i[stars] ?i[max stars]", CFGFLAG_SERVER | CFGFLAG_STORE, ConRandomUnfinishedMap, this, "Random unfinished map");
 	Console()->Register("restart", "?i[seconds]", CFGFLAG_SERVER | CFGFLAG_STORE, ConRestart, this, "Restart in x seconds (0 = abort)");
-	Console()->Register("server_alert", "r[message]", CFGFLAG_SERVER, ConServerAlert, this, "Send a server alert message to all players");
-	Console()->Register("mod_alert", "v[id] r[message]", CFGFLAG_SERVER, ConModAlert, this, "Send a moderator alert message to player");
 	Console()->Register("broadcast", "r[message]", CFGFLAG_SERVER, ConBroadcast, this, "Broadcast message");
 	Console()->Register("say", "r[message]", CFGFLAG_SERVER, ConSay, this, "Say in chat");
 	Console()->Register("set_team", "i[id] i[team-id] ?i[delay in minutes]", CFGFLAG_SERVER, ConSetTeam, this, "Set team for a player (spectators = -1, game = 0)");
@@ -3970,6 +4049,8 @@ void CGameContext::RegisterDDRaceCommands()
 	Console()->Register("dump_log", "?i[seconds]", CFGFLAG_SERVER, ConDumpLog, this, "Show logs of the last i seconds");
 
 	Console()->Chain("sv_practice_by_default", ConchainPracticeByDefaultUpdate, this);
+	Console()->Chain("sv_force_season", ConchainForceSeasonUpdate, this);
+	time_set_season_override(std::clamp(g_Config.m_SvForceSeason, -1, SEASON_COUNT - 1));
 }
 
 void CGameContext::RegisterChatCommands()
@@ -3981,7 +4062,9 @@ void CGameContext::RegisterChatCommands()
 	Console()->Register("settings", "?s[configname]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConSettings, this, "Shows gameplay information for this server");
 	Console()->Register("help", "?r[command]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConHelp, this, "Shows help to command r, general help if left blank");
 	Console()->Register("info", "", CFGFLAG_CHAT | CFGFLAG_SERVER, ConInfo, this, "Shows info about this server");
+	Console()->Register("net", "?i[seconds]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConNet, this, "Measure your latency over the next seconds (default 10, max 30)");
 	Console()->Register("list", "?s[filter]", CFGFLAG_CHAT, ConList, this, "List connected players with optional case-insensitive substring matching filter");
+	Console()->Register("report", "s[player name] r[reason]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConReport, this, "Report a player to the moderators");
 	Console()->Register("w", "s[player name] r[message]", CFGFLAG_CHAT | CFGFLAG_SERVER | CFGFLAG_NONTEEHISTORIC, ConWhisper, this, "Whisper something to someone (private message)");
 	Console()->Register("whisper", "s[player name] r[message]", CFGFLAG_CHAT | CFGFLAG_SERVER | CFGFLAG_NONTEEHISTORIC, ConWhisper, this, "Whisper something to someone (private message)");
 	Console()->Register("c", "r[message]", CFGFLAG_CHAT | CFGFLAG_SERVER | CFGFLAG_NONTEEHISTORIC, ConConverse, this, "Converse with the last person you whispered to (private message)");
@@ -4087,6 +4170,7 @@ void CGameContext::OnInit(const void *pPersistentData)
 	m_pConfig = m_pConfigManager->Values();
 	m_pConsole = Kernel()->RequestInterface<IConsole>();
 	m_pEngine = Kernel()->RequestInterface<IEngine>();
+	m_pHttp = Kernel()->RequestInterface<IHttp>();
 	m_pStorage = Kernel()->RequestInterface<IStorage>();
 	m_pAntibot = Kernel()->RequestInterface<IAntibot>();
 	m_World.SetGameServer(this);
@@ -4189,6 +4273,8 @@ void CGameContext::OnInit(const void *pPersistentData)
 
 	if(!str_comp(Config()->m_SvGametype, "mod"))
 		m_pController = new CGameControllerMod(this);
+	else if(!str_comp(Config()->m_SvGametype, "gores"))
+		m_pController = new CGameControllerGores(this);
 	else
 		m_pController = new CGameControllerDDRace(this);
 
@@ -4815,6 +4901,90 @@ void CGameContext::SendFinish(int ClientId, float Time, float PreviousBestTime)
 	Server()->SendPackMsg(&RaceFinishMsg, MSGFLAG_VITAL | MSGFLAG_NORECORD, g_Config.m_SvHideScore ? ClientId : -1);
 }
 
+void CGameContext::SendFinishWebhook(int ClientId, const char *pTimeText, bool IsServerRecord)
+{
+	if(!g_Config.m_SvFinishWebhookUrl[0] || m_pHttp == nullptr)
+		return;
+
+	if(g_Config.m_SvIsFunServer)
+		return;
+
+	const char *pName = Server()->ClientName(ClientId);
+	const char *pMapName = Server()->GetMapName();
+	const char *pTime = pTimeText ? pTimeText : "unknown";
+
+	char aEscName[192];
+	char aEscMap[192];
+	char aEscTime[128];
+	EscapeJson(aEscName, sizeof(aEscName), pName);
+	EscapeJson(aEscMap, sizeof(aEscMap), pMapName);
+	EscapeJson(aEscTime, sizeof(aEscTime), pTime);
+
+	char aMessage[640];
+		if(IsServerRecord)
+		{
+			str_format(aMessage, sizeof(aMessage),
+				"%s님이 %s 를(을) %s만에 클리어 하셨습니다.",
+				aEscName[0] ? aEscName : "알 수 없음",
+				aEscMap[0] ? aEscMap : "알 수 없음",
+				aEscTime[0] ? aEscTime : "알 수 없음");
+			str_append(aMessage, " 현재 맵 1등이에요! 🎉", sizeof(aMessage));
+		}
+		else
+		{
+			str_format(aMessage, sizeof(aMessage),
+				"%s님이 %s 를(을) %s만에 클리어 하셨습니다.",
+				aEscName[0] ? aEscName : "알 수 없음",
+				aEscMap[0] ? aEscMap : "알 수 없음",
+				aEscTime[0] ? aEscTime : "알 수 없음");
+		}
+
+	char aJson[896];
+	str_format(aJson, sizeof(aJson), "{\"content\":\"%s\",\"allowed_mentions\":{\"parse\":[]}}", aMessage);
+
+	auto pUniqueReq = HttpPostJson(g_Config.m_SvFinishWebhookUrl, aJson);
+	if(!pUniqueReq)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "finish_webhook", "Failed to create webhook request");
+		return;
+	}
+
+	std::shared_ptr<IHttpRequest> pReq(
+		pUniqueReq.release(),
+		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
+	m_pHttp->Run(pReq);
+}
+
+void CGameContext::OnHookSpamDetected(CPlayer *pPlayer, float HooksPerSecond)
+{
+	if(!pPlayer)
+		return;
+
+	const int64_t Now = Server()->Tick();
+	const int64_t CooldownTicks = Server()->TickSpeed() * 30;
+
+	char aMsg[256];
+	str_copy(aMsg, "지금 갈고리를 너무 빨리 쓰시는 것 같아요. 확인을 위해 로그를 관리자에게 전송했어요! / We detected unusually fast hook usage and sent the log to the administrators for review.", sizeof(aMsg));
+	SendChatTarget(pPlayer->GetCid(), aMsg);
+
+	char aAddr[NETADDR_MAXSTRSIZE];
+	const char *pAddr = Server()->ClientAddrString(pPlayer->GetCid(), false);
+	if(pAddr)
+		str_copy(aAddr, pAddr, sizeof(aAddr));
+	else
+		aAddr[0] = '\0';
+
+	Server()->SendHookSpamWebhook(pPlayer->GetCid(), HooksPerSecond, aAddr);
+
+	if(Now >= pPlayer->m_NextHookDemoRecordTick)
+	{
+		if(Server()->StartHookSpamDemoRecord(pPlayer->GetCid(), HooksPerSecond))
+		{
+			pPlayer->m_NextHookDemoRecordTick = Now + CooldownTicks;
+		}
+	}
+}
+
 void CGameContext::SendSaveCode(int Team, int TeamSize, int State, const char *pError, const char *pSaveRequester, const char *pServerName, const char *pGeneratedCode, const char *pCode)
 {
 	char aBuf[512];
@@ -5122,7 +5292,7 @@ void CGameContext::WhisperId(int ClientId, int VictimId, const char *pMessage)
 	}
 	else
 	{
-		str_format(aBuf, sizeof(aBuf), "[→ %s] %s", Server()->ClientName(VictimId), aCensoredMessage);
+		str_format(aBuf, sizeof(aBuf), "[??%s] %s", Server()->ClientName(VictimId), aCensoredMessage);
 		SendChatTarget(ClientId, aBuf);
 	}
 
@@ -5155,7 +5325,7 @@ void CGameContext::WhisperId(int ClientId, int VictimId, const char *pMessage)
 	}
 	else
 	{
-		str_format(aBuf, sizeof(aBuf), "[← %s] %s", Server()->ClientName(ClientId), aCensoredMessage);
+		str_format(aBuf, sizeof(aBuf), "[??%s] %s", Server()->ClientName(ClientId), aCensoredMessage);
 		SendChatTarget(VictimId, aBuf);
 	}
 }

@@ -27,6 +27,8 @@
 #include <engine/shared/host_lookup.h>
 #include <engine/shared/http.h>
 #include <engine/shared/json.h>
+#include <memory>
+#include <type_traits>
 #include <engine/shared/jsonwriter.h>
 #include <engine/shared/linereader.h>
 #include <engine/shared/masterserver.h>
@@ -37,6 +39,7 @@
 #include <engine/shared/protocol7.h>
 #include <engine/shared/protocol_ex.h>
 #include <engine/shared/rust_version.h>
+#include <algorithm>
 #include <engine/shared/snapshot.h>
 #include <engine/storage.h>
 
@@ -47,6 +50,8 @@
 #include <chrono>
 #include <vector>
 
+static std::unique_ptr<CHttpRequest> CreateWebhookFileRequest(const char *pUrl, const char *pJsonPayload, const char *pFilename, const unsigned char *pFileData, size_t FileSize);
+
 using namespace std::chrono_literals;
 
 #if defined(CONF_PLATFORM_ANDROID)
@@ -55,9 +60,8 @@ extern std::vector<std::string> FetchAndroidServerCommandQueue();
 
 void CServerBan::InitServerBan(IConsole *pConsole, IStorage *pStorage, CServer *pServer)
 {
-	CNetBan::Init(pConsole, pStorage);
-
 	m_pServer = pServer;
+	CNetBan::Init(pConsole, pStorage);
 
 	// overwrites base command, todo: improve this
 	Console()->Register("ban", "s[ip|id] ?i[minutes] r[reason]", CFGFLAG_SERVER | CFGFLAG_STORE, ConBanExt, this, "Ban player with ip/client id for x minutes for any reason");
@@ -109,6 +113,38 @@ int CServerBan::BanExt(T *pBanPool, const typename T::CDataType *pData, int Seco
 	if(Result != 0)
 		return Result;
 
+	char aTargetName[MAX_NAME_LENGTH] = {0};
+	char aTargetAddr[NETADDR_MAXSTRSIZE] = {0};
+	if(Server())
+	{
+		using TDataType = typename T::CDataType;
+		if constexpr(std::is_same_v<TDataType, NETADDR>)
+		{
+			const NETADDR *pAddr = static_cast<const NETADDR *>(pData);
+			for(int i = 0; i < MAX_CLIENTS; ++i)
+			{
+				if(Server()->m_aClients[i].m_State == CServer::CClient::STATE_EMPTY)
+					continue;
+
+				if(NetMatch(pAddr, Server()->ClientAddr(i)))
+				{
+					if(Server()->m_aClients[i].m_aName[0])
+						str_copy(aTargetName, Server()->m_aClients[i].m_aName);
+					else
+						str_copy(aTargetName, Server()->ClientName(i));
+					break;
+				}
+			}
+		}
+		else if constexpr(std::is_same_v<TDataType, CNetRange>)
+		{
+			const CNetRange *pRange = pData;
+			(void)pRange;
+		}
+
+		Server()->SendBanWebhook(aTargetName[0] ? aTargetName : nullptr, aTargetAddr[0] ? aTargetAddr : nullptr, Seconds, pReason);
+	}
+
 	// drop banned clients
 	typename T::CDataType Data = *pData;
 	for(int i = 0; i < MAX_CLIENTS; ++i)
@@ -128,9 +164,499 @@ int CServerBan::BanExt(T *pBanPool, const typename T::CDataType *pData, int Seco
 	return Result;
 }
 
+void CServer::SendBanWebhook(const char *pTargetName, const char *pTargetAddr, int Seconds, const char *pReason)
+{
+	if(g_Config.m_SvBanWebhookUrl[0] == '\0')
+	{
+		return;
+	}
+
+	(void)Seconds;
+
+	const bool HasTargetName = pTargetName && pTargetName[0];
+	if(!HasTargetName)
+	{
+		return;
+	}
+
+	const char *pDisplayName = pTargetName;
+	const char *pReasonText = (pReason && pReason[0]) ? pReason : "no reason specified";
+
+	char aEscDisplayName[192];
+	char aEscReason[256];
+	EscapeJson(aEscDisplayName, sizeof(aEscDisplayName), pDisplayName);
+	EscapeJson(aEscReason, sizeof(aEscReason), pReasonText);
+
+	char aMessage[768];
+	str_format(aMessage, sizeof(aMessage), "%s님이 밴을 당하셨습니다. (사유: %s)", aEscDisplayName, aEscReason);
+
+	if(pTargetAddr && pTargetAddr[0])
+	{
+		char aEscAddr[256];
+		EscapeJson(aEscAddr, sizeof(aEscAddr), pTargetAddr);
+		str_append(aMessage, " (IP: ", sizeof(aMessage));
+		str_append(aMessage, aEscAddr, sizeof(aMessage));
+		str_append(aMessage, ")", sizeof(aMessage));
+	}
+
+	char aJson[1024];
+	str_format(aJson, sizeof(aJson), "{\"content\":\"%s\",\"allowed_mentions\":{\"parse\":[]}}", aMessage);
+
+	auto pUniqueReq = HttpPostJson(g_Config.m_SvBanWebhookUrl, aJson);
+	if(!pUniqueReq)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "ban_webhook", "Failed to create ban webhook request.");
+		return;
+	}
+
+	std::shared_ptr<IHttpRequest> pReq(
+		pUniqueReq.release(),
+		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
+	m_Http.Run(pReq);
+}
+
+void CServer::SendHookSpamWebhook(int ClientId, float HooksPerSecond, const char *pAddr)
+{
+	if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')
+		return;
+
+	const char *pName = (ClientId >= 0 && ClientId < MAX_CLIENTS) ? ClientName(ClientId) : "Unknown player";
+	const char *pServerName = g_Config.m_SvName[0] ? g_Config.m_SvName : "DDNet Server";
+	const char *pAddrStr = (pAddr && pAddr[0]) ? pAddr : "알 수 없음";
+
+	char aDesc[512];
+	str_format(aDesc, sizeof(aDesc),
+		"%s님이 초당 %.1f번의 갈고리를 사용하셨어요.\n서버: %s%s%s",
+		pName && pName[0] ? pName : "알 수 없음",
+		HooksPerSecond,
+		pServerName,
+		pAddrStr[0] ? "\nIP: " : "",
+		pAddrStr[0] ? pAddrStr : "");
+
+	char aEscDesc[768];
+	EscapeJson(aEscDesc, sizeof(aEscDesc), aDesc);
+
+	char aJson[1152];
+	str_format(aJson, sizeof(aJson),
+		"{\"username\":\"안티치트 로그\",\"embeds\":[{\"title\":\"비정상적인 갈고리 사용이 감지되었어요.\",\"description\":\"%s\",\"color\":16737792}],\"allowed_mentions\":{\"parse\":[]}}",
+		aEscDesc);
+
+	auto pUniqueReq = HttpPostJson(g_Config.m_SvAntiHookWebhookUrl, aJson);
+	if(!pUniqueReq)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "anti_hook_webhook", "Failed to create anti-hook webhook request.");
+		return;
+	}
+
+	std::shared_ptr<IHttpRequest> pReq(
+		pUniqueReq.release(),
+		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
+	m_Http.Run(pReq);
+}
+
+bool CServer::StartHookSpamDemoRecord(int ClientId, float HooksPerSecond)
+{
+	if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')
+	{
+		return false;
+	}
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+	{
+		return false;
+	}
+	if(m_aClients[ClientId].m_State != CClient::STATE_INGAME)
+	{
+		return false;
+	}
+
+	Storage()->CreateFolder("demos", IStorage::TYPE_SAVE);
+	Storage()->CreateFolder("demos/hook", IStorage::TYPE_SAVE);
+
+	const char *pClientName = ClientName(ClientId);
+	char aSanitizedName[64];
+	str_copy(aSanitizedName, pClientName && pClientName[0] ? pClientName : "player", sizeof(aSanitizedName));
+	str_sanitize_filename(aSanitizedName);
+	if(aSanitizedName[0] == '\0')
+	{
+		str_copy(aSanitizedName, "player", sizeof(aSanitizedName));
+	}
+
+	char aTimestamp[20];
+	str_timestamp(aTimestamp, sizeof(aTimestamp));
+
+	char aFilename[IO_MAX_PATH_LENGTH];
+	str_format(aFilename, sizeof(aFilename), "demos/hook/%s_%s_cid%d.demo", aSanitizedName, aTimestamp, ClientId);
+
+	auto pRecorder = std::make_unique<CDemoRecorder>(&m_SnapshotDelta, false);
+	if(pRecorder->Start(
+		   Storage(),
+		   Console(),
+		   aFilename,
+		   GameServer()->NetVersion(),
+		   GetMapName(),
+		   m_aCurrentMapSha256[MAP_TYPE_SIX],
+		   m_aCurrentMapCrc[MAP_TYPE_SIX],
+		   "server",
+		   m_aCurrentMapSize[MAP_TYPE_SIX],
+		   m_apCurrentMapData[MAP_TYPE_SIX],
+		   nullptr,
+		   nullptr,
+		   nullptr) == -1)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Failed to start hook demo recorder.");
+		return false;
+	}
+
+	CHookDemoSession Session;
+	Session.m_Type = CHookDemoSession::EType::HOOK_SPAM;
+	Session.m_pRecorder = std::move(pRecorder);
+	Session.m_ClientId = ClientId;
+	Session.m_EndTick = Tick() + TickSpeed() * 20;
+	str_copy(Session.m_aFilename, aFilename, sizeof(Session.m_aFilename));
+	const char *pBase = strrchr(aFilename, '/');
+	if(!pBase)
+		pBase = aFilename;
+	else
+		pBase++;
+	str_copy(Session.m_aUploadName, pBase, sizeof(Session.m_aUploadName));
+	const char *pName = (pClientName && pClientName[0]) ? pClientName : "알 수 없음";
+	str_copy(Session.m_aPlayerName, pName, sizeof(Session.m_aPlayerName));
+	const char *pAddr = ClientAddrString(ClientId, false);
+	if(pAddr)
+		str_copy(Session.m_aPlayerAddr, pAddr, sizeof(Session.m_aPlayerAddr));
+	else
+	Session.m_aPlayerAddr[0] = '\0';
+	Session.m_HooksPerSecond = HooksPerSecond;
+	Session.m_aReporterName[0] = '\0';
+	Session.m_aReporterAddr[0] = '\0';
+	Session.m_aReportReason[0] = '\0';
+
+	m_vHookDemoSessions.push_back(std::move(Session));
+	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Started hook demo recording session.");
+	return true;
+}
+
+bool CServer::StartReportDemoRecord(int ReporterId, int TargetId, const char *pReason)
+{
+	if(g_Config.m_SvReportWebhookUrl[0] == '\0')
+	{
+		return false;
+	}
+	if(TargetId < 0 || TargetId >= MAX_CLIENTS)
+	{
+		return false;
+	}
+	if(m_aClients[TargetId].m_State != CClient::STATE_INGAME)
+	{
+		return false;
+	}
+
+	Storage()->CreateFolder("demos", IStorage::TYPE_SAVE);
+	Storage()->CreateFolder("demos/report", IStorage::TYPE_SAVE);
+
+	const char *pClientName = ClientName(TargetId);
+	char aSanitizedName[64];
+	str_copy(aSanitizedName, pClientName && pClientName[0] ? pClientName : "player", sizeof(aSanitizedName));
+	str_sanitize_filename(aSanitizedName);
+	if(aSanitizedName[0] == '\0')
+	{
+		str_copy(aSanitizedName, "player", sizeof(aSanitizedName));
+	}
+
+	char aTimestamp[20];
+	str_timestamp(aTimestamp, sizeof(aTimestamp));
+
+	char aFilename[IO_MAX_PATH_LENGTH];
+	str_format(aFilename, sizeof(aFilename), "demos/report/%s_%s_cid%d.demo", aSanitizedName, aTimestamp, TargetId);
+
+	auto pRecorder = std::make_unique<CDemoRecorder>(&m_SnapshotDelta, false);
+	if(pRecorder->Start(
+		   Storage(),
+		   Console(),
+		   aFilename,
+		   GameServer()->NetVersion(),
+		   GetMapName(),
+		   m_aCurrentMapSha256[MAP_TYPE_SIX],
+		   m_aCurrentMapCrc[MAP_TYPE_SIX],
+		   "server",
+		   m_aCurrentMapSize[MAP_TYPE_SIX],
+		   m_apCurrentMapData[MAP_TYPE_SIX],
+		   nullptr,
+		   nullptr,
+		   nullptr) == -1)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "report_demo", "Failed to start report demo recorder.");
+		return false;
+	}
+
+	CHookDemoSession Session;
+	Session.m_Type = CHookDemoSession::EType::REPORT;
+	Session.m_pRecorder = std::move(pRecorder);
+	Session.m_ClientId = TargetId;
+	Session.m_EndTick = Tick() + TickSpeed() * 20;
+	str_copy(Session.m_aFilename, aFilename, sizeof(Session.m_aFilename));
+	const char *pBase = strrchr(aFilename, '/');
+	if(!pBase)
+		pBase = aFilename;
+	else
+		pBase++;
+	str_copy(Session.m_aUploadName, pBase, sizeof(Session.m_aUploadName));
+
+	const char *pTargetName = (pClientName && pClientName[0]) ? pClientName : "알 수 없음";
+	str_copy(Session.m_aPlayerName, pTargetName, sizeof(Session.m_aPlayerName));
+	const char *pTargetAddr = ClientAddrString(TargetId, false);
+	if(pTargetAddr)
+		str_copy(Session.m_aPlayerAddr, pTargetAddr, sizeof(Session.m_aPlayerAddr));
+	else
+		Session.m_aPlayerAddr[0] = '\0';
+
+	const char *pReporterName = (ReporterId >= 0 && ReporterId < MAX_CLIENTS) ? ClientName(ReporterId) : nullptr;
+	str_copy(Session.m_aReporterName, (pReporterName && pReporterName[0]) ? pReporterName : "알 수 없음", sizeof(Session.m_aReporterName));
+	const char *pReporterAddr = (ReporterId >= 0 && ReporterId < MAX_CLIENTS) ? ClientAddrString(ReporterId, false) : nullptr;
+	if(pReporterAddr)
+		str_copy(Session.m_aReporterAddr, pReporterAddr, sizeof(Session.m_aReporterAddr));
+	else
+		Session.m_aReporterAddr[0] = '\0';
+
+	if(pReason && pReason[0])
+		str_copy(Session.m_aReportReason, pReason, sizeof(Session.m_aReportReason));
+	else
+		Session.m_aReportReason[0] = '\0';
+
+	Session.m_HooksPerSecond = 0.f;
+	m_vHookDemoSessions.push_back(std::move(Session));
+	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "report_demo", "Started report demo recording session.");
+	return true;
+}
+
+bool CServer::HookDemoRecordingActive() const
+{
+	for(const auto &Session : m_vHookDemoSessions)
+	{
+		if(Session.m_pRecorder && Session.m_pRecorder->IsRecording())
+			return true;
+	}
+	return false;
+}
+
+void CServer::RecordHookDemoSnapshot(int Tick, const char *pData, int Size)
+{
+	for(auto &Session : m_vHookDemoSessions)
+	{
+		if(Session.m_pRecorder && Session.m_pRecorder->IsRecording())
+			Session.m_pRecorder->RecordSnapshot(Tick, pData, Size);
+	}
+}
+
+void CServer::RecordHookDemoMessage(const void *pData, int Size)
+{
+	for(auto &Session : m_vHookDemoSessions)
+	{
+		if(Session.m_pRecorder && Session.m_pRecorder->IsRecording())
+			Session.m_pRecorder->RecordMessage(pData, Size);
+	}
+}
+
+void CServer::ProcessHookDemoSessions()
+{
+	if(m_vHookDemoSessions.empty())
+		return;
+
+	const int64_t Now = Tick();
+	auto RemoveIt = std::remove_if(m_vHookDemoSessions.begin(), m_vHookDemoSessions.end(), [&](CHookDemoSession &Session) {
+		if(Session.m_pRecorder && Now >= Session.m_EndTick)
+		{
+			Session.m_pRecorder->Stop(IDemoRecorder::EStopMode::KEEP_FILE);
+			Session.m_pRecorder.reset();
+			QueueHookDemoUpload(Session);
+			return true;
+		}
+		return false;
+	});
+	m_vHookDemoSessions.erase(RemoveIt, m_vHookDemoSessions.end());
+}
+
+void CServer::AbortHookDemoSessions()
+{
+	if(m_vHookDemoSessions.empty())
+		return;
+
+	for(auto &Session : m_vHookDemoSessions)
+	{
+		if(Session.m_pRecorder && Session.m_pRecorder->IsRecording())
+		{
+			Session.m_pRecorder->Stop(IDemoRecorder::EStopMode::REMOVE_FILE);
+		}
+		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+	}
+	m_vHookDemoSessions.clear();
+}
+
+bool CServer::QueueHookDemoUpload(const CHookDemoSession &Session)
+{
+	const char *pWebhookUrl = nullptr;
+	if(Session.m_Type == CHookDemoSession::EType::HOOK_SPAM)
+	{
+		if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')
+		{
+			Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+			return false;
+		}
+		pWebhookUrl = g_Config.m_SvAntiHookWebhookUrl;
+	}
+	else
+	{
+		if(g_Config.m_SvReportWebhookUrl[0] == '\0')
+		{
+			Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+			return false;
+		}
+		pWebhookUrl = g_Config.m_SvReportWebhookUrl;
+	}
+
+	IOHANDLE File = Storage()->OpenFile(Session.m_aFilename, IOFLAG_READ, IStorage::TYPE_SAVE);
+	if(!File)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Failed to open hook demo for upload.");
+		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+		return false;
+	}
+
+	const int64_t FileSize = io_length(File);
+	if(FileSize <= 0 || FileSize > 25LL * 1024 * 1024)
+	{
+		char aBuf[160];
+		str_format(aBuf, sizeof(aBuf), "Skipping hook demo upload, invalid size (%lld bytes).", (long long)FileSize);
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", aBuf);
+		io_close(File);
+		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+		return false;
+	}
+
+	std::vector<unsigned char> vData(static_cast<size_t>(FileSize));
+	const int BytesRead = io_read(File, vData.data(), static_cast<unsigned>(vData.size()));
+	io_close(File);
+	if(BytesRead != (int)vData.size())
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Failed to read hook demo for upload.");
+		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+		return false;
+	}
+
+	const char *pServerName = g_Config.m_SvName[0] ? g_Config.m_SvName : "DDNet Server";
+	const char *pAddr = Session.m_aPlayerAddr[0] ? Session.m_aPlayerAddr : "알 수 없음";
+
+	char aJson[1472];
+	if(Session.m_Type == CHookDemoSession::EType::HOOK_SPAM)
+	{
+		char aEscName[192];
+		EscapeJson(aEscName, sizeof(aEscName), Session.m_aPlayerName[0] ? Session.m_aPlayerName : "알 수 없음");
+
+		str_format(aJson, sizeof(aJson),
+			"{\"content\":\"%s님의 비정상적인 갈고리 사용에 대한 서버 데모가 도착했어요. 관리자분들은 확인 후 처리 부탁드립니다.\",\"username\":\"안티치트 로그\",\"allowed_mentions\":{\"parse\":[]}}",
+			aEscName[0] ? aEscName : "알 수 없음");
+	}
+	else
+	{
+		const char *pReporterName = Session.m_aReporterName[0] ? Session.m_aReporterName : "알 수 없음";
+		const char *pReporterAddr = Session.m_aReporterAddr[0] ? Session.m_aReporterAddr : "알 수 없음";
+		const char *pReason = Session.m_aReportReason[0] ? Session.m_aReportReason : "(사유 미입력)";
+
+		char aMessage[768];
+		str_format(aMessage, sizeof(aMessage),
+			"서버: %s\\n신고 대상: %s (%s)\\n신고자: %s (%s)\\n사유: %s",
+			pServerName,
+			Session.m_aPlayerName[0] ? Session.m_aPlayerName : "알 수 없음",
+			pAddr,
+			pReporterName,
+			pReporterAddr,
+			pReason);
+		char aEscMessage[1024];
+		EscapeJson(aEscMessage, sizeof(aEscMessage), aMessage);
+
+		str_format(aJson, sizeof(aJson),
+			"{\"content\":\"신고 데모가 도착했어요!\\n%s\",\"allowed_mentions\":{\"parse\":[]}}",
+			aEscMessage);
+	}
+
+	const char *pUploadName = Session.m_aUploadName[0] ? Session.m_aUploadName : "hook-demo.demo";
+	auto pUniqueReq = CreateWebhookFileRequest(pWebhookUrl, aJson, pUploadName, vData.data(), vData.size());
+	if(!pUniqueReq)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Failed to create webhook request for hook demo upload.");
+		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+		return false;
+	}
+
+	std::shared_ptr<IHttpRequest> pReq(
+		pUniqueReq.release(),
+		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
+	m_Http.Run(pReq);
+
+	Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
+	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Queued hook demo upload.");
+	return true;
+}
+
+static std::unique_ptr<CHttpRequest> CreateWebhookFileRequest(const char *pUrl, const char *pJsonPayload, const char *pFilename, const unsigned char *pFileData, size_t FileSize)
+{
+	if(!pUrl || !pJsonPayload || !pFilename || !pFileData || FileSize == 0)
+	{
+		return nullptr;
+	}
+
+	unsigned char aRandom[8];
+	secure_random_fill(aRandom, sizeof(aRandom));
+	char aBoundary[64];
+	str_format(aBoundary, sizeof(aBoundary), "------------------------DDNetHookDemo-%02x%02x%02x%02x", aRandom[0], aRandom[1], aRandom[2], aRandom[3]);
+
+	std::vector<unsigned char> vBody;
+	vBody.reserve(FileSize + 512);
+
+	const auto AppendString = [&vBody](const char *pStr) {
+		const size_t Length = str_length(pStr);
+		vBody.insert(vBody.end(), pStr, pStr + Length);
+	};
+	const auto AppendData = [&vBody](const unsigned char *pData, size_t Size) {
+		vBody.insert(vBody.end(), pData, pData + Size);
+	};
+
+	AppendString("--");
+	AppendString(aBoundary);
+	AppendString("\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n");
+	AppendString(pJsonPayload);
+	AppendString("\r\n--");
+	AppendString(aBoundary);
+	AppendString("\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"");
+	AppendString(pFilename);
+	AppendString("\"\r\nContent-Type: application/octet-stream\r\n\r\n");
+	AppendData(pFileData, FileSize);
+	AppendString("\r\n--");
+	AppendString(aBoundary);
+	AppendString("--\r\n");
+
+	auto pRequest = std::make_unique<CHttpRequest>(pUrl);
+	if(!pRequest)
+	{
+		return nullptr;
+	}
+
+	pRequest->Post(vBody.data(), vBody.size());
+	char aHeader[128];
+	str_format(aHeader, sizeof(aHeader), "Content-Type: multipart/form-data; boundary=%s", aBoundary);
+	pRequest->Header(aHeader);
+	pRequest->Timeout(CTimeout{4000, 30000, 500, 5});
+	return pRequest;
+}
+
 int CServerBan::BanAddr(const NETADDR *pAddr, int Seconds, const char *pReason, bool VerbatimReason)
 {
-	return BanExt(&m_BanAddrPool, pAddr, Seconds, pReason, VerbatimReason);
+	int Result = BanExt(&m_BanAddrPool, pAddr, Seconds, pReason, VerbatimReason);
+	if(Result == 0 && Seconds <= 0 && !m_LoadingPersistentBans && !m_SyncingPersistentBans)
+	{
+		AppendPersistentBan(pAddr, pReason);
+	}
+	return Result;
 }
 
 int CServerBan::BanRange(const CNetRange *pRange, int Seconds, const char *pReason)
@@ -225,6 +751,7 @@ void CServer::CClient::Reset()
 	m_NextMapChunk = 0;
 	m_Flags = 0;
 	m_RedirectDropTime = 0;
+	m_DnsblBanPending = false;
 }
 
 CServer::CServer()
@@ -927,6 +1454,7 @@ int CServer::SendMsg(CMsgPacker *pMsg, int Flags, int ClientId)
 			for(auto &Recorder : m_aDemoRecorder)
 				if(Recorder.IsRecording())
 					Recorder.RecordMessage(Pack6.Data(), Pack6.Size());
+			RecordHookDemoMessage(Pack6.Data(), Pack6.Size());
 		}
 
 		if(!(Flags & MSGFLAG_NOSEND))
@@ -972,6 +1500,7 @@ int CServer::SendMsg(CMsgPacker *pMsg, int Flags, int ClientId)
 				m_aDemoRecorder[RECORDER_MANUAL].RecordMessage(Pack.Data(), Pack.Size());
 			if(m_aDemoRecorder[RECORDER_AUTO].IsRecording())
 				m_aDemoRecorder[RECORDER_AUTO].RecordMessage(Pack.Data(), Pack.Size());
+			RecordHookDemoMessage(Pack.Data(), Pack.Size());
 		}
 
 		if(!(Flags & MSGFLAG_NOSEND))
@@ -1004,7 +1533,7 @@ void CServer::DoSnapshot()
 {
 	bool IsGlobalSnap = Config()->m_SvHighBandwidth || (m_CurrentGameTick % 2) == 0;
 
-	if(m_aDemoRecorder[RECORDER_MANUAL].IsRecording() || m_aDemoRecorder[RECORDER_AUTO].IsRecording())
+	if(m_aDemoRecorder[RECORDER_MANUAL].IsRecording() || m_aDemoRecorder[RECORDER_AUTO].IsRecording() || HookDemoRecordingActive())
 	{
 		// create snapshot for demo recording
 		char aData[CSnapshot::MAX_SIZE];
@@ -1019,6 +1548,8 @@ void CServer::DoSnapshot()
 			m_aDemoRecorder[RECORDER_MANUAL].RecordSnapshot(Tick(), aData, SnapshotSize);
 		if(m_aDemoRecorder[RECORDER_AUTO].IsRecording())
 			m_aDemoRecorder[RECORDER_AUTO].RecordSnapshot(Tick(), aData, SnapshotSize);
+		if(HookDemoRecordingActive())
+			RecordHookDemoSnapshot(Tick(), aData, SnapshotSize);
 	}
 
 	// create snapshots for all clients
@@ -2651,7 +3182,7 @@ void CServer::UpdateRegisterServerInfo()
 	JsonWriter.WriteStrValue("time"); // "points" or "time"
 
 	JsonWriter.WriteAttribute("requires_login");
-	JsonWriter.WriteBoolValue(false);
+	JsonWriter.WriteBoolValue(g_Config.m_SvRequiredLogin);
 
 	{
 		bool FoundFlags = false;
@@ -2905,6 +3436,12 @@ int CServer::LoadMap(const char *pMapName)
 
 	str_copy(m_aCurrentMap, pMapName);
 	m_pCurrentMapName = fs_filename(m_aCurrentMap);
+
+	// Execute server-configured auto cfg on every map change, if set.
+	if(g_Config.m_SvMapAutoCfg[0] != '\0')
+	{
+		Console()->ExecuteFile(g_Config.m_SvMapAutoCfg, IConsole::CLIENT_ID_UNSPECIFIED, true, IStorage::TYPE_ALL);
+	}
 
 	// load complete map into memory for download
 	{
@@ -3167,6 +3704,7 @@ int CServer::Run()
 			if(m_MapReload || m_SameMapReload || m_CurrentGameTick >= MAX_TICK) // force reload to make sure the ticks stay within a valid range
 			{
 				const bool SameMapReload = m_SameMapReload;
+				AbortHookDemoSessions();
 				// load map
 				if(LoadMap(Config()->m_SvMap))
 				{
@@ -3303,6 +3841,7 @@ int CServer::Run()
 				UpdateClientMaplistEntries(CommandSendingClientId);
 
 				m_Fifo.Update();
+				ProcessHookDemoSessions();
 
 #if defined(CONF_PLATFORM_ANDROID)
 				std::vector<std::string> vAndroidCommandQueue = FetchAndroidServerCommandQueue();
@@ -3354,9 +3893,27 @@ int CServer::Run()
 
 								if(Config()->m_SvDnsblBan)
 								{
-									m_NetServer.NetBan()->BanAddr(ClientAddr(ClientId), 60, Config()->m_SvDnsblBanReason, true);
+									if(m_aClients[ClientId].m_State >= CClient::STATE_READY)
+									{
+										m_NetServer.NetBan()->BanAddr(ClientAddr(ClientId), 60, Config()->m_SvDnsblBanReason, true);
+									}
+									else
+									{
+										m_aClients[ClientId].m_DnsblBanPending = true;
+									}
 								}
 							}
+						}
+					}
+				}
+				if(Config()->m_SvDnsblBan)
+				{
+					for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+					{
+						if(m_aClients[ClientId].m_DnsblBanPending && m_aClients[ClientId].m_State >= CClient::STATE_READY)
+						{
+							m_aClients[ClientId].m_DnsblBanPending = false;
+							m_NetServer.NetBan()->BanAddr(ClientAddr(ClientId), 60, Config()->m_SvDnsblBanReason, true);
 						}
 					}
 				}
@@ -3428,6 +3985,7 @@ int CServer::Run()
 			}
 		}
 	}
+	AbortHookDemoSessions();
 	const char *pDisconnectReason = "Server shutdown";
 	if(m_aShutdownReason[0])
 		pDisconnectReason = m_aShutdownReason;

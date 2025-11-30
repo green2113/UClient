@@ -294,6 +294,10 @@ public:
 
 	virtual const char *GetMapName() const = 0;
 
+	virtual void SendHookSpamWebhook(int ClientId, float HooksPerSecond, const char *pAddr) = 0;
+	virtual bool StartHookSpamDemoRecord(int ClientId, float HooksPerSecond) = 0;
+	virtual bool StartReportDemoRecord(int ReporterId, int TargetId, const char *pReason) = 0;
+
 	virtual bool IsSixup(int ClientId) const = 0;
 };
 

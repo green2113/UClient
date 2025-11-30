@@ -128,6 +128,11 @@ class CClient : public IClient, public CDemoPlayer::IListener
 
 	// version-checking
 	char m_aVersionStr[10] = "0";
+	char m_aUcVersionStr[64] = "";
+	bool m_HasUcInfo = false;
+	bool m_UcInfoFailed = false;
+	bool m_CustomUpdateAvailable = false;
+	std::shared_ptr<CHttpRequest> m_pUcInfoTask = nullptr;
 
 	// pinging
 	int64_t m_PingStartTime = 0;
@@ -391,8 +396,16 @@ public:
 
 	EInfoState InfoState() const override { return m_InfoState; }
 	void RequestDDNetInfo() override;
+	void RequestUcInfo() override;
+	bool UcInfoRequestRunning() const override;
+	bool UcInfoHasResult() const override;
+	bool UcInfoFailed() const override;
+	bool UcUpdateAvailable() const override;
+	const char *UcLatestVersion() const override;
 	void ResetDDNetInfoTask();
 	void LoadDDNetInfo();
+	void ResetUcInfoTask();
+	void LoadUcInfo();
 
 	bool IsSixup() const override { return m_Sixup; }
 

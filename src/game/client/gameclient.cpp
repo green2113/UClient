@@ -164,7 +164,6 @@ void CGameClient::OnConsoleInit()
 					      &m_InfoMessages,
 					      &m_Chat,
 					      &m_Broadcast,
-					      &m_ImportantAlert,
 					      &m_DebugHud,
 					      &m_TouchControls,
 					      &m_Scoreboard,
@@ -175,7 +174,15 @@ void CGameClient::OnConsoleInit()
 					      &m_Scripting,
 					      &m_KeyBinder,
 					      &m_GameConsole,
-					      &m_MenuBackground});
+					      &m_MenuBackground,
+						
+						  // UNDER COMPONENTS
+						  &m_AutoChat,
+						  &m_AutoReply,
+						  &m_ChatSkin,
+						  &m_SkinSwitch,
+						  &m_UcTranslator
+						});
 
 	// build the input stack
 	m_vpInput.insert(m_vpInput.end(), {&m_KeyBinder, // this will take over all input when we want to bind a key
@@ -187,7 +194,6 @@ void CGameClient::OnConsoleInit()
 						  &m_Spectator,
 						  &m_BindWheel,
 						  &m_Emoticon,
-						  &m_ImportantAlert,
 						  &m_Menus,
 						  &m_Controls,
 						  &m_TouchControls,

@@ -2503,8 +2503,6 @@ if(CLIENT)
     components/ghost.h
     components/hud.cpp
     components/hud.h
-    components/important_alert.cpp
-    components/important_alert.h
     components/infomessages.cpp
     components/infomessages.h
     components/items.cpp
@@ -2600,6 +2598,17 @@ if(CLIENT)
     components/tooltips.h
     components/touch_controls.cpp
     components/touch_controls.h
+    components/under/autochat.cpp
+    components/under/autochat.h
+    components/under/autoreply.cpp
+    components/under/autoreply.h
+    components/under/chatskin.cpp
+    components/under/chatskin.h
+    components/under/menus_uclient.cpp
+    components/under/skinswitch.cpp
+    components/under/skinswitch.h
+    components/under/translator.cpp
+    components/under/translator.h
     components/voting.cpp
     components/voting.h
     gameclient.cpp
@@ -2981,6 +2990,8 @@ if(SERVER)
     gamecontroller.h
     gamemodes/DDRace.cpp
     gamemodes/DDRace.h
+    gamemodes/gores.cpp
+    gamemodes/gores.h
     gamemodes/mod.cpp
     gamemodes/mod.h
     gameworld.cpp

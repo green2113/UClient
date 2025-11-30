@@ -68,9 +68,7 @@ static void UrlEncodePath(const char *pIn, char *pOut, size_t OutSize)
 
 static const char *GetUpdaterUrl(char *pBuf, int BufSize, const char *pFile)
 {
-	char aBuf[1024];
-	UrlEncodePath(pFile, aBuf, sizeof(aBuf));
-	str_format(pBuf, BufSize, "https://update.tclient.app/%s", aBuf);
+	str_format(pBuf, BufSize, "%s/%s", UCLIENT_UPDATE_BASE_URL, pFile);
 	return pBuf;
 }
 

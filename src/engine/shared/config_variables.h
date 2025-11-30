@@ -47,6 +47,15 @@ MACRO_CONFIG_INT(ClNamePlatesFriendMark, cl_nameplates_friendmark, 0, 0, 1, CFGF
 MACRO_CONFIG_INT(ClNamePlatesStrong, cl_nameplates_strong, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show strong/weak in name plates (0 - off, 1 - icons, 2 - icons + numbers)")
 MACRO_CONFIG_INT(ClNamePlatesStrongSize, cl_nameplates_strong_size, 30, -50, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Size of strong/weak state icons and numbers")
 
+MACRO_CONFIG_INT(ClTagReply, uc_tag_reply, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable automatic reply when your name is tagged")
+MACRO_CONFIG_STR(ClTagReplyMessage, uc_tag_reply_message, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Message to send when automatic tag reply triggers")
+MACRO_CONFIG_STR(ClTagDiscordWebHookUrl, uc_tag_discord_webhook_url, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Discord webhook URL used when automatic tag reply triggers")
+MACRO_CONFIG_STR(ClChatDiscordWebHookUrl, uc_chat_discord_webhook_url, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Discord webhook URL used to send chat logs")
+MACRO_CONFIG_STR(ClChatSkinMessage, uc_chat_skin_message, 128, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Keyword that triggers automatic skin change")
+MACRO_CONFIG_STR(ClSkinSwitchSkinName, uc_skin_switch_skin_name, 64, "default", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Skin name to switch to when using /skin command")
+MACRO_CONFIG_STR(ClSkinSwitchBodyColor, uc_skin_switch_body_color, 9, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Body color to use when switching skin")
+MACRO_CONFIG_STR(ClSkinSwitchFeetColor, uc_skin_switch_feet_color, 9, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Feet color to use when switching skin")
+
 MACRO_CONFIG_INT(ClAfkEmote, cl_afk_emote, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show zzz emote next to afk players")
 MACRO_CONFIG_INT(ClTextEntities, cl_text_entities, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Render textual entity data")
 MACRO_CONFIG_INT(ClTextEntitiesSize, cl_text_entities_size, 100, 20, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Size of textual entity data from 20 to 100%")
@@ -88,6 +97,11 @@ MACRO_CONFIG_INT(ClShowVotesAfterVoting, cl_show_votes_after_voting, 0, 0, 1, CF
 MACRO_CONFIG_INT(ClShowLocalTimeAlways, cl_show_local_time_always, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Always show local time")
 MACRO_CONFIG_INT(ClShowfps, cl_showfps, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show ingame FPS counter")
 MACRO_CONFIG_INT(ClShowpred, cl_showpred, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show ingame prediction time in milliseconds")
+MACRO_CONFIG_INT(UcTranslate, uc_translate, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Automatically translate chat messages before sending")
+MACRO_CONFIG_STR(UcTranslateTarget, uc_translate_target, 8, "en", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Translation target language (ISO 639 code)")
+MACRO_CONFIG_STR(UcTranslateApi, uc_translate_api, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Custom translation API endpoint for chat translator")
+MACRO_CONFIG_STR(UcTranslateKey, uc_translate_key, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "API key for the custom translation endpoint")
+MACRO_CONFIG_STR(UcTranslateMessageTarget, uc_translate_message_target, 8, "en", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Target language for manual chat translations")
 MACRO_CONFIG_INT(ClEyeWheel, cl_eye_wheel, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show eye wheel along together with emotes")
 MACRO_CONFIG_INT(ClEyeDuration, cl_eye_duration, 999999, 1, 999999, CFGFLAG_CLIENT | CFGFLAG_SAVE, "How long the eyes emotes last")
 MACRO_CONFIG_INT(ClFreezeStars, cl_freeze_stars, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show old star particles for frozen tees")
@@ -457,6 +471,7 @@ MACRO_CONFIG_INT(SvIpv4Only, sv_ipv4only, 0, 0, 1, CFGFLAG_SERVER, "Whether to b
 MACRO_CONFIG_INT(SvPort, sv_port, 0, 0, 65535, CFGFLAG_SERVER, "Port to use for the server (Only ports 8303-8310 work in LAN server browser, 0 to automatically find a free port in 8303-8310). See sv_register_port for the external port if you're behind NAT")
 MACRO_CONFIG_STR(SvHostname, sv_hostname, 128, "", CFGFLAG_SERVER, "Server hostname (0.7 only)")
 MACRO_CONFIG_STR(SvMap, sv_map, 128, "Sunny Side Up", CFGFLAG_SERVER, "Map to use on the server")
+MACRO_CONFIG_STR(SvMapAutoCfg, sv_map_auto_cfg, 128, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "CFG file to execute on every map change")
 MACRO_CONFIG_INT(SvMaxClients, sv_max_clients, SERVER_MAX_CLIENTS, 1, SERVER_MAX_CLIENTS, CFGFLAG_SERVER, "Maximum number of clients that are allowed on a server")
 MACRO_CONFIG_INT(SvMaxClientsPerIp, sv_max_clients_per_ip, 4, 1, SERVER_MAX_CLIENTS, CFGFLAG_SERVER, "Maximum number of clients with the same IP that can connect to the server")
 MACRO_CONFIG_INT(SvHighBandwidth, sv_high_bandwidth, 0, 0, 1, CFGFLAG_SERVER, "Use high bandwidth mode. Doubles the bandwidth required for the server. LAN use only")
@@ -572,6 +587,24 @@ MACRO_CONFIG_INT(SvTeam0Mode, sv_team0mode, 1, 0, 1, CFGFLAG_SERVER, "Enables /t
 MACRO_CONFIG_INT(SvUseSql, sv_use_sql, 0, 0, 1, CFGFLAG_SERVER, "Enables MySQL backend instead of SQLite backend (sv_sqlite_file is still used as fallback write server when no MySQL server is reachable)")
 MACRO_CONFIG_INT(SvSqlQueriesDelay, sv_sql_queries_delay, 1, 0, 20, CFGFLAG_SERVER, "Delay in seconds between SQL queries of a single player")
 MACRO_CONFIG_STR(SvSqliteFile, sv_sqlite_file, 64, "ddnet-server.sqlite", CFGFLAG_SERVER, "File to store ranks in case sv_use_sql is turned off or used as backup sql server")
+MACRO_CONFIG_INT(SvReportAutopunish, sv_report_autopunish, 1, 0, 1, CFGFLAG_SERVER, "Enable automatic punishments triggered by player reports")
+MACRO_CONFIG_INT(SvReportAutopunishWindow, sv_report_autopunish_window, 600, 10, 7200, CFGFLAG_SERVER, "Time window in seconds used to aggregate unique reports against a player")
+MACRO_CONFIG_INT(SvReportDuplicateCooldown, sv_report_duplicate_cooldown, 600, 10, 7200, CFGFLAG_SERVER, "Seconds a player must wait before reporting the same target again")
+MACRO_CONFIG_INT(SvReportMinPlayers, sv_report_min_players, 6, 0, MAX_CLIENTS, CFGFLAG_SERVER, "Minimum number of active players required before automatic punishments can trigger")
+MACRO_CONFIG_INT(SvReportAutopunishMutePercent, sv_report_autopunish_mute_percent, 30, 1, 100, CFGFLAG_SERVER, "Percent of active players that must report a target to trigger an automatic mute")
+MACRO_CONFIG_INT(SvReportAutopunishMuteMinutes, sv_report_autopunish_mute_minutes, 30, 1, 240, CFGFLAG_SERVER, "Mute duration in minutes applied by automatic report handling")
+MACRO_CONFIG_INT(SvReportAutopunishBanPercent, sv_report_autopunish_ban_percent, 60, 1, 100, CFGFLAG_SERVER, "Percent of active players that must report a target to trigger an automatic ban")
+MACRO_CONFIG_INT(SvReportAutopunishBanMinutes, sv_report_autopunish_ban_minutes, 60, 1, 1440, CFGFLAG_SERVER, "Ban duration in minutes applied by automatic report handling")
+MACRO_CONFIG_STR(SvReportWebhookUrl, sv_report_webhook_url, 256, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "Discord webhook URL for /report chat command")
+MACRO_CONFIG_STR(SvFinishWebhookUrl, sv_finish_webhook_url, 256, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "Discord webhook URL for finish notifications")
+MACRO_CONFIG_STR(SvBanWebhookUrl, sv_ban_webhook_url, 256, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "Discord webhook URL for ban notifications")
+
+MACRO_CONFIG_INT(SvVoteKickReasonRequired, sv_vote_kick_reason_required, 1, 0, 1, CFGFLAG_SERVER, "투표 사유 입력")
+MACRO_CONFIG_INT(SvMaintenance, sv_maintenance, 0, 0, 1, CFGFLAG_SERVER | CFGFLAG_SAVE, "Enable maintenance mode (block new connections)")
+MACRO_CONFIG_STR(SvMaintenanceMessage, sv_maintenance_message, 256, "현재 서버가 점검 중입니다. (discord.gg/PNpxPxvcws)", CFGFLAG_SERVER | CFGFLAG_SAVE, "Disconnect message shown when maintenance mode is enabled")
+MACRO_CONFIG_STR(SvMaintenanceBypassIp, sv_maintenance_bypass_ip, 64, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "Single IP address allowed to bypass maintenance mode")
+
+MACRO_CONFIG_INT(SvRequiredLogin, sv_required_login, 0, 0, 1, CFGFLAG_SERVER, "Require players to login with ddnet account to join the server")
 
 #if defined(CONF_UPNP)
 MACRO_CONFIG_INT(SvUseUPnP, sv_use_upnp, 0, 0, 1, CFGFLAG_SERVER, "Enables UPnP support. (Requires -DCONF_UPNP=ON when compiling)")
@@ -674,6 +707,10 @@ MACRO_CONFIG_INT(SvVotePauseTime, sv_vote_pause_time, 10, 0, 360, CFGFLAG_SERVER
 MACRO_CONFIG_INT(SvTuneReset, sv_tune_reset, 1, 0, 1, CFGFLAG_SERVER, "Whether tuning is reset after each map change or not")
 MACRO_CONFIG_STR(SvResetFile, sv_reset_file, 128, "reset.cfg", CFGFLAG_SERVER, "File to execute on map change or reload to set the default server settings")
 MACRO_CONFIG_STR(SvInputFifo, sv_input_fifo, 128, "", CFGFLAG_SERVER, "Fifo file (non-Windows) or Named Pipe (Windows) to use as input for server console")
+MACRO_CONFIG_STR(SvPersistentBansFile, sv_persistent_bans_file, 128, "storage/bans", CFGFLAG_SERVER | CFGFLAG_SAVE, "File used to persist permanent bans across servers")
+MACRO_CONFIG_STR(SvAntiHookWebhookUrl, sv_anti_hook_webhook_url, 256, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "Discord webhook URL used for anti-hook spam notifications")
+MACRO_CONFIG_INT(SvAntiHookMonitor, sv_anti_hook_monitor, 1, 0, 1, CFGFLAG_SERVER | CFGFLAG_SAVE, "Enable automatic monitoring of abnormal hook usage")
+MACRO_CONFIG_INT(SvAntiHookClick, sv_anti_hook_click, 20, 1, 1000, CFGFLAG_SERVER | CFGFLAG_SAVE, "Number of hooks per 10 seconds considered as abnormal")
 MACRO_CONFIG_INT(SvDDRaceTuneReset, sv_ddrace_tune_reset, 1, 0, 1, CFGFLAG_SERVER, "Whether DDRace tuning (sv_hit, sv_endless_drag and sv_old_laser) is reset after each map change or not")
 MACRO_CONFIG_INT(SvNamelessScore, sv_nameless_score, 1, 0, 1, CFGFLAG_SERVER, "Whether nameless tee has a score or not")
 MACRO_CONFIG_INT(SvTimeInBroadcastInterval, sv_time_in_broadcast_interval, 1, 0, 60, CFGFLAG_SERVER, "How often to update the broadcast time")
@@ -688,6 +725,7 @@ MACRO_CONFIG_INT(SvSpamMuteDuration, sv_spam_mute_duration, 60, 0, 3600, CFGFLAG
 MACRO_CONFIG_INT(SvShutdownWhenEmpty, sv_shutdown_when_empty, 0, 0, 1, CFGFLAG_SERVER, "Shutdown server as soon as no one is on it anymore")
 MACRO_CONFIG_INT(SvReloadWhenEmpty, sv_reload_when_empty, 0, 0, 2, CFGFLAG_SERVER, "Reload map when server is empty (1 = reload once, 2 = reload every time server gets empty)")
 MACRO_CONFIG_INT(SvKillProtection, sv_kill_protection, 20, 0, 9999, CFGFLAG_SERVER, "0 - Disable, 1-9999 minutes")
+MACRO_CONFIG_INT(SvForceSeason, sv_force_season, -1, -1, SEASON_COUNT - 1, CFGFLAG_SERVER | CFGFLAG_SAVE, "Force the world season (-1 = automatic real date)")
 MACRO_CONFIG_INT(SvSoloServer, sv_solo_server, 0, 0, 1, CFGFLAG_SERVER | CFGFLAG_GAME, "Set server to solo mode (no player interactions, has to be set before loading the map)")
 MACRO_CONFIG_STR(SvClientSuggestion, sv_client_suggestion, 128, "Get DDNet client from DDNet.org to use all features on DDNet!", CFGFLAG_SERVER, "Broadcast to display to players without DDNet client")
 MACRO_CONFIG_STR(SvClientSuggestionOld, sv_client_suggestion_old, 128, "Your DDNet client is old, update it on DDNet.org!", CFGFLAG_SERVER, "Broadcast to display to players with an old version of DDNet client")
@@ -780,3 +818,11 @@ MACRO_CONFIG_INT(GfxRenderThreadCount, gfx_render_thread_count, 3, 0, 0, CFGFLAG
 MACRO_CONFIG_INT(GfxDriverIsBlocked, gfx_driver_is_blocked, 0, 0, 1, CFGFLAG_SAVE | CFGFLAG_CLIENT, "If 1, the current driver is in a blocked error state.")
 
 MACRO_CONFIG_INT(ClVideoRecorderFPS, cl_video_recorder_fps, 60, 1, 1000, CFGFLAG_SAVE | CFGFLAG_CLIENT, "At which FPS the videorecorder should record demos.")
+
+/*
+ * Add config variables for mods below this comment to avoid merge conflicts.
+ */
+
+// uclient and userver
+MACRO_CONFIG_STR(UServerNewYearMessage, userver_newyear_message, 256, "새해 복 많이 받으세요! / Happy New Year!", CFGFLAG_SERVER | CFGFLAG_SAVE, "새해 인사 메세지를 설정합니다. (단, 시즌날에만 메세지를 전송합니다)")
+MACRO_CONFIG_INT(SvIsFunServer, sv_is_fun_server, 0, 0, 1, CFGFLAG_SERVER | CFGFLAG_GAME, "서버를 재미 서버로 설정합니다.")

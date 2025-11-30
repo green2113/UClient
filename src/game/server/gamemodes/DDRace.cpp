@@ -136,8 +136,13 @@ void CGameControllerDDRace::OnPlayerConnect(CPlayer *pPlayer)
 		str_format(aBuf, sizeof(aBuf), "'%s' entered and joined the %s", Server()->ClientName(ClientId), GetTeamName(pPlayer->GetTeam()));
 		GameServer()->SendChat(-1, TEAM_ALL, aBuf, -1, CGameContext::FLAG_SIX);
 
-		GameServer()->SendChatTarget(ClientId, "DDraceNetwork Mod. Version: " GAME_VERSION);
-		GameServer()->SendChatTarget(ClientId, "please visit DDNet.org or say /info and make sure to read our /rules");
+		GameServer()->SendChatTarget(ClientId, "Gores Mod. Version: " GAME_VERSION);
+		GameServer()->SendChatTarget(ClientId, "Join discord.gg/PNpxPxvcws to check out the map finish logs and announcements!");
+		
+		if(g_Config.m_SvIsFunServer)
+		{
+			GameServer()->SendChatTarget(ClientId, "This is a fun server! Records are not saved, so just have fun!");
+		}
 	}
 }
 

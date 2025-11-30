@@ -41,6 +41,7 @@ public:
 	uint32_t GetUniqueCid() const { return m_UniqueClientId; }
 	int GetClientVersion() const;
 	bool SetTimerType(int TimerType);
+	bool IsNewYear() const { return m_NewYear; }
 
 	void Tick();
 	void PostTick();
@@ -60,6 +61,7 @@ public:
 	const CCharacter *GetCharacter() const;
 
 	void SpectatePlayerName(const char *pName);
+	void OnHookFired();
 
 	//---------------------------------------------------------
 	// this is used for snapping so we know how we can clip the view for the player
@@ -120,6 +122,34 @@ public:
 		int m_Max;
 	} m_Latency;
 
+	struct CNetStatsTracker
+	{
+		bool m_Active;
+		int m_Seconds;
+		int64_t m_EndTick;
+		int m_SampleCount;
+		int64_t m_LatencySum;
+		int m_LatencyMin;
+		int m_LatencyMax;
+		int64_t m_JitterAccum;
+		int m_LastLatency;
+		bool m_HaveLastLatency;
+
+		void Reset()
+		{
+			m_Active = false;
+			m_Seconds = 0;
+			m_EndTick = 0;
+			m_SampleCount = 0;
+			m_LatencySum = 0;
+			m_LatencyMin = 0;
+			m_LatencyMax = 0;
+			m_JitterAccum = 0;
+			m_LastLatency = 0;
+			m_HaveLastLatency = false;
+		}
+	} m_NetStats;
+
 private:
 	const uint32_t m_UniqueClientId;
 	CCharacter *m_pCharacter;
@@ -147,6 +177,8 @@ private:
 	int m_OverrideEmote;
 	int m_OverrideEmoteReset;
 	bool m_Halloween;
+	bool m_NewYear;
+	bool m_Valentine;
 
 public:
 	enum
@@ -178,6 +210,8 @@ public:
 	bool CanSpec() const;
 
 	bool IsPlaying() const;
+	void StartNetStatsMeasurement(int Seconds);
+	bool IsNetStatsMeasurementActive() const { return m_NetStats.m_Active; }
 	int64_t m_LastKickVote;
 	int64_t m_LastDDRaceTeamChange;
 	int m_ShowOthers;
@@ -222,6 +256,11 @@ public:
 
 	bool m_EyeEmoteEnabled;
 	int m_TimerType;
+
+	int64_t m_HookSpamWindowStartTick = 0;
+	int m_HookSpamCount = 0;
+	bool m_HookSpamWarned = false;
+	int64_t m_NextHookDemoRecordTick = 0;
 
 	int GetDefaultEmote() const;
 	void OverrideDefaultEmote(int Emote, int Tick);

@@ -395,3 +395,28 @@ void CScore::GetSaves(int ClientId)
 		return;
 	ExecPlayerThread(CScoreWorker::GetSaves, "get saves", ClientId, "", 0);
 }
+
+void CScore::AddReportEntry(const char *pReporterName, const char *pReporterAddr, const char *pTargetName, const char *pTargetAddr, const char *pReason, const char *pMap, const char *pServer, int AutoAction, int AutoDurationSeconds)
+{
+	if(!m_pPool)
+		return;
+
+	auto Tmp = std::make_unique<CSqlReportEntry>();
+	str_copy(Tmp->m_aReporter, pReporterName ? pReporterName : "", sizeof(Tmp->m_aReporter));
+	str_copy(Tmp->m_aReporterAddr, pReporterAddr ? pReporterAddr : "", sizeof(Tmp->m_aReporterAddr));
+	str_copy(Tmp->m_aTarget, pTargetName ? pTargetName : "", sizeof(Tmp->m_aTarget));
+	str_copy(Tmp->m_aTargetAddr, pTargetAddr ? pTargetAddr : "", sizeof(Tmp->m_aTargetAddr));
+	str_copy(Tmp->m_aReason, pReason ? pReason : "", sizeof(Tmp->m_aReason));
+	str_copy(Tmp->m_aMap, pMap ? pMap : "", sizeof(Tmp->m_aMap));
+
+	const char *pSourceServer = (pServer && pServer[0]) ? pServer : g_Config.m_SvSqlServerName;
+	if(!pSourceServer || !pSourceServer[0])
+		pSourceServer = g_Config.m_SvName;
+	str_copy(Tmp->m_aServer, pSourceServer ? pSourceServer : "", sizeof(Tmp->m_aServer));
+
+	Tmp->m_AutoAction = AutoAction;
+	Tmp->m_AutoDuration = AutoDurationSeconds;
+	Tmp->m_Timestamp = time_timestamp();
+
+	m_pPool->ExecuteWrite(CScoreWorker::AddReportEntry, std::move(Tmp), "add report entry");
+}

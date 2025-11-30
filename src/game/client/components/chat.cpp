@@ -20,8 +20,10 @@
 #include <game/client/components/skins.h>
 #include <game/client/components/sounds.h>
 #include <game/client/components/tclient/colored_parts.h>
+#include <game/client/components/under/translator.h>
 #include <game/client/gameclient.h>
 #include <game/localization.h>
+#include <game/client/component.h>
 
 char CChat::ms_aDisplayText[MAX_LINE_LENGTH] = "";
 
@@ -29,6 +31,10 @@ CChat::CLine::CLine()
 {
 	m_TextContainerIndex.Reset();
 	m_QuadContainerIndex = -1;
+	m_LineId = -1;
+	m_aTranslation[0] = '\0';
+	m_HasTranslation = false;
+	m_TranslationPending = false;
 }
 
 void CChat::CLine::Reset(CChat &This)
@@ -38,6 +44,10 @@ void CChat::CLine::Reset(CChat &This)
 	m_Initialized = false;
 	m_Time = 0;
 	m_aText[0] = '\0';
+	m_aTranslation[0] = '\0';
+	m_LineId = -1;
+	m_HasTranslation = false;
+	m_TranslationPending = false;
 	m_aName[0] = '\0';
 	m_Friend = false;
 	m_TimesRepeated = 0;
@@ -119,6 +129,7 @@ void CChat::ClearLines()
 		Line.Reset(*this);
 	m_PrevScoreBoardShowed = false;
 	m_PrevShowChat = false;
+	m_ManualTranslateCursor = -1;
 }
 
 void CChat::OnWindowResize()
@@ -143,6 +154,8 @@ void CChat::Reset()
 	m_IsInputCensored = false;
 	m_EditingNewLine = true;
 	m_ServerSupportsCommandInfo = false;
+	m_LineSequence = 0;
+	m_ManualTranslateCursor = -1;
 	m_ServerCommandsNeedSorting = false;
 	m_aCurrentInputText[0] = '\0';
 	DisableMode();
@@ -202,6 +215,11 @@ void CChat::ConClearChat(IConsole::IResult *pResult, void *pUserData)
 	((CChat *)pUserData)->ClearLines();
 }
 
+void CChat::ConTranslateMessage(IConsole::IResult *pResult, void *pUserData)
+{
+	((CChat *)pUserData)->RequestManualTranslation();
+}
+
 void CChat::ConchainChatOld(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
 {
 	pfnCallback(pResult, pCallbackUserData);
@@ -237,6 +255,7 @@ void CChat::OnConsoleInit()
 	Console()->Register("+show_chat", "", CFGFLAG_CLIENT, ConShowChat, this, "Show chat");
 	Console()->Register("echo", "r[message]", CFGFLAG_CLIENT | CFGFLAG_STORE, ConEcho, this, "Echo the text in chat window");
 	Console()->Register("clear_chat", "", CFGFLAG_CLIENT | CFGFLAG_STORE, ConClearChat, this, "Clear chat messages");
+	Console()->Register("uc_translate_message", "", CFGFLAG_CLIENT, ConTranslateMessage, this, "Translate the most recent chat line");
 }
 
 void CChat::OnInit()
@@ -264,6 +283,65 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	}
 	else if(Event.m_Flags & IInput::FLAG_PRESS && (Event.m_Key == KEY_RETURN || Event.m_Key == KEY_KP_ENTER))
 	{
+		const char *pText = m_Input.GetString();
+
+		if(pText && str_length(pText) >= 6 && str_comp_nocase_num(pText, "/skin ", 6) == 0)
+		{
+			const char *pNameStart = pText + 6;
+			char aName[256];
+			str_copy(aName, pNameStart, sizeof(aName));
+
+			int len = str_length(aName);
+			int start = 0;
+			while(start < len && aName[start] == ' ')
+				start++;
+			int end = len - 1;
+			while(end >= start && aName[end] == ' ')
+			{
+				aName[end] = '\0';
+				end--;
+			}
+
+			int trimmedLen = end - start + 1;
+			if(start > 0 && trimmedLen > 0)
+				memmove(aName, aName + start, trimmedLen);
+			aName[trimmedLen] = '\0';
+
+			{
+				int j = 0;
+				for(int i = 0; i < trimmedLen; i++)
+				{
+					if(aName[i] != '"')
+						aName[j++] = aName[i];
+				}
+				aName[j] = '\0';
+			}
+
+			const char *pTargetName = aName;
+
+			bool AddEntry = false;
+
+			if(pTargetName[0] != '\0')
+			{
+				GameClient()->m_SkinSwitch.ChangeSkinByName(pTargetName);
+				AddEntry = true;
+			}
+
+			if(AddEntry)
+			{
+				const int Length = str_length(pText);
+				CHistoryEntry *pEntry = m_History.Allocate(sizeof(CHistoryEntry) + Length);
+				pEntry->m_Team = m_Mode == MODE_ALL ? 0 : 1;
+				str_copy(pEntry->m_aText, pText, Length + 1);
+			}
+
+			m_Input.Clear();
+			m_Show = false;
+			m_pHistoryEntry = nullptr;
+			DisableMode();
+			return true;
+		}
+
 		if(m_ServerCommandsNeedSorting)
 		{
 			std::sort(m_vServerCommands.begin(), m_vServerCommands.end());
@@ -285,6 +363,8 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	{
 		const bool ShiftPressed = Input()->ShiftIsPressed();
 
+		const bool CtrlPressed = Input()->KeyIsPressed(KEY_LCTRL);
+
 		// fill the completion buffer
 		if(!m_CompletionUsed)
 		{
@@ -301,27 +381,70 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 
 		if(!m_CompletionUsed && m_aCompletionBuffer[0] != '/')
 		{
+			const int LocalId = GameClient()->m_aLocalIds[0];
+			const vec2 CamCenter = GameClient()->m_Camera.m_Center;
+
 			// Create the completion list of player names through which the player can iterate
 			const char *PlayerName, *FoundInput;
 			m_PlayerCompletionListLength = 0;
-			for(auto &PlayerInfo : GameClient()->m_Snap.m_apInfoByName)
+
+			if(CtrlPressed)
 			{
-				if(PlayerInfo)
+				struct SPair
 				{
-					PlayerName = GameClient()->m_aClients[PlayerInfo->m_ClientId].m_aName;
+					float m_Dist;
+					int m_ClientId;
+				};
+				std::vector<SPair> List;
+				List.reserve(MAX_CLIENTS);
+				for(auto &pInfo : GameClient()->m_Snap.m_apInfoByName)
+				{
+					if(!pInfo)
+						continue;
+
+					const int ClientId = pInfo->m_ClientId;
+					if(ClientId == LocalId)
+						continue;
+
+					const vec2 Pos = GameClient()->m_aClients[ClientId].m_Predicted.m_Pos;
+					const float Dx = Pos.x - CamCenter.x;
+					const float Dy = Pos.y - CamCenter.y;
+					List.push_back({Dx * Dx + Dy * Dy, ClientId});
+				}
+				std::sort(List.begin(), List.end(), [](const SPair &a, const SPair &b) { return a.m_Dist < b.m_Dist; });
+				for(const auto &Entry : List)
+				{
+					auto &Completion = m_aPlayerCompletionList[m_PlayerCompletionListLength];
+					Completion.m_ClientId = Entry.m_ClientId;
+					Completion.m_Score = int(Entry.m_Dist);
+					++m_PlayerCompletionListLength;
+
+					if(m_PlayerCompletionListLength >= MAX_CLIENTS)
+						break;
+				}
+			}
+			else
+			{
+				for(auto &pInfo : GameClient()->m_Snap.m_apInfoByName)
+				{
+					if(!pInfo)
+						continue;
+
+					PlayerName = GameClient()->m_aClients[pInfo->m_ClientId].m_aName;
 					FoundInput = str_utf8_find_nocase(PlayerName, m_aCompletionBuffer);
 					if(FoundInput != nullptr)
 					{
-						m_aPlayerCompletionList[m_PlayerCompletionListLength].m_ClientId = PlayerInfo->m_ClientId;
+						m_aPlayerCompletionList[m_PlayerCompletionListLength].m_ClientId = pInfo->m_ClientId;
 						// The score for suggesting a player name is determined by the distance of the search input to the beginning of the player name
 						m_aPlayerCompletionList[m_PlayerCompletionListLength].m_Score = (int)(FoundInput - PlayerName);
-						m_PlayerCompletionListLength++;
+						++m_PlayerCompletionListLength;
 					}
 				}
 			}
+
 			std::stable_sort(m_aPlayerCompletionList, m_aPlayerCompletionList + m_PlayerCompletionListLength,
-				[](const CRateablePlayer &Player1, const CRateablePlayer &Player2) -> bool {
-					return Player1.m_Score < Player2.m_Score;
+				[](const CRateablePlayer &p1, const CRateablePlayer &p2) -> bool {
+					return p1.m_Score < p2.m_Score;
 				});
 		}
 
@@ -665,6 +788,90 @@ void CChat::StoreSave(const char *pText)
 	io_close(File);
 }
 
+CChat::CLine *CChat::FindLineBySequence(int64_t LineId)
+{
+	if(LineId < 0)
+		return nullptr;
+
+	for(auto &Line : m_aLines)
+	{
+		if(Line.m_Initialized && Line.m_LineId == LineId)
+			return &Line;
+	}
+
+	return nullptr;
+}
+
+int64_t CChat::NewestLineSequence() const
+{
+	int64_t Result = -1;
+	for(const auto &Line : m_aLines)
+	{
+		if(Line.m_Initialized && Line.m_LineId > Result)
+			Result = Line.m_LineId;
+	}
+	return Result;
+}
+
+void CChat::HandleManualTranslation(int64_t LineId, const char *pTranslation, bool Success)
+{
+	CLine *pLine = FindLineBySequence(LineId);
+	if(!pLine)
+		return;
+
+	pLine->m_TranslationPending = false;
+
+	if(!Success || !pTranslation || !*pTranslation)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "translator", "Failed to translate chat message.");
+		return;
+	}
+
+	pLine->m_HasTranslation = true;
+	str_copy(pLine->m_aTranslation, pTranslation, sizeof(pLine->m_aTranslation));
+	pLine->m_Time = time();
+	RebuildChat();
+}
+
+void CChat::RequestManualTranslation()
+{
+	if(m_ManualTranslateCursor < 0)
+		m_ManualTranslateCursor = NewestLineSequence();
+
+	CLine *pTargetLine = nullptr;
+	while(m_ManualTranslateCursor >= 0)
+	{
+		CLine *pCandidate = FindLineBySequence(m_ManualTranslateCursor);
+		--m_ManualTranslateCursor;
+		if(!pCandidate || !pCandidate->m_Initialized)
+			continue;
+		if(pCandidate->m_aText[0] == '\0')
+			continue;
+		if(pCandidate->m_TranslationPending || pCandidate->m_HasTranslation)
+			continue;
+		pTargetLine = pCandidate;
+		break;
+	}
+
+	if(!pTargetLine)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "translator", "No chat messages left to translate.");
+		return;
+	}
+
+	pTargetLine->m_TranslationPending = true;
+	const char *pTarget = g_Config.m_UcTranslateMessageTarget[0] ? g_Config.m_UcTranslateMessageTarget : nullptr;
+	pTargetLine->m_Time = time();
+	if(!GameClient()->m_UcTranslator.TranslateLineAsync(pTargetLine->m_LineId, pTargetLine->m_aText, pTarget, this))
+	{
+		pTargetLine->m_TranslationPending = false;
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "translator", "Unable to request translation.");
+		return;
+	}
+
+	RebuildChat();
+}
+
 void CChat::AddLine(int ClientId, int Team, const char *pLine)
 {
 	if(*pLine == 0 ||
@@ -783,6 +990,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	CurrentLine.Reset(*this);
 	CurrentLine.m_Initialized = true;
 	CurrentLine.m_Time = time();
+	CurrentLine.m_LineId = ++m_LineSequence;
 	CurrentLine.m_aYOffset[0] = -1.0f;
 	CurrentLine.m_aYOffset[1] = -1.0f;
 	CurrentLine.m_ClientId = ClientId;
@@ -790,7 +998,11 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	CurrentLine.m_Team = Team == 1;
 	CurrentLine.m_Whisper = Team >= 2;
 	CurrentLine.m_NameColor = -2;
+	CurrentLine.m_aTranslation[0] = '\0';
+	CurrentLine.m_HasTranslation = false;
+	CurrentLine.m_TranslationPending = false;
 	CurrentLine.m_CustomColor = CustomColor;
+	m_ManualTranslateCursor = -1;
 
 	// check for highlighted name
 	if(Client()->State() != IClient::STATE_DEMOPLAYBACK)
@@ -1035,6 +1247,15 @@ void CChat::OnPrepareLines(float y)
 				if(Line.m_pTranslateResponse->m_Language[0] != '\0')
 					pTranslatedLanguage = Line.m_pTranslateResponse->m_Language;
 			}
+		}
+
+		char aRendered[MAX_LINE_LENGTH + MAX_TRANSLATED_LENGTH + 16];
+		const char *pRenderedText = pText;
+		if(Line.m_HasTranslation || Line.m_TranslationPending)
+		{
+			const char *pSuffix = Line.m_TranslationPending ? Localize("Translating...") : Line.m_aTranslation;
+			str_format(aRendered, sizeof(aRendered), "%s\n-> %s", pText, pSuffix);
+			pRenderedText = aRendered;
 		}
 
 		// get the y offset (calculate it if we haven't done that yet)
@@ -1467,9 +1688,25 @@ void CChat::EnsureCoherentWidth() const
 
 void CChat::SendChat(int Team, const char *pLine)
 {
+	SendChatImpl(Team, pLine, true);
+}
+
+void CChat::SendChatTranslated(int Team, const char *pLine)
+{
+	SendChatImpl(Team, pLine, false);
+}
+
+void CChat::SendChatImpl(int Team, const char *pLine, bool AllowTranslation)
+{
 	// don't send empty messages
 	if(*str_utf8_skip_whitespaces(pLine) == '\0')
 		return;
+
+	if(AllowTranslation && pLine[0] != '/' && GameClient()->m_UcTranslator.IsEnabled())
+	{
+		if(GameClient()->m_UcTranslator.TranslateAsync(Team, pLine, this))
+			return;
+	}
 
 	m_LastChatSend = time();
 

@@ -44,7 +44,6 @@
 #include "components/freezebars.h"
 #include "components/ghost.h"
 #include "components/hud.h"
-#include "components/important_alert.h"
 #include "components/infomessages.h"
 #include "components/items.h"
 #include "components/key_binder.h"
@@ -83,6 +82,11 @@
 #include "components/tclient/warlist.h"
 #include "components/tooltips.h"
 #include "components/touch_controls.h"
+#include "components/under/autochat.h"
+#include "components/under/autoreply.h"
+#include "components/under/chatskin.h"
+#include "components/under/skinswitch.h"
+#include "components/under/translator.h"
 #include "components/voting.h"
 
 #include <vector>
@@ -173,7 +177,6 @@ public:
 	CCountryFlags m_CountryFlags;
 	CFlow m_Flow;
 	CHud m_Hud;
-	CImportantAlert m_ImportantAlert;
 	CDebugHud m_DebugHud;
 	CControls m_Controls;
 	CEffects m_Effects;
@@ -224,6 +227,13 @@ public:
 	CScripting m_Scripting;
 	CMod m_Mod;
 	CCustomCommunities m_CustomCommunities;
+	
+	// under client
+	CAutochat m_AutoChat;
+	CAutoreply m_AutoReply;
+	CChatskin m_ChatSkin;
+	CSkinswitch m_SkinSwitch;
+	CUcTranslator m_UcTranslator;
 
 private:
 	std::vector<class CComponent *> m_vpAll;
