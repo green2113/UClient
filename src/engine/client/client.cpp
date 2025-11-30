@@ -476,6 +476,7 @@ void CClient::SetState(EClientState State)
 		CServerInfo CurrentServerInfo;
 		GetServerInfo(&CurrentServerInfo);
 
+		Discord()->SetRichPresenceImageIndex(g_Config.m_UcRichPresenceImage);
 		Discord()->SetGameInfo(CurrentServerInfo, m_aCurrentMap, Registered);
 		Steam()->SetGameInfo(ServerAddress(), m_aCurrentMap, Registered);
 	}
@@ -3150,7 +3151,8 @@ void CClient::Update()
 	else
 		GameClient()->OnUpdate();
 
-	Discord()->Update(g_Config.m_TcDiscordRPC);
+	Discord()->SetRichPresenceImageIndex(g_Config.m_UcRichPresenceImage);
+	Discord()->Update();
 	Steam()->Update();
 	if(Steam()->GetConnectAddress())
 	{
