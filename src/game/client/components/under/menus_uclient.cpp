@@ -59,14 +59,14 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 	Ui()->DoLabel(&Label, Localize("Auto Reply"), HeadlineFontSize, TEXTALIGN_ML);
 
 	CUIRect TagReply;
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClTagReply, Localize("태그 되었을 때 자동 응답"), &g_Config.m_ClTagReply, &MainView, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClTagReply, Localize("Automatic reply when tagged."), &g_Config.m_ClTagReply, &MainView, LineSize);
 
 	MainView.HSplitTop(LineSize + MarginExtraSmall, &TagReply, &MainView);
 	if(g_Config.m_ClTagReply)
 	{
 		TagReply.HSplitTop(MarginExtraSmall, nullptr, &TagReply);
 		static CLineInput l_TagReply(g_Config.m_ClTagReplyMessage, sizeof(g_Config.m_ClTagReplyMessage));
-		l_TagReply.SetEmptyText("자동 응답을 보낼 메세지를 입력하세요.");
+		l_TagReply.SetEmptyText(Localize("Enter the message to send as an auto-reply."));
 		Ui()->DoEditBox(&l_TagReply, &TagReply, EditBoxFontSize);
 	}
 
@@ -87,7 +87,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 	section.HSplitTop(infoH, &infoRect, &section);
 	char aBuf[256];
 	str_format(aBuf, sizeof(aBuf),
-		"/skin %s 를(을) 입력 시 본인이 설정한 스킨으로 되돌아옵니다.",
+		Localize("/skin %s 를(을) 입력 시 본인이 설정한 스킨으로 되돌아옵니다."),
 		g_Config.m_PlayerName);
 	Ui()->DoLabel(&infoRect, aBuf, EditBoxFontSize, TEXTALIGN_TL);
 
@@ -104,11 +104,11 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 	{
 		CUIRect rLabel, rEdit;
 		cName.HSplitTop(labelH, &rLabel, &rEdit);
-		Ui()->DoLabel(&rLabel, Localize("스킨 이름"), EditBoxFontSize, TEXTALIGN_TL);
+		Ui()->DoLabel(&rLabel, Localize("Skin Name"), EditBoxFontSize, TEXTALIGN_TL);
 		rEdit.HSplitTop(editH, &rEdit, nullptr);
 		static CLineInput l_SkinName(g_Config.m_ClSkinSwitchSkinName,
 			sizeof(g_Config.m_ClSkinSwitchSkinName));
-		l_SkinName.SetEmptyText("스킨 이름을 입력해 주세요.");
+		l_SkinName.SetEmptyText(Localize("Please enter the skin name."));
 		Ui()->DoEditBox(&l_SkinName, &rEdit, EditBoxFontSize);
 	}
 

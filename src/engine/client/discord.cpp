@@ -38,6 +38,8 @@ class CDiscord : public IDiscord
 	IDiscordCore *m_pCore;
 	IDiscordActivityEvents m_ActivityEvents;
 	IDiscordActivityManager *m_pActivityManager;
+	bool m_Enabled = false;
+	FDiscordCreate m_pfnDiscordCreate = nullptr;
 
 	const char *RichPresenceImageKey() const
 	{

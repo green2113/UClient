@@ -3152,7 +3152,7 @@ void CClient::Update()
 		GameClient()->OnUpdate();
 
 	Discord()->SetRichPresenceImageIndex(g_Config.m_UcRichPresenceImage);
-	Discord()->Update();
+	Discord()->Update(g_Config.m_TcDiscordRPC != 0);
 	Steam()->Update();
 	if(Steam()->GetConnectAddress())
 	{
