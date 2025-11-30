@@ -20,7 +20,7 @@ extern const char *GIT_SHORTREV_HASH;
 #define UCLIENT_NAME "UClient"
 #endif
 #ifndef UCLIENT_INFO_URL
-#define UCLIENT_INFO_URL "https://ddnet.under1111.com/update    /info.json"
+#define UCLIENT_INFO_URL "https://ddnet.under1111.com/update/info.json"
 #endif
 #ifndef UCLIENT_UPDATE_BASE_URL
 #define UCLIENT_UPDATE_BASE_URL "https://ddnet.under1111.com/update"
