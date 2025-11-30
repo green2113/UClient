@@ -1472,8 +1472,6 @@ void CMenus::RenderSettings(CUIRect MainView)
 		Localize("Assets"),
 		TCLocalize("TClient"),
 		Localize("Profiles"),
-		Localize("Configs"),
-
 		Localize("Client")};
 	static CButtonContainer s_aTabButtons[SETTINGS_LENGTH];
 
@@ -1547,11 +1545,6 @@ void CMenus::RenderSettings(CUIRect MainView)
 	{
 		GameClient()->m_MenuBackground.ChangePosition(14);
 		RenderSettingsTClientProfiles(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_CONFIGS)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(15);
-		RenderSettingsTClientConfigs(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_UCLIENT)
 	{
@@ -2962,48 +2955,6 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 	if(DoButton_Menu(&s_ButtonUnregisterShell, Localize("Unregister protocol and file extensions"), 0, &Button))
 	{
 		Client()->ShellUnregister();
-	}
-#endif
-
-	// Updater
-#if defined(CONF_AUTOUPDATE)
-	{
-		const bool NeedUpdate = GameClient()->m_TClient.NeedUpdate();
-		IUpdater::EUpdaterState State = Updater()->GetCurrentState();
-
-		// Update Button
-		char aBuf[256];
-		if(NeedUpdate && State <= IUpdater::CLEAN)
-		{
-			str_format(aBuf, sizeof(aBuf), Localize("TClient %s is available:"), GameClient()->m_TClient.m_aVersionStr);
-			UpdaterRect.VSplitLeft(TextRender()->TextWidth(14.0f, aBuf, -1, -1.0f) + 10.0f, &UpdaterRect, &Button);
-			Button.VSplitLeft(100.0f, &Button, nullptr);
-			static CButtonContainer s_ButtonUpdate;
-			if(DoButton_Menu(&s_ButtonUpdate, Localize("Update now"), 0, &Button))
-			{
-				Updater()->InitiateUpdate();
-			}
-		}
-		else if(State >= IUpdater::GETTING_MANIFEST && State < IUpdater::NEED_RESTART)
-			str_copy(aBuf, Localize("Updating…"));
-		else if(State == IUpdater::NEED_RESTART)
-		{
-			str_copy(aBuf, Localize("TClient Client updated!"));
-			m_NeedRestartUpdate = true;
-		}
-		else
-		{
-			str_copy(aBuf, Localize("No updates available"));
-			UpdaterRect.VSplitLeft(TextRender()->TextWidth(14.0f, aBuf, -1, -1.0f) + 10.0f, &UpdaterRect, &Button);
-			Button.VSplitLeft(100.0f, &Button, nullptr);
-			static CButtonContainer s_ButtonUpdate;
-			if(DoButton_Menu(&s_ButtonUpdate, Localize("Check now"), 0, &Button))
-			{
-				GameClient()->m_TClient.FetchTClientInfo();
-			}
-		}
-		Ui()->DoLabel(&UpdaterRect, aBuf, 14.0f, TEXTALIGN_ML);
-		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 	}
 #endif
 }

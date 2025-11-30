@@ -2904,10 +2904,10 @@ int time_get_season_override()
 	return gs_TimeSeasonOverride.load(std::memory_order_relaxed);
 }
 
-static bool time_iseasterday(time_t time_data, struct tm *time_info)
+static bool time_iseasterday(time_t time_data, const tm *pTimeInfo)
 {
 	// compute Easter day (Sunday) using https://en.wikipedia.org/w/index.php?title=Computus&oldid=890710285#Anonymous_Gregorian_algorithm
-	int Y = time_info.tm_year + 1900;
+	int Y = pTimeInfo->tm_year + 1900;
 	int a = Y % 19;
 	int b = Y / 100;
 	int c = Y % 100;
@@ -2962,7 +2962,7 @@ ETimeSeason time_season()
 	{
 		return SEASON_VALENTINE;
 	}
-	else if(time_iseasterday(time_data, time_info))
+	else if(time_iseasterday(time_data, &time_info))
 	{
 		return SEASON_EASTER;
 	}

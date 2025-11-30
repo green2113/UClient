@@ -16,33 +16,22 @@ class CUcTranslator : public CComponent
 {
 public:
 	bool IsEnabled() const;
-	bool TranslateMessage(const char *pText, char *pOut, int OutSize);
 	bool TranslateAsync(int Team, const char *pText, CChat *pChat);
-	bool TranslateLineAsync(int64_t LineId, const char *pText, const char *pTarget, CChat *pChat);
 	void OnRender() override;
 	int Sizeof() const override { return sizeof(*this); }
 
 private:
-	enum class EResultType
-	{
-		SEND,
-		LINE,
-	};
-
 	struct CResult
 	{
-		EResultType m_Type = EResultType::SEND;
 		int m_Team;
-		int64_t m_LineId;
 		std::string m_Text;
 		CChat *m_pChat;
-		bool m_Success;
 	};
 
 	std::mutex m_ResultLock;
 	std::deque<CResult> m_vResults;
 
-	bool TranslateAsyncImpl(const char *pText, const char *pTarget, CChat *pChat, EResultType Type, int Team, int64_t LineId);
+	bool TranslateAsyncImpl(const char *pText, const char *pTarget, CChat *pChat, int Team);
 	bool TranslateInternal(const char *pText, char *pOut, int OutSize, const char *pTarget);
 	bool TranslateUsingDefault(const char *pText, char *pOut, int OutSize, const char *pTarget);
 	bool TranslateUsingCustom(const char *pText, char *pOut, int OutSize, const char *pTarget);

@@ -20,28 +20,12 @@ bool CUcTranslator::IsEnabled() const
 
 static constexpr int TRANSLATE_MAX_LENGTH = 512;
 
-bool CUcTranslator::TranslateMessage(const char *pText, char *pOut, int OutSize)
-{
-	if(!IsEnabled() || !pText || !*pText || !pOut || OutSize <= 0)
-		return false;
-
-	return TranslateInternal(pText, pOut, OutSize, nullptr);
-}
-
 bool CUcTranslator::TranslateAsync(int Team, const char *pText, CChat *pChat)
 {
 	if(!IsEnabled() || !pChat || !pText || !*pText)
 		return false;
 
-	return TranslateAsyncImpl(pText, g_Config.m_UcTranslateTarget, pChat, EResultType::SEND, Team, -1);
-}
-
-bool CUcTranslator::TranslateLineAsync(int64_t LineId, const char *pText, const char *pTarget, CChat *pChat)
-{
-	if(!pChat || !pText || !*pText)
-		return false;
-
-	return TranslateAsyncImpl(pText, pTarget, pChat, EResultType::LINE, -1, LineId);
+	return TranslateAsyncImpl(pText, g_Config.m_UcTranslateTarget, pChat, Team);
 }
 
 void CUcTranslator::OnRender()
@@ -58,31 +42,25 @@ void CUcTranslator::OnRender()
 	{
 		if(Result.m_pChat)
 		{
-			if(Result.m_Type == EResultType::SEND)
-				Result.m_pChat->SendChatTranslated(Result.m_Team, Result.m_Text.c_str());
-			else if(Result.m_Type == EResultType::LINE)
-				Result.m_pChat->HandleManualTranslation(Result.m_LineId, Result.m_Success ? Result.m_Text.c_str() : nullptr, Result.m_Success);
+			Result.m_pChat->SendChatTranslated(Result.m_Team, Result.m_Text.c_str());
 		}
 	}
 }
 
-bool CUcTranslator::TranslateAsyncImpl(const char *pText, const char *pTarget, CChat *pChat, EResultType Type, int Team, int64_t LineId)
+bool CUcTranslator::TranslateAsyncImpl(const char *pText, const char *pTarget, CChat *pChat, int Team)
 {
 	if(!pChat || !pText || !*pText)
 		return false;
 
 	std::string Input(pText);
 	std::string TargetString = pTarget && *pTarget ? pTarget : "";
-	std::thread([this, Team, Input = std::move(Input), pChat, Type, LineId, TargetString = std::move(TargetString)]() {
+	std::thread([this, Team, Input = std::move(Input), pChat, TargetString = std::move(TargetString)]() {
 		char aBuffer[TRANSLATE_MAX_LENGTH];
 		const char *pTargetOverride = TargetString.empty() ? nullptr : TargetString.c_str();
 		bool Success = TranslateInternal(Input.c_str(), aBuffer, sizeof(aBuffer), pTargetOverride);
 		CResult Result;
-		Result.m_Type = Type;
 		Result.m_Team = Team;
-		Result.m_LineId = LineId;
 		Result.m_pChat = pChat;
-		Result.m_Success = Success;
 		Result.m_Text = Success ? std::string(aBuffer) : Input;
 		{
 			std::lock_guard<std::mutex> Lock(m_ResultLock);
