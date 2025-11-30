@@ -3,6 +3,8 @@
 #include <engine/client.h>
 #include <engine/discord.h>
 
+#include <algorithm>
+
 #if defined(CONF_DISCORD)
 #include <discord_game_sdk.h>
 
@@ -31,10 +33,19 @@ class CDiscord : public IDiscord
 	DiscordActivity m_Activity;
 	bool m_UpdateActivity = false;
 	int64_t m_LastActivityUpdate = 0;
+	int m_RichPresenceImageIndex = 0;
 
 	IDiscordCore *m_pCore;
 	IDiscordActivityEvents m_ActivityEvents;
 	IDiscordActivityManager *m_pActivityManager;
+
+	const char *RichPresenceImageKey() const
+	{
+		static const char *const s_apImages[] = {"ddnet_rich_1", "ddnet_rich_2", "ddnet_rich_3"};
+		const int ImageCount = (int)(sizeof(s_apImages) / sizeof(s_apImages[0]));
+		const int Index = std::clamp(m_RichPresenceImageIndex, 0, ImageCount - 1);
+		return s_apImages[Index];
+	}
 
 public:
 	bool Init(FDiscordCreate pfnDiscordCreate)
@@ -48,7 +59,7 @@ public:
 		DiscordCreateParams Params;
 		DiscordCreateParamsSetDefault(&Params);
 
-		Params.client_id = 752165779117441075; // DDNet
+		Params.client_id = 1431955226436567141; // DDNet
 		Params.flags = EDiscordCreateFlags::DiscordCreateFlags_NoRequireDiscord;
 		Params.event_data = this;
 		Params.activity_events = &m_ActivityEvents;
@@ -89,7 +100,7 @@ public:
 	{
 		mem_zero(&m_Activity, sizeof(DiscordActivity));
 
-		str_copy(m_Activity.assets.large_image, "ddnet_logo", sizeof(m_Activity.assets.large_image));
+		str_copy(m_Activity.assets.large_image, RichPresenceImageKey(), sizeof(m_Activity.assets.large_image));
 		str_copy(m_Activity.assets.large_text, "DDNet logo", sizeof(m_Activity.assets.large_text));
 		m_Activity.timestamps.start = time_timestamp();
 		str_copy(m_Activity.details, "Offline", sizeof(m_Activity.details));
@@ -102,7 +113,7 @@ public:
 	{
 		mem_zero(&m_Activity, sizeof(DiscordActivity));
 
-		str_copy(m_Activity.assets.large_image, "ddnet_logo", sizeof(m_Activity.assets.large_image));
+		str_copy(m_Activity.assets.large_image, RichPresenceImageKey(), sizeof(m_Activity.assets.large_image));
 		str_copy(m_Activity.assets.large_text, "DDNet logo", sizeof(m_Activity.assets.large_text));
 		m_Activity.timestamps.start = time_timestamp();
 		str_copy(m_Activity.name, "Online", sizeof(m_Activity.name));
@@ -149,6 +160,13 @@ public:
 			return;
 
 		m_Activity.party.size.current_size = Count;
+		m_UpdateActivity = true;
+	}
+
+	void SetRichPresenceImageIndex(int Index) override
+	{
+		static const int s_ImageCount = 3;
+		m_RichPresenceImageIndex = std::clamp(Index, 0, s_ImageCount - 1);
 		m_UpdateActivity = true;
 	}
 
@@ -216,6 +234,7 @@ class CDiscordStub : public IDiscord
 	void SetGameInfo(const CServerInfo &ServerInfo, const char *pMapName, bool Registered) override {}
 	void UpdateServerInfo(const CServerInfo &ServerInfo, const char *pMapName) override {}
 	void UpdatePlayerCount(int Count) override {}
+	void SetRichPresenceImageIndex(int Index) override {}
 };
 
 IDiscord *CreateDiscord()
