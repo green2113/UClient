@@ -32,7 +32,7 @@ public:
 
 static const char *GetUpdaterUrl(char *pBuf, int BufSize, const char *pFile)
 {
-	str_format(pBuf, BufSize, "https://update.ddnet.org/%s", pFile);
+	str_format(pBuf, BufSize, "%s/%s", UCLIENT_UPDATE_BASE_URL, pFile);
 	return pBuf;
 }
 
@@ -251,7 +251,7 @@ void CUpdater::ParseUpdate()
 		{
 			const json_value *pTemp;
 			const json_value *pCurrent = json_array_get(pVersions, i);
-			if(str_comp(json_string_get(json_object_get(pCurrent, "version")), GAME_RELEASE_VERSION))
+			if(str_comp(json_string_get(json_object_get(pCurrent, "version")), UCLIENT_VERSION))
 			{
 				if(json_boolean_get(json_object_get(pCurrent, "client")))
 					m_ClientUpdate = true;

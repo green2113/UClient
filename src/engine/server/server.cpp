@@ -3188,7 +3188,7 @@ void CServer::UpdateRegisterServerInfo()
 	JsonWriter.WriteStrValue("time"); // "points" or "time"
 
 	JsonWriter.WriteAttribute("requires_login");
-	JsonWriter.WriteBoolValue(false);
+	JsonWriter.WriteBoolValue(g_Config.m_SvRequiredLogin);
 
 	JsonWriter.WriteAttribute("clients");
 	JsonWriter.BeginArray();

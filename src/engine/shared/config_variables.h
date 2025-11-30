@@ -602,6 +602,8 @@ MACRO_CONFIG_INT(SvMaintenance, sv_maintenance, 0, 0, 1, CFGFLAG_SERVER | CFGFLA
 MACRO_CONFIG_STR(SvMaintenanceMessage, sv_maintenance_message, 256, "현재 서버가 점검 중입니다. (discord.gg/PNpxPxvcws)", CFGFLAG_SERVER | CFGFLAG_SAVE, "Disconnect message shown when maintenance mode is enabled")
 MACRO_CONFIG_STR(SvMaintenanceBypassIp, sv_maintenance_bypass_ip, 64, "", CFGFLAG_SERVER | CFGFLAG_SAVE, "Single IP address allowed to bypass maintenance mode")
 
+MACRO_CONFIG_INT(SvRequiredLogin, sv_required_login, 0, 0, 1, CFGFLAG_SERVER, "Require players to login with ddnet account to join the server")
+
 #if defined(CONF_UPNP)
 MACRO_CONFIG_INT(SvUseUPnP, sv_use_upnp, 0, 0, 1, CFGFLAG_SERVER, "Enables UPnP support. (Requires -DCONF_UPNP=ON when compiling)")
 #endif

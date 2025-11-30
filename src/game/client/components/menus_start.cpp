@@ -171,12 +171,19 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 
 	// render version
 	CUIRect CurVersion, ConsoleButton;
-	MainView.HSplitBottom(45.0f, nullptr, &CurVersion);
+	MainView.HSplitBottom(60.0f, nullptr, &CurVersion);
 	CurVersion.VSplitRight(40.0f, &CurVersion, nullptr);
 	CurVersion.HSplitTop(20.0f, &ConsoleButton, &CurVersion);
 	CurVersion.HSplitTop(5.0f, nullptr, &CurVersion);
 	ConsoleButton.VSplitRight(40.0f, nullptr, &ConsoleButton);
-	Ui()->DoLabel(&CurVersion, GAME_RELEASE_VERSION, 14.0f, TEXTALIGN_MR);
+	CUIRect DdnetVersion, UcVersion;
+	CurVersion.HSplitTop(16.0f, &DdnetVersion, &CurVersion);
+	CurVersion.HSplitTop(2.0f, nullptr, &CurVersion);
+	CurVersion.HSplitTop(16.0f, &UcVersion, &CurVersion);
+	Ui()->DoLabel(&DdnetVersion, GAME_RELEASE_VERSION, 14.0f, TEXTALIGN_MR);
+	char aUcVersion[64];
+	str_format(aUcVersion, sizeof(aUcVersion), "%s %s", UCLIENT_NAME, UCLIENT_VERSION);
+	Ui()->DoLabel(&UcVersion, aUcVersion, 12.0f, TEXTALIGN_MR);
 
 	static CButtonContainer s_ConsoleButton;
 	TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
@@ -188,9 +195,10 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	TextRender()->SetRenderFlags(0);
 	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 
-	CUIRect VersionUpdate;
-	MainView.HSplitBottom(20.0f, nullptr, &VersionUpdate);
-	VersionUpdate.VMargin(VMargin, &VersionUpdate);
+CUIRect UpdateArea, VersionUpdate;
+MainView.HSplitBottom(40.0f, nullptr, &UpdateArea);
+UpdateArea.VMargin(VMargin, &UpdateArea);
+UpdateArea.HSplitTop(18.0f, nullptr, &VersionUpdate);
 #if defined(CONF_AUTOUPDATE)
 	CUIRect UpdateButton;
 	VersionUpdate.VSplitRight(100.0f, &VersionUpdate, &UpdateButton);
@@ -198,7 +206,8 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 
 	char aBuf[128];
 	const IUpdater::EUpdaterState State = Updater()->GetCurrentState();
-	const bool NeedUpdate = str_comp(Client()->LatestVersion(), "0");
+	const bool CustomNeedsUpdate = Client()->UcUpdateAvailable();
+	const bool NeedUpdate = CustomNeedsUpdate;
 
 	if(State == IUpdater::CLEAN && NeedUpdate)
 	{
@@ -223,7 +232,10 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 
 	if(State == IUpdater::CLEAN && NeedUpdate)
 	{
-		str_format(aBuf, sizeof(aBuf), Localize("DDNet %s is out!"), Client()->LatestVersion());
+		const char *pRemote = Client()->UcLatestVersion();
+		if(!pRemote[0])
+			pRemote = "?";
+		str_format(aBuf, sizeof(aBuf), Localize("%s %s is out!"), UCLIENT_NAME, pRemote);
 		TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
 	}
 	else if(State == IUpdater::CLEAN)
@@ -249,7 +261,8 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	Ui()->DoLabel(&VersionUpdate, aBuf, 14.0f, TEXTALIGN_ML);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
 #elif defined(CONF_INFORM_UPDATE)
-	if(str_comp(Client()->LatestVersion(), "0") != 0)
+	const bool CustomNeedsUpdateInform = Client()->UcUpdateAvailable();
+	if(CustomNeedsUpdateInform)
 	{
 		CUIRect DownloadButton;
 		VersionUpdate.VSplitRight(100.0f, &VersionUpdate, &DownloadButton);
@@ -262,12 +275,16 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 		}
 
 		char aBuf[64];
-		str_format(aBuf, sizeof(aBuf), Localize("DDNet %s is out!"), Client()->LatestVersion());
+		const char *pRemote = Client()->UcLatestVersion();
+		if(!pRemote[0])
+			pRemote = "?";
+		str_format(aBuf, sizeof(aBuf), Localize("%s %s is out!"), UCLIENT_NAME, pRemote);
 		SLabelProperties UpdateLabelProps;
 		UpdateLabelProps.SetColor(ColorRGBA(1.0f, 0.4f, 0.4f, 1.0f));
 		Ui()->DoLabel(&VersionUpdate, aBuf, 14.0f, TEXTALIGN_ML, UpdateLabelProps);
 	}
 #endif
+
 
 	if(NewPage != -1)
 	{

@@ -268,6 +268,12 @@ public:
 	virtual const char *DummyName() = 0;
 	virtual const char *ErrorString() const = 0;
 	virtual const char *LatestVersion() const = 0;
+	virtual void RequestUcInfo() = 0;
+	virtual bool UcInfoRequestRunning() const = 0;
+	virtual bool UcInfoHasResult() const = 0;
+	virtual bool UcInfoFailed() const = 0;
+	virtual bool UcUpdateAvailable() const = 0;
+	virtual const char *UcLatestVersion() const = 0;
 	virtual bool ConnectionProblems() const = 0;
 
 	virtual IGraphics::CTextureHandle GetDebugFont() const = 0; // TODO: remove this function

@@ -9,7 +9,6 @@
 #include <engine/shared/protocol7.h>
 #include <engine/storage.h>
 #include <engine/textrender.h>
-#include <engine/updater.h>
 
 #include <generated/protocol.h>
 
