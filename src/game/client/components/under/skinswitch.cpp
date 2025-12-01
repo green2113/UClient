@@ -93,7 +93,7 @@ void CSkinswitch::ChangeSkinByName(const char *pTargetName)
 		const int bodyColor = str_toint(g_Config.m_ClSkinSwitchBodyColor);
 		const int feetColor = str_toint(g_Config.m_ClSkinSwitchFeetColor);
 
-		const int UseColor = (bodyColor >= 1 && feetColor >= 1) ? 1 : 0;
+		const int UseColor = (bodyColor >= 1 && feetColor >= 1 && g_Config.m_UcSkinSwitchUseCustomColors) ? 1 : 0;
 		Config()->m_ClPlayerUseCustomColor = UseColor;
 
 		if(UseColor == 1)

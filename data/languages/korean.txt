@@ -2518,3 +2518,48 @@ You will be disconnected from the server.
 
 Are you sure that you want to disconnect and play this demo?
 == 
+
+Auto Reply
+== 자동 응답
+
+Automatic reply when tagged.
+== 태그 되었을 때 자동 응답
+
+Enter the message to send as an auto-reply.
+== 자동 응답 시 자동으로 보내질 메세지를 입력해 주세요.
+
+Skin Switch
+== 스킨 변경
+
+When you enter /skin %s, it reverts to the skin you have set.
+== /skin %s 를(을) 입력 시 본인이 설정한 스킨으로 되돌아옵니다.
+
+Use current skin
+== 현재 스킨 사용
+
+Use custom colors
+== 사용자 색상 사용
+
+Skin name
+== 스킨 이름
+
+Body color
+== 몸 색
+
+Feet color
+== 발 색
+
+Please enter the skin name.
+== 스킨 이름을 입력해 주세요.
+
+Please enter the body color code.
+== 몸 색 코드를 입력해 주세요.
+
+Please enter the feet color code.
+== 발 색 코드를 입력해 주세요.
+
+Use current skin
+== 현재 스킨 사용
+
+A new UClient update is available.
+== 새로운 UClient 업데이트가 있습니다.

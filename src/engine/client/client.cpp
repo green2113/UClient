@@ -83,6 +83,8 @@ using namespace std::chrono_literals;
 static constexpr ColorRGBA gs_ClientNetworkPrintColor{0.7f, 1, 0.7f, 1.0f};
 static constexpr ColorRGBA gs_ClientNetworkErrPrintColor{1.0f, 0.25f, 0.25f, 1.0f};
 
+static constexpr int UCINFO_REFRESH_SECONDS = 30;
+
 CClient::CClient() :
 	m_DemoPlayer(&m_SnapshotDelta, true, [&]() { UpdateDemoIntraTimers(); }),
 	m_InputtimeMarginGraph(128, 2, true),
@@ -109,6 +111,7 @@ CClient::CClient() :
 	m_HasUcInfo = false;
 	m_UcInfoFailed = false;
 	m_CustomUpdateAvailable = false;
+	m_NextUcInfoRequest = 0;
 }
 
 // ----- send functions -----
@@ -3114,6 +3117,11 @@ void CClient::Update()
 		}
 	}
 
+	if(g_Config.m_TcUpdateNotice && !m_pUcInfoTask && m_NextUcInfoRequest > 0 && time_get() >= m_NextUcInfoRequest)
+	{
+		RequestUcInfo();
+	}
+
 
 	if(State() == IClient::STATE_ONLINE)
 	{
@@ -5334,6 +5342,7 @@ void CClient::RequestUcInfo()
 	pTask->IpResolve(IPRESOLVE::V4);
 	m_pUcInfoTask = std::move(pTask);
 	Http()->Run(m_pUcInfoTask);
+	m_NextUcInfoRequest = time_get() + time_freq() * UCINFO_REFRESH_SECONDS;
 }
 
 

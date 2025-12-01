@@ -862,6 +862,24 @@ void CGameClient::OnRender()
 	for(auto &pComponent : m_vpAll)
 		pComponent->OnRender();
 
+	if(g_Config.m_TcUpdateNotice && Client()->State() == IClient::STATE_ONLINE && Client()->UcUpdateAvailable() && !m_Menus.IsActive())
+	{
+		Ui()->MapScreen();
+		const CUIRect *pScreen = Ui()->Screen();
+
+		CUIRect NoticeRect;
+		NoticeRect.x = pScreen->x + 5.0f;
+		NoticeRect.y = pScreen->y + pScreen->h - 18.0f;
+		NoticeRect.w = pScreen->w * 0.6f;
+		NoticeRect.h = 12.0f;
+
+		SLabelProperties Props;
+		Props.m_MaxWidth = NoticeRect.w;
+		Props.SetColor(ColorRGBA(1.0f, 0.8f, 0.3f, 0.85f));
+		Ui()->DoLabel(&NoticeRect, Localize("A new UClient update is available."), 10.0f, TEXTALIGN_ML, Props);
+	}
+
+
 	// clear all events/input for this frame
 	Input()->Clear();
 

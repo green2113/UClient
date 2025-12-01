@@ -225,7 +225,7 @@ UpdateArea.HSplitTop(18.0f, nullptr, &VersionUpdate);
 
 	char aBuf[128];
 	const IUpdater::EUpdaterState State = Updater()->GetCurrentState();
-	const bool CustomNeedsUpdate = Client()->UcUpdateAvailable();
+	const bool CustomNeedsUpdate = g_Config.m_TcUpdateNotice && Client()->UcUpdateAvailable();
 	const bool NeedUpdate = CustomNeedsUpdate;
 
 	if(State == IUpdater::CLEAN && NeedUpdate)
@@ -280,7 +280,7 @@ UpdateArea.HSplitTop(18.0f, nullptr, &VersionUpdate);
 	Ui()->DoLabel(&VersionUpdate, aBuf, 14.0f, TEXTALIGN_ML);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
 #elif defined(CONF_INFORM_UPDATE)
-	const bool CustomNeedsUpdateInform = Client()->UcUpdateAvailable();
+	const bool CustomNeedsUpdateInform = g_Config.m_TcUpdateNotice && Client()->UcUpdateAvailable();
 	if(CustomNeedsUpdateInform)
 	{
 		CUIRect DownloadButton;

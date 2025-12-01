@@ -132,6 +132,7 @@ class CClient : public IClient, public CDemoPlayer::IListener
 	bool m_HasUcInfo = false;
 	bool m_UcInfoFailed = false;
 	bool m_CustomUpdateAvailable = false;
+	int64_t m_NextUcInfoRequest = 0;
 	std::shared_ptr<CHttpRequest> m_pUcInfoTask = nullptr;
 
 	// pinging

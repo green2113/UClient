@@ -50,6 +50,10 @@ const float MarginExtraSmall = 2.5f;
 const float MarginBetweenSections = 30.0f;
 const float MarginBetweenViews = 30.0f;
 
+static CLineInput s_SkinSwitchNameInput(g_Config.m_ClSkinSwitchSkinName, sizeof(g_Config.m_ClSkinSwitchSkinName));
+static CLineInput s_SkinSwitchBodyColorInput(g_Config.m_ClSkinSwitchBodyColor, sizeof(g_Config.m_ClSkinSwitchBodyColor));
+static CLineInput s_SkinSwitchFeetColorInput(g_Config.m_ClSkinSwitchFeetColor, sizeof(g_Config.m_ClSkinSwitchFeetColor));
+
 void CMenus::RenderSettingsUClient(CUIRect MainView)
 {
 	CUIRect Label, Checkbox, EditBox;
@@ -62,6 +66,8 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClTagReply, Localize("Automatic reply when tagged."), &g_Config.m_ClTagReply, &MainView, LineSize);
 
 	MainView.HSplitTop(LineSize + MarginExtraSmall, &TagReply, &MainView);
+
+	MainView.HSplitTop(LineSize, nullptr, &MainView);
 	if(g_Config.m_ClTagReply)
 	{
 		TagReply.HSplitTop(MarginExtraSmall, nullptr, &TagReply);
@@ -73,7 +79,23 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 	MainView.HSplitTop(MarginBetweenSections, &Label, &MainView);
 
 	// Skin Switch //
-	Ui()->DoLabel(&Label, Localize("Skin Switch"), HeadlineFontSize, TEXTALIGN_ML);
+	CUIRect SkinLabel = Label, FillButton;
+	SkinLabel.VSplitRight(180.0f, &SkinLabel, &FillButton);
+	SkinLabel.HSplitTop(HeadlineHeight, &SkinLabel, nullptr);
+	FillButton.HSplitTop(HeadlineHeight, &FillButton, nullptr);
+	FillButton.VSplitLeft(10.0f, nullptr, &FillButton);
+	Ui()->DoLabel(&SkinLabel, Localize("Skin Switch"), HeadlineFontSize, TEXTALIGN_ML);
+	static CButtonContainer s_FillSkinButton;
+	if(DoButton_Menu(&s_FillSkinButton, Localize("Use current skin"), 0, &FillButton))
+	{
+		const char *pSkinName = g_Config.m_ClPlayerSkin;
+		const int BodyColor = g_Config.m_ClPlayerColorBody;
+		const int FeetColor = g_Config.m_ClPlayerColorFeet;
+
+		str_copy(g_Config.m_ClSkinSwitchSkinName, pSkinName, sizeof(g_Config.m_ClSkinSwitchSkinName));
+		str_format(g_Config.m_ClSkinSwitchBodyColor, sizeof(g_Config.m_ClSkinSwitchBodyColor), "%d", BodyColor);
+		str_format(g_Config.m_ClSkinSwitchFeetColor, sizeof(g_Config.m_ClSkinSwitchFeetColor), "%d", FeetColor);
+	}
 
 	float infoH = EditBoxFontSize;
 	float labelH = EditBoxFontSize;
@@ -87,9 +109,14 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 	section.HSplitTop(infoH, &infoRect, &section);
 	char aBuf[256];
 	str_format(aBuf, sizeof(aBuf),
-		Localize("/skin %s 를(을) 입력 시 본인이 설정한 스킨으로 되돌아옵니다."),
+		Localize("When you enter /skin %s, it reverts to the skin you have set."),
 		g_Config.m_PlayerName);
 	Ui()->DoLabel(&infoRect, aBuf, EditBoxFontSize, TEXTALIGN_TL);
+
+	section.HSplitTop(MarginSmall, nullptr, &section);
+	CUIRect CustomColorRect;
+	section.HSplitTop(LineSize, &CustomColorRect, &section);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcSkinSwitchUseCustomColors, Localize("Use custom colors"), &g_Config.m_UcSkinSwitchUseCustomColors, &CustomColorRect, LineSize);
 
 	section.HSplitTop(vGap, nullptr, &section);
 
@@ -106,31 +133,27 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 		cName.HSplitTop(labelH, &rLabel, &rEdit);
 		Ui()->DoLabel(&rLabel, Localize("Skin Name"), EditBoxFontSize, TEXTALIGN_TL);
 		rEdit.HSplitTop(editH, &rEdit, nullptr);
-		static CLineInput l_SkinName(g_Config.m_ClSkinSwitchSkinName,
-			sizeof(g_Config.m_ClSkinSwitchSkinName));
-		l_SkinName.SetEmptyText(Localize("Please enter the skin name."));
-		Ui()->DoEditBox(&l_SkinName, &rEdit, EditBoxFontSize);
+		s_SkinSwitchNameInput.SetEmptyText(Localize("Please enter the skin name."));
+		Ui()->DoEditBox(&s_SkinSwitchNameInput, &rEdit, EditBoxFontSize);
 	}
 
 	{
 		CUIRect rLabel, rEdit;
 		cBody.HSplitTop(labelH, &rLabel, &rEdit);
-		Ui()->DoLabel(&rLabel, Localize("몸 색"), EditBoxFontSize, TEXTALIGN_TL);
+		Ui()->DoLabel(&rLabel, Localize("Body color"), EditBoxFontSize, TEXTALIGN_TL);
 		rEdit.HSplitTop(editH, &rEdit, nullptr);
 
-		static CLineInput l_BodyCol(g_Config.m_ClSkinSwitchBodyColor, sizeof(g_Config.m_ClSkinSwitchBodyColor));
-		l_BodyCol.SetEmptyText("몸 색 코드를 입력해 주세요.");
-		Ui()->DoEditBox(&l_BodyCol, &rEdit, EditBoxFontSize);
+		s_SkinSwitchBodyColorInput.SetEmptyText("Please enter the body color code.");
+		Ui()->DoEditBox(&s_SkinSwitchBodyColorInput, &rEdit, EditBoxFontSize);
 	}
 
 	{
 		CUIRect rLabel, rEdit;
 		cFeet.HSplitTop(labelH, &rLabel, &rEdit);
-		Ui()->DoLabel(&rLabel, Localize("발 색"), EditBoxFontSize, TEXTALIGN_TL);
+		Ui()->DoLabel(&rLabel, Localize("Feet color"), EditBoxFontSize, TEXTALIGN_TL);
 		rEdit.HSplitTop(editH, &rEdit, nullptr);
 
-		static CLineInput l_FeetCol(g_Config.m_ClSkinSwitchFeetColor, sizeof(g_Config.m_ClSkinSwitchFeetColor));
-		l_FeetCol.SetEmptyText("발 색 코드를 입력해 주세요.");
-		Ui()->DoEditBox(&l_FeetCol, &rEdit, EditBoxFontSize);
+		s_SkinSwitchFeetColorInput.SetEmptyText("Please enter the feet color code.");
+		Ui()->DoEditBox(&s_SkinSwitchFeetColorInput, &rEdit, EditBoxFontSize);
 	}
 }

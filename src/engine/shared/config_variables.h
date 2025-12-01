@@ -53,6 +53,7 @@ MACRO_CONFIG_STR(ClTagDiscordWebHookUrl, uc_tag_discord_webhook_url, 256, "", CF
 MACRO_CONFIG_STR(ClChatDiscordWebHookUrl, uc_chat_discord_webhook_url, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Discord webhook URL used to send chat logs")
 MACRO_CONFIG_STR(ClChatSkinMessage, uc_chat_skin_message, 128, "uc_chat_skin_message", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Keyword that triggers automatic skin change")
 MACRO_CONFIG_STR(ClSkinSwitchSkinName, uc_skin_switch_skin_name, 64, "default", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Skin name to switch to when using /skin command")
+MACRO_CONFIG_INT(UcSkinSwitchUseCustomColors, uc_skin_switch_use_custom_colors, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Use custom body and feet colors when switching skin")
 MACRO_CONFIG_STR(ClSkinSwitchBodyColor, uc_skin_switch_body_color, 9, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Body color to use when switching skin")
 MACRO_CONFIG_STR(ClSkinSwitchFeetColor, uc_skin_switch_feet_color, 9, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Feet color to use when switching skin")
 
@@ -827,3 +828,5 @@ MACRO_CONFIG_INT(ClVideoRecorderFPS, cl_video_recorder_fps, 60, 1, 1000, CFGFLAG
 // uclient and userver
 MACRO_CONFIG_STR(UServerNewYearMessage, userver_newyear_message, 256, "새해 복 많이 받으세요! / Happy New Year!", CFGFLAG_SERVER | CFGFLAG_SAVE, "새해 인사 메세지를 설정합니다. (단, 시즌날에만 메세지를 전송합니다)")
 MACRO_CONFIG_INT(SvIsFunServer, sv_is_fun_server, 0, 0, 1, CFGFLAG_SERVER | CFGFLAG_GAME, "서버를 재미 서버로 설정합니다.")
+
+MACRO_CONFIG_INT(TcUpdateNotice, uc_update_notice, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show UClient update notifications")
