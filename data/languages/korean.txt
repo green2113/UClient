@@ -2561,5 +2561,5 @@ Please enter the feet color code.
 Use current skin
 == 현재 스킨 사용
 
-A new UClient update is available.
-== 새로운 UClient 업데이트가 있습니다.
+A new U-Client update is available.
+== 새로운 U-Client 업데이트가 있습니다.

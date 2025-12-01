@@ -5333,7 +5333,6 @@ void CClient::RequestUcInfo()
 
 	m_HasUcInfo = false;
 	m_UcInfoFailed = false;
-	m_CustomUpdateAvailable = false;
 	str_copy(m_aUcVersionStr, UCLIENT_VERSION, sizeof(m_aUcVersionStr));
 
 	auto pTask = HttpGet(UCLIENT_INFO_URL);

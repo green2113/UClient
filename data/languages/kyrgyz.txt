@@ -2518,3 +2518,48 @@ Moved ingame
 
 https://wiki.ddnet.org/wiki/Mapping
 == 
+
+Auto Reply
+== 
+
+Automatic reply when tagged.
+== 
+
+Enter the message to send as an auto-reply.
+==
+
+Use custom colors
+== 
+
+Skin Switch
+== 
+
+When you enter /skin %s, it reverts to the skin you have set.
+== 
+
+Use current skin
+== 
+
+Skin name
+== 
+
+Body color
+== 
+
+Feet color
+== 
+
+Please enter the skin name.
+== 
+
+Please enter the body color code.
+== 
+
+Please enter the feet color code.
+== 
+
+Use current skin
+== 
+
+A new U-Client update is available.
+== 

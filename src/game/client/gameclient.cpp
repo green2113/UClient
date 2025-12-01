@@ -211,6 +211,7 @@ void CGameClient::OnConsoleInit()
 	Console()->Register("team", "i[team-id]", CFGFLAG_CLIENT, ConTeam, this, "Switch team");
 	Console()->Register("kill", "", CFGFLAG_CLIENT, ConKill, this, "Kill yourself to restart");
 	Console()->Register("ready_change", "", CFGFLAG_CLIENT, ConReadyChange7, this, "Change ready state (0.7 only)");
+	Console()->Register("uc_switch_my_skin", "", CFGFLAG_CLIENT, ConUcSwitchMySkin, this, "Switches to the skin you configured for yourself.");
 
 	// register game commands to allow the client prediction to load settings from the map
 	Console()->Register("tune", "s[tuning] ?f[value]", CFGFLAG_GAME, ConTuneParam, this, "Tune variable to value");
@@ -862,7 +863,7 @@ void CGameClient::OnRender()
 	for(auto &pComponent : m_vpAll)
 		pComponent->OnRender();
 
-	if(g_Config.m_TcUpdateNotice && Client()->State() == IClient::STATE_ONLINE && Client()->UcUpdateAvailable() && !m_Menus.IsActive())
+	if(g_Config.m_ClShowhud && g_Config.m_TcUpdateNotice && Client()->State() == IClient::STATE_ONLINE && Client()->UcUpdateAvailable() && !m_Menus.IsActive())
 	{
 		Ui()->MapScreen();
 		const CUIRect *pScreen = Ui()->Screen();
@@ -876,7 +877,7 @@ void CGameClient::OnRender()
 		SLabelProperties Props;
 		Props.m_MaxWidth = NoticeRect.w;
 		Props.SetColor(ColorRGBA(1.0f, 0.8f, 0.3f, 0.85f));
-		Ui()->DoLabel(&NoticeRect, Localize("A new UClient update is available."), 10.0f, TEXTALIGN_ML, Props);
+		Ui()->DoLabel(&NoticeRect, Localize("A new U-Client update is available."), 10.0f, TEXTALIGN_ML, Props);
 	}
 
 
@@ -3481,6 +3482,34 @@ void CGameClient::ConReadyChange7(IConsole::IResult *pResult, void *pUserData)
 	if(pClient->Client()->State() == IClient::STATE_ONLINE)
 		pClient->SendReadyChange7();
 }
+
+void CGameClient::ConUcSwitchMySkin(IConsole::IResult *pResult, void *pUserData)
+{
+	(void)pResult;
+	CGameClient *pClient = static_cast<CGameClient *>(pUserData);
+	if(!pClient)
+		return;
+
+	CConfig *pCfg = pClient->Config();
+	const char *pSkinName = g_Config.m_ClSkinSwitchSkinName[0] ? g_Config.m_ClSkinSwitchSkinName : "default";
+
+	str_copy(pCfg->m_ClPlayerSkin, pSkinName, sizeof(pCfg->m_ClPlayerSkin));
+
+	const int BodyColor = str_toint(g_Config.m_ClSkinSwitchBodyColor);
+	const int FeetColor = str_toint(g_Config.m_ClSkinSwitchFeetColor);
+	const int UseColor = (BodyColor >= 1 && FeetColor >= 1 && g_Config.m_UcSkinSwitchUseCustomColors) ? 1 : 0;
+	pCfg->m_ClPlayerUseCustomColor = UseColor;
+
+	if(UseColor == 1)
+	{
+		pCfg->m_ClPlayerColorBody = BodyColor;
+		pCfg->m_ClPlayerColorFeet = FeetColor;
+	}
+
+	pClient->SendInfo(false);
+	pClient->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "uclient", "Skin Switch applied.");
+}
+
 
 void CGameClient::ConchainLanguageUpdate(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
 {

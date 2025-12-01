@@ -2561,5 +2561,5 @@ Please enter the feet color code.
 Use current skin
 == 
 
-A new UClient update is available.
+A new U-Client update is available.
 == 
