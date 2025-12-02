@@ -2520,46 +2520,43 @@ Are you sure that you want to disconnect and play this demo?
 == 
 
 Auto Reply
-== 
+== 自動回覆
 
 Automatic reply when tagged.
-== 
+== 標記時自動回覆
 
 Enter the message to send as an auto-reply.
-==
+== 請輸入要自動回覆的消息
 
 Use custom colors
-== 
+== 使用自定義顏色
 
 Skin Switch
-== 
+== 更換Tee
 
 When you enter /skin %s, it reverts to the skin you have set.
-== 
+== 輸入 /skin %s 時，會恢復成你設定的皮膚
 
 Use current skin
-== 
+== 使用目前的Tee
 
 Skin name
-== 
+== Tee名稱
 
 Body color
-== 
+== 身體顏色
 
 Feet color
-== 
+== 腳部顏色
 
 Please enter the skin name.
-== 
+== 請輸入Tee名稱
 
 Please enter the body color code.
-== 
+== 請輸入身體顏色代碼
 
 Please enter the feet color code.
-== 
-
-Use current skin
-== 
+== 請輸入腳部顏色代碼
 
 A new U-Client update is available.
-== 
+== 有新的 U-Client 更新可用

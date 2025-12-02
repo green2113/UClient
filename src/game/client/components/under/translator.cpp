@@ -25,7 +25,29 @@ bool CUcTranslator::TranslateAsync(int Team, const char *pText, CChat *pChat)
 	if(!IsEnabled() || !pChat || !pText || !*pText)
 		return false;
 
-	return TranslateAsyncImpl(pText, g_Config.m_UcTranslateTarget, pChat, Team);
+	std::string Prefix;
+	const char *pTextToTranslate = pText;
+	const char *pColon = str_find(pText, ":");
+	if(pColon)
+	{
+		const char *pAfterColon = pColon + 1;
+		Prefix.assign(pText, pAfterColon - pText);
+		while(*pAfterColon == ' ' || *pAfterColon == '\t')
+		{
+			Prefix.push_back(*pAfterColon);
+			++pAfterColon;
+		}
+		if(*pAfterColon)
+		{
+			pTextToTranslate = pAfterColon;
+		}
+		else
+		{
+			Prefix.clear();
+		}
+	}
+
+	return TranslateAsyncImpl(pTextToTranslate, g_Config.m_UcTranslateTarget, pChat, Team, std::move(Prefix));
 }
 
 void CUcTranslator::OnRender()
@@ -47,21 +69,24 @@ void CUcTranslator::OnRender()
 	}
 }
 
-bool CUcTranslator::TranslateAsyncImpl(const char *pText, const char *pTarget, CChat *pChat, int Team)
+bool CUcTranslator::TranslateAsyncImpl(const char *pText, const char *pTarget, CChat *pChat, int Team, std::string Prefix)
 {
 	if(!pChat || !pText || !*pText)
 		return false;
 
 	std::string Input(pText);
 	std::string TargetString = pTarget && *pTarget ? pTarget : "";
-	std::thread([this, Team, Input = std::move(Input), pChat, TargetString = std::move(TargetString)]() {
+	std::thread([this, Team, Input = std::move(Input), pChat, TargetString = std::move(TargetString), Prefix = std::move(Prefix)]() {
 		char aBuffer[TRANSLATE_MAX_LENGTH];
 		const char *pTargetOverride = TargetString.empty() ? nullptr : TargetString.c_str();
 		bool Success = TranslateInternal(Input.c_str(), aBuffer, sizeof(aBuffer), pTargetOverride);
 		CResult Result;
 		Result.m_Team = Team;
 		Result.m_pChat = pChat;
-		Result.m_Text = Success ? std::string(aBuffer) : Input;
+		if(Success)
+			Result.m_Text = Prefix.empty() ? std::string(aBuffer) : Prefix + aBuffer;
+		else
+			Result.m_Text = Prefix.empty() ? Input : Prefix + Input;
 		{
 			std::lock_guard<std::mutex> Lock(m_ResultLock);
 			m_vResults.emplace_back(std::move(Result));

@@ -14,7 +14,7 @@ extern const char *GIT_SHORTREV_HASH;
 
 // uclient
 #ifndef UCLIENT_VERSION
-#define UCLIENT_VERSION "1.2"
+#define UCLIENT_VERSION "1.2.2"
 #endif
 #ifndef UCLIENT_NAME
 #define UCLIENT_NAME "UClient"

@@ -31,7 +31,7 @@ private:
 	std::mutex m_ResultLock;
 	std::deque<CResult> m_vResults;
 
-	bool TranslateAsyncImpl(const char *pText, const char *pTarget, CChat *pChat, int Team);
+	bool TranslateAsyncImpl(const char *pText, const char *pTarget, CChat *pChat, int Team, std::string Prefix);
 	bool TranslateInternal(const char *pText, char *pOut, int OutSize, const char *pTarget);
 	bool TranslateUsingDefault(const char *pText, char *pOut, int OutSize, const char *pTarget);
 	bool TranslateUsingCustom(const char *pText, char *pOut, int OutSize, const char *pTarget);

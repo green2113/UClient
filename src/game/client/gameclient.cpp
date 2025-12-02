@@ -874,9 +874,14 @@ void CGameClient::OnRender()
 		NoticeRect.w = pScreen->w * 0.6f;
 		NoticeRect.h = 12.0f;
 
+		const float PulsePeriod = 2.0f;
+		const float Wave = sinf(Client()->LocalTime() * 2.0f * pi / PulsePeriod);
+		const bool Highlight = Wave >= 0.0f;
+		ColorRGBA NoticeColor = Highlight ? ColorRGBA(1.0f, 0.85f, 0.35f, 1.0f) : ColorRGBA(1.0f, 0.65f, 0.2f, 0.6f);
+
 		SLabelProperties Props;
 		Props.m_MaxWidth = NoticeRect.w;
-		Props.SetColor(ColorRGBA(1.0f, 0.8f, 0.3f, 0.85f));
+		Props.SetColor(NoticeColor);
 		Ui()->DoLabel(&NoticeRect, Localize("A new U-Client update is available."), 10.0f, TEXTALIGN_ML, Props);
 	}
 
