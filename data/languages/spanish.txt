@@ -2540,7 +2540,7 @@ When you enter /skin %s, it reverts to the skin you have set.
 Use current skin
 == 
 
-Skin name
+Skin Name
 == 
 
 Body color
@@ -2556,9 +2556,6 @@ Please enter the body color code.
 == 
 
 Please enter the feet color code.
-== 
-
-Use current skin
 == 
 
 A new U-Client update is available.

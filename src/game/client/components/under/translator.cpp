@@ -97,6 +97,12 @@ bool CUcTranslator::TranslateAsyncImpl(const char *pText, const char *pTarget, C
 
 bool CUcTranslator::TranslateInternal(const char *pText, char *pOut, int OutSize, const char *pTarget)
 {
+	if(str_comp_nocase(g_Config.m_UcTranslateBackend, "deepl") == 0)
+	{
+		return TranslateUsingDeepL(pText, pOut, OutSize, pTarget);
+	}
+
+	// default/ucapi backend uses google endpoint or custom override.
 	if(g_Config.m_UcTranslateApi[0])
 		return TranslateUsingCustom(pText, pOut, OutSize, pTarget);
 	return TranslateUsingDefault(pText, pOut, OutSize, pTarget);
@@ -281,7 +287,7 @@ bool CUcTranslator::ParseResponse(const unsigned char *pData, size_t Length, cha
 
 bool CUcTranslator::TranslateUsingDeepL(const char *pText, char *pOut, int OutSize, const char *pTarget)
 {
-	if(!g_Config.m_UcTranslateKey[0] || !g_Config.m_UcTranslateApi[0])
+	if(!g_Config.m_UcTranslateKey[0])
 		return false;
 
 	char aEscaped[2048];
@@ -294,7 +300,9 @@ bool CUcTranslator::TranslateUsingDeepL(const char *pText, char *pOut, int OutSi
 	str_format(aBody, sizeof(aBody), "text=%s&target_lang=%s", aEscaped, aTarget);
 	const size_t BodyLen = str_length(aBody);
 
-	auto pRequest = HttpPost(g_Config.m_UcTranslateApi, reinterpret_cast<const unsigned char *>(aBody), BodyLen);
+	const char *pEndpoint = g_Config.m_UcTranslateApi[0] ? g_Config.m_UcTranslateApi : "https://api-free.deepl.com/v2/translate";
+
+	auto pRequest = HttpPost(pEndpoint, reinterpret_cast<const unsigned char *>(aBody), BodyLen);
 	pRequest->HeaderString("Content-Type", "application/x-www-form-urlencoded");
 	char aAuth[512];
 	str_format(aAuth, sizeof(aAuth), "DeepL-Auth-Key %s", g_Config.m_UcTranslateKey);

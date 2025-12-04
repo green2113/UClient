@@ -838,5 +838,6 @@ private:
 
 	// found in menus_uclient.cpp
 	void RenderSettingsUClient(CUIRect MainView);
+	void RenderSettingsUClientConfig(CUIRect MainView);
 };
 #endif

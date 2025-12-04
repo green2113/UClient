@@ -43,7 +43,7 @@ class CDiscord : public IDiscord
 
 	const char *RichPresenceImageKey() const
 	{
-		static const char *const s_apImages[] = {"ddnet_rich_1", "ddnet_rich_2", "ddnet_rich_3"};
+		static const char *const s_apImages[] = {"ddnet_rich_0", "ddnet_rich_1", "ddnet_rich_2", "ddnet_rich_3"};
 		const int ImageCount = (int)(sizeof(s_apImages) / sizeof(s_apImages[0]));
 		const int Index = std::clamp(m_RichPresenceImageIndex, 0, ImageCount - 1);
 		return s_apImages[Index];

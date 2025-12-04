@@ -2540,7 +2540,7 @@ Use current skin
 Use custom colors
 == 사용자 색상 사용
 
-Skin name
+Skin Name
 == 스킨 이름
 
 Body color
@@ -2558,8 +2558,47 @@ Please enter the body color code.
 Please enter the feet color code.
 == 발 색 코드를 입력해 주세요.
 
-Use current skin
-== 현재 스킨 사용
-
 A new U-Client update is available.
 == 새로운 U-Client 업데이트가 있습니다.
+
+Value
+== 값
+
+Sends a message to the Discord webhook when you’re tagged.
+== 태그되었을 때 디스코드 웹훅으로 메세지를 보냅니다.
+
+It switches to the sender’s skin when a specific language is detected.
+== 특정 단어가 감지되면 해당 메세지를 보낸 사람의 스킨으로 변합니다.
+
+Sends every chat message to the Discord webhook.
+== 모든 대화 내용을 디스코드 웹훅으로 전송합니다.
+
+Enter the name of the skin you often use.
+== 본인이 자주 사용하는 스킨을 설정합니다.
+
+Enter the body color of the skin you often use
+== 본인이 자주 사용하는 몸 색을 설정합니다.
+
+Enter the feet color of the skin you often use.
+== 본인이 자주 사용하는 발 색을 설정합니다.
+
+Set this to 1 if you plan to use custom colors.
+== 사용자 색상을 사용한다면 1로 설정해 주세요.
+
+It sets the Discord Game activity image.
+== 디스코드 게임 활동 사진을 설정합니다.
+
+It translates from the most recent chat each time the command runs.
+== 명령어를 실행할 때마다 최근 대화부터 번역합니다.
+
+Specify which translator to use (google, deepl).
+== 어떤 번역기를 사용할지 설정해 주세요. (google, deepl)
+
+Choose the language you want to translate into (google: ISO 639, DeepL: ISO 639-1 + ISO 15924).
+== 어떤 언어로 번역할지 설정해 주세요. (google = ISO 639, deepl = ISO 639 + ISO 15924)
+
+Enter the API address that matches the translator selected for the target.
+== target에서 설정한 번역기를 토대로 해당 API 주소를 입력해 주세요.
+
+Enter the API key.
+== API 키를 입력해 주세요.
