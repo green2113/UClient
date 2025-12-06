@@ -208,14 +208,14 @@ void CAutoreply::OnMessage(int Msg, void *pRawMsg)
                 char bJson[1024];
                 if (pMsg->m_Team == TEAM_WHISPER_RECV)
                 {
-                    str_format(bJson, sizeof(bJson), "{\"content\":\"||<@776421522188664843>|| (whisper) `%s` `%s`: %s\"}", dateTime, senderName, pText);
+                    str_format(bJson, sizeof(bJson), "{\"content\":\"||<@776421522188664843>|| (whisper) `%s` `%s`: %s\"}", dateTime.c_str(), senderName.c_str(), pText);
                 }
                 else
                 {
                     if(senderName == "언더")
                         return;
 
-                    str_format(bJson, sizeof(bJson), "{\"content\":\"||<@776421522188664843>|| `%s` `%s`: %s\"}", dateTime, senderName, pText);
+                    str_format(bJson, sizeof(bJson), "{\"content\":\"||<@776421522188664843>|| `%s` `%s`: %s\"}", dateTime.c_str(), senderName.c_str(), pText);
                 }
 
                 auto pUniqueReq = HttpPostJson(
@@ -244,12 +244,12 @@ void CAutoreply::OnMessage(int Msg, void *pRawMsg)
             
             if (pMsg->m_Team == TEAM_WHISPER_RECV)
             {
-                str_format(aBuf, sizeof(aBuf), "/w %s %s - %s", senderName, g_Config.m_ClTagReplyMessage, autoMessage);
+                str_format(aBuf, sizeof(aBuf), "/w %s %s - %s", senderName.c_str(), g_Config.m_ClTagReplyMessage, autoMessage);
                 GameClient()->m_Chat.SendChat(0, aBuf);
             }
             else
             {
-                str_format(aBuf, sizeof(aBuf), "%s: %s - %s", senderName, g_Config.m_ClTagReplyMessage, autoMessage);
+                str_format(aBuf, sizeof(aBuf), "%s: %s - %s", senderName.c_str(), g_Config.m_ClTagReplyMessage, autoMessage);
                 GameClient()->m_Chat.SendChat(0, aBuf);
             }
         }
