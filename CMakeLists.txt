@@ -2185,6 +2185,7 @@ set_src(ENGINE_SHARED GLOB_RECURSE src/engine/shared
   config_includes.h
   config_variables.h
   config_variables_tclient.h
+  config_variables_uclient.h
   console.cpp
   console.h
   csv.cpp
