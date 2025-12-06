@@ -6,6 +6,7 @@
 #endif
 
 CONFIG_DOMAIN(DDNET, "settings_ddnet.cfg", true)
+CONFIG_DOMAIN(UCLIENT, "settings_uclient.cfg", true)
 CONFIG_DOMAIN(TCLIENT, "settings_tclient.cfg", true)
 CONFIG_DOMAIN(TCLIENTPROFILES, "tclient_profiles.cfg", false)
 CONFIG_DOMAIN(TCLIENTCHATBINDS, "tclient_chatbinds.cfg", false)

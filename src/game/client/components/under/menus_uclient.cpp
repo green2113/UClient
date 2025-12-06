@@ -187,7 +187,7 @@ void CMenus::RenderSettingsUClientConfig(CUIRect MainView)
 		g_Config.m_UcRichPresenceImage = Ui()->DoDropDown(&Row, g_Config.m_UcRichPresenceImage, apPresence, std::size(apPresence), s_RichPresenceDropDownState);
 	});
 
-	RenderCard(100.0f, "uc_translate", Localize("It translates from the most recent chat each time the command runs."), [&](CUIRect &Controls) {
+	RenderCard(100.0f, "uc_translate", Localize("It sends your chat messages in their translated form when you send them."), [&](CUIRect &Controls) {
 		const char *apAuto[] = {"0", "1"};
 		CUIRect Row;
 		Controls.HSplitTop(LineSize, &Row, &Controls);
@@ -265,7 +265,9 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 	CUIRect TagReply;
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClTagReply, Localize("Automatic reply when tagged."), &g_Config.m_ClTagReply, &MainView, LineSize);
 
-	MainView.HSplitTop(LineSize + MarginExtraSmall, &TagReply, &MainView);
+	const float AutoReplyPreviewHeight = LineSize;
+	const float AutoReplyBlockHeight = LineSize + MarginExtraSmall + AutoReplyPreviewHeight;
+	MainView.HSplitTop(AutoReplyBlockHeight, &TagReply, &MainView);
 
 	MainView.HSplitTop(LineSize, nullptr, &MainView);
 	if(g_Config.m_ClTagReply)
@@ -273,7 +275,28 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 		TagReply.HSplitTop(MarginExtraSmall, nullptr, &TagReply);
 		static CLineInput l_TagReply(g_Config.m_ClTagReplyMessage, sizeof(g_Config.m_ClTagReplyMessage));
 		l_TagReply.SetEmptyText(Localize("Enter the message to send as an auto-reply."));
-		Ui()->DoEditBox(&l_TagReply, &TagReply, EditBoxFontSize);
+		CUIRect EditRect, PreviewBlock;
+		TagReply.HSplitTop(LineSize, &EditRect, &PreviewBlock);
+		Ui()->DoEditBox(&l_TagReply, &EditRect, EditBoxFontSize);
+
+		char aAutoMessage[128];
+		if(str_comp(g_Config.m_ClLanguagefile, "languages/korean.txt") == 0)
+			str_copy(aAutoMessage, "이 메세지는 자동 응답이에요!", sizeof(aAutoMessage));
+		else if(str_comp(g_Config.m_ClLanguagefile, "languages/simplified_chinese.txt") == 0)
+			str_copy(aAutoMessage, "此消息为自动回复", sizeof(aAutoMessage));
+		else if(str_comp(g_Config.m_ClLanguagefile, "languages/traditional_chinese.txt") == 0)
+			str_copy(aAutoMessage, "此訊息為自動回覆", sizeof(aAutoMessage));
+		else
+			str_copy(aAutoMessage, "This message is an auto-reply!", sizeof(aAutoMessage));
+
+		const char *pUserAutoReply = g_Config.m_ClTagReplyMessage[0] ? g_Config.m_ClTagReplyMessage : Localize("(None)");
+
+		PreviewBlock.HSplitTop(MarginExtraSmall, nullptr, &PreviewBlock);
+		CUIRect PreviewRect;
+		PreviewBlock.HSplitTop(LineSize, &PreviewRect, nullptr);
+		char aPreview[256];
+		str_format(aPreview, sizeof(aPreview), "%s: %s - %s", Localize("Preview"), pUserAutoReply, aAutoMessage);
+		Ui()->DoLabel(&PreviewRect, aPreview, EditBoxFontSize, TEXTALIGN_TL);
 	}
 
 	MainView.HSplitTop(MarginBetweenSections, &Label, &MainView);

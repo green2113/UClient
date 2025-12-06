@@ -2588,7 +2588,7 @@ Set this to 1 if you plan to use custom colors.
 It sets the Discord Game activity image.
 == 
 
-It translates from the most recent chat each time the command runs.
+It sends your chat messages in their translated form when you send them.
 == 
 
 Specify which translator to use (google, deepl).

@@ -47,15 +47,6 @@ MACRO_CONFIG_INT(ClNamePlatesFriendMark, cl_nameplates_friendmark, 0, 0, 1, CFGF
 MACRO_CONFIG_INT(ClNamePlatesStrong, cl_nameplates_strong, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show strong/weak in name plates (0 - off, 1 - icons, 2 - icons + numbers)")
 MACRO_CONFIG_INT(ClNamePlatesStrongSize, cl_nameplates_strong_size, 30, -50, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Size of strong/weak state icons and numbers")
 
-MACRO_CONFIG_INT(ClTagReply, uc_tag_reply, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable automatic reply when your name is tagged")
-MACRO_CONFIG_STR(ClTagReplyMessage, uc_tag_reply_message, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Message to send when automatic tag reply triggers")
-MACRO_CONFIG_STR(ClTagDiscordWebHookUrl, uc_tag_discord_webhook_url, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Discord webhook URL used when automatic tag reply triggers")
-MACRO_CONFIG_STR(ClChatDiscordWebHookUrl, uc_chat_discord_webhook_url, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Discord webhook URL used to send chat logs")
-MACRO_CONFIG_STR(ClChatSkinMessage, uc_chat_skin_message, 128, "uc_chat_skin_message", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Keyword that triggers automatic skin change")
-MACRO_CONFIG_STR(ClSkinSwitchSkinName, uc_skin_switch_skin_name, 64, "default", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Skin name to switch to when using /skin command")
-MACRO_CONFIG_INT(UcSkinSwitchUseCustomColors, uc_skin_switch_use_custom_colors, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Use custom body and feet colors when switching skin")
-MACRO_CONFIG_STR(ClSkinSwitchBodyColor, uc_skin_switch_body_color, 9, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Body color to use when switching skin")
-MACRO_CONFIG_STR(ClSkinSwitchFeetColor, uc_skin_switch_feet_color, 9, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Feet color to use when switching skin")
 
 MACRO_CONFIG_INT(ClAfkEmote, cl_afk_emote, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show zzz emote next to afk players")
 MACRO_CONFIG_INT(ClTextEntities, cl_text_entities, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Render textual entity data")
@@ -98,12 +89,6 @@ MACRO_CONFIG_INT(ClShowVotesAfterVoting, cl_show_votes_after_voting, 0, 0, 1, CF
 MACRO_CONFIG_INT(ClShowLocalTimeAlways, cl_show_local_time_always, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Always show local time")
 MACRO_CONFIG_INT(ClShowfps, cl_showfps, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show ingame FPS counter")
 MACRO_CONFIG_INT(ClShowpred, cl_showpred, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show ingame prediction time in milliseconds")
-MACRO_CONFIG_INT(UcTranslate, uc_translate, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Automatically translate chat messages before sending")
-MACRO_CONFIG_STR(UcTranslateTarget, uc_translate_target, 8, "en", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Translation target language (google: ISO 639, deepl: ISO 639-1 + ISO 15924)")
-MACRO_CONFIG_STR(UcTranslateApi, uc_translate_api, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Custom translation API endpoint for chat translator")
-MACRO_CONFIG_STR(UcTranslateKey, uc_translate_key, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "API key for the custom translation endpoint")
-MACRO_CONFIG_STR(UcTranslateBackend, uc_translate_backend, 16, "google", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Translation backend (google, deepl)")
-MACRO_CONFIG_INT(UcRichPresenceImage, uc_rich_presence_image, 0, 0, 3, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Discord Rich Presence image index")
 MACRO_CONFIG_INT(ClEyeWheel, cl_eye_wheel, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show eye wheel along together with emotes")
 MACRO_CONFIG_INT(ClEyeDuration, cl_eye_duration, 999999, 1, 999999, CFGFLAG_CLIENT | CFGFLAG_SAVE, "How long the eyes emotes last")
 MACRO_CONFIG_INT(ClFreezeStars, cl_freeze_stars, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show old star particles for frozen tees")
@@ -829,4 +814,3 @@ MACRO_CONFIG_INT(ClVideoRecorderFPS, cl_video_recorder_fps, 60, 1, 1000, CFGFLAG
 MACRO_CONFIG_STR(UServerNewYearMessage, userver_newyear_message, 256, "새해 복 많이 받으세요! / Happy New Year!", CFGFLAG_SERVER | CFGFLAG_SAVE, "새해 인사 메세지를 설정합니다. (단, 시즌날에만 메세지를 전송합니다)")
 MACRO_CONFIG_INT(SvIsFunServer, sv_is_fun_server, 0, 0, 1, CFGFLAG_SERVER | CFGFLAG_GAME, "서버를 재미 서버로 설정합니다.")
 
-MACRO_CONFIG_INT(TcUpdateNotice, uc_update_notice, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show UClient update notifications")

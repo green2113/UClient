@@ -215,8 +215,8 @@ public:
 		}
 		Json.EndObject();
 		CreateHttpRequest(Http, g_Config.m_TcTranslateEndpoint[0] == '\0' ? "localhost:5000/translate" : g_Config.m_TcTranslateEndpoint);
-		const char *pJson = Json.GetOutputString().c_str();
-		m_pHttpRequest->PostJson(pJson);
+		std::string JsonPayload = Json.GetOutputString();
+		m_pHttpRequest->PostJson(JsonPayload.c_str());
 	}
 };
 
@@ -301,6 +301,102 @@ public:
 		CreateHttpRequest(Http, aBuf);
 	}
 };
+
+class CTranslateBackendDeepl : public ITranslateBackendHttp
+{
+private:
+	static void UpperCopy(char *pDst, size_t DstSize, const char *pSrc)
+	{
+		if(DstSize == 0)
+			return;
+		size_t i = 0;
+		while(pSrc && pSrc[i] && i < DstSize - 1)
+		{
+			pDst[i] = (char)str_uppercase(pSrc[i]);
+			++i;
+		}
+		pDst[i] = '\0';
+	}
+
+	bool ParseResponseJson(const json_value *pObj, CTranslateResponse &Out)
+	{
+		if(!pObj || pObj->type != json_object)
+		{
+			str_copy(Out.m_Text, "Response is not JSON object");
+			return false;
+		}
+
+		const json_value *pTranslations = json_object_get(pObj, "translations");
+		if(pTranslations == &json_value_none)
+		{
+			str_copy(Out.m_Text, "No translations entry");
+			return false;
+		}
+		if(pTranslations->type != json_array || pTranslations->u.array.length == 0)
+		{
+			str_copy(Out.m_Text, "translations is empty");
+			return false;
+		}
+
+		const json_value *pEntry = pTranslations->u.array.values[0];
+		if(!pEntry || pEntry->type != json_object)
+		{
+			str_copy(Out.m_Text, "translation entry invalid");
+			return false;
+		}
+
+		const json_value *pText = json_object_get(pEntry, "text");
+		if(pText == &json_value_none || pText->type != json_string)
+		{
+			str_copy(Out.m_Text, "translation missing text");
+			return false;
+		}
+
+		const json_value *pSource = json_object_get(pEntry, "detected_source_language");
+		if(pSource != &json_value_none && pSource->type == json_string)
+			str_copy(Out.m_Language, pSource->u.string.ptr);
+		else
+			Out.m_Language[0] = '\0';
+
+		str_copy(Out.m_Text, pText->u.string.ptr);
+		return true;
+	}
+
+	protected:
+		bool ParseResponse(CTranslateResponse &Out) override
+		{
+			json_value *pObj = m_pHttpRequest->ResultJson();
+			bool Res = ParseResponseJson(pObj, Out);
+			json_value_free(pObj);
+			return Res;
+		}
+
+	public:
+		const char *Name() const override { return "DeepL"; }
+
+		CTranslateBackendDeepl(IHttp &Http, const char *pText)
+		{
+			const char *pEndpoint = g_Config.m_TcTranslateEndpoint[0] != '\0' ? g_Config.m_TcTranslateEndpoint : "https://api-free.deepl.com/v2/translate";
+			CreateHttpRequest(Http, pEndpoint);
+
+			if(g_Config.m_TcTranslateKey[0] != '\0')
+		{
+			char aAuth[512];
+			str_format(aAuth, sizeof(aAuth), "DeepL-Auth-Key %s", g_Config.m_TcTranslateKey);
+			m_pHttpRequest->HeaderString("Authorization", aAuth);
+			}
+			m_pHttpRequest->HeaderString("Content-Type", "application/x-www-form-urlencoded");
+
+			char aEncoded[4096];
+			UrlEncode(pText, aEncoded, sizeof(aEncoded));
+			char aTarget[16];
+			UpperCopy(aTarget, sizeof(aTarget), EncodeTarget(g_Config.m_TcTranslateTarget));
+			char aBody[8192];
+			str_format(aBody, sizeof(aBody), "text=%s&target_lang=%s", aEncoded, aTarget);
+			const size_t BodyLen = str_length(aBody);
+			m_pHttpRequest->Post((const unsigned char *)aBody, BodyLen);
+		}
+	};
 
 void CTranslate::ConTranslate(IConsole::IResult *pResult, void *pUserData)
 {
@@ -402,6 +498,10 @@ void CTranslate::Translate(CChat::CLine &Line, bool ShowProgress)
 		Job.m_pBackend = std::make_unique<CTranslateBackendLibretranslate>(*Http(), Job.m_pLine->m_aText);
 	else if(str_comp_nocase(g_Config.m_TcTranslateBackend, "ftapi") == 0)
 		Job.m_pBackend = std::make_unique<CTranslateBackendFtapi>(*Http(), Job.m_pLine->m_aText);
+	else if(str_comp_nocase(g_Config.m_TcTranslateBackend, "deepl") == 0)
+	{
+		Job.m_pBackend = std::make_unique<CTranslateBackendDeepl>(*Http(), Job.m_pLine->m_aText);
+	}
 	else
 	{
 		GameClient()->m_Chat.Echo("Invalid translate backend");

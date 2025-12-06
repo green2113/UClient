@@ -1469,6 +1469,22 @@ void CChat::OnRender()
 				}
 			}
 		}
+
+		if(g_Config.m_UcTranslate)
+		{
+			CTextCursor NoticeCursor;
+			const float NoticeFontSize = ScaledFontSize * 0.6f;
+			NoticeCursor.SetPosition(vec2(x, y - NoticeFontSize - NoticeFontSize * 0.25f));
+			NoticeCursor.m_FontSize = NoticeFontSize;
+			NoticeCursor.m_LineWidth = InputCursor.m_LineWidth;
+			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.7f);
+			
+			char aBuf[128];
+			str_format(aBuf, sizeof(aBuf), Localize("Auto-translation is disabled. (%s)"), g_Config.m_UcTranslateTarget);
+
+			TextRender()->TextEx(&NoticeCursor, aBuf);
+			TextRender()->TextColor(TextRender()->DefaultTextColor());
+		}
 	}
 
 #if defined(CONF_VIDEORECORDER)

@@ -32,7 +32,8 @@ std::string CAutoreply::GetCurrentDateTime()
 
 static bool LineShouldHighlight(const char *pLine, const char *pName)
 {
-    const char *pHit = str_find_nocase(pLine, pName);
+    const char *pHit = str_utf8_find_nocase(pLine, pName);
+    
     while(pHit)
     {
         int Length = str_length(pName);
@@ -230,15 +231,25 @@ void CAutoreply::OnMessage(int Msg, void *pRawMsg)
                 if (auto pHttp = Kernel()->RequestInterface<IHttp>())
                     pHttp->Run(pReq);
             }
+
+            char autoMessage[128];
+            if(str_comp(g_Config.m_ClLanguagefile, "languages/korean.txt") == 0)
+                str_copy(autoMessage, "이 메세지는 자동 응답이에요!", sizeof(autoMessage));
+            else if(str_comp(g_Config.m_ClLanguagefile, "languages/simplified_chinese.txt") == 0)
+                str_copy(autoMessage, "此消息为自动回复", sizeof(autoMessage));
+            else if(str_comp(g_Config.m_ClLanguagefile, "languages/traditional_chinese.txt") == 0)
+                str_copy(autoMessage, "此訊息為自動回覆", sizeof(autoMessage));
+            else
+                str_copy(autoMessage, "This message is an auto-reply!", sizeof(autoMessage));
             
             if (pMsg->m_Team == TEAM_WHISPER_RECV)
             {
-                str_format(aBuf, sizeof(aBuf), "/w %s %s - 이 메세지는 자동 응답이에요!", senderName, g_Config.m_ClTagReplyMessage);
+                str_format(aBuf, sizeof(aBuf), "/w %s %s - %s", senderName, g_Config.m_ClTagReplyMessage, autoMessage);
                 GameClient()->m_Chat.SendChat(0, aBuf);
             }
             else
             {
-                str_format(aBuf, sizeof(aBuf), "%s: %s - 이 메세지는 자동 응답이에요!", senderName, g_Config.m_ClTagReplyMessage);
+                str_format(aBuf, sizeof(aBuf), "%s: %s - %s", senderName, g_Config.m_ClTagReplyMessage, autoMessage);
                 GameClient()->m_Chat.SendChat(0, aBuf);
             }
         }

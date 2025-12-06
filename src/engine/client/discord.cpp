@@ -191,7 +191,7 @@ public:
 
 	void SetRichPresenceImageIndex(int Index) override
 	{
-		static const int s_ImageCount = 3;
+		static const int s_ImageCount = 4;
 		m_RichPresenceImageIndex = std::clamp(Index, 0, s_ImageCount - 1);
 		m_UpdateActivity = true;
 	}

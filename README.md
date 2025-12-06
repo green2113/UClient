@@ -45,7 +45,9 @@ pip install libretranslate
 libretranslate
 ```
 
-You can then set `tc_translate_backend libretranslate`, the port is automatically 5000
+You can then set `tc_translate_backend libretranslate`, the port is automatically 5000.
+
+If you prefer DeepL, set `tc_translate_backend deepl`, specify `tc_translate_key` with your API key, and optionally override `tc_translate_endpoint` (defaults to `https://api-free.deepl.com/v2/translate`).
 
 ### Scripting
 
