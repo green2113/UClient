@@ -181,12 +181,12 @@ bool CUcTranslator::ParseResponse(const unsigned char *pData, size_t Length, cha
 
 	std::string Response(reinterpret_cast<const char *>(pData), Length);
 
-	auto DecodeJsonString = [](const std::string &Response, size_t StartIndex, std::string &Out) -> bool {
+	auto DecodeJsonString = [](const std::string &Json, size_t StartIndex, std::string &Out) -> bool {
 		Out.clear();
 		bool Escape = false;
-		for(size_t i = StartIndex; i < Response.size(); ++i)
+		for(size_t i = StartIndex; i < Json.size(); ++i)
 		{
-			char c = Response[i];
+			char c = Json[i];
 			if(Escape)
 			{
 				switch(c)
