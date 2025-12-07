@@ -202,6 +202,9 @@ void CMenuBackground::LoadMenuBackground(bool HasDayHint, bool HasNightHint)
 			case SEASON_SUMMER:
 				pMenuMap = "jungle";
 				break;
+			case SEASON_VALENTINE:
+				pMenuMap = "heavens";
+				break;
 			case SEASON_AUTUMN:
 			case SEASON_HALLOWEEN:
 				pMenuMap = "autumn";
@@ -212,6 +215,8 @@ void CMenuBackground::LoadMenuBackground(bool HasDayHint, bool HasNightHint)
 				break;
 			case SEASON_NEWYEAR:
 				pMenuMap = "newyear";
+				break;
+			case SEASON_COUNT:
 				break;
 			}
 		}
