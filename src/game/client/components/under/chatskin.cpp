@@ -23,8 +23,7 @@ void CChatskin::OnConsoleInit()
 
 void CChatskin::ConMessage(IConsole::IResult *pResult, void *pUserData)
 {
-	CChatskin *pSelf = static_cast<CChatskin *>(pUserData);
-
+	(void)pUserData;
 	const char *pInput = pResult->GetString(0);
 
 	str_copy(g_Config.m_ClChatSkinMessage, pInput, sizeof(g_Config.m_ClChatSkinMessage));
@@ -43,7 +42,6 @@ void CChatskin::OnMessage(int Msg, void *pRawMsg)
 	const char *pText = pMsg->m_pMessage;
 	int pClientID = pMsg->m_ClientId;
 
-	const char *pName = GameClient()->m_aClients[pClientID].m_aName;
 	const char *pSkinName = GameClient()->m_aClients[pClientID].m_aSkinName;
 	int pSkinUseCustomColors = GameClient()->m_aClients[pClientID].m_UseCustomColor;
 	int pSkinBody = GameClient()->m_aClients[pClientID].m_ColorBody;

@@ -256,7 +256,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 		return;
 	}
 
-	CUIRect Label, Checkbox, EditBox;
+	CUIRect Label;
 	MainView.HSplitTop(MarginBetweenSections, &Label, &MainView);
 
 	// Auto Reply //
