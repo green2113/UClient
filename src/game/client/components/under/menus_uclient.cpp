@@ -37,10 +37,8 @@ enum
 
 using namespace FontIcons;
 
-const float FontSize = 14.0f;
 const float EditBoxFontSize = 12.0f;
 const float LineSize = 20.0f;
-const float ColorPickerLineSize = 25.0f;
 const float HeadlineFontSize = 20.0f;
 const float StandardFontSize = 14.0f;
 
@@ -49,7 +47,6 @@ const float Margin = 10.0f;
 const float MarginSmall = 5.0f;
 const float MarginExtraSmall = 2.5f;
 const float MarginBetweenSections = 30.0f;
-const float MarginBetweenViews = 30.0f;
 
 static CLineInput s_SkinSwitchNameInput(g_Config.m_ClSkinSwitchSkinName, sizeof(g_Config.m_ClSkinSwitchSkinName));
 static CLineInput s_SkinSwitchBodyColorInput(g_Config.m_ClSkinSwitchBodyColor, sizeof(g_Config.m_ClSkinSwitchBodyColor));

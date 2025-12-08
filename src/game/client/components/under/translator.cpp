@@ -98,11 +98,11 @@ bool CUcTranslator::TranslateAsyncImpl(const char *pText, const char *pTarget, C
 bool CUcTranslator::TranslateInternal(const char *pText, char *pOut, int OutSize, const char *pTarget)
 {
 	if(str_comp_nocase(g_Config.m_UcTranslateBackend, "deepl") == 0)
-	{
 		return TranslateUsingDeepL(pText, pOut, OutSize, pTarget);
-	}
 
-	// default/ucapi backend uses google endpoint or custom override.
+	if(str_comp_nocase(g_Config.m_UcTranslateBackend, "google") == 0)
+		return TranslateUsingDefault(pText, pOut, OutSize, pTarget);
+
 	if(g_Config.m_UcTranslateApi[0])
 		return TranslateUsingCustom(pText, pOut, OutSize, pTarget);
 	return TranslateUsingDefault(pText, pOut, OutSize, pTarget);
@@ -235,7 +235,6 @@ bool CUcTranslator::ParseResponse(const unsigned char *pData, size_t Length, cha
 		}
 	}
 
-	// try to find the first JSON string
 	std::string Extracted;
 	bool InString = false;
 	bool Escape = false;
@@ -280,7 +279,6 @@ bool CUcTranslator::ParseResponse(const unsigned char *pData, size_t Length, cha
 		}
 	}
 
-	// fallback: copy raw response
 	str_copy(pOut, Response.c_str(), OutSize);
 	return true;
 }

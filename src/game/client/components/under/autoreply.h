@@ -11,8 +11,6 @@
 
 class CAutoreply : public CComponent
 {
-	class IEngineGraphics *m_pGraphics = nullptr;
-
 	public:
 		CAutoreply();
 

@@ -563,7 +563,7 @@ void CTranslate::AutoTranslate(CChat::CLine &Line)
 		if(Id >= 0 && Id == Line.m_ClientId)
 			return;
 	}
-	if(str_comp(g_Config.m_TcTranslateBackend, "ftapi") == 0)
+	if(str_comp(g_Config.m_TcTranslateBackend, "ftapi") == 0 || str_comp_nocase(g_Config.m_TcTranslateBackend, "deepl") == 0)
 	{
 		// FTAPI quickly gets overloaded, please do not disable this
 		// It may shut down if we spam it too hard
