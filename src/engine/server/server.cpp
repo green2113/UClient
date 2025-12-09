@@ -614,8 +614,12 @@ static std::unique_ptr<CHttpRequest> CreateWebhookFileRequest(const char *pUrl, 
 	vBody.reserve(FileSize + 512);
 
 	const auto AppendString = [&vBody](const char *pStr) {
-		const size_t Length = str_length(pStr);
-		vBody.insert(vBody.end(), pStr, pStr + Length);
+		if(!pStr)
+			return;
+		for(const char *p = pStr; *p; ++p)
+		{
+			vBody.emplace_back(static_cast<unsigned char>(*p));
+		}
 	};
 	const auto AppendData = [&vBody](const unsigned char *pData, size_t Size) {
 		vBody.insert(vBody.end(), pData, pData + Size);
