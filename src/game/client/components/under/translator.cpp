@@ -69,14 +69,14 @@ void CUcTranslator::OnRender()
 	}
 }
 
-bool CUcTranslator::TranslateAsyncImpl(const char *pText, const char *pTarget, CChat *pChat, int Team, std::string Prefix)
+bool CUcTranslator::TranslateAsyncImpl(const char *pText, const char *pTarget, CChat *pChat, int Team, std::string PrefixArg)
 {
 	if(!pChat || !pText || !*pText)
 		return false;
 
 	std::string InputStr(pText);
 	std::string TargetStr = pTarget && *pTarget ? pTarget : "";
-	std::string PrefixStr = std::move(Prefix);
+	std::string PrefixStr = std::move(PrefixArg);
 	std::thread([this, Team, Input = std::move(InputStr), pChat, TargetString = std::move(TargetStr), Prefix = std::move(PrefixStr)]() {
 		char aBuffer[TRANSLATE_MAX_LENGTH];
 		const char *pTargetOverride = TargetString.empty() ? nullptr : TargetString.c_str();
