@@ -74,9 +74,9 @@ bool CUcTranslator::TranslateAsyncImpl(const char *pText, const char *pTarget, C
 	if(!pChat || !pText || !*pText)
 		return false;
 
-	std::string Input(pText);
-	std::string TargetString = pTarget && *pTarget ? pTarget : "";
-	std::thread([this, Team, Input = std::move(Input), pChat, TargetString = std::move(TargetString), Prefix = std::move(Prefix)]() {
+	std::string InputStr(pText);
+	std::string TargetStr = pTarget && *pTarget ? pTarget : "";
+	std::thread([this, Team, Input = std::move(InputStr), pChat, TargetString = std::move(TargetStr), Prefix = std::move(Prefix)]() {
 		char aBuffer[TRANSLATE_MAX_LENGTH];
 		const char *pTargetOverride = TargetString.empty() ? nullptr : TargetString.c_str();
 		bool Success = TranslateInternal(Input.c_str(), aBuffer, sizeof(aBuffer), pTargetOverride);

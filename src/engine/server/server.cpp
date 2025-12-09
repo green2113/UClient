@@ -630,7 +630,8 @@ static std::unique_ptr<CHttpRequest> CreateWebhookFileRequest(const char *pUrl, 
 	AppendString("\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"");
 	AppendString(pFilename);
 	AppendString("\"\r\nContent-Type: application/octet-stream\r\n\r\n");
-	AppendData(pFileData, FileSize);
+	if(pFileData && FileSize > 0)
+		AppendData(pFileData, FileSize);
 	AppendString("\r\n--");
 	AppendString(aBoundary);
 	AppendString("--\r\n");
