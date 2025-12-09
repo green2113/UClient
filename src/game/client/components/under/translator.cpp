@@ -50,6 +50,14 @@ bool CUcTranslator::TranslateAsync(int Team, const char *pText, CChat *pChat)
 	return TranslateAsyncImpl(pTextToTranslate, g_Config.m_UcTranslateTarget, pChat, Team, std::move(Prefix));
 }
 
+bool CUcTranslator::TranslateAsyncWithPrefix(int Team, const char *pText, CChat *pChat, std::string Prefix)
+{
+	if(!IsEnabled() || !pChat || !pText || !*pText)
+		return false;
+
+	return TranslateAsyncImpl(pText, g_Config.m_UcTranslateTarget, pChat, Team, std::move(Prefix));
+}
+
 void CUcTranslator::OnRender()
 {
 	std::deque<CResult> Results;

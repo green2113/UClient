@@ -17,6 +17,7 @@ class CUcTranslator : public CComponent
 public:
 	bool IsEnabled() const;
 	bool TranslateAsync(int Team, const char *pText, CChat *pChat);
+	bool TranslateAsyncWithPrefix(int Team, const char *pText, CChat *pChat, std::string Prefix);
 	void OnRender() override;
 	int Sizeof() const override { return sizeof(*this); }
 

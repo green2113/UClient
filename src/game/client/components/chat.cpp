@@ -1604,9 +1604,64 @@ void CChat::SendChatImpl(int Team, const char *pLine, bool AllowTranslation)
 	if(*str_utf8_skip_whitespaces(pLine) == '\0')
 		return;
 
-	if(AllowTranslation && pLine[0] != '/' && GameClient()->m_UcTranslator.IsEnabled())
+	if(AllowTranslation && GameClient()->m_UcTranslator.IsEnabled())
 	{
-		if(GameClient()->m_UcTranslator.TranslateAsync(Team, pLine, this))
+		bool Handled = false;
+		if(pLine[0] != '/')
+		{
+			Handled = GameClient()->m_UcTranslator.TranslateAsync(Team, pLine, this);
+		}
+		else
+		{
+			const auto TryWhisperTranslate = [&](const char *pAfterCommand) -> bool {
+				while(*pAfterCommand == ' ' || *pAfterCommand == '\t')
+					++pAfterCommand;
+				if(*pAfterCommand == '\0')
+					return false;
+				const char *pNameEnd = pAfterCommand;
+				while(*pNameEnd && *pNameEnd != ' ')
+					++pNameEnd;
+				if(!*pNameEnd)
+					return false;
+				const char *pMsg = pNameEnd;
+				while(*pMsg == ' ')
+					++pMsg;
+				if(*pMsg == '\0')
+					return false;
+				std::string Prefix;
+				Prefix.assign(pLine, pMsg - pLine);
+				return GameClient()->m_UcTranslator.TranslateAsyncWithPrefix(Team, pMsg, this, std::move(Prefix));
+			};
+
+			const auto TryConverseTranslate = [&](const char *pAfterCommand) -> bool {
+				while(*pAfterCommand == ' ' || *pAfterCommand == '\t')
+					++pAfterCommand;
+				if(*pAfterCommand == '\0')
+					return false;
+				std::string Prefix;
+				Prefix.assign(pLine, pAfterCommand - pLine);
+				return GameClient()->m_UcTranslator.TranslateAsyncWithPrefix(Team, pAfterCommand, this, std::move(Prefix));
+			};
+
+			const char *pLineStart = pLine;
+			if(str_comp_nocase_num(pLineStart, "/w", 2) == 0 && (pLineStart[2] == ' ' || pLineStart[2] == '\t'))
+			{
+				Handled = TryWhisperTranslate(pLineStart + 2);
+			}
+			else if(str_comp_nocase_num(pLineStart, "/whisper", 8) == 0 && (pLineStart[8] == ' ' || pLineStart[8] == '\t'))
+			{
+				Handled = TryWhisperTranslate(pLineStart + 8);
+			}
+			else if(str_comp_nocase_num(pLineStart, "/c", 2) == 0 && (pLineStart[2] == ' ' || pLineStart[2] == '\t'))
+			{
+				Handled = TryConverseTranslate(pLineStart + 2);
+			}
+			else if(str_comp_nocase_num(pLineStart, "/converse", 9) == 0 && (pLineStart[9] == ' ' || pLineStart[9] == '\t'))
+			{
+				Handled = TryConverseTranslate(pLineStart + 9);
+			}
+		}
+		if(Handled)
 			return;
 	}
 
