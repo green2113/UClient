@@ -151,9 +151,10 @@ enum
 	VERSION_DDNET_SAVE_CODE = 19060,
 };
 
-enum
+namespace TuneZone
 {
-	NUM_TUNEZONES = 256,
+	inline constexpr int OVERRIDE_NONE = -1;
+	inline constexpr int NUM = 256;
 };
 
 typedef std::bitset<MAX_CLIENTS> CClientMask;
