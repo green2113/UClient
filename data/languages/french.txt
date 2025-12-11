@@ -847,9 +847,6 @@ Automatically create statboard csv
 Video name:
 == Nom de la vidéo
 
-Show quads
-== Afficher les quads
-
 Best
 == Meilleur
 
@@ -2513,7 +2510,13 @@ Dragger Outline Color
 Dragger Inner Color
 == 
 
+Show background quads
+== 
+
 AntiPing: prediction margin
+== 
+
+Scoreboard cursor
 == 
 
 Download
@@ -2559,4 +2562,17 @@ Please enter the feet color code.
 == 
 
 A new U-Client update is available.
+Add friend
+== 
+
+Unmute
+== 
+
+Mute
+== 
+
+Unmute emoticons
+== 
+
+Mute emoticons
 == 

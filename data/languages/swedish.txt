@@ -883,9 +883,6 @@ Show others
 Unfinished map
 == Oavklarad bana
 
-Show quads
-== Visa quads
-
 Show names in chat in team colors
 == Visa namn in chatten med lagets färger
 
@@ -2559,4 +2556,23 @@ Please enter the feet color code.
 == 
 
 A new U-Client update is available.
+Show background quads
+== 
+
+Scoreboard cursor
+== 
+
+Add friend
+== 
+
+Unmute
+== 
+
+Mute
+== 
+
+Unmute emoticons
+== 
+
+Mute emoticons
 == 

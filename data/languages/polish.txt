@@ -514,9 +514,6 @@ Name plates size
 Show others
 == Pokazuj innych
 
-Show quads
-== Pokazuj quady
-
 Show other players' hook collision lines
 == Pokazuj linie kolizyjne innych graczy
 
@@ -2516,6 +2513,12 @@ Are you sure that you want to disconnect and play this demo?
 Censor profanity
 == 
 
+Show background quads
+== 
+
+Scoreboard cursor
+== 
+
 Download
 == 
 
@@ -2559,4 +2562,17 @@ Please enter the feet color code.
 == 
 
 A new U-Client update is available.
+Add friend
+== 
+
+Unmute
+== 
+
+Mute
+== 
+
+Unmute emoticons
+== 
+
+Mute emoticons
 == 

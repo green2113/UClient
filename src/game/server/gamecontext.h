@@ -304,6 +304,7 @@ public:
 	void SendMotd(int ClientId) const;
 	void SendSettings(int ClientId) const;
 	void SendBroadcast(const char *pText, int ClientId, bool IsImportant = true);
+	void SendSkinChange7(int ClientId);
 
 	void List(int ClientId, const char *pFilter);
 
