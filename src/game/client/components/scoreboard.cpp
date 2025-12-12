@@ -1072,7 +1072,31 @@ CUi::EPopupMenuFunctionResult CScoreboard::PopupScoreboard(void *pContext, CUIRe
 	const float FontSize = 12.0f;
 
 	View.HSplitTop(FontSize, &Label, &View);
+
+	CUIRect NameButton = Label;
+	const float NamePaddingX = 3.0f;
+	const float NamePaddingY = 2.0f;
+	NameButton.x -= NamePaddingX;
+	NameButton.w += NamePaddingX * 2.0f;
+	NameButton.y -= NamePaddingY;
+	NameButton.h += NamePaddingY * 2.0f;
+
+	const int CopyNameClicked = pUi->DoButtonLogic(&pPopupContext->m_CopyNameAction, 0, &NameButton, BUTTONFLAG_LEFT);
+	const bool NameHovered = pUi->HotItem() == &pPopupContext->m_CopyNameAction || pUi->ActiveItem() == &pPopupContext->m_CopyNameAction;
+	if(NameHovered)
+	{
+		ColorRGBA HighlightColor = ColorRGBA(1.0f, 1.0f, 1.0f, 0.2f * pUi->ButtonColorMul(&pPopupContext->m_CopyNameAction));
+		NameButton.Draw(HighlightColor, IGraphics::CORNER_ALL, 3.0f);
+	}
+
 	pUi->DoLabel(&Label, Client.m_aName, FontSize, TEXTALIGN_ML);
+
+	if(CopyNameClicked)
+	{
+		pScoreboard->Input()->SetClipboardText(Client.m_aName);
+	}
+
+	pScoreboard->GameClient()->m_Tooltips.DoToolTip(&pPopupContext->m_CopyNameAction, &NameButton, Localize("Copy name"));
 
 	if(!pPopupContext->m_IsLocal)
 	{
