@@ -119,7 +119,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y p7zip-full awscli
+          sudo apt-get install -y p7zip-full python3-pip
+          python3 -m pip install --user awscli
 
           mkdir -p r2/tmp/windows r2/tmp/linux r2/tmp/macos r2upload
 
@@ -141,13 +142,7 @@ jobs:
           fi
           cp "$LIN_BIN" "r2upload/DDNet-linux-x86_64.exe"
 
-          echo "Extracting macOS executable"
-          7z x "./artifacts/${CLIENT_NAME}-macOS.dmg" -or2/tmp/macos >/dev/null
-          MAC_BIN=$(find r2/tmp/macos -type f -executable -name 'DDNet*' | head -n 1 || true)
-          if [ -z "$MAC_BIN" ]; then
-            echo "Unable to find DDNet executable in macOS artifact"
-            exit 1
-          fi
+          echo "Copying macOS disk image"
           cp "./artifacts/${CLIENT_NAME}-macOS.dmg" "r2upload/DDNet-macOS.dmg"
 
           echo "Preparing Android package"
@@ -163,13 +158,14 @@ jobs:
           CLIENT_NAME: ${{ env.CLIENT_NAME }}
         run: |
           set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           echo "Clearing existing download objects in bucket ${R2_BUCKET}"
           aws s3 rm "s3://${R2_BUCKET}/download" --recursive --endpoint-url "$ENDPOINT" || true
           echo "Uploading extracted binaries to R2 bucket ${R2_BUCKET}"
           aws s3 cp "r2upload/DDNet-win64.exe" "s3://${R2_BUCKET}/download/DDNet-win64.exe" --endpoint-url "$ENDPOINT"
           aws s3 cp "r2upload/DDNet-linux-x86_64.exe" "s3://${R2_BUCKET}/download/DDNet-linux-x86_64.exe" --endpoint-url "$ENDPOINT"
-          aws s3 cp "r2upload/DDNet-macOS.exe" "s3://${R2_BUCKET}/download/DDNet-macOS.exe" --endpoint-url "$ENDPOINT"
+          aws s3 cp "r2upload/DDNet-macOS.dmg" "s3://${R2_BUCKET}/download/DDNet-macOS.dmg" --endpoint-url "$ENDPOINT"
           aws s3 cp "r2upload/DDNet-android.apk" "s3://${R2_BUCKET}/download/DDNet-android.apk" --endpoint-url "$ENDPOINT"
           echo "Syncing data directory to R2 download/data"
           aws s3 sync "data" "s3://${R2_BUCKET}/download/data" --delete --endpoint-url "$ENDPOINT"
