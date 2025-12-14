@@ -9,6 +9,7 @@
 #include <antibot/antibot_data.h>
 
 #include <base/log.h>
+#include <base/math.h>
 
 #include <engine/antibot.h>
 #include <engine/shared/config.h>
@@ -76,6 +77,10 @@ bool CCharacter::Spawn(CPlayer *pPlayer, vec2 Pos)
 	mem_zero(&m_LatestPrevPrevInput, sizeof(m_LatestPrevPrevInput));
 	m_LatestPrevPrevInput.m_TargetY = -1;
 	m_NumInputs = 0;
+	m_HookAngleTrackingInitialized = false;
+	m_HookAngleRapidChanges = 0;
+	m_LastHookAimAngle = 0.0f;
+	m_LastHookAimTick = Server()->Tick();
 	m_SpawnTick = Server()->Tick();
 	m_WeaponChangeTick = Server()->Tick();
 	Antibot()->OnSpawn(m_pPlayer->GetCid());
@@ -727,6 +732,67 @@ void CCharacter::OnPredictedInput(const CNetObj_PlayerInput *pNewInput)
 		m_Input.m_TargetY = -1;
 
 	mem_copy(&m_SavedInput, &m_Input, sizeof(m_SavedInput));
+	CheckHookAngleExploit();
+}
+
+void CCharacter::CheckHookAngleExploit()
+{
+	if(!g_Config.m_SvAntiHookMonitor || g_Config.m_SvAntiHookAngleDelta <= 0 || g_Config.m_SvAntiHookAngleInterval <= 0 || g_Config.m_SvAntiHookAngleRepeats <= 0)
+	{
+		m_HookAngleTrackingInitialized = false;
+		m_HookAngleRapidChanges = 0;
+		return;
+	}
+
+	if(!m_pPlayer || m_pPlayer->GetTeam() == TEAM_SPECTATORS)
+		return;
+
+	if(!m_Input.m_Hook)
+	{
+		m_HookAngleTrackingInitialized = false;
+		m_HookAngleRapidChanges = 0;
+		return;
+	}
+
+	vec2 Aim((float)m_Input.m_TargetX, (float)m_Input.m_TargetY);
+	if(length(Aim) < 0.001f)
+		return;
+
+	const float Angle = std::atan2(Aim.y, Aim.x);
+	const int64_t Now = Server()->Tick();
+
+	if(!m_HookAngleTrackingInitialized)
+	{
+		m_HookAngleTrackingInitialized = true;
+		m_LastHookAimAngle = Angle;
+		m_LastHookAimTick = Now;
+		m_HookAngleRapidChanges = 0;
+		return;
+	}
+
+	const int IntervalTicks = g_Config.m_SvAntiHookAngleInterval;
+	const int64_t TicksSince = Now - m_LastHookAimTick;
+
+	float DiffDeg = std::abs((Angle - m_LastHookAimAngle) * 180.0f / pi);
+	if(DiffDeg > 180.0f)
+		DiffDeg = 360.0f - DiffDeg;
+
+	if(TicksSince <= IntervalTicks && DiffDeg >= g_Config.m_SvAntiHookAngleDelta)
+	{
+		++m_HookAngleRapidChanges;
+		if(m_HookAngleRapidChanges >= g_Config.m_SvAntiHookAngleRepeats)
+		{
+			GameServer()->OnHookAngleExploitDetected(m_pPlayer, DiffDeg, (int)TicksSince);
+			m_HookAngleRapidChanges = 0;
+		}
+	}
+	else if(TicksSince > IntervalTicks)
+	{
+		m_HookAngleRapidChanges = 0;
+	}
+
+	m_LastHookAimAngle = Angle;
+	m_LastHookAimTick = Now;
 }
 
 void CCharacter::OnDirectInput(const CNetObj_PlayerInput *pNewInput)

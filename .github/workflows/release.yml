@@ -115,6 +115,65 @@ jobs:
           echo "Listing ./artifacts directory:"
           ls -R ./artifacts
 
+      - name: Prepare standalone binaries for R2
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full awscli
+
+          mkdir -p r2/tmp/windows r2/tmp/linux r2/tmp/macos r2upload
+
+          echo "Extracting Windows executable"
+          unzip -q "./artifacts/${CLIENT_NAME}-windows.zip" -d r2/tmp/windows
+          WIN_BIN=$(find r2/tmp/windows -type f -name 'DDNet*.exe' | head -n 1 || true)
+          if [ -z "$WIN_BIN" ]; then
+            echo "Unable to find DDNet executable in Windows artifact"
+            exit 1
+          fi
+          cp "$WIN_BIN" "r2upload/DDNet-win64.exe"
+
+          echo "Extracting Linux executable"
+          tar -xJf "./artifacts/${CLIENT_NAME}-ubuntu.tar.xz" -C r2/tmp/linux
+          LIN_BIN=$(find r2/tmp/linux -type f -executable -name 'DDNet*' ! -name '*.so' | head -n 1 || true)
+          if [ -z "$LIN_BIN" ]; then
+            echo "Unable to find DDNet executable in Linux artifact"
+            exit 1
+          fi
+          cp "$LIN_BIN" "r2upload/DDNet-linux-x86_64.exe"
+
+          echo "Extracting macOS executable"
+          7z x "./artifacts/${CLIENT_NAME}-macOS.dmg" -or2/tmp/macos >/dev/null
+          MAC_BIN=$(find r2/tmp/macos -type f -executable -name 'DDNet*' | head -n 1 || true)
+          if [ -z "$MAC_BIN" ]; then
+            echo "Unable to find DDNet executable in macOS artifact"
+            exit 1
+          fi
+          cp "./artifacts/${CLIENT_NAME}-macOS.dmg" "r2upload/DDNet-macOS.dmg"
+
+          echo "Preparing Android package"
+          cp "./artifacts/${CLIENT_NAME}-android.apk" "r2upload/DDNet-android.apk"
+
+      - name: Upload artifacts to Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          CLIENT_NAME: ${{ env.CLIENT_NAME }}
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          echo "Clearing existing download objects in bucket ${R2_BUCKET}"
+          aws s3 rm "s3://${R2_BUCKET}/download" --recursive --endpoint-url "$ENDPOINT" || true
+          echo "Uploading extracted binaries to R2 bucket ${R2_BUCKET}"
+          aws s3 cp "r2upload/DDNet-win64.exe" "s3://${R2_BUCKET}/download/DDNet-win64.exe" --endpoint-url "$ENDPOINT"
+          aws s3 cp "r2upload/DDNet-linux-x86_64.exe" "s3://${R2_BUCKET}/download/DDNet-linux-x86_64.exe" --endpoint-url "$ENDPOINT"
+          aws s3 cp "r2upload/DDNet-macOS.exe" "s3://${R2_BUCKET}/download/DDNet-macOS.exe" --endpoint-url "$ENDPOINT"
+          aws s3 cp "r2upload/DDNet-android.apk" "s3://${R2_BUCKET}/download/DDNet-android.apk" --endpoint-url "$ENDPOINT"
+          echo "Syncing data directory to R2 download/data"
+          aws s3 sync "data" "s3://${R2_BUCKET}/download/data" --delete --endpoint-url "$ENDPOINT"
+
       - name: Upload Ubuntu
         uses: actions/upload-release-asset@v1
         env:

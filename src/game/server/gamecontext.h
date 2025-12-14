@@ -201,6 +201,7 @@ public:
 	CTeeHistorian *TeeHistorian() { return &m_TeeHistorian; }
 	bool TeeHistorianActive() const { return m_TeeHistorianActive; }
 	void OnHookSpamDetected(class CPlayer *pPlayer, float HooksPerSecond);
+	void OnHookAngleExploitDetected(class CPlayer *pPlayer, float AngleDelta, int IntervalTicks);
 	CNetObjHandler *GetNetObjHandler() override { return &m_NetObjHandler; }
 	protocol7::CNetObjHandler *GetNetObjHandler7() override { return &m_NetObjHandler7; }
 

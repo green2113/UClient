@@ -261,6 +261,7 @@ public:
 	int m_HookSpamCount = 0;
 	bool m_HookSpamWarned = false;
 	int64_t m_NextHookDemoRecordTick = 0;
+	int64_t m_NextHookAngleWebhookTick = 0;
 
 	int GetDefaultEmote() const;
 	void OverrideDefaultEmote(int Emote, int Tick);

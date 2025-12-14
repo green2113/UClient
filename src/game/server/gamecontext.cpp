@@ -4986,6 +4986,30 @@ void CGameContext::OnHookSpamDetected(CPlayer *pPlayer, float HooksPerSecond)
 	}
 }
 
+void CGameContext::OnHookAngleExploitDetected(CPlayer *pPlayer, float AngleDelta, int IntervalTicks)
+{
+	if(!pPlayer)
+		return;
+
+	if(!g_Config.m_SvAntiHookMonitor)
+		return;
+
+	const int CooldownSeconds = maximum(1, g_Config.m_SvAntiHookAngleCooldown);
+	const int64_t Now = Server()->Tick();
+	if(Now < pPlayer->m_NextHookAngleWebhookTick)
+		return;
+	pPlayer->m_NextHookAngleWebhookTick = Now + (int64_t)Server()->TickSpeed() * CooldownSeconds;
+
+	char aAddr[NETADDR_MAXSTRSIZE];
+	const char *pAddr = Server()->ClientAddrString(pPlayer->GetCid(), false);
+	if(pAddr)
+		str_copy(aAddr, pAddr, sizeof(aAddr));
+	else
+		aAddr[0] = '\0';
+
+	Server()->SendHookAngleWebhook(pPlayer->GetCid(), AngleDelta, IntervalTicks, aAddr);
+}
+
 void CGameContext::SendSaveCode(int Team, int TeamSize, int State, const char *pError, const char *pSaveRequester, const char *pServerName, const char *pGeneratedCode, const char *pCode)
 {
 	char aBuf[512];

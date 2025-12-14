@@ -166,6 +166,7 @@ void CPlayer::Reset()
 	m_HookSpamWindowStartTick = 0;
 	m_HookSpamCount = 0;
 	m_HookSpamWarned = false;
+	m_NextHookAngleWebhookTick = 0;
 }
 
 static int PlayerFlags_SixToSeven(int Flags)

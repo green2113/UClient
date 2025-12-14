@@ -254,6 +254,48 @@ void CServer::SendHookSpamWebhook(int ClientId, float HooksPerSecond, const char
 	m_Http.Run(pReq);
 }
 
+void CServer::SendHookAngleWebhook(int ClientId, float AngleDelta, int IntervalTicks, const char *pAddr)
+{
+	if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')
+		return;
+
+	const char *pName = (ClientId >= 0 && ClientId < MAX_CLIENTS) ? ClientName(ClientId) : "Unknown player";
+	const char *pServerName = g_Config.m_SvName[0] ? g_Config.m_SvName : "DDNet Server";
+	const char *pAddrStr = (pAddr && pAddr[0]) ? pAddr : "알 수 없음";
+	const float IntervalSeconds = IntervalTicks > 0 ? static_cast<float>(IntervalTicks) / TickSpeed() : 0.0f;
+
+	char aDesc[512];
+	str_format(aDesc, sizeof(aDesc),
+		"%s님이 %.1f°의 갈고리 각도를 약 %.2f초(%d tick) 이내에 연속적으로 변경했어요.\n서버: %s%s%s",
+		pName && pName[0] ? pName : "알 수 없음",
+		AngleDelta,
+		IntervalSeconds,
+		IntervalTicks,
+		pServerName,
+		pAddrStr[0] ? "\nIP: " : "",
+		pAddrStr[0] ? pAddrStr : "");
+
+	char aEscDesc[768];
+	EscapeJson(aEscDesc, sizeof(aEscDesc), aDesc);
+
+	char aJson[1152];
+	str_format(aJson, sizeof(aJson),
+		"{\"username\":\"안티치트 로그\",\"embeds\":[{\"title\":\"비정상적인 갈고리 각도 조작이 감지되었어요.\",\"description\":\"%s\",\"color\":16737792}],\"allowed_mentions\":{\"parse\":[]}}",
+		aEscDesc);
+
+	auto pUniqueReq = HttpPostJson(g_Config.m_SvAntiHookWebhookUrl, aJson);
+	if(!pUniqueReq)
+	{
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "anti_hook_webhook", "Failed to create hook angle webhook request.");
+		return;
+	}
+
+	std::shared_ptr<IHttpRequest> pReq(
+		pUniqueReq.release(),
+		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
+	m_Http.Run(pReq);
+}
+
 bool CServer::StartHookSpamDemoRecord(int ClientId, float HooksPerSecond)
 {
 	if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')

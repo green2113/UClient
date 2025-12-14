@@ -334,6 +334,7 @@ public:
 	void SendLogLine(const CLogMessage *pMessage);
 	void SendBanWebhook(const char *pTargetName, const char *pTargetAddr, int Seconds, const char *pReason);
 	void SendHookSpamWebhook(int ClientId, float HooksPerSecond, const char *pAddr) override;
+	void SendHookAngleWebhook(int ClientId, float AngleDelta, int IntervalTicks, const char *pAddr) override;
 	bool StartHookSpamDemoRecord(int ClientId, float HooksPerSecond) override;
 	bool StartReportDemoRecord(int ReporterId, int TargetId, const char *pReason) override;
 	void SetRconCid(int ClientId) override;
