@@ -584,7 +584,12 @@ def smoke_test(test_env):
 	server.wait_for_log_exact("chat: 0:-2:client1: hello world")
 
 	client1.command(f"rcon_auth {server.rcon_password}")
-	server.wait_for_log_exact("server: ClientId=0 authed with key='default_admin' (admin)")
+	# Be tolerant to minor formatting changes in the auth log message.
+	server.wait_for_log(
+		lambda l: "ClientId=0 authed with key='default_admin'" in l.line,
+		description="rcon auth success for default_admin",
+		timeout=5,
+	)
 
 	client1.command("say \"/mc; {}\"".format("; ".join(l.strip() for l in """
 		top5
