@@ -16,6 +16,7 @@
 #include <optional>
 
 class CCharacter;
+class CTrailProjectile;
 class CGameContext;
 class IServer;
 struct CNetObj_PlayerInput;
@@ -220,6 +221,8 @@ public:
 	vec2 m_ShowDistance;
 	bool m_SpecTeam;
 	bool m_NinjaJetpack;
+	int m_TrailMode;
+	CTrailProjectile *m_pTrail;
 
 	// camera info is used sparingly for converting aim target to absolute world coordinates
 	class CCameraInfo

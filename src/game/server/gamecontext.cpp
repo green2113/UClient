@@ -3,6 +3,7 @@
 #include "gamecontext.h"
 
 #include "entities/character.h"
+#include "entities/trail_projectile.h"
 #include "gamemodes/DDRace.h"
 #include "gamemodes/gores.h"
 #include "gamemodes/mod.h"
@@ -14,6 +15,7 @@
 
 #include <base/logger.h>
 #include <base/math.h>
+#include <base/str.h>
 #include <base/system.h>
 
 #include <engine/console.h>
@@ -116,6 +118,8 @@ CGameContext::CGameContext(bool Resetting) :
 
 	m_LatestLog = 0;
 	mem_zero(&m_aLogs, sizeof(m_aLogs));
+	m_TrailPermFileLastWrite = 0;
+	m_NextTrailPermSync = 0;
 
 	if(!Resetting)
 	{
@@ -211,6 +215,425 @@ const CCharacter *CGameContext::GetPlayerChar(int ClientId) const
 	if(ClientId < 0 || ClientId >= MAX_CLIENTS || !m_apPlayers[ClientId])
 		return nullptr;
 	return m_apPlayers[ClientId]->GetCharacter();
+}
+
+static NETADDR TrailKeyAddress(NETADDR Addr)
+{
+	if(Addr.type == NETTYPE_WEBSOCKET_IPV4)
+	{
+		Addr.type = NETTYPE_IPV4;
+	}
+	else if(Addr.type == NETTYPE_WEBSOCKET_IPV6)
+	{
+		Addr.type = NETTYPE_IPV6;
+	}
+	Addr.port = 0;
+	return Addr;
+}
+
+int CGameContext::TrailPermMask(const NETADDR *pAddr) const
+{
+	if(!pAddr)
+		return 0;
+	NETADDR KeyAddr = TrailKeyAddress(*pAddr);
+	for(const auto &Entry : m_vTrailPerms)
+	{
+		if(Entry.m_aName[0] != '\0')
+			continue;
+		if(Entry.m_IsWildcard || net_addr_comp_noport(&Entry.m_Addr, &KeyAddr) == 0)
+			return Entry.m_Mask;
+	}
+	return 0;
+}
+
+int CGameContext::TrailPermMaskForClient(int ClientId) const
+{
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return 0;
+	const NETADDR *pAddr = Server()->ClientAddr(ClientId);
+	if(!pAddr)
+		return 0;
+	NETADDR KeyAddr = TrailKeyAddress(*pAddr);
+	const char *pName = Server()->ClientName(ClientId);
+	int Mask = 0;
+	for(const auto &Entry : m_vTrailPerms)
+	{
+		if(!Entry.m_IsWildcard && net_addr_comp_noport(&Entry.m_Addr, &KeyAddr) != 0)
+			continue;
+		if(Entry.m_aName[0] != '\0' && str_comp(Entry.m_aName, pName) != 0)
+			continue;
+		Mask |= Entry.m_Mask;
+	}
+	return Mask;
+}
+
+void CGameContext::SetTrailPerm(const NETADDR *pAddr, int Mask)
+{
+	if(!pAddr)
+		return;
+	NETADDR KeyAddr = TrailKeyAddress(*pAddr);
+	for(auto &Entry : m_vTrailPerms)
+	{
+		if(!Entry.m_IsWildcard && net_addr_comp_noport(&Entry.m_Addr, &KeyAddr) == 0 && Entry.m_aName[0] == '\0')
+		{
+			Entry.m_Mask = Mask;
+			RewriteTrailPermFile();
+			return;
+		}
+	}
+	CTrailPerm Perm;
+	Perm.m_Addr = KeyAddr;
+	Perm.m_Mask = Mask;
+	Perm.m_aName[0] = '\0';
+	Perm.m_IsWildcard = false;
+	m_vTrailPerms.push_back(Perm);
+	RewriteTrailPermFile();
+}
+
+void CGameContext::SetTrailPermWildcard(int Mask)
+{
+	for(auto &Entry : m_vTrailPerms)
+	{
+		if(Entry.m_IsWildcard && Entry.m_aName[0] == '\0')
+		{
+			Entry.m_Mask = Mask;
+			RewriteTrailPermFile();
+			return;
+		}
+	}
+	CTrailPerm Perm;
+	mem_zero(&Perm.m_Addr, sizeof(Perm.m_Addr));
+	Perm.m_Mask = Mask;
+	Perm.m_aName[0] = '\0';
+	Perm.m_IsWildcard = true;
+	m_vTrailPerms.push_back(Perm);
+	RewriteTrailPermFile();
+}
+
+void CGameContext::SetTrailPermNamed(const NETADDR *pAddr, const char *pName, int Mask)
+{
+	if(!pAddr || !pName || pName[0] == '\0')
+		return;
+	NETADDR KeyAddr = TrailKeyAddress(*pAddr);
+	for(auto &Entry : m_vTrailPerms)
+	{
+		if(!Entry.m_IsWildcard && net_addr_comp_noport(&Entry.m_Addr, &KeyAddr) == 0 && str_comp(Entry.m_aName, pName) == 0)
+		{
+			Entry.m_Mask = Mask;
+			RewriteTrailPermFile();
+			return;
+		}
+	}
+	CTrailPerm Perm;
+	Perm.m_Addr = KeyAddr;
+	Perm.m_Mask = Mask;
+	str_copy(Perm.m_aName, pName, sizeof(Perm.m_aName));
+	Perm.m_IsWildcard = false;
+	m_vTrailPerms.push_back(Perm);
+	RewriteTrailPermFile();
+}
+
+bool CGameContext::RemoveTrailPerm(const NETADDR *pAddr)
+{
+	if(!pAddr)
+		return false;
+	NETADDR KeyAddr = TrailKeyAddress(*pAddr);
+	for(auto It = m_vTrailPerms.begin(); It != m_vTrailPerms.end(); ++It)
+	{
+		if(!It->m_IsWildcard && net_addr_comp_noport(&It->m_Addr, &KeyAddr) == 0 && It->m_aName[0] == '\0')
+		{
+			m_vTrailPerms.erase(It);
+			RewriteTrailPermFile();
+			return true;
+		}
+	}
+	return false;
+}
+
+bool CGameContext::RemoveTrailPermWildcard()
+{
+	for(auto It = m_vTrailPerms.begin(); It != m_vTrailPerms.end(); ++It)
+	{
+		if(It->m_IsWildcard && It->m_aName[0] == '\0')
+		{
+			m_vTrailPerms.erase(It);
+			RewriteTrailPermFile();
+			return true;
+		}
+	}
+	return false;
+}
+
+bool CGameContext::RemoveTrailPermNamed(const NETADDR *pAddr, const char *pName)
+{
+	if(!pAddr || !pName || pName[0] == '\0')
+		return false;
+	NETADDR KeyAddr = TrailKeyAddress(*pAddr);
+	for(auto It = m_vTrailPerms.begin(); It != m_vTrailPerms.end(); ++It)
+	{
+		if(!It->m_IsWildcard && net_addr_comp_noport(&It->m_Addr, &KeyAddr) == 0 && str_comp(It->m_aName, pName) == 0)
+		{
+			m_vTrailPerms.erase(It);
+			RewriteTrailPermFile();
+			return true;
+		}
+	}
+	return false;
+}
+
+void CGameContext::UpdateTrailForClient(int ClientId)
+{
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return;
+	CPlayer *pPlayer = m_apPlayers[ClientId];
+	if(!pPlayer)
+		return;
+	if(pPlayer->m_TrailMode > 0)
+	{
+		const int Mask = TrailPermMaskForClient(ClientId);
+		const int ModeMask = (pPlayer->m_TrailMode >= 1 && pPlayer->m_TrailMode <= 3) ? (1 << (pPlayer->m_TrailMode - 1)) : 0;
+		if((Mask & ModeMask) == 0)
+		{
+			pPlayer->m_TrailMode = 0;
+			if(pPlayer->m_pTrail)
+			{
+				pPlayer->m_pTrail->Reset();
+				pPlayer->m_pTrail = nullptr;
+			}
+		}
+	}
+}
+
+void CGameContext::ScheduleNextTrailPermSync()
+{
+	m_NextTrailPermSync = time_get() + time_freq();
+}
+
+bool CGameContext::ResolveTrailPermPath(char *pPath, unsigned PathSize) const
+{
+	if(!m_pStorage)
+		return false;
+	m_pStorage->GetCompletePath(IStorage::TYPE_SAVE, "trail_perms.txt", pPath, PathSize);
+	return pPath[0] != '\0';
+}
+
+void CGameContext::RewriteTrailPermFile()
+{
+	char aPath[IO_MAX_PATH_LENGTH];
+	if(!ResolveTrailPermPath(aPath, sizeof(aPath)))
+		return;
+
+	fs_makedir_rec_for(aPath);
+	IOHANDLE File = io_open(aPath, IOFLAG_WRITE);
+	if(!File)
+		return;
+
+	for(const auto &Entry : m_vTrailPerms)
+	{
+		char aAddr[NETADDR_MAXSTRSIZE];
+		if(Entry.m_IsWildcard)
+			str_copy(aAddr, "*", sizeof(aAddr));
+		else
+			net_addr_str(&Entry.m_Addr, aAddr, sizeof(aAddr), false);
+		char aLine[NETADDR_MAXSTRSIZE + MAX_NAME_LENGTH + 16];
+		if(Entry.m_aName[0])
+			str_format(aLine, sizeof(aLine), "%s %s %d", aAddr, Entry.m_aName, Entry.m_Mask);
+		else
+			str_format(aLine, sizeof(aLine), "%s %d", aAddr, Entry.m_Mask);
+		io_write(File, aLine, str_length(aLine));
+		io_write_newline(File);
+	}
+	io_close(File);
+
+	time_t Created = 0, Modified = 0;
+	if(fs_file_time(aPath, &Created, &Modified) == 0)
+		m_TrailPermFileLastWrite = Modified;
+	ScheduleNextTrailPermSync();
+}
+
+void CGameContext::SyncTrailPerms(bool Force)
+{
+	if(!Force && m_NextTrailPermSync != 0 && time_get() < m_NextTrailPermSync)
+		return;
+
+	ScheduleNextTrailPermSync();
+
+	char aPath[IO_MAX_PATH_LENGTH];
+	if(!ResolveTrailPermPath(aPath, sizeof(aPath)))
+		return;
+
+	time_t Created = 0;
+	time_t Modified = 0;
+	const bool HasFile = fs_file_time(aPath, &Created, &Modified) == 0;
+	if(!Force && HasFile && m_TrailPermFileLastWrite != 0 && Modified <= m_TrailPermFileLastWrite)
+		return;
+
+	std::vector<CTrailPerm> Parsed;
+	if(HasFile)
+	{
+		IOHANDLE File = io_open(aPath, IOFLAG_READ);
+		if(File)
+		{
+			CLineReader Reader;
+			if(Reader.OpenFile(File))
+			{
+				while(const char *pLine = Reader.Get())
+				{
+					if(!pLine || pLine[0] == 0 || pLine[0] == '#')
+						continue;
+					char aLine[1024];
+					str_copy(aLine, pLine, sizeof(aLine));
+
+					char aIp[NETADDR_MAXSTRSIZE];
+					const char *pRest = str_next_token(aLine, " \t", aIp, sizeof(aIp));
+					if(aIp[0] == 0 || !pRest)
+						continue;
+
+					NETADDR Addr;
+					if(str_comp(aIp, "*") != 0)
+					{
+						if(net_addr_from_str(&Addr, aIp) != 0)
+							continue;
+					}
+
+					char aSecond[128];
+					pRest = str_next_token(pRest, " \t", aSecond, sizeof(aSecond));
+					if(aSecond[0] == 0)
+						continue;
+
+					const char *pName = "";
+					const char *pMaskStr = aSecond;
+					if(pRest && pRest[0] != '\0')
+					{
+						char aThird[16];
+						str_next_token(pRest, " \t", aThird, sizeof(aThird));
+						if(aThird[0] == 0)
+							continue;
+						pName = aSecond;
+						pMaskStr = aThird;
+					}
+
+					int Mask = 0;
+					if(!str_toint(pMaskStr, &Mask))
+						continue;
+					if(Mask < 0 || Mask > 7)
+						continue;
+
+					CTrailPerm Perm;
+					if(str_comp(aIp, "*") == 0)
+					{
+						mem_zero(&Perm.m_Addr, sizeof(Perm.m_Addr));
+						Perm.m_IsWildcard = true;
+					}
+					else
+					{
+						Perm.m_Addr = TrailKeyAddress(Addr);
+						Perm.m_IsWildcard = false;
+					}
+					Perm.m_Mask = Mask;
+					Perm.m_aName[0] = '\0';
+					if(pName[0] != '\0')
+						str_copy(Perm.m_aName, pName, sizeof(Perm.m_aName));
+					Parsed.push_back(Perm);
+				}
+			}
+			else
+			{
+				io_close(File);
+			}
+		}
+	}
+
+    const bool Changed = HasFile ? (Modified != m_TrailPermFileLastWrite) : (m_TrailPermFileLastWrite != 0 || !m_vTrailPerms.empty());
+    m_TrailPermFileLastWrite = HasFile ? Modified : 0;
+    if(!Changed)
+        return;
+
+    if(!HasFile)
+        Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission file removed, clearing permissions.");
+    else
+        Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission file changed, reloading.");
+
+    const auto FormatTrailPerm = [](const CTrailPerm &Entry, char *pBuf, int BufSize) {
+		char aAddr[NETADDR_MAXSTRSIZE];
+		if(Entry.m_IsWildcard)
+			str_copy(aAddr, "*", sizeof(aAddr));
+		else
+			net_addr_str(&Entry.m_Addr, aAddr, sizeof(aAddr), false);
+        if(Entry.m_aName[0])
+            str_format(pBuf, BufSize, "%s %s -> %d", aAddr, Entry.m_aName, Entry.m_Mask);
+        else
+            str_format(pBuf, BufSize, "%s -> %d", aAddr, Entry.m_Mask);
+    };
+
+    for(const auto &Old : m_vTrailPerms)
+    {
+        bool Found = false;
+        int NewMask = 0;
+        for(const auto &NewEntry : Parsed)
+        {
+            const bool AddrMatch = Old.m_IsWildcard == NewEntry.m_IsWildcard &&
+                (Old.m_IsWildcard || net_addr_comp_noport(&Old.m_Addr, &NewEntry.m_Addr) == 0);
+            if(AddrMatch && str_comp(Old.m_aName, NewEntry.m_aName) == 0)
+            {
+                Found = true;
+                NewMask = NewEntry.m_Mask;
+                break;
+            }
+        }
+        if(!Found)
+        {
+            char aBuf[160];
+            FormatTrailPerm(Old, aBuf, sizeof(aBuf));
+            Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", aBuf);
+            Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "  removed");
+        }
+        else if(NewMask != Old.m_Mask)
+        {
+            char aBuf[160];
+            FormatTrailPerm(Old, aBuf, sizeof(aBuf));
+            Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", aBuf);
+            char aBuf2[64];
+            str_format(aBuf2, sizeof(aBuf2), "  updated -> %d", NewMask);
+            Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", aBuf2);
+        }
+    }
+
+    for(const auto &NewEntry : Parsed)
+    {
+        bool Found = false;
+        for(const auto &Old : m_vTrailPerms)
+        {
+            const bool AddrMatch = Old.m_IsWildcard == NewEntry.m_IsWildcard &&
+                (Old.m_IsWildcard || net_addr_comp_noport(&Old.m_Addr, &NewEntry.m_Addr) == 0);
+            if(AddrMatch && str_comp(Old.m_aName, NewEntry.m_aName) == 0)
+            {
+                Found = true;
+                break;
+            }
+        }
+        if(!Found)
+        {
+            char aBuf[160];
+            FormatTrailPerm(NewEntry, aBuf, sizeof(aBuf));
+            Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", aBuf);
+            Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "  added");
+        }
+    }
+
+    m_vTrailPerms = std::move(Parsed);
+	for(int i = 0; i < MAX_CLIENTS; i++)
+		UpdateTrailForClient(i);
+}
+void CGameContext::OnTrailDestroyed(int ClientId, CTrailProjectile *pTrail)
+{
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return;
+	CPlayer *pPlayer = m_apPlayers[ClientId];
+	if(!pPlayer)
+		return;
+	if(pPlayer->m_pTrail == pTrail)
+		pPlayer->m_pTrail = nullptr;
 }
 
 bool CGameContext::EmulateBug(int Bug) const
@@ -1041,6 +1464,8 @@ void CGameContext::OnPreTickTeehistorian()
 
 void CGameContext::OnTick()
 {
+	SyncTrailPerms(false);
+
 	// check tuning
 	CheckPureTuning();
 
@@ -4076,6 +4501,12 @@ void CGameContext::RegisterChatCommands()
 	Console()->Register("specvoted", "", CFGFLAG_CHAT | CFGFLAG_SERVER, ConToggleSpecVoted, this, "Toggles spec on the currently voted player");
 	Console()->Register("dnd", "?i['0'|'1']", CFGFLAG_CHAT | CFGFLAG_SERVER | CFGFLAG_NONTEEHISTORIC, ConDND, this, "Toggle Do Not Disturb (no chat and server messages)");
 	Console()->Register("whispers", "?i['0'|'1']", CFGFLAG_CHAT | CFGFLAG_SERVER | CFGFLAG_NONTEEHISTORIC, ConWhispers, this, "Toggle receiving whispers");
+	Console()->Register("trail", "?i['0'|'1']", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTrail, this, "Toggle a bullet trail effect that follows you");
+	Console()->Register("trail_perm_add", "s[ip] i[mask]", CFGFLAG_SERVER, ConTrailPermAdd, this, "Set trail permissions for IP (mask: 0=off, 1=trail1, 2=trail2, 4=trail3, 7=all)");
+	Console()->Register("trail_perm_add_named", "s[ip] s[name] i[mask]", CFGFLAG_SERVER, ConTrailPermAddNamed, this, "Set trail permissions for IP+name (mask: 0=off, 1=trail1, 2=trail2, 4=trail3, 7=all)");
+	Console()->Register("trail_perm_del", "s[ip]", CFGFLAG_SERVER, ConTrailPermDel, this, "Remove trail permissions for IP");
+	Console()->Register("trail_perm_del_named", "s[ip] s[name]", CFGFLAG_SERVER, ConTrailPermDelNamed, this, "Remove trail permissions for IP+name");
+	Console()->Register("trail_perm_list", "", CFGFLAG_SERVER, ConTrailPermList, this, "List trail permissions");
 	Console()->Register("mapinfo", "?r[map]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConMapInfo, this, "Show info about the map with name r gives (current map by default)");
 	Console()->Register("timeout", "?s[code]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTimeout, this, "Set timeout protection code s");
 	Console()->Register("practice", "?i['0'|'1']", CFGFLAG_CHAT | CFGFLAG_SERVER, ConPractice, this, "Enable cheats for your current team's run, but you can't earn a rank");

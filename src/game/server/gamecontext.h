@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <ctime>
 
 /*
 	Tick
@@ -44,6 +45,7 @@
 */
 
 class CCharacter;
+class CTrailProjectile;
 class IConfigManager;
 class CConfig;
 class CHeap;
@@ -187,6 +189,17 @@ class CGameContext : public IGameServer
 		int m_LastWhisperTo;
 	};
 
+	struct CTrailPerm
+	{
+		NETADDR m_Addr;
+		int m_Mask;
+		char m_aName[MAX_NAME_LENGTH];
+		bool m_IsWildcard;
+	};
+
+	time_t m_TrailPermFileLastWrite;
+	int64_t m_NextTrailPermSync;
+
 public:
 	IServer *Server() const { return m_pServer; }
 	IConfigManager *ConfigManager() const { return m_pConfigManager; }
@@ -229,6 +242,20 @@ public:
 	// helper functions
 	CCharacter *GetPlayerChar(int ClientId);
 	const CCharacter *GetPlayerChar(int ClientId) const;
+	int TrailPermMask(const NETADDR *pAddr) const;
+	int TrailPermMaskForClient(int ClientId) const;
+	void SetTrailPerm(const NETADDR *pAddr, int Mask);
+	void SetTrailPermWildcard(int Mask);
+	void SetTrailPermNamed(const NETADDR *pAddr, const char *pName, int Mask);
+	bool RemoveTrailPerm(const NETADDR *pAddr);
+	bool RemoveTrailPermWildcard();
+	bool RemoveTrailPermNamed(const NETADDR *pAddr, const char *pName);
+	void UpdateTrailForClient(int ClientId);
+	void SyncTrailPerms(bool Force);
+	void ScheduleNextTrailPermSync();
+	bool ResolveTrailPermPath(char *pPath, unsigned PathSize) const;
+	void RewriteTrailPermFile();
+	void OnTrailDestroyed(int ClientId, CTrailProjectile *pTrail);
 	bool EmulateBug(int Bug) const;
 	std::vector<SSwitchers> &Switchers() { return m_World.m_Core.m_vSwitchers; }
 
@@ -252,6 +279,7 @@ public:
 	int m_VoteEnforce;
 	char m_aaZoneEnterMsg[TuneZone::NUM][256]; // 0 is used for switching from or to area without tunings
 	char m_aaZoneLeaveMsg[TuneZone::NUM][256];
+	std::vector<CTrailPerm> m_vTrailPerms;
 
 	void CreateAllEntities(bool Initial);
 	CPlayer *CreatePlayer(int ClientId, int StartTeam, bool Afk, int LastWhisperTo);
@@ -507,6 +535,12 @@ private:
 	static void ConConverse(IConsole::IResult *pResult, void *pUserData);
 	static void ConSetEyeEmote(IConsole::IResult *pResult, void *pUserData);
 	static void ConEyeEmote(IConsole::IResult *pResult, void *pUserData);
+	static void ConTrail(IConsole::IResult *pResult, void *pUserData);
+	static void ConTrailPermAdd(IConsole::IResult *pResult, void *pUserData);
+	static void ConTrailPermAddNamed(IConsole::IResult *pResult, void *pUserData);
+	static void ConTrailPermDel(IConsole::IResult *pResult, void *pUserData);
+	static void ConTrailPermDelNamed(IConsole::IResult *pResult, void *pUserData);
+	static void ConTrailPermList(IConsole::IResult *pResult, void *pUserData);
 	static void ConShowOthers(IConsole::IResult *pResult, void *pUserData);
 	static void ConShowAll(IConsole::IResult *pResult, void *pUserData);
 	static void ConSpecTeam(IConsole::IResult *pResult, void *pUserData);

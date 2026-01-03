@@ -3,6 +3,7 @@
 #include "player.h"
 
 #include "entities/character.h"
+#include "entities/trail_projectile.h"
 #include "gamecontext.h"
 #include "gamecontroller.h"
 #include "score.h"
@@ -24,7 +25,9 @@ MACRO_ALLOC_POOL_ID_IMPL(CPlayer, MAX_CLIENTS)
 IServer *CPlayer::Server() const { return m_pGameServer->Server(); }
 
 CPlayer::CPlayer(CGameContext *pGameServer, uint32_t UniqueClientId, int ClientId, int Team) :
-	m_UniqueClientId(UniqueClientId)
+	m_UniqueClientId(UniqueClientId),
+	m_TrailMode(0),
+	m_pTrail(nullptr)
 {
 	m_pGameServer = pGameServer;
 	m_ClientId = ClientId;
@@ -38,6 +41,11 @@ CPlayer::CPlayer(CGameContext *pGameServer, uint32_t UniqueClientId, int ClientI
 CPlayer::~CPlayer()
 {
 	GameServer()->Antibot()->OnPlayerDestroy(m_ClientId);
+	if(m_pTrail)
+	{
+		m_pTrail->Reset();
+		m_pTrail = nullptr;
+	}
 	delete m_pLastTarget;
 	delete m_pCharacter;
 	m_pCharacter = nullptr;
@@ -90,6 +98,12 @@ void CPlayer::Reset()
 	m_FirstPacket = true;
 	m_NewYear = false;
 	m_Valentine =false;
+	m_TrailMode = 0;
+	if(m_pTrail)
+	{
+		m_pTrail->Reset();
+		m_pTrail = nullptr;
+	}
 
 	m_SendVoteIndex = -1;
 	m_NetStats.Reset();
@@ -331,6 +345,29 @@ void CPlayer::Tick()
 		{
 			GameServer()->SendEmoticon(GetCid(), EMOTICON_HEARTS, -1);
 		}
+	}
+
+	if(m_TrailMode > 0)
+	{
+		if(m_TrailMode == 3)
+		{
+			if(m_pTrail)
+			{
+				m_pTrail->Reset();
+				m_pTrail = nullptr;
+			}
+		}
+		else if(!m_pTrail && GetCharacter())
+		{
+			const bool StarEffect = m_TrailMode == 2;
+			const bool OnlyWhileMoving = m_TrailMode == 1;
+			m_pTrail = new CTrailProjectile(&GameServer()->m_World, m_ClientId, WEAPON_SHOTGUN, false, false, StarEffect, OnlyWhileMoving);
+		}
+	}
+	else if(m_pTrail)
+	{
+		m_pTrail->Reset();
+		m_pTrail = nullptr;
 	}
 }
 
@@ -614,6 +651,11 @@ void CPlayer::OnDisconnect()
 	KillCharacter();
 
 	m_Moderating = false;
+	if(m_pTrail)
+	{
+		m_pTrail->Reset();
+		m_pTrail = nullptr;
+	}
 }
 
 void CPlayer::OnPredictedInput(const CNetObj_PlayerInput *pNewInput)

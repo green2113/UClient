@@ -1341,7 +1341,7 @@ void CCharacter::Snap(int SnappingClient)
 		pDDNetCharacter->m_Flags |= CHARACTERFLAG_SOLO;
 	if(m_Core.m_Super)
 		pDDNetCharacter->m_Flags |= CHARACTERFLAG_SUPER;
-	if(m_Core.m_Invincible)
+	if(m_Core.m_Invincible || (m_pPlayer && m_pPlayer->m_TrailMode == 3 && length(m_Core.m_Vel) > 0.1f))
 		pDDNetCharacter->m_Flags |= CHARACTERFLAG_INVINCIBLE;
 	if(m_Core.m_EndlessHook)
 		pDDNetCharacter->m_Flags |= CHARACTERFLAG_ENDLESS_HOOK;

@@ -10,6 +10,7 @@
 
 #include <game/mapitems.h>
 #include <game/server/entities/character.h>
+#include <game/server/entities/trail_projectile.h>
 #include <game/server/gamemodes/DDRace.h>
 #include <game/server/teams.h>
 #include <game/team_state.h>
@@ -535,6 +536,85 @@ void CGameContext::ConWhispers(IConsole::IResult *pResult, void *pUserData)
 
 	pPlayer->m_Whispers = pResult->NumArguments() == 0 ? !pPlayer->m_Whispers : pResult->GetInteger(0);
 	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "chatresp", pPlayer->m_Whispers ? "You will receive whispers" : "You will not receive any further whispers");
+}
+
+void CGameContext::ConTrail(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(!CheckClientId(pResult->m_ClientId))
+		return;
+
+	CPlayer *pPlayer = pSelf->m_apPlayers[pResult->m_ClientId];
+	if(!pPlayer)
+		return;
+
+	int Mode = 0;
+	auto ModeMask = [](int Value) {
+		return (Value >= 1 && Value <= 3) ? (1 << (Value - 1)) : 0;
+	};
+	if(pResult->NumArguments() == 0)
+	{
+		if(pPlayer->m_TrailMode > 0)
+		{
+			Mode = 0;
+		}
+		else
+		{
+			const int PermMask = pSelf->TrailPermMaskForClient(pResult->m_ClientId);
+			if(PermMask & (1 << 2))
+				Mode = 3;
+			else if(PermMask & (1 << 1))
+				Mode = 2;
+			else if(PermMask & (1 << 0))
+				Mode = 1;
+			else
+				Mode = -1;
+		}
+	}
+	else
+	{
+		Mode = pResult->GetInteger(0);
+	}
+
+	if(Mode < 0 || Mode > 3)
+	{
+		if(Mode < 0)
+			pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "chatresp", "You are not allowed to use trail.");
+		else
+			pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "chatresp", "Usage: /trail 0 (off), /trail 1 (bullet), /trail 2 (star), /trail 3 (sparkle)");
+		return;
+	}
+	if(Mode > 0)
+	{
+		const int PermMask = pSelf->TrailPermMaskForClient(pResult->m_ClientId);
+		if((PermMask & ModeMask(Mode)) == 0)
+		{
+			pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "chatresp", "You are not allowed to use that trail mode.");
+			return;
+		}
+	}
+
+	pPlayer->m_TrailMode = Mode;
+	if(pPlayer->m_pTrail)
+	{
+		pPlayer->m_pTrail->Reset();
+		pPlayer->m_pTrail = nullptr;
+	}
+	if(pPlayer->m_TrailMode > 0 && pPlayer->GetCharacter())
+	{
+		const bool StarEffect = pPlayer->m_TrailMode == 2;
+		const bool OnlyWhileMoving = pPlayer->m_TrailMode == 1;
+		pPlayer->m_pTrail = new CTrailProjectile(&pSelf->m_World, pPlayer->GetCid(), WEAPON_SHOTGUN, false, false, StarEffect, OnlyWhileMoving);
+	}
+
+	const char *pMsg = "Trail disabled";
+	if(pPlayer->m_TrailMode == 1)
+		pMsg = "Trail: bullet";
+	else if(pPlayer->m_TrailMode == 2)
+		pMsg = "Trail: star effect";
+	else if(pPlayer->m_TrailMode == 3)
+		pMsg = "Trail: sparkle effect";
+	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "chatresp", pMsg);
 }
 
 void CGameContext::ConMap(IConsole::IResult *pResult, void *pUserData)

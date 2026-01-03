@@ -1,6 +1,8 @@
 /* (c) Shereef Marzouk. See "licence DDRace.txt" and the readme.txt in the root of the distribution for more information. */
 #include "gamecontext.h"
 
+#include <base/system.h>
+
 #include <engine/antibot.h>
 #include <engine/http.h>
 #include <engine/shared/config.h>
@@ -889,4 +891,149 @@ void CGameContext::ConNet(IConsole::IResult *pResult, void *pUserData)
 	pSelf->SendChatTarget(ClientId, aBuf);
 
 	pSelf->m_apPlayers[ClientId]->StartNetStatsMeasurement(Seconds);
+}
+
+void CGameContext::ConTrailPermAdd(IConsole::IResult *pResult, void *pUserData)
+{
+	auto *pSelf = static_cast<CGameContext *>(pUserData);
+	const char *pIp = pResult->GetString(0);
+	NETADDR Addr;
+	bool Wildcard = str_comp(pIp, "*") == 0;
+	if(!Wildcard && net_addr_from_str(&Addr, pIp) != 0)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Invalid IP address.");
+		return;
+	}
+	int Mask = pResult->GetInteger(1);
+	if(Mask < 0 || Mask > 7)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Mask must be 0..7.");
+		return;
+	}
+	if(Mask == 0)
+	{
+		if(Wildcard)
+			pSelf->RemoveTrailPermWildcard();
+		else
+			pSelf->RemoveTrailPerm(&Addr);
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission removed.");
+		return;
+	}
+	if(Wildcard)
+		pSelf->SetTrailPermWildcard(Mask);
+	else
+		pSelf->SetTrailPerm(&Addr, Mask);
+	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission set.");
+	for(int i = 0; i < MAX_CLIENTS; i++)
+		pSelf->UpdateTrailForClient(i);
+}
+
+void CGameContext::ConTrailPermAddNamed(IConsole::IResult *pResult, void *pUserData)
+{
+	auto *pSelf = static_cast<CGameContext *>(pUserData);
+	const char *pIp = pResult->GetString(0);
+	if(str_comp(pIp, "*") == 0)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Use trail_perm_add for wildcard IP without name.");
+		return;
+	}
+	NETADDR Addr;
+	if(net_addr_from_str(&Addr, pIp) != 0)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Invalid IP address.");
+		return;
+	}
+	const char *pName = pResult->GetString(1);
+	if(pName[0] == '\0')
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Name required.");
+		return;
+	}
+	int Mask = pResult->GetInteger(2);
+	if(Mask < 0 || Mask > 7)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Mask must be 0..7.");
+		return;
+	}
+	if(Mask == 0)
+	{
+		pSelf->RemoveTrailPermNamed(&Addr, pName);
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission removed.");
+		for(int i = 0; i < MAX_CLIENTS; i++)
+			pSelf->UpdateTrailForClient(i);
+		return;
+	}
+	pSelf->SetTrailPermNamed(&Addr, pName, Mask);
+	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission set.");
+	for(int i = 0; i < MAX_CLIENTS; i++)
+		pSelf->UpdateTrailForClient(i);
+}
+
+void CGameContext::ConTrailPermDel(IConsole::IResult *pResult, void *pUserData)
+{
+	auto *pSelf = static_cast<CGameContext *>(pUserData);
+	const char *pIp = pResult->GetString(0);
+	NETADDR Addr;
+	bool Wildcard = str_comp(pIp, "*") == 0;
+	if(!Wildcard && net_addr_from_str(&Addr, pIp) != 0)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Invalid IP address.");
+		return;
+	}
+	if(Wildcard ? pSelf->RemoveTrailPermWildcard() : pSelf->RemoveTrailPerm(&Addr))
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission removed.");
+	else
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "No entry for IP.");
+	for(int i = 0; i < MAX_CLIENTS; i++)
+		pSelf->UpdateTrailForClient(i);
+}
+
+void CGameContext::ConTrailPermDelNamed(IConsole::IResult *pResult, void *pUserData)
+{
+	auto *pSelf = static_cast<CGameContext *>(pUserData);
+	const char *pIp = pResult->GetString(0);
+	if(str_comp(pIp, "*") == 0)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Use trail_perm_del for wildcard IP without name.");
+		return;
+	}
+	NETADDR Addr;
+	if(net_addr_from_str(&Addr, pIp) != 0)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Invalid IP address.");
+		return;
+	}
+	const char *pName = pResult->GetString(1);
+	if(pName[0] == '\0')
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Name required.");
+		return;
+	}
+	if(pSelf->RemoveTrailPermNamed(&Addr, pName))
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission removed.");
+	else
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "No entry for IP+name.");
+	for(int i = 0; i < MAX_CLIENTS; i++)
+		pSelf->UpdateTrailForClient(i);
+}
+
+void CGameContext::ConTrailPermList(IConsole::IResult *pResult, void *pUserData)
+{
+	auto *pSelf = static_cast<CGameContext *>(pUserData);
+	if(pSelf->m_vTrailPerms.empty())
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "No trail permissions set.");
+		return;
+	}
+	for(const auto &Entry : pSelf->m_vTrailPerms)
+	{
+		char aAddr[NETADDR_MAXSTRSIZE];
+		net_addr_str(&Entry.m_Addr, aAddr, sizeof(aAddr), false);
+		char aBuf[128];
+		if(Entry.m_aName[0])
+			str_format(aBuf, sizeof(aBuf), "%s %s -> %d", aAddr, Entry.m_aName, Entry.m_Mask);
+		else
+			str_format(aBuf, sizeof(aBuf), "%s -> %d", aAddr, Entry.m_Mask);
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", aBuf);
+	}
 }
