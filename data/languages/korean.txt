@@ -2620,3 +2620,9 @@ Enter the API address that matches the translator selected for the target.
 
 Enter the API key.
 == API 키를 입력해 주세요.
+
+Show
+== 보이기
+
+Hide
+== 숨기기
