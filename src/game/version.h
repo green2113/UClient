@@ -14,7 +14,7 @@ extern const char *GIT_SHORTREV_HASH;
 
 // uclient
 #ifndef UCLIENT_VERSION
-#define UCLIENT_VERSION "1.4.0"
+#define UCLIENT_VERSION "1.5.0"
 #endif
 #ifndef UCLIENT_NAME
 #define UCLIENT_NAME "UClient"
@@ -28,7 +28,7 @@ extern const char *GIT_SHORTREV_HASH;
 
 // teeworlds
 #define CLIENT_VERSION7 0x0705
-#define GAME_VERSION "0.6.4, " GAME_RELEASE_VERSION
+#define GAME_VERSION "0.1, " GAME_RELEASE_VERSION
 #define GAME_NETVERSION "0.6 626fce9a778df4d4"
 #define GAME_NETVERSION7 "0.7 802f1be60a05665f"
 

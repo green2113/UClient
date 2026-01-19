@@ -3210,6 +3210,7 @@ void CGameClient::CClientData::Reset()
 	m_Active = false;
 	m_ChatIgnore = false;
 	m_EmoticonIgnore = false;
+	m_Hidden = false;
 	m_Friend = false;
 	m_Foe = false;
 

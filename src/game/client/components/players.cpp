@@ -1507,6 +1507,10 @@ void CPlayers::OnRender()
 		{
 			continue;
 		}
+		if(GameClient()->m_aClients[ClientId].m_Hidden)
+		{
+			continue;
+		}
 		RenderHook(&GameClient()->m_aClients[ClientId].m_RenderPrev, &GameClient()->m_aClients[ClientId].m_RenderCur, &aRenderInfo[ClientId], ClientId);
 	}
 	if(LocalClientId != -1 && IsPlayerInfoAvailable(LocalClientId))
@@ -1519,6 +1523,10 @@ void CPlayers::OnRender()
 	for(const auto &Client : GameClient()->m_aClients)
 	{
 		if(!Client.m_SpecCharPresent)
+		{
+			continue;
+		}
+		if(Client.m_Hidden)
 		{
 			continue;
 		}
@@ -1538,6 +1546,10 @@ void CPlayers::OnRender()
 	for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
 	{
 		if(ClientId == RenderLastId || !IsPlayerInfoAvailable(ClientId))
+		{
+			continue;
+		}
+		if(GameClient()->m_aClients[ClientId].m_Hidden)
 		{
 			continue;
 		}
@@ -1570,7 +1582,7 @@ void CPlayers::OnRender()
 
 		RenderPlayer(&GameClient()->m_aClients[ClientId].m_RenderPrev, &GameClient()->m_aClients[ClientId].m_RenderCur, &aRenderInfo[ClientId], ClientId);
 	}
-	if(RenderLastId != -1 && IsPlayerInfoAvailable(RenderLastId))
+	if(RenderLastId != -1 && IsPlayerInfoAvailable(RenderLastId) && !GameClient()->m_aClients[RenderLastId].m_Hidden)
 	{
 		const CGameClient::CClientData *pClientData = &GameClient()->m_aClients[RenderLastId];
 		RenderHookCollLine(&pClientData->m_RenderPrev, &pClientData->m_RenderCur, RenderLastId);

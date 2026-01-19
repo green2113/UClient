@@ -1099,6 +1099,8 @@ void CNamePlates::OnRender()
 		const CNetObj_PlayerInfo *pInfo = GameClient()->m_Snap.m_apPlayerInfos[i];
 		if(!pInfo)
 			continue;
+		if(GameClient()->m_aClients[i].m_Hidden)
+			continue;
 
 		// Each player can also have a spectator char whose name plate is displayed independently
 		if(GameClient()->m_aClients[i].m_SpecCharPresent)

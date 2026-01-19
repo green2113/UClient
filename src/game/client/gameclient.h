@@ -535,6 +535,7 @@ public:
 		bool m_Active;
 		bool m_ChatIgnore;
 		bool m_EmoticonIgnore;
+		bool m_Hidden;
 		bool m_Friend;
 		bool m_Foe;
 

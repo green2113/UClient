@@ -157,6 +157,11 @@ namespace TuneZone
 	inline constexpr int NUM = 256;
 };
 
+// Compatibility with generated protocol code expecting NUM_TUNEZONES.
+#ifndef NUM_TUNEZONES
+#define NUM_TUNEZONES TuneZone::NUM
+#endif
+
 typedef std::bitset<MAX_CLIENTS> CClientMask;
 
 #endif

@@ -14,8 +14,10 @@ public:
     virtual int Sizeof() const override { return sizeof(*this); }
 
     static void ConSkinChange(IConsole::IResult *pResult, void *pUserData);
+    static void ConSkinChangeDb(IConsole::IResult *pResult, void *pUserData);
 
     void ChangeSkinByName(const char *pTargetName);
+    void ChangeSkinByDb(const char *pTargetName, const char *pDate);
 };
 
 #endif

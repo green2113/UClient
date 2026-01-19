@@ -162,23 +162,15 @@ jobs:
           echo "Fetching latest data file list"
           curl -fsSL https://ddnet.under1111.com/update/update.json -o r2/tmp/update.json
 
-          # (1) 최신 버전의 download[] 중 data/만 추출
-          jq -r 'max_by(.version | split(".") | map(tonumber)) | .download[]? | select(startswith("data/"))' \
-            r2/tmp/update.json > r2upload/data-files.txt
+          # (1) 최신 버전의 download[] 전체 추출
+          jq -r 'max_by(.version | split(".") | map(tonumber)) | .download[]?' \
+            r2/tmp/update.json > r2upload/upload-files.txt
 
-          # ✅ (2) data/languages/는 download에 없어도 "무조건 전부 업로드" 목록에 추가
-          if [ -d "data/languages" ]; then
-            echo "Appending all language files from data/languages/"
-            find "data/languages" -type f -print >> r2upload/data-files.txt
-          else
-            echo "Warning: data/languages directory not found in repository"
-          fi
+          # (2) 중복 제거 + 정렬
+          sort -u r2upload/upload-files.txt -o r2upload/upload-files.txt
 
-          # (3) 중복 제거 + 정렬
-          sort -u r2upload/data-files.txt -o r2upload/data-files.txt
-
-          echo "Data files to upload:"
-          cat r2upload/data-files.txt
+          echo "Files to upload:"
+          cat r2upload/upload-files.txt
 
       - name: Upload artifacts to Cloudflare R2
         env:
@@ -192,31 +184,37 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
-          echo "Clearing existing download objects in bucket ${R2_BUCKET}"
-          aws s3 rm "s3://${R2_BUCKET}/download" --recursive --endpoint-url "$ENDPOINT" || true
-          echo "Uploading extracted binaries to R2 bucket ${R2_BUCKET}"
+          echo "Uploading core binaries to R2 bucket ${R2_BUCKET}"
           aws s3 cp "r2upload/DDNet-win64.exe" "s3://${R2_BUCKET}/download/DDNet-win64.exe" --endpoint-url "$ENDPOINT"
           aws s3 cp "r2upload/DDNet-linux-x86_64.exe" "s3://${R2_BUCKET}/download/DDNet-linux-x86_64.exe" --endpoint-url "$ENDPOINT"
           aws s3 cp "r2upload/DDNet-macOS.dmg" "s3://${R2_BUCKET}/download/DDNet-macOS.dmg" --endpoint-url "$ENDPOINT"
           aws s3 cp "r2upload/DDNet-android.apk" "s3://${R2_BUCKET}/download/DDNet-android.apk" --endpoint-url "$ENDPOINT"
+          if [ -s "r2upload/upload-files.txt" ]; then
+            echo "Uploading latest download[] files"
+            while IFS= read -r rel_path; do
+              [ -z "$rel_path" ] && continue
+              local_path=""
+              if [ -f "$rel_path" ]; then
+                local_path="$rel_path"
+              elif [ -f "r2upload/$rel_path" ]; then
+                local_path="r2upload/$rel_path"
+              elif [ -f "r2upload/$(basename "$rel_path")" ]; then
+                local_path="r2upload/$(basename "$rel_path")"
+              fi
 
-          if [ -s "r2upload/data-files.txt" ]; then
-            echo "Uploading selected data files"
-            while IFS= read -r data_file; do
-              [ -z "$data_file" ] && continue
-              if [ -f "$data_file" ]; then
+              if [ -n "$local_path" ]; then
                 content_type="application/octet-stream"
-                case "$data_file" in
+                case "$rel_path" in
                   *.txt|*.cfg|*.csv|*.ini) content_type="text/plain; charset=utf-8" ;;
                   *.json) content_type="application/json; charset=utf-8" ;;
                 esac
-                aws s3 cp "$data_file" "s3://${R2_BUCKET}/download/${data_file}" --endpoint-url "$ENDPOINT" --content-type "$content_type"
+                aws s3 cp "$local_path" "s3://${R2_BUCKET}/download/${rel_path}" --endpoint-url "$ENDPOINT" --content-type "$content_type"
               else
-                echo "Warning: data file '$data_file' not found in repository"
+                echo "Warning: upload file '$rel_path' not found locally"
               fi
-            done < "r2upload/data-files.txt"
+            done < "r2upload/upload-files.txt"
           else
-            echo "No data files listed in update.json"
+            echo "No download entries listed in update.json"
           fi
 
       - name: Upload Ubuntu

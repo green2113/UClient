@@ -374,7 +374,7 @@ void CScoreboard::RenderSpectators(CUIRect Spectators)
 				m_ScoreboardPopupContext.m_IsSpectating = true;
 
 				Ui()->DoPopupMenu(&m_ScoreboardPopupContext, Ui()->MouseX(), Ui()->MouseY(), 110.0f,
-					m_ScoreboardPopupContext.m_IsLocal ? 30.0f : 60.0f, &m_ScoreboardPopupContext, PopupScoreboard);
+					m_ScoreboardPopupContext.m_IsLocal ? 30.0f : 81.5f, &m_ScoreboardPopupContext, PopupScoreboard);
 			}
 
 			if(Ui()->HotItem() == &m_aPlayers[pInfo->m_ClientId].m_PlayerButtonId || Ui()->HotItem() == &m_aPlayers[pInfo->m_ClientId].m_SpectatorSecondLineButtonId)
@@ -667,7 +667,7 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 					m_ScoreboardPopupContext.m_IsSpectating = false;
 
 					Ui()->DoPopupMenu(&m_ScoreboardPopupContext, Ui()->MouseX(), Ui()->MouseY(), 110.0f,
-						m_ScoreboardPopupContext.m_IsLocal ? 58.5f : 87.5f, &m_ScoreboardPopupContext, PopupScoreboard);
+						m_ScoreboardPopupContext.m_IsLocal ? 58.5f : 109.0f, &m_ScoreboardPopupContext, PopupScoreboard);
 				}
 
 				if(Ui()->HotItem() == &m_aPlayers[pInfo->m_ClientId].m_PlayerButtonId)
@@ -1181,6 +1181,21 @@ CUi::EPopupMenuFunctionResult CScoreboard::PopupScoreboard(void *pContext, CUIRe
 				}
 			}
 		}
+	}
+
+	if(!pPopupContext->m_IsLocal)
+	{
+		View.HSplitTop(ItemSpacing * 2, nullptr, &View);
+		View.HSplitTop(ButtonSize, &Container, &View);
+
+		ColorRGBA HideButtonColor = ColorRGBA(1.0f, 1.0f, 1.0f, 0.5f * pUi->ButtonColorMul(&pPopupContext->m_HideButton));
+		const char *pHideLabel = Client.m_Hidden ? Localize("Show") : Localize("Hide");
+		if(pUi->DoButton_PopupMenu(&pPopupContext->m_HideButton, pHideLabel, &Container, FontSize, TEXTALIGN_MC, 0.0f, false, true, HideButtonColor))
+		{
+			Client.m_Hidden ^= 1;
+		}
+
+		pScoreboard->GameClient()->m_Tooltips.DoToolTip(&pPopupContext->m_HideButton, &Container, Client.m_Hidden ? Localize("Show player") : Localize("Hide player"));
 	}
 
 	return CUi::POPUP_KEEP_OPEN;
