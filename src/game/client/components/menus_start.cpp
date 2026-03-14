@@ -149,19 +149,19 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 
 	// render version
 	CUIRect CurVersion, ConsoleButton;
-	MainView.HSplitBottom(45.0f, nullptr, &CurVersion);
+	MainView.HSplitBottom(60.0f, nullptr, &CurVersion);
 	CurVersion.VSplitRight(40.0f, &CurVersion, nullptr);
 	CurVersion.HSplitTop(20.0f, &ConsoleButton, &CurVersion);
 	CurVersion.HSplitTop(5.0f, nullptr, &CurVersion);
 	ConsoleButton.VSplitRight(40.0f, nullptr, &ConsoleButton);
-	Ui()->DoLabel(&CurVersion, GAME_RELEASE_VERSION, 14.0f, TEXTALIGN_MR);
-
-	CUIRect TClientVersion;
-	MainView.HSplitTop(15.0f, &TClientVersion, &MainView);
-	TClientVersion.VSplitRight(40.0f, &TClientVersion, nullptr);
-	char aTBuf[64];
-	str_format(aTBuf, sizeof(aTBuf), UCLIENT_NAME " %s", UCLIENT_VERSION);
-	Ui()->DoLabel(&TClientVersion, aTBuf, 14.0f, TEXTALIGN_MR);
+	CUIRect DdnetVersion, UcVersion;
+	CurVersion.HSplitTop(16.0f, &DdnetVersion, &CurVersion);
+	CurVersion.HSplitTop(2.0f, nullptr, &CurVersion);
+	CurVersion.HSplitTop(16.0f, &UcVersion, &CurVersion);
+	Ui()->DoLabel(&DdnetVersion, GAME_RELEASE_VERSION, 14.0f, TEXTALIGN_MR);
+	char aUcVersion[64];
+	str_format(aUcVersion, sizeof(aUcVersion), "%s %s", UCLIENT_NAME, UCLIENT_VERSION);
+	Ui()->DoLabel(&UcVersion, aUcVersion, 12.0f, TEXTALIGN_MR);
 #if defined(CONF_AUTOUPDATE)
 	CUIRect UpdateToDateText;
 	MainView.HSplitTop(15.0f, &UpdateToDateText, nullptr);
@@ -220,7 +220,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 
 	if(State == IUpdater::CLEAN && NeedUpdate)
 	{
-		str_format(aBuf, sizeof(aBuf), Localize("TClient %s is out!"), GameClient()->m_TClient.m_aVersionStr);
+		str_format(aBuf, sizeof(aBuf), Localize("%s %s is out!"), UCLIENT_NAME, GameClient()->m_TClient.m_aVersionStr);
 		TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
 	}
 	else if(State == IUpdater::CLEAN)
@@ -235,12 +235,12 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	}
 	else if(State == IUpdater::FAIL)
 	{
-		str_copy(aBuf, Localize("Update failed! Check log…"));
+		str_copy(aBuf, Localize("Update failed! Check log..."));
 		TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
 	}
 	else if(State == IUpdater::NEED_RESTART)
 	{
-		str_copy(aBuf, Localize("DDNet Client updated!"));
+		str_copy(aBuf, Localize("UClient updated!"));
 		TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
 	}
 	Ui()->DoLabel(&VersionUpdate, aBuf, 14.0f, TEXTALIGN_ML);
