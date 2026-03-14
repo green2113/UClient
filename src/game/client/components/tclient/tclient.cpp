@@ -22,7 +22,7 @@
 #include <game/localization.h>
 #include <game/version.h>
 
-static constexpr const char *TCLIENT_INFO_URL = "https://update.tclient.app/info.json";
+static constexpr const char *TCLIENT_INFO_URL = UCLIENT_INFO_URL;
 
 CTClient::CTClient()
 {
@@ -622,7 +622,7 @@ void CTClient::FinishTClientInfo()
 		char aNewVersionStr[64];
 		str_copy(aNewVersionStr, CurrentVersion);
 		char aCurVersionStr[64];
-		str_copy(aCurVersionStr, TCLIENT_VERSION);
+		str_copy(aCurVersionStr, UCLIENT_VERSION);
 		if(ToTCVersion(aNewVersionStr) > ToTCVersion(aCurVersionStr))
 		{
 			str_copy(m_aVersionStr, CurrentVersion);

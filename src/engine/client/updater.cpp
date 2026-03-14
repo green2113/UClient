@@ -70,7 +70,7 @@ static const char *GetUpdaterUrl(char *pBuf, int BufSize, const char *pFile)
 {
 	char aBuf[1024];
 	UrlEncodePath(pFile, aBuf, sizeof(aBuf));
-	str_format(pBuf, BufSize, "https://update.tclient.app/%s", aBuf);
+	str_format(pBuf, BufSize, "%s/%s", UCLIENT_UPDATE_BASE_URL, aBuf);
 	return pBuf;
 }
 
@@ -305,7 +305,7 @@ void CUpdater::ParseUpdate()
 		if(!pVersion)
 			continue;
 
-		if(str_comp(pVersion, TCLIENT_VERSION) == 0)
+		if(str_comp(pVersion, UCLIENT_VERSION) == 0)
 			break;
 
 		if(json_boolean_get(json_object_get(pCurrent, "client")))

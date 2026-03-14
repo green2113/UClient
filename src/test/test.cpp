@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include <base/logger.h>
+#include <base/os.h>
 #include <base/system.h>
 
 #include <engine/storage.h>
