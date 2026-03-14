@@ -19,6 +19,14 @@
 
 #include <curl/curl.h>
 
+static bool IsDiscordWebhookUrl(const char *pUrl)
+{
+	return str_startswith_nocase(pUrl, "https://discord.com/api/webhooks/") != nullptr ||
+		str_startswith_nocase(pUrl, "http://discord.com/api/webhooks/") != nullptr ||
+		str_startswith_nocase(pUrl, "https://discordapp.com/api/webhooks/") != nullptr ||
+		str_startswith_nocase(pUrl, "http://discordapp.com/api/webhooks/") != nullptr;
+}
+
 static int CurlDebug(CURL *pHandle, curl_infotype Type, char *pData, size_t DataSize, void *pUser)
 {
 	char TypeChar;
@@ -388,7 +396,7 @@ void CHttpRequest::OnCompletionInternal(void *pHandle, unsigned int Result)
 	}
 	else
 	{
-		if(g_Config.m_DbgCurl || m_LogProgress >= HTTPLOG::ALL)
+		if((g_Config.m_DbgCurl || m_LogProgress >= HTTPLOG::ALL) && !IsDiscordWebhookUrl(m_aUrl))
 		{
 			log_info("http", "task done: %s", m_aUrl);
 		}
