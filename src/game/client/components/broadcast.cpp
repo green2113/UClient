@@ -8,6 +8,7 @@
 
 #include <generated/protocol.h>
 
+#include <game/client/components/important_alert.h>
 #include <game/client/components/motd.h>
 #include <game/client/components/scoreboard.h>
 #include <game/client/gameclient.h>
@@ -37,6 +38,7 @@ void CBroadcast::RenderServerBroadcast()
 {
 	if(GameClient()->m_Scoreboard.IsActive() ||
 		GameClient()->m_Motd.IsActive() ||
+		GameClient()->m_ImportantAlert.IsActive() ||
 		!g_Config.m_ClShowBroadcasts)
 	{
 		return;

@@ -1,6 +1,7 @@
 #include "bg_draw.h"
 
-#include <base/log.h>
+#include <base/io.h>
+#include <base/system.h>
 
 #include <engine/client.h>
 #include <engine/external/spt.h>
@@ -90,7 +91,7 @@ private:
 	void AddQuads(IGraphics::CFreeformItem *pFreeformItem, int Count, ColorRGBA Color)
 	{
 		m_QuadCount += Count;
-		if(m_vQuadContainerIndexes.size() == 0)
+		if(m_vQuadContainerIndexes.empty())
 		{
 			m_vQuadContainerIndexes.push_back(m_Graphics.CreateQuadContainer(false));
 		}
@@ -128,7 +129,7 @@ public:
 	void Update(const CBgDrawItemData &Data)
 	{
 		Clear();
-		if(Data.size() == 0)
+		if(Data.empty())
 		{
 			return;
 		}
@@ -348,10 +349,10 @@ static IOHANDLE BgDrawOpenFile(CGameClient &This, const char *pFilename, int Fla
 	}
 	else
 	{
-		SHA256_DIGEST Sha256 = This.Client()->GetCurrentMapSha256();
+		SHA256_DIGEST Sha256 = This.Map()->Sha256();
 		char aSha256[SHA256_MAXSTRSIZE];
 		sha256_str(Sha256, aSha256, sizeof(aSha256));
-		str_format(aFilename, sizeof(aFilename), "bgdraw/%s_%s.csv", This.Client()->GetCurrentMap(), aSha256);
+		str_format(aFilename, sizeof(aFilename), "bgdraw/%s_%s.csv", This.Map()->BaseName(), aSha256);
 	}
 	dbg_assert(Flags == IOFLAG_WRITE || Flags == IOFLAG_READ, "Flags must be either read or write");
 	if(Flags == IOFLAG_WRITE)
@@ -594,7 +595,7 @@ void CBgDraw::OnStateChange(int NewState, int OldState)
 	if(OldState == IClient::STATE_ONLINE || OldState == IClient::STATE_DEMOPLAYBACK)
 	{
 		if(g_Config.m_TcBgDrawAutoSaveLoad > 0)
-			Save(nullptr, true);
+			Save(nullptr, false);
 	}
 	Reset();
 	m_NextAutoSave = AUTO_SAVE_INTERVAL;

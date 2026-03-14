@@ -2,6 +2,9 @@
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
 #ifndef GAME_CLIENT_COMPONENTS_CHAT_H
 #define GAME_CLIENT_COMPONENTS_CHAT_H
+
+#include <base/str.h>
+
 #include <engine/console.h>
 #include <engine/shared/config.h>
 #include <engine/shared/protocol.h>
@@ -34,7 +37,7 @@ class CChat : public CComponent
 	enum
 	{
 		MAX_LINES = 64,
-		MAX_LINE_LENGTH = 256,
+		MAX_LINE_LENGTH = 256
 	};
 
 	CLineInputBuffered<MAX_LINE_LENGTH> m_Input;
@@ -215,7 +218,6 @@ public:
 	// @param Team MODE_ALL=0 MODE_TEAM=1
 	// @param pLine the chat message
 	void SendChat(int Team, const char *pLine);
-	void SendChatTranslated(int Team, const char *pLine);
 
 	// Sends a chat message to the server.
 	//
@@ -225,8 +227,5 @@ public:
 	//
 	// It uses team or public chat depending on m_Mode.
 	void SendChatQueued(const char *pLine);
-
-private:
-	void SendChatImpl(int Team, const char *pLine, bool AllowTranslation);
 };
 #endif

@@ -7,6 +7,8 @@
 #include "gameworld.h"
 #include "teehistorian.h"
 
+#include <base/types.h>
+
 #include <engine/console.h>
 #include <engine/server.h>
 
@@ -20,7 +22,6 @@
 #include <map>
 #include <memory>
 #include <string>
-#include <ctime>
 
 /*
 	Tick
@@ -45,7 +46,6 @@
 */
 
 class CCharacter;
-class CTrailProjectile;
 class IConfigManager;
 class CConfig;
 class CHeap;
@@ -54,11 +54,12 @@ class CScore;
 class CUnpacker;
 class IAntibot;
 class IGameController;
+class IMap;
 class IEngine;
-class IHttp;
 class IStorage;
 struct CAntibotRoundData;
 struct CScoreRandomMapResult;
+struct CScorePlayerResult;
 
 struct CSnapContext
 {
@@ -84,6 +85,8 @@ public:
 	bool m_Initialized = false;
 	bool m_InitialDelay;
 	char m_aReason[128];
+	char m_aClientName[MAX_NAME_LENGTH];
+	bool m_NameKnown;
 
 	int SecondsLeft() const;
 };
@@ -93,7 +96,7 @@ class CMutes
 public:
 	CMutes(const char *pSystemName);
 
-	bool Mute(const NETADDR *pAddr, int Seconds, const char *pReason, bool InitialDelay);
+	bool Mute(const NETADDR *pAddr, int Seconds, const char *pReason, const char *pClientName, bool InitialDelay);
 	void UnmuteIndex(int Index);
 	void UnmuteAddr(const NETADDR *pAddr);
 	void UnmuteExpired();
@@ -112,9 +115,9 @@ class CGameContext : public IGameServer
 	CConfig *m_pConfig;
 	IConsole *m_pConsole;
 	IEngine *m_pEngine;
-	IHttp *m_pHttp;
 	IStorage *m_pStorage;
 	IAntibot *m_pAntibot;
+	std::unique_ptr<IMap> m_pMap;
 	CLayers m_Layers;
 	CCollision m_Collision;
 	protocol7::CNetObjHandler m_NetObjHandler7;
@@ -128,7 +131,6 @@ class CGameContext : public IGameServer
 	CUuid m_GameUuid;
 	CMapBugs m_MapBugs;
 	CPrng m_Prng;
-	int m_LastSvMaintenance; // last known value of sv_maintenance (0/1) to detect toggles
 
 	bool m_Resetting;
 
@@ -151,6 +153,8 @@ class CGameContext : public IGameServer
 	static void ConRandomMap(IConsole::IResult *pResult, void *pUserData);
 	static void ConRandomUnfinishedMap(IConsole::IResult *pResult, void *pUserData);
 	static void ConRestart(IConsole::IResult *pResult, void *pUserData);
+	static void ConServerAlert(IConsole::IResult *pResult, void *pUserData);
+	static void ConModAlert(IConsole::IResult *pResult, void *pUserData);
 	static void ConBroadcast(IConsole::IResult *pResult, void *pUserData);
 	static void ConSay(IConsole::IResult *pResult, void *pUserData);
 	static void ConSetTeam(IConsole::IResult *pResult, void *pUserData);
@@ -170,9 +174,7 @@ class CGameContext : public IGameServer
 	static void ConchainSpecialMotdupdate(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainSettingUpdate(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainPracticeByDefaultUpdate(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
-	static void ConchainForceSeasonUpdate(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConDumpLog(IConsole::IResult *pResult, void *pUserData);
-	static void ConNet(IConsole::IResult *pResult, void *pUserData);
 
 	void AddVote(const char *pDescription, const char *pCommand);
 	static int MapScan(const char *pName, int IsDir, int DirType, void *pUserData);
@@ -189,17 +191,6 @@ class CGameContext : public IGameServer
 		int m_LastWhisperTo;
 	};
 
-	struct CTrailPerm
-	{
-		NETADDR m_Addr;
-		int m_Mask;
-		char m_aName[MAX_NAME_LENGTH];
-		bool m_IsWildcard;
-	};
-
-	time_t m_TrailPermFileLastWrite;
-	int64_t m_NextTrailPermSync;
-
 public:
 	IServer *Server() const { return m_pServer; }
 	IConfigManager *ConfigManager() const { return m_pConfigManager; }
@@ -207,14 +198,14 @@ public:
 	IConsole *Console() { return m_pConsole; }
 	IEngine *Engine() { return m_pEngine; }
 	IStorage *Storage() { return m_pStorage; }
+	IMap *Map() override { return m_pMap.get(); }
+	const IMap *Map() const override { return m_pMap.get(); }
 	CCollision *Collision() { return &m_Collision; }
 	CTuningParams *GlobalTuning() { return &m_aTuningList[0]; }
 	CTuningParams *TuningList() { return m_aTuningList; }
 	IAntibot *Antibot() { return m_pAntibot; }
 	CTeeHistorian *TeeHistorian() { return &m_TeeHistorian; }
 	bool TeeHistorianActive() const { return m_TeeHistorianActive; }
-	void OnHookSpamDetected(class CPlayer *pPlayer, float HooksPerSecond);
-	void OnHookAngleExploitDetected(class CPlayer *pPlayer, float AngleDelta, int IntervalTicks);
 	CNetObjHandler *GetNetObjHandler() override { return &m_NetObjHandler; }
 	protocol7::CNetObjHandler *GetNetObjHandler7() override { return &m_NetObjHandler7; }
 
@@ -242,20 +233,6 @@ public:
 	// helper functions
 	CCharacter *GetPlayerChar(int ClientId);
 	const CCharacter *GetPlayerChar(int ClientId) const;
-	int TrailPermMask(const NETADDR *pAddr) const;
-	int TrailPermMaskForClient(int ClientId) const;
-	void SetTrailPerm(const NETADDR *pAddr, int Mask);
-	void SetTrailPermWildcard(int Mask);
-	void SetTrailPermNamed(const NETADDR *pAddr, const char *pName, int Mask);
-	bool RemoveTrailPerm(const NETADDR *pAddr);
-	bool RemoveTrailPermWildcard();
-	bool RemoveTrailPermNamed(const NETADDR *pAddr, const char *pName);
-	void UpdateTrailForClient(int ClientId);
-	void SyncTrailPerms(bool Force);
-	void ScheduleNextTrailPermSync();
-	bool ResolveTrailPermPath(char *pPath, unsigned PathSize) const;
-	void RewriteTrailPermFile();
-	void OnTrailDestroyed(int ClientId, CTrailProjectile *pTrail);
 	bool EmulateBug(int Bug) const;
 	std::vector<SSwitchers> &Switchers() { return m_World.m_Core.m_vSwitchers; }
 
@@ -279,7 +256,6 @@ public:
 	int m_VoteEnforce;
 	char m_aaZoneEnterMsg[TuneZone::NUM][256]; // 0 is used for switching from or to area without tunings
 	char m_aaZoneLeaveMsg[TuneZone::NUM][256];
-	std::vector<CTrailPerm> m_vTrailPerms;
 
 	void CreateAllEntities(bool Initial);
 	CPlayer *CreatePlayer(int ClientId, int StartTeam, bool Afk, int LastWhisperTo);
@@ -332,6 +308,8 @@ public:
 	void SendWeaponPickup(int ClientId, int Weapon) const;
 	void SendMotd(int ClientId) const;
 	void SendSettings(int ClientId) const;
+	void SendServerAlert(const char *pMessage);
+	void SendModeratorAlert(const char *pMessage, int ToClientId);
 	void SendBroadcast(const char *pText, int ClientId, bool IsImportant = true);
 	void SendSkinChange7(int ClientId);
 
@@ -356,7 +334,7 @@ public:
 	void OnShutdown(void *pPersistentData) override;
 
 	void OnTick() override;
-	void OnSnap(int ClientId, bool GlobalSnap) override;
+	void OnSnap(int ClientId, bool GlobalSnap, bool RecordingDemo) override;
 	void OnPostGlobalSnap() override;
 
 	void UpdatePlayerMaps();
@@ -426,7 +404,7 @@ public:
 	bool PlayerExists(int ClientId) const override { return m_apPlayers[ClientId]; }
 	// Returns true if someone is actively moderating.
 	bool PlayerModerating() const;
-	void ForceVote(int EnforcerId, bool Success);
+	void ForceVote(bool Success);
 
 	// Checks if player can vote and notify them about the reason
 	bool RateLimitPlayerVote(int ClientId);
@@ -438,6 +416,10 @@ public:
 	bool PracticeByDefault() const;
 
 	std::shared_ptr<CScoreRandomMapResult> m_SqlRandomMapResult;
+
+	// cached map info from database
+	std::shared_ptr<CScorePlayerResult> m_pLoadMapInfoResult;
+	char m_aMapInfoMessage[512];
 
 private:
 	// starting 1 to make 0 the special value "no client id"
@@ -456,7 +438,7 @@ private:
 	static void ConSolo(IConsole::IResult *pResult, void *pUserData);
 	static void ConUnSolo(IConsole::IResult *pResult, void *pUserData);
 	static void ConFreeze(IConsole::IResult *pResult, void *pUserData);
-	static void ConUnFreeze(IConsole::IResult *pResult, void *pUserData);
+	static void ConUnfreeze(IConsole::IResult *pResult, void *pUserData);
 	static void ConDeep(IConsole::IResult *pResult, void *pUserData);
 	static void ConUnDeep(IConsole::IResult *pResult, void *pUserData);
 	static void ConLiveFreeze(IConsole::IResult *pResult, void *pUserData);
@@ -476,6 +458,7 @@ private:
 	static void ConUnLaser(IConsole::IResult *pResult, void *pUserData);
 	static void ConUnJetpack(IConsole::IResult *pResult, void *pUserData);
 	static void ConUnEndlessJump(IConsole::IResult *pResult, void *pUserData);
+	static void ConSetSwitch(IConsole::IResult *pResult, void *pUserData);
 	static void ConUnWeapons(IConsole::IResult *pResult, void *pUserData);
 	static void ConAddWeapon(IConsole::IResult *pResult, void *pUserData);
 	static void ConRemoveWeapon(IConsole::IResult *pResult, void *pUserData);
@@ -535,12 +518,6 @@ private:
 	static void ConConverse(IConsole::IResult *pResult, void *pUserData);
 	static void ConSetEyeEmote(IConsole::IResult *pResult, void *pUserData);
 	static void ConEyeEmote(IConsole::IResult *pResult, void *pUserData);
-	static void ConTrail(IConsole::IResult *pResult, void *pUserData);
-	static void ConTrailPermAdd(IConsole::IResult *pResult, void *pUserData);
-	static void ConTrailPermAddNamed(IConsole::IResult *pResult, void *pUserData);
-	static void ConTrailPermDel(IConsole::IResult *pResult, void *pUserData);
-	static void ConTrailPermDelNamed(IConsole::IResult *pResult, void *pUserData);
-	static void ConTrailPermList(IConsole::IResult *pResult, void *pUserData);
 	static void ConShowOthers(IConsole::IResult *pResult, void *pUserData);
 	static void ConShowAll(IConsole::IResult *pResult, void *pUserData);
 	static void ConSpecTeam(IConsole::IResult *pResult, void *pUserData);
@@ -583,6 +560,7 @@ private:
 	static void ConPracticeUnNinja(IConsole::IResult *pResult, void *pUserData);
 	static void ConPracticeEndlessHook(IConsole::IResult *pResult, void *pUserData);
 	static void ConPracticeUnEndlessHook(IConsole::IResult *pResult, void *pUserData);
+	static void ConPracticeSetSwitch(IConsole::IResult *pResult, void *pUserData);
 	static void ConPracticeToggleInvincible(IConsole::IResult *pResult, void *pUserData);
 	static void ConPracticeToggleCollision(IConsole::IResult *pResult, void *pUserData);
 	static void ConPracticeToggleHookCollision(IConsole::IResult *pResult, void *pUserData);
@@ -604,17 +582,6 @@ private:
 
 	CMutes m_Mutes;
 	CMutes m_VoteMutes;
-	std::map<int, std::map<std::string, int64_t>> m_ReportTargets;
-	std::map<std::string, std::map<int, int64_t>> m_ReportCooldown;
-	void HandleAutoPunish(int ReporterId, const char *pReporterAddr, int TargetId, const char *pReason, bool &OutDuplicate, int &OutAction, int &OutDurationSeconds);
-
-	enum
-	{
-		REPORT_ACTION_NONE = 0,
-		REPORT_ACTION_MUTE,
-		REPORT_ACTION_BAN
-	};
-
 	void MuteWithMessage(const NETADDR *pAddr, int Seconds, const char *pReason, const char *pDisplayName);
 	void VoteMuteWithMessage(const NETADDR *pAddr, int Seconds, const char *pReason, const char *pDisplayName);
 
@@ -633,7 +600,6 @@ private:
 	static void ConVoteUnmuteId(IConsole::IResult *pResult, void *pUserData);
 	static void ConVoteUnmuteIp(IConsole::IResult *pResult, void *pUserData);
 	static void ConVoteMutes(IConsole::IResult *pResult, void *pUserData);
-	static void ConReport(IConsole::IResult *pResult, void *pUserData);
 
 	void Whisper(int ClientId, char *pStr);
 	void WhisperId(int ClientId, int VictimId, const char *pMessage);
@@ -682,8 +648,7 @@ public:
 	bool IsRunningKickOrSpecVote(int ClientId) const;
 
 	void SendRecord(int ClientId);
-	void SendFinish(int ClientId, float Time, float PreviousBestTime);
-	void SendFinishWebhook(int ClientId, const char *pTimeText, bool IsServerRecord);
+	void SendFinish(int ClientId, float Time, std::optional<float> PreviousBestTime);
 	void SendSaveCode(int Team, int TeamSize, int State, const char *pError, const char *pSaveRequester, const char *pServerName, const char *pGeneratedCode, const char *pCode);
 	void OnSetAuthed(int ClientId, int Level) override;
 

@@ -3,6 +3,7 @@
 #include "menus_start.h"
 
 #include <engine/client/updater.h>
+#include <engine/font_icons.h>
 #include <engine/graphics.h>
 #include <engine/keys.h>
 #include <engine/serverbrowser.h>
@@ -19,8 +20,6 @@
 #if defined(CONF_PLATFORM_ANDROID)
 #include <android/android_main.h>
 #endif
-
-using namespace FontIcons;
 
 void CMenusStart::RenderStartMenu(CUIRect MainView)
 {
@@ -62,30 +61,9 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	ExtMenu.HSplitBottom(5.0f, &ExtMenu, nullptr); // little space
 	ExtMenu.HSplitBottom(20.0f, &ExtMenu, &Button);
 	static CButtonContainer s_TutorialButton;
-	static float s_JoinTutorialTime = 0.0f;
-	if(GameClient()->m_Menus.DoButton_Menu(&s_TutorialButton, Localize("Tutorial"), 0, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)) ||
-		(s_JoinTutorialTime != 0.0f && Client()->LocalTime() >= s_JoinTutorialTime))
+	if(GameClient()->m_Menus.DoButton_Menu(&s_TutorialButton, Localize("Tutorial"), 0, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 	{
-		// Activate internet tab before joining tutorial to make sure the server info
-		// for the tutorial servers is available.
-		GameClient()->m_Menus.SetMenuPage(CMenus::PAGE_INTERNET);
-		GameClient()->m_Menus.RefreshBrowserTab(true);
-		const char *pAddr = ServerBrowser()->GetTutorialServer();
-		if(pAddr)
-		{
-			Client()->Connect(pAddr);
-			s_JoinTutorialTime = 0.0f;
-		}
-		else if(s_JoinTutorialTime == 0.0f)
-		{
-			dbg_msg("menus", "couldn't find tutorial server, retrying in 5 seconds");
-			s_JoinTutorialTime = Client()->LocalTime() + 5.0f;
-		}
-		else
-		{
-			Client()->AddWarning(SWarning(Localize("Can't find a Tutorial server")));
-			s_JoinTutorialTime = 0.0f;
-		}
+		GameClient()->m_Menus.JoinTutorial();
 	}
 
 	ExtMenu.HSplitBottom(5.0f, &ExtMenu, nullptr); // little space
@@ -171,19 +149,12 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 
 	// render version
 	CUIRect CurVersion, ConsoleButton;
-	MainView.HSplitBottom(60.0f, nullptr, &CurVersion);
+	MainView.HSplitBottom(45.0f, nullptr, &CurVersion);
 	CurVersion.VSplitRight(40.0f, &CurVersion, nullptr);
 	CurVersion.HSplitTop(20.0f, &ConsoleButton, &CurVersion);
 	CurVersion.HSplitTop(5.0f, nullptr, &CurVersion);
 	ConsoleButton.VSplitRight(40.0f, nullptr, &ConsoleButton);
-	CUIRect DdnetVersion, UcVersion;
-	CurVersion.HSplitTop(16.0f, &DdnetVersion, &CurVersion);
-	CurVersion.HSplitTop(2.0f, nullptr, &CurVersion);
-	CurVersion.HSplitTop(16.0f, &UcVersion, &CurVersion);
-	Ui()->DoLabel(&DdnetVersion, GAME_RELEASE_VERSION, 14.0f, TEXTALIGN_MR);
-	char aUcVersion[64];
-	str_format(aUcVersion, sizeof(aUcVersion), "%s %s", UCLIENT_NAME, UCLIENT_VERSION);
-	Ui()->DoLabel(&UcVersion, aUcVersion, 12.0f, TEXTALIGN_MR);
+	Ui()->DoLabel(&CurVersion, GAME_RELEASE_VERSION, 14.0f, TEXTALIGN_MR);
 
 	CUIRect TClientVersion;
 	MainView.HSplitTop(15.0f, &TClientVersion, &MainView);
@@ -207,17 +178,16 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	static CButtonContainer s_ConsoleButton;
 	TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
 	TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
-	if(GameClient()->m_Menus.DoButton_Menu(&s_ConsoleButton, FONT_ICON_TERMINAL, 0, &ConsoleButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.1f)))
+	if(GameClient()->m_Menus.DoButton_Menu(&s_ConsoleButton, FontIcon::TERMINAL, 0, &ConsoleButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.1f)))
 	{
 		GameClient()->m_GameConsole.Toggle(CGameConsole::CONSOLETYPE_LOCAL);
 	}
 	TextRender()->SetRenderFlags(0);
 	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 
-CUIRect UpdateArea, VersionUpdate;
-MainView.HSplitBottom(40.0f, nullptr, &UpdateArea);
-UpdateArea.VMargin(VMargin, &UpdateArea);
-UpdateArea.HSplitTop(18.0f, nullptr, &VersionUpdate);
+	CUIRect VersionUpdate;
+	MainView.HSplitBottom(20.0f, nullptr, &VersionUpdate);
+	VersionUpdate.VMargin(VMargin, &VersionUpdate);
 #if defined(CONF_AUTOUPDATE)
 	CUIRect UpdateButton;
 	VersionUpdate.VSplitRight(100.0f, &VersionUpdate, &UpdateButton);
@@ -225,8 +195,7 @@ UpdateArea.HSplitTop(18.0f, nullptr, &VersionUpdate);
 
 	char aBuf[128];
 	const IUpdater::EUpdaterState State = Updater()->GetCurrentState();
-	const bool CustomNeedsUpdate = g_Config.m_TcUpdateNotice && Client()->UcUpdateAvailable();
-	const bool NeedUpdate = CustomNeedsUpdate;
+	const bool NeedUpdate = GameClient()->m_TClient.NeedUpdate();
 
 	if(State == IUpdater::CLEAN && NeedUpdate)
 	{
@@ -251,10 +220,7 @@ UpdateArea.HSplitTop(18.0f, nullptr, &VersionUpdate);
 
 	if(State == IUpdater::CLEAN && NeedUpdate)
 	{
-		const char *pRemote = Client()->UcLatestVersion();
-		if(!pRemote[0])
-			pRemote = "?";
-		str_format(aBuf, sizeof(aBuf), Localize("%s %s is out!"), UCLIENT_NAME, pRemote);
+		str_format(aBuf, sizeof(aBuf), Localize("TClient %s is out!"), GameClient()->m_TClient.m_aVersionStr);
 		TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
 	}
 	else if(State == IUpdater::CLEAN)
@@ -280,8 +246,7 @@ UpdateArea.HSplitTop(18.0f, nullptr, &VersionUpdate);
 	Ui()->DoLabel(&VersionUpdate, aBuf, 14.0f, TEXTALIGN_ML);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
 #elif defined(CONF_INFORM_UPDATE)
-	const bool CustomNeedsUpdateInform = g_Config.m_TcUpdateNotice && Client()->UcUpdateAvailable();
-	if(CustomNeedsUpdateInform)
+	if(str_comp(Client()->LatestVersion(), "0") != 0 && false)
 	{
 		CUIRect DownloadButton;
 		VersionUpdate.VSplitRight(100.0f, &VersionUpdate, &DownloadButton);
@@ -294,16 +259,12 @@ UpdateArea.HSplitTop(18.0f, nullptr, &VersionUpdate);
 		}
 
 		char aBuf[64];
-		const char *pRemote = Client()->UcLatestVersion();
-		if(!pRemote[0])
-			pRemote = "?";
-		str_format(aBuf, sizeof(aBuf), Localize("%s %s is out!"), UCLIENT_NAME, pRemote);
+		str_format(aBuf, sizeof(aBuf), Localize("DDNet %s is out!"), Client()->LatestVersion());
 		SLabelProperties UpdateLabelProps;
 		UpdateLabelProps.SetColor(ColorRGBA(1.0f, 0.4f, 0.4f, 1.0f));
 		Ui()->DoLabel(&VersionUpdate, aBuf, 14.0f, TEXTALIGN_ML, UpdateLabelProps);
 	}
 #endif
-
 
 	if(NewPage != -1)
 	{

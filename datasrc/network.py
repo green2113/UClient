@@ -1,6 +1,3 @@
-# pylint: skip-file
-# See https://github.com/ddnet/ddnet/issues/3507
-
 from datatypes import Enum, Flags, NetArray, NetBool, NetEvent, NetEventEx, NetIntAny, NetTwIntString, NetIntRange
 from datatypes import NetMessage, NetMessageEx, NetObject, NetObjectEx, NetString, NetStringHalfStrict, NetStringStrict, NetTick
 
@@ -27,7 +24,7 @@ GameInfoFlags = [
 ]
 GameInfoFlags2 = [
 	"ALLOW_X_SKINS", "GAMETYPE_CITY", "GAMETYPE_FDDRACE", "ENTITIES_FDDRACE", "HUD_HEALTH_ARMOR", "HUD_AMMO",
-	"HUD_DDRACE", "NO_WEAK_HOOK", "NO_SKIN_CHANGE_FOR_FROZEN", "DDRACE_TEAM"
+	"HUD_DDRACE", "NO_WEAK_HOOK", "NO_SKIN_CHANGE_FOR_FROZEN", "DDRACE_TEAM", "PREDICT_EVENTS"
 ]
 ExPlayerFlags = ["AFK", "PAUSED", "SPEC"]
 LegacyProjectileFlags = [f"CLIENTID_BIT{i}" for i in range(8)] + [
@@ -80,7 +77,7 @@ enum
 
 enum
 {
-	GAMEINFO_CURVERSION=10,
+	GAMEINFO_CURVERSION=11,
 };
 '''
 
@@ -211,6 +208,7 @@ Objects = [
 		NetIntRange("m_Armor", 0, 10),
 		# -1 is infinite ammo
 		NetIntRange("m_AmmoCount", -1, 10),
+		# -1 means "no weapon"
 		NetIntRange("m_Weapon", -1, 'NUM_WEAPONS-1'),
 		NetIntRange("m_Emote", 0, len(Emotes)),
 		NetIntRange("m_AttackTick", 0, 'max_int'),
@@ -266,6 +264,8 @@ Objects = [
 	NetObjectEx("DDNetPlayer", "player@netobj.ddnet.tw", [
 		NetIntAny("m_Flags"),
 		NetIntRange("m_AuthLevel", "AUTHED_NO", "AUTHED_ADMIN"),
+		NetIntRange("m_FinishTimeSeconds", 'FinishTime::UNSET', 'max_int', default='FinishTime::UNSET'),
+		NetIntRange("m_FinishTimeMillis", 0, 999, default=0),
 	]),
 
 	NetObjectEx("GameInfoEx", "gameinfo@netobj.ddnet.tw", [
@@ -389,6 +389,12 @@ Objects = [
 		NetIntAny("m_SwitchNumber"),
 		NetIntAny("m_Layer"),
 		NetIntAny("m_EntityClass"),
+	]),
+
+ 	# the current best time in the server
+	NetObjectEx("MapBestTime", "map-best-time@netobj.ddnet.org", [
+			NetIntRange("m_MapBestTimeSeconds", 'FinishTime::NOT_FINISHED_MILLIS', 'max_int'),
+			NetIntRange("m_MapBestTimeMillis", 0, 999),
 	]),
 
 	NetEventEx("MapSoundWorld:Common", "map-sound-world@netevent.ddnet.org", [
@@ -653,5 +659,9 @@ Messages = [
 
 	NetMessageEx("Cl_EnableSpectatorCount", "enable-spectator-count@netmsg.ddnet.org", [
 		NetBool("m_Enable"),
+	]),
+	
+	NetMessageEx("Sv_MapInfo", "map-info@netmsg.ddnet.org", [
+		NetString("m_pDescription"),
 	]),
 ]

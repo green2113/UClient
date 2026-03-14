@@ -73,7 +73,6 @@ public:
 	void ReleaseHook();
 	void ResetHook();
 	void ResetInput();
-	void CheckHookAngleExploit();
 	void FireWeapon();
 
 	void Die(int Killer, int Weapon, bool SendKillMsg = true);
@@ -140,7 +139,6 @@ private:
 
 	// last tick that the player took any action ie some input
 	int m_LastAction;
-	int m_LastNoAmmoSound;
 
 	// these are non-heldback inputs
 	CNetObj_PlayerInput m_LatestPrevPrevInput;
@@ -152,10 +150,6 @@ private:
 	CNetObj_PlayerInput m_Input;
 	CNetObj_PlayerInput m_SavedInput;
 	int m_NumInputs;
-	bool m_HookAngleTrackingInitialized = false;
-	float m_LastHookAimAngle = 0.0f;
-	int64_t m_LastHookAimTick = 0;
-	int m_HookAngleRapidChanges = 0;
 
 	int m_DamageTakenTick;
 
@@ -202,7 +196,7 @@ public:
 	void Pause(bool Pause);
 	bool Freeze(int Seconds);
 	bool Freeze();
-	bool UnFreeze();
+	bool Unfreeze();
 	void GiveAllWeapons();
 	void ResetPickups();
 	void ResetJumps();

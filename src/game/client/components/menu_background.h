@@ -9,11 +9,6 @@
 #include <string>
 #include <vector>
 
-class CMenuMap : public CBackgroundEngineMap
-{
-	MACRO_INTERFACE("menu_enginemap")
-};
-
 // themes
 class CTheme
 {
@@ -48,7 +43,6 @@ public:
 		POS_SETTINGS_SOUND,
 		POS_SETTINGS_DDNET,
 		POS_SETTINGS_ASSETS,
-		POS_SETTINGS_UCLIENT,
 		POS_SETTINGS_RESERVED0,
 		POS_SETTINGS_RESERVED1,
 		POS_BROWSER_INTERNET,
@@ -80,8 +74,6 @@ public:
 
 private:
 	CCamera m_Camera;
-
-	CBackgroundEngineMap *CreateBGMap() override;
 
 	vec2 m_RotationCenter;
 	std::array<vec2, NUM_POS> m_aPositions;

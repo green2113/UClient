@@ -9,7 +9,7 @@
 #include <antibot/antibot_data.h>
 
 #include <base/log.h>
-#include <base/math.h>
+#include <base/time.h>
 
 #include <engine/antibot.h>
 #include <engine/shared/config.h>
@@ -61,7 +61,6 @@ bool CCharacter::Spawn(CPlayer *pPlayer, vec2 Pos)
 {
 	m_EmoteStop = -1;
 	m_LastAction = -1;
-	m_LastNoAmmoSound = -1;
 	m_LastWeapon = WEAPON_HAMMER;
 	m_QueuedWeapon = -1;
 	m_LastRefillJumps = false;
@@ -77,10 +76,6 @@ bool CCharacter::Spawn(CPlayer *pPlayer, vec2 Pos)
 	mem_zero(&m_LatestPrevPrevInput, sizeof(m_LatestPrevPrevInput));
 	m_LatestPrevPrevInput.m_TargetY = -1;
 	m_NumInputs = 0;
-	m_HookAngleTrackingInitialized = false;
-	m_HookAngleRapidChanges = 0;
-	m_LastHookAimAngle = 0.0f;
-	m_LastHookAimTick = Server()->Tick();
 	m_SpawnTick = Server()->Tick();
 	m_WeaponChangeTick = Server()->Tick();
 	Antibot()->OnSpawn(m_pPlayer->GetCid());
@@ -211,7 +206,7 @@ void CCharacter::SetInvincible(bool Invincible)
 
 	m_Core.m_Invincible = Invincible;
 	if(Invincible)
-		UnFreeze();
+		Unfreeze();
 
 	SetEndlessJump(Invincible);
 }
@@ -357,7 +352,7 @@ void CCharacter::HandleNinja()
 
 				// Don't hit players in solo parts
 				if(Teams()->m_Core.GetSolo(ClientId))
-					return;
+					continue;
 
 				// make sure we haven't Hit this object before
 				bool AlreadyHit = false;
@@ -375,7 +370,7 @@ void CCharacter::HandleNinja()
 
 				// Hit a player, give them damage and stuffs...
 				GameServer()->CreateSound(pChr->m_Pos, SOUND_NINJA_HIT, TeamMask());
-				// set his velocity to fast upward (for now)
+				// set their velocity to fast upward (for now)
 				dbg_assert(m_NumObjectsHit < MAX_CLIENTS, "m_aHitObjects overflow");
 				m_aHitObjects[m_NumObjectsHit++] = ClientId;
 
@@ -390,7 +385,9 @@ void CCharacter::HandleNinja()
 void CCharacter::DoWeaponSwitch()
 {
 	// make sure we can switch
-	if(m_ReloadTimer != 0 || m_QueuedWeapon == -1 || m_Core.m_aWeapons[WEAPON_NINJA].m_Got || !m_Core.m_aWeapons[m_QueuedWeapon].m_Got)
+	if(m_ReloadTimer != 0 || m_QueuedWeapon == -1)
+		return;
+	if(m_Core.m_aWeapons[WEAPON_NINJA].m_Got || !m_Core.m_aWeapons[m_QueuedWeapon].m_Got)
 		return;
 
 	// switch Weapon
@@ -524,7 +521,7 @@ void CCharacter::FireWeapon()
 			if((pTarget == this || (pTarget->IsAlive() && !CanCollide(pTarget->GetPlayer()->GetCid()))))
 				continue;
 
-			// set his velocity to fast upward (for now)
+			// set their velocity to fast upward (for now)
 			if(length(pTarget->m_Pos - ProjStartPos) > 0.0f)
 				GameServer()->CreateHammerHit(pTarget->m_Pos - normalize(pTarget->m_Pos - ProjStartPos) * GetProximityRadius() * 0.5f, TeamMask());
 			else
@@ -543,7 +540,7 @@ void CCharacter::FireWeapon()
 			Temp -= pTarget->m_Core.m_Vel;
 			pTarget->TakeDamage((vec2(0.f, -1.0f) + Temp) * Strength, g_pData->m_Weapons.m_Hammer.m_pBase->m_Damage,
 				m_pPlayer->GetCid(), m_Core.m_ActiveWeapon);
-			pTarget->UnFreeze();
+			pTarget->Unfreeze();
 
 			Antibot()->OnHammerHit(m_pPlayer->GetCid(), pTarget->GetPlayer()->GetCid());
 
@@ -642,9 +639,7 @@ void CCharacter::FireWeapon()
 
 	if(!m_ReloadTimer)
 	{
-		float FireDelay;
-		GetTuning(m_TuneZone)->Get(offsetof(CTuningParams, m_HammerFireDelay) / sizeof(CTuneParam) + m_Core.m_ActiveWeapon, &FireDelay);
-		m_ReloadTimer = FireDelay * Server()->TickSpeed() / 1000;
+		m_ReloadTimer = GetTuning(m_TuneZone)->GetWeaponFireDelay(m_Core.m_ActiveWeapon) * Server()->TickSpeed();
 	}
 }
 
@@ -677,8 +672,8 @@ void CCharacter::GiveNinja()
 		m_LastWeapon = m_Core.m_ActiveWeapon;
 	m_Core.m_ActiveWeapon = WEAPON_NINJA;
 
-	if(!m_Core.m_aWeapons[WEAPON_NINJA].m_Got)
-		GameServer()->CreateSound(m_Pos, SOUND_PICKUP_NINJA, TeamMask());
+	// not used on ddrace
+	// GameServer()->CreateSound(m_Pos, SOUND_PICKUP_NINJA, TeamMask());
 }
 
 void CCharacter::RemoveNinja()
@@ -706,7 +701,7 @@ int CCharacter::DetermineEyeEmote()
 	const bool HasNinjajetpack = m_pPlayer->m_NinjaJetpack && m_Core.m_Jetpack && m_Core.m_ActiveWeapon == WEAPON_GUN;
 
 	if(GetPlayer()->IsAfk() || GetPlayer()->IsPaused())
-		return IsFrozen ? EMOTE_NORMAL : EMOTE_BLINK;
+		return (m_Core.m_DeepFrozen || m_FreezeTime > 0) ? EMOTE_NORMAL : EMOTE_BLINK;
 	if(m_EmoteType != EMOTE_NORMAL) // user manually set an eye emote using /emote
 		return m_EmoteType;
 	if(IsFrozen)
@@ -732,67 +727,6 @@ void CCharacter::OnPredictedInput(const CNetObj_PlayerInput *pNewInput)
 		m_Input.m_TargetY = -1;
 
 	mem_copy(&m_SavedInput, &m_Input, sizeof(m_SavedInput));
-	CheckHookAngleExploit();
-}
-
-void CCharacter::CheckHookAngleExploit()
-{
-	if(!g_Config.m_SvAntiHookMonitor || g_Config.m_SvAntiHookAngleDelta <= 0 || g_Config.m_SvAntiHookAngleInterval <= 0 || g_Config.m_SvAntiHookAngleRepeats <= 0)
-	{
-		m_HookAngleTrackingInitialized = false;
-		m_HookAngleRapidChanges = 0;
-		return;
-	}
-
-	if(!m_pPlayer || m_pPlayer->GetTeam() == TEAM_SPECTATORS)
-		return;
-
-	if(!m_Input.m_Hook)
-	{
-		m_HookAngleTrackingInitialized = false;
-		m_HookAngleRapidChanges = 0;
-		return;
-	}
-
-	vec2 Aim((float)m_Input.m_TargetX, (float)m_Input.m_TargetY);
-	if(length(Aim) < 0.001f)
-		return;
-
-	const float Angle = std::atan2(Aim.y, Aim.x);
-	const int64_t Now = Server()->Tick();
-
-	if(!m_HookAngleTrackingInitialized)
-	{
-		m_HookAngleTrackingInitialized = true;
-		m_LastHookAimAngle = Angle;
-		m_LastHookAimTick = Now;
-		m_HookAngleRapidChanges = 0;
-		return;
-	}
-
-	const int IntervalTicks = g_Config.m_SvAntiHookAngleInterval;
-	const int64_t TicksSince = Now - m_LastHookAimTick;
-
-	float DiffDeg = std::abs((Angle - m_LastHookAimAngle) * 180.0f / pi);
-	if(DiffDeg > 180.0f)
-		DiffDeg = 360.0f - DiffDeg;
-
-	if(TicksSince <= IntervalTicks && DiffDeg >= g_Config.m_SvAntiHookAngleDelta)
-	{
-		++m_HookAngleRapidChanges;
-		if(m_HookAngleRapidChanges >= g_Config.m_SvAntiHookAngleRepeats)
-		{
-			GameServer()->OnHookAngleExploitDetected(m_pPlayer, DiffDeg, (int)TicksSince);
-			m_HookAngleRapidChanges = 0;
-		}
-	}
-	else if(TicksSince > IntervalTicks)
-	{
-		m_HookAngleRapidChanges = 0;
-	}
-
-	m_LastHookAimAngle = Angle;
-	m_LastHookAimTick = Now;
 }
 
 void CCharacter::OnDirectInput(const CNetObj_PlayerInput *pNewInput)
@@ -883,14 +817,9 @@ void CCharacter::Tick()
 		PreTick();
 	}
 
-	if(!m_PrevInput.m_Hook && m_Input.m_Hook)
+	if(!m_PrevInput.m_Hook && m_Input.m_Hook && !(m_Core.m_TriggeredEvents & COREEVENT_HOOK_ATTACH_PLAYER))
 	{
-		if(m_pPlayer)
-			m_pPlayer->OnHookFired();
-		if(!(m_Core.m_TriggeredEvents & COREEVENT_HOOK_ATTACH_PLAYER))
-		{
-			Antibot()->OnHookAttach(m_pPlayer->GetCid(), false);
-		}
+		Antibot()->OnHookAttach(m_pPlayer->GetCid(), false);
 	}
 
 	// handle Weapons
@@ -1146,7 +1075,7 @@ void CCharacter::SnapCharacter(int SnappingClient, int Id)
 	    Health = 0, Armor = 0;
 	int Emote = DetermineEyeEmote();
 	int Tick;
-	if(!m_ReckoningTick || GameServer()->m_World.m_Paused)
+	if(!m_ReckoningTick || GameServer()->m_pController->IsGamePaused())
 	{
 		Tick = 0;
 		pCore = &m_Core;
@@ -1289,7 +1218,7 @@ bool CCharacter::IsSnappingCharacterInView(int SnappingClientId)
 {
 	int Id = m_pPlayer->GetCid();
 
-	// A player may not be clipped away if his hook or a hook attached to him is in the field of view
+	// A player may not be clipped away if their hook or a hook attached to them is in the field of view
 	bool PlayerAndHookNotInView = NetworkClippedLine(SnappingClientId, m_Pos, m_Core.m_HookPos);
 	bool AttachedHookInView = false;
 	if(PlayerAndHookNotInView)
@@ -1341,7 +1270,7 @@ void CCharacter::Snap(int SnappingClient)
 		pDDNetCharacter->m_Flags |= CHARACTERFLAG_SOLO;
 	if(m_Core.m_Super)
 		pDDNetCharacter->m_Flags |= CHARACTERFLAG_SUPER;
-	if(m_Core.m_Invincible || (m_pPlayer && m_pPlayer->m_TrailMode == 3 && length(m_Core.m_Vel) > 0.1f))
+	if(m_Core.m_Invincible)
 		pDDNetCharacter->m_Flags |= CHARACTERFLAG_INVINCIBLE;
 	if(m_Core.m_EndlessHook)
 		pDDNetCharacter->m_Flags |= CHARACTERFLAG_ENDLESS_HOOK;
@@ -1500,7 +1429,7 @@ void CCharacter::HandleBroadcast()
 	{
 		char aBuf[32];
 		int Time = (int64_t)100 * ((float)(Server()->Tick() - m_StartTime) / ((float)Server()->TickSpeed()));
-		str_time(Time, TIME_HOURS, aBuf, sizeof(aBuf));
+		str_time(Time, ETimeFormat::HOURS, aBuf, sizeof(aBuf));
 		GameServer()->SendBroadcast(aBuf, m_pPlayer->GetCid(), false);
 		m_LastTimeCpBroadcasted = m_LastTimeCp;
 		m_LastBroadcast = Server()->Tick();
@@ -1699,7 +1628,7 @@ void CCharacter::HandleTiles(int Index)
 		Freeze();
 	}
 	else if(((m_TileIndex == TILE_UNFREEZE) || (m_TileFIndex == TILE_UNFREEZE)) && !m_Core.m_DeepFrozen)
-		UnFreeze();
+		Unfreeze();
 
 	// deep freeze
 	if(((m_TileIndex == TILE_DFREEZE) || (m_TileFIndex == TILE_DFREEZE)) && !m_Core.m_Super && !m_Core.m_Invincible && !m_Core.m_DeepFrozen)
@@ -2282,7 +2211,7 @@ void CCharacter::DDRaceTick()
 		m_Input.m_Jump = 0;
 		m_Input.m_Hook = 0;
 		if(m_FreezeTime == 1)
-			UnFreeze();
+			Unfreeze();
 	}
 
 	HandleTuneLayer(); // need this before coretick
@@ -2333,12 +2262,12 @@ void CCharacter::DDRacePostCoreTick()
 	// following jump rules can be overridden by tiles, like Refill Jumps, Stopper and Wall Jump
 	if(m_Core.m_Jumps == -1)
 	{
-		// The player has only one ground jump, so his feet are always dark
+		// The player has only one ground jump, so their feet are always dark
 		m_Core.m_Jumped |= 2;
 	}
 	else if(m_Core.m_Jumps == 0)
 	{
-		// The player has no jumps at all, so his feet are always dark
+		// The player has no jumps at all, so their feet are always dark
 		m_Core.m_Jumped |= 2;
 	}
 	else if(m_Core.m_Jumps == 1 && m_Core.m_Jumped > 0)
@@ -2348,7 +2277,7 @@ void CCharacter::DDRacePostCoreTick()
 	}
 	else if(m_Core.m_JumpedTotal < m_Core.m_Jumps - 1 && m_Core.m_Jumped > 1)
 	{
-		// The player has not yet used up all his jumps, so his feet remain light
+		// The player has not yet used up all their jumps, so their feet remain light
 		m_Core.m_Jumped = 1;
 	}
 
@@ -2416,7 +2345,7 @@ bool CCharacter::Freeze()
 	return Freeze(g_Config.m_SvFreezeDelay);
 }
 
-bool CCharacter::UnFreeze()
+bool CCharacter::Unfreeze()
 {
 	if(m_FreezeTime > 0)
 	{

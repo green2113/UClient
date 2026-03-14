@@ -36,7 +36,6 @@ class CLogMessage;
 class CMsgPacker;
 class CPacker;
 class IEngine;
-class IEngineMap;
 class ILogger;
 
 class CServerBan : public CNetBan
@@ -198,7 +197,6 @@ public:
 		// DNSBL
 		EDnsblState m_DnsblState;
 		std::shared_ptr<CHostLookup> m_pDnsblLookup;
-		bool m_DnsblBanPending;
 
 		bool m_Sixup;
 
@@ -221,8 +219,6 @@ public:
 	CFifo m_Fifo;
 	CServerBan m_ServerBan;
 	CHttp m_Http;
-
-	IEngineMap *m_pMap;
 
 	int64_t m_GameStartTime;
 
@@ -258,8 +254,6 @@ public:
 		NUM_RECORDERS = MAX_CLIENTS + 2,
 	};
 
-	char m_aCurrentMap[IO_MAX_PATH_LENGTH];
-	const char *m_pCurrentMapName;
 	SHA256_DIGEST m_aCurrentMapSha256[NUM_MAP_TYPES];
 	unsigned m_aCurrentMapCrc[NUM_MAP_TYPES];
 	unsigned char *m_apCurrentMapData[NUM_MAP_TYPES];
@@ -278,28 +272,6 @@ public:
 
 	size_t m_AnnouncementLastLine;
 	std::vector<std::string> m_vAnnouncements;
-	struct CHookDemoSession
-	{
-		enum class EType
-		{
-			HOOK_SPAM,
-			REPORT,
-		};
-
-		EType m_Type = EType::HOOK_SPAM;
-		std::unique_ptr<CDemoRecorder> m_pRecorder;
-		int m_ClientId = -1;
-		int64_t m_EndTick = 0;
-		char m_aFilename[IO_MAX_PATH_LENGTH];
-		char m_aUploadName[IO_MAX_PATH_LENGTH];
-		float m_HooksPerSecond = 0.f;
-		char m_aPlayerName[64];
-		char m_aPlayerAddr[NETADDR_MAXSTRSIZE];
-		char m_aReporterName[64];
-		char m_aReporterAddr[NETADDR_MAXSTRSIZE];
-		char m_aReportReason[256];
-	};
-	std::vector<CHookDemoSession> m_vHookDemoSessions;
 
 	std::shared_ptr<ILogger> m_pFileLogger = nullptr;
 	std::shared_ptr<ILogger> m_pStdoutLogger = nullptr;
@@ -332,18 +304,12 @@ public:
 
 	static bool StrHideIps(const char *pInput, char *pOutputWithIps, int OutputWithIpsSize, char *pOutputWithoutIps, int OutputWithoutIpsSize);
 	void SendLogLine(const CLogMessage *pMessage);
-	void SendBanWebhook(const char *pTargetName, const char *pTargetAddr, int Seconds, const char *pReason);
-	void SendHookSpamWebhook(int ClientId, float HooksPerSecond, const char *pAddr) override;
-	void SendHookAngleWebhook(int ClientId, float AngleDelta, int IntervalTicks, const char *pAddr) override;
-	bool StartHookSpamDemoRecord(int ClientId, float HooksPerSecond) override;
-	bool StartReportDemoRecord(int ReporterId, int TargetId, const char *pReason) override;
 	void SetRconCid(int ClientId) override;
 	int GetAuthedState(int ClientId) const override;
 	bool IsRconAuthed(int ClientId) const override;
 	bool IsRconAuthedAdmin(int ClientId) const override;
 	const char *GetAuthName(int ClientId) const override;
 	bool HasAuthHidden(int ClientId) const override;
-	void GetMapInfo(char *pMapName, int MapNameSize, int *pMapSize, SHA256_DIGEST *pMapSha256, int *pMapCrc) override;
 	bool GetClientInfo(int ClientId, CClientInfo *pInfo) const override;
 	void SetClientDDNetVersion(int ClientId, int DDNetVersion) override;
 	const NETADDR *ClientAddr(int ClientId) const override;
@@ -402,6 +368,11 @@ public:
 
 	bool CheckReservedSlotAuth(int ClientId, const char *pPassword);
 	void ProcessClientPacket(CNetChunk *pPacket);
+	void OnNetMsgClientVer(int ClientId, CUuid *pConnectionId, int DDNetVersion, const char *pDDNetVersionStr);
+	void OnNetMsgReady(int ClientId);
+	void OnNetMsgEnterGame(int ClientId);
+	void OnNetMsgRconCmd(int ClientId, const char *pCmd);
+	void OnNetMsgRconAuth(int ClientId, const char *pName, const char *pPw, bool SendRconCmds);
 
 	class CCache
 	{
@@ -426,11 +397,13 @@ public:
 	};
 	CCache m_aServerInfoCache[3 * 2];
 	CCache m_aSixupServerInfoCache[2];
-	bool m_ServerInfoNeedsUpdate;
+	bool m_ServerInfoNeedsUpdate = false;
+	bool m_ServerInfoNeedsResend = false;
 
 	void FillAntibot(CAntibotRoundData *pData) override;
 
 	void ExpireServerInfo() override;
+	void ExpireServerInfoAndQueueResend();
 	void CacheServerInfo(CCache *pCache, int Type, bool SendClients);
 	void CacheServerInfoSixup(CCache *pCache, bool SendClients, int MaxConsideredClients);
 	void SendServerInfo(const NETADDR *pAddr, int Token, int Type, bool SendClients);
@@ -438,12 +411,11 @@ public:
 	bool RateLimitServerInfoConnless();
 	void SendServerInfoConnless(const NETADDR *pAddr, int Token, int Type);
 	void UpdateRegisterServerInfo();
-	void UpdateServerInfo(bool Resend = false);
+	void UpdateServerInfo(bool Resend);
 
 	void PumpNetwork(bool PacketWaiting);
 
 	void ChangeMap(const char *pMap) override;
-	const char *GetMapName() const override;
 	void ReloadMap() override;
 	int LoadMap(const char *pMapName);
 
@@ -553,12 +525,6 @@ public:
 	bool IsSixup(int ClientId) const override { return ClientId != SERVER_DEMO_CLIENT && m_aClients[ClientId].m_Sixup; }
 
 	void SetLoggers(std::shared_ptr<ILogger> &&pFileLogger, std::shared_ptr<ILogger> &&pStdoutLogger);
-	bool HookDemoRecordingActive() const;
-	void RecordHookDemoSnapshot(int Tick, const char *pData, int Size);
-	void RecordHookDemoMessage(const void *pData, int Size);
-	void ProcessHookDemoSessions();
-	void AbortHookDemoSessions();
-	bool QueueHookDemoUpload(const CHookDemoSession &Session);
 
 #ifdef CONF_FAMILY_UNIX
 	enum CONN_LOGGING_CMD

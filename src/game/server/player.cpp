@@ -3,7 +3,6 @@
 #include "player.h"
 
 #include "entities/character.h"
-#include "entities/trail_projectile.h"
 #include "gamecontext.h"
 #include "gamecontroller.h"
 #include "score.h"
@@ -17,17 +16,12 @@
 #include <game/gamecore.h>
 #include <game/teamscore.h>
 
-#include <cstdlib>
-#include <limits>
-
 MACRO_ALLOC_POOL_ID_IMPL(CPlayer, MAX_CLIENTS)
 
 IServer *CPlayer::Server() const { return m_pGameServer->Server(); }
 
 CPlayer::CPlayer(CGameContext *pGameServer, uint32_t UniqueClientId, int ClientId, int Team) :
-	m_UniqueClientId(UniqueClientId),
-	m_TrailMode(0),
-	m_pTrail(nullptr)
+	m_UniqueClientId(UniqueClientId)
 {
 	m_pGameServer = pGameServer;
 	m_ClientId = ClientId;
@@ -41,11 +35,6 @@ CPlayer::CPlayer(CGameContext *pGameServer, uint32_t UniqueClientId, int ClientI
 CPlayer::~CPlayer()
 {
 	GameServer()->Antibot()->OnPlayerDestroy(m_ClientId);
-	if(m_pTrail)
-	{
-		m_pTrail->Reset();
-		m_pTrail = nullptr;
-	}
 	delete m_pLastTarget;
 	delete m_pCharacter;
 	m_pCharacter = nullptr;
@@ -96,35 +85,20 @@ void CPlayer::Reset()
 	m_TuneZoneOld = m_TuneZone;
 	m_Halloween = false;
 	m_FirstPacket = true;
-	m_NewYear = false;
-	m_Valentine =false;
-	m_TrailMode = 0;
-	if(m_pTrail)
-	{
-		m_pTrail->Reset();
-		m_pTrail = nullptr;
-	}
 
 	m_SendVoteIndex = -1;
-	m_NetStats.Reset();
 
 	if(g_Config.m_Events)
 	{
 		const ETimeSeason Season = time_season();
-		if(Season == SEASON_NEWYEAR)
+		if(Season == ETimeSeason::NEWYEAR)
 		{
 			m_DefEmote = EMOTE_HAPPY;
-			m_NewYear = true;
 		}
-		else if(Season == SEASON_HALLOWEEN)
+		else if(Season == ETimeSeason::HALLOWEEN)
 		{
-			m_DefEmote = EMOTE_NORMAL;
+			m_DefEmote = EMOTE_ANGRY;
 			m_Halloween = true;
-		}
-		else if(Season == SEASON_VALENTINE)
-		{
-			m_DefEmote = EMOTE_PAIN;
-			m_Valentine = true;
 		}
 		else
 		{
@@ -149,7 +123,6 @@ void CPlayer::Reset()
 	m_Whispers = true;
 
 	m_LastPause = 0;
-	m_Score.reset();
 
 	// Variable initialized:
 	m_LastSqlQuery = 0;
@@ -176,11 +149,6 @@ void CPlayer::Reset()
 	m_RescueMode = RESCUEMODE_AUTO;
 
 	m_CameraInfo.Reset();
-
-	m_HookSpamWindowStartTick = 0;
-	m_HookSpamCount = 0;
-	m_HookSpamWarned = false;
-	m_NextHookAngleWebhookTick = 0;
 }
 
 static int PlayerFlags_SixToSeven(int Flags)
@@ -213,8 +181,6 @@ void CPlayer::Tick()
 	if(m_ChatScore > 0)
 		m_ChatScore--;
 
-	Server()->SetClientScore(m_ClientId, m_Score);
-
 	if(m_Moderating && m_Afk)
 	{
 		m_Moderating = false;
@@ -227,22 +193,11 @@ void CPlayer::Tick()
 	// do latency stuff
 	{
 		IServer::CClientInfo Info;
-			if(Server()->GetClientInfo(m_ClientId, &Info))
-			{
-				m_Latency.m_Accum += Info.m_Latency;
-				m_Latency.m_AccumMax = maximum(m_Latency.m_AccumMax, Info.m_Latency);
-				m_Latency.m_AccumMin = minimum(m_Latency.m_AccumMin, Info.m_Latency);
-				if(m_NetStats.m_Active && Info.m_Latency > 0)
-				{
-					m_NetStats.m_LatencySum += Info.m_Latency;
-					m_NetStats.m_SampleCount++;
-					m_NetStats.m_LatencyMin = minimum(m_NetStats.m_LatencyMin, Info.m_Latency);
-					m_NetStats.m_LatencyMax = maximum(m_NetStats.m_LatencyMax, Info.m_Latency);
-				if(m_NetStats.m_HaveLastLatency)
-					m_NetStats.m_JitterAccum += std::abs(Info.m_Latency - m_NetStats.m_LastLatency);
-				m_NetStats.m_LastLatency = Info.m_Latency;
-				m_NetStats.m_HaveLastLatency = true;
-			}
+		if(Server()->GetClientInfo(m_ClientId, &Info))
+		{
+			m_Latency.m_Accum += Info.m_Latency;
+			m_Latency.m_AccumMax = maximum(m_Latency.m_AccumMax, Info.m_Latency);
+			m_Latency.m_AccumMin = minimum(m_Latency.m_AccumMin, Info.m_Latency);
 		}
 		// each second
 		if(Server()->Tick() % Server()->TickSpeed() == 0)
@@ -256,24 +211,6 @@ void CPlayer::Tick()
 		}
 	}
 
-	if(m_NetStats.m_Active && Server()->Tick() >= m_NetStats.m_EndTick)
-	{
-		if(m_NetStats.m_SampleCount > 0)
-		{
-			const float Avg = static_cast<float>(m_NetStats.m_LatencySum) / m_NetStats.m_SampleCount;
-			const float Jitter = m_NetStats.m_SampleCount > 1 ? static_cast<float>(m_NetStats.m_JitterAccum) / (m_NetStats.m_SampleCount - 1) : 0.0f;
-			char aBuf[192];
-			str_format(aBuf, sizeof(aBuf), "네트워크 상태 결과가 나왔어요. 지난 %d초간의 평균 지연 시간: %.1fms(최소: %dms, 최대: %dms), 지터: %.1fms (샘플: %d개)",
-				m_NetStats.m_Seconds, Avg, m_NetStats.m_LatencyMin, m_NetStats.m_LatencyMax, Jitter, m_NetStats.m_SampleCount);
-			GameServer()->SendChatTarget(m_ClientId, aBuf);
-		}
-		else
-		{
-			GameServer()->SendChatTarget(m_ClientId, "네트워크 상태 측정을 실패했어요.");
-		}
-		m_NetStats.Reset();
-	}
-
 	if(Server()->GetNetErrorString(m_ClientId)[0])
 	{
 		SetInitialAfk(true);
@@ -284,7 +221,7 @@ void CPlayer::Tick()
 		Server()->ResetNetErrorString(m_ClientId);
 	}
 
-	if(!GameServer()->m_World.m_Paused)
+	if(!GameServer()->m_pController->IsGamePaused())
 	{
 		int EarliestRespawnTick = m_PreviousDieTick + Server()->TickSpeed() * 3;
 		int RespawnTick = maximum(m_DieTick, EarliestRespawnTick) + 2;
@@ -338,37 +275,6 @@ void CPlayer::Tick()
 			GameServer()->SendEmoticon(GetCid(), EMOTICON_GHOST, -1);
 		}
 	}
-
-	if(m_Valentine && m_pCharacter && !m_pCharacter->IsPaused())
-	{
-		if(1200 - ((Server()->Tick() - m_pCharacter->GetLastAction()) % (1200)) < 5)
-		{
-			GameServer()->SendEmoticon(GetCid(), EMOTICON_HEARTS, -1);
-		}
-	}
-
-	if(m_TrailMode > 0)
-	{
-		if(m_TrailMode == 3)
-		{
-			if(m_pTrail)
-			{
-				m_pTrail->Reset();
-				m_pTrail = nullptr;
-			}
-		}
-		else if(!m_pTrail && GetCharacter())
-		{
-			const bool StarEffect = m_TrailMode == 2;
-			const bool OnlyWhileMoving = m_TrailMode == 1;
-			m_pTrail = new CTrailProjectile(&GameServer()->m_World, m_ClientId, WEAPON_SHOTGUN, false, false, StarEffect, OnlyWhileMoving);
-		}
-	}
-	else if(m_pTrail)
-	{
-		m_pTrail->Reset();
-		m_pTrail = nullptr;
-	}
 }
 
 void CPlayer::PostTick()
@@ -396,7 +302,7 @@ void CPlayer::PostPostTick()
 	if(!Server()->ClientIngame(m_ClientId))
 		return;
 
-	if(!GameServer()->m_World.m_Paused && !m_pCharacter && m_Spawning && m_WeakHookSpawn)
+	if(!GameServer()->m_pController->IsGamePaused() && !m_pCharacter && m_Spawning && m_WeakHookSpawn)
 		TryRespawn();
 }
 
@@ -423,29 +329,7 @@ void CPlayer::Snap(int SnappingClient)
 
 	int SnappingClientVersion = GameServer()->GetClientVersion(SnappingClient);
 	int Latency = SnappingClient == SERVER_DEMO_CLIENT ? m_Latency.m_Min : GameServer()->m_apPlayers[SnappingClient]->m_aCurLatency[m_ClientId];
-
-	int Score;
-	// This is the time sent to the player while ingame (do not confuse to the one reported to the master server).
-	// Due to clients expecting this as a negative value, we have to make sure it's negative.
-	// Special numbers:
-	// -9999: means no time and isn't displayed in the scoreboard.
-	if(m_Score.has_value())
-	{
-		// shift the time by a second if the player actually took 9999
-		// seconds to finish the map.
-		if(m_Score.value() == 9999)
-			Score = -10000;
-		else
-			Score = -m_Score.value();
-	}
-	else
-	{
-		Score = -9999;
-	}
-
-	// send 0 if times of others are not shown
-	if(SnappingClient != m_ClientId && g_Config.m_SvHideScore)
-		Score = -9999;
+	int Score = GameServer()->m_pController->SnapPlayerScore(SnappingClient, this);
 
 	if(!Server()->IsSixup(SnappingClient))
 	{
@@ -475,9 +359,7 @@ void CPlayer::Snap(int SnappingClient)
 			pPlayerInfo->m_PlayerFlags |= protocol7::PLAYERFLAG_AIM;
 		if(Server()->IsRconAuthed(m_ClientId) && ((SnappingClient >= 0 && Server()->IsRconAuthed(SnappingClient)) || !Server()->HasAuthHidden(m_ClientId)))
 			pPlayerInfo->m_PlayerFlags |= protocol7::PLAYERFLAG_ADMIN;
-
-		// Times are in milliseconds for 0.7
-		pPlayerInfo->m_Score = m_Score.has_value() ? GameServer()->Score()->PlayerData(m_ClientId)->m_BestTime * 1000 : -1;
+		pPlayerInfo->m_Score = Score;
 		pPlayerInfo->m_Latency = Latency;
 	}
 
@@ -576,6 +458,10 @@ void CPlayer::Snap(int SnappingClient)
 	if(m_Paused == PAUSE_PAUSED)
 		pDDNetPlayer->m_Flags |= EXPLAYERFLAG_PAUSED;
 
+	IGameController::CFinishTime PlayerTime = GameServer()->m_pController->SnapPlayerTime(SnappingClient, this);
+	pDDNetPlayer->m_FinishTimeSeconds = PlayerTime.m_Seconds;
+	pDDNetPlayer->m_FinishTimeMillis = PlayerTime.m_Milliseconds;
+
 	if(Server()->IsSixup(SnappingClient) && m_pCharacter && m_pCharacter->m_DDRaceState == ERaceState::STARTED &&
 		GameServer()->m_apPlayers[SnappingClient]->m_TimerType == TIMERTYPE_SIXUP)
 	{
@@ -634,7 +520,7 @@ void CPlayer::FakeSnap()
 	pPlayerInfo->m_Latency = m_Latency.m_Min;
 	pPlayerInfo->m_Local = 1;
 	pPlayerInfo->m_ClientId = FakeId;
-	pPlayerInfo->m_Score = -9999;
+	pPlayerInfo->m_Score = FinishTime::NOT_FINISHED_TIMESCORE;
 	pPlayerInfo->m_Team = TEAM_SPECTATORS;
 
 	CNetObj_SpectatorInfo *pSpectatorInfo = Server()->SnapNewItem<CNetObj_SpectatorInfo>(FakeId);
@@ -651,11 +537,6 @@ void CPlayer::OnDisconnect()
 	KillCharacter();
 
 	m_Moderating = false;
-	if(m_pTrail)
-	{
-		m_pTrail->Reset();
-		m_pTrail = nullptr;
-	}
 }
 
 void CPlayer::OnPredictedInput(const CNetObj_PlayerInput *pNewInput)
@@ -1013,20 +894,6 @@ bool CPlayer::IsPlaying() const
 	return m_pCharacter && m_pCharacter->IsAlive();
 }
 
-void CPlayer::StartNetStatsMeasurement(int Seconds)
-{
-	m_NetStats.m_Active = true;
-	m_NetStats.m_Seconds = Seconds;
-	m_NetStats.m_EndTick = Server()->Tick() + Seconds * Server()->TickSpeed();
-	m_NetStats.m_SampleCount = 0;
-	m_NetStats.m_LatencySum = 0;
-	m_NetStats.m_LatencyMin = std::numeric_limits<int>::max();
-	m_NetStats.m_LatencyMax = 0;
-	m_NetStats.m_JitterAccum = 0;
-	m_NetStats.m_LastLatency = 0;
-	m_NetStats.m_HaveLastLatency = false;
-}
-
 void CPlayer::SpectatePlayerName(const char *pName)
 {
 	if(!pName)
@@ -1039,35 +906,6 @@ void CPlayer::SpectatePlayerName(const char *pName)
 			SetSpectatorId(i);
 			return;
 		}
-	}
-}
-
-void CPlayer::OnHookFired()
-{
-	if(!g_Config.m_SvAntiHookMonitor)
-		return;
-
-	const int64_t Now = Server()->Tick();
-	const int64_t TickSpeed = Server()->TickSpeed();
-
-	if(m_HookSpamWindowStartTick == 0 || Now > m_HookSpamWindowStartTick + TickSpeed)
-	{
-		m_HookSpamWindowStartTick = Now;
-		m_HookSpamCount = 0;
-		m_HookSpamWarned = false;
-	}
-
-	++m_HookSpamCount;
-
-	const int HookSpamThreshold = g_Config.m_SvAntiHookClick > 0 ? g_Config.m_SvAntiHookClick : 20;
-	if(!m_HookSpamWarned && m_HookSpamCount >= HookSpamThreshold)
-	{
-		m_HookSpamWarned = true;
-		float Duration = (Now - m_HookSpamWindowStartTick) / static_cast<float>(TickSpeed);
-		if(Duration <= 0.0f)
-			Duration = 1.0f;
-		const float HooksPerSecond = m_HookSpamCount / Duration;
-		GameServer()->OnHookSpamDetected(this, HooksPerSecond);
 	}
 }
 
@@ -1130,7 +968,13 @@ void CPlayer::ProcessScoreResult(CScorePlayerResult &Result)
 			if(Result.m_Data.m_Info.m_Time.has_value())
 			{
 				GameServer()->Score()->PlayerData(m_ClientId)->Set(Result.m_Data.m_Info.m_Time.value(), Result.m_Data.m_Info.m_aTimeCp);
-				m_Score = Result.m_Data.m_Info.m_Time;
+				Server()->SetClientScore(m_ClientId, Result.m_Data.m_Info.m_Time.value());
+				// update map best time if player's time is better
+				if(!GameServer()->m_pController->m_CurrentRecord.has_value() ||
+					Result.m_Data.m_Info.m_Time.value() < GameServer()->m_pController->m_CurrentRecord.value())
+				{
+					GameServer()->Score()->LoadBestTime();
+				}
 			}
 			Server()->ExpireServerInfo();
 			int Birthday = Result.m_Data.m_Info.m_Birthday;
@@ -1155,7 +999,7 @@ void CPlayer::ProcessScoreResult(CScorePlayerResult &Result)
 		case CScorePlayerResult::PLAYER_TIMECP:
 			GameServer()->Score()->PlayerData(m_ClientId)->SetBestTimeCp(Result.m_Data.m_Info.m_aTimeCp);
 			char aBuf[128], aTime[32];
-			str_time_float(Result.m_Data.m_Info.m_Time.value(), TIME_HOURS_CENTISECS, aTime, sizeof(aTime));
+			str_time_float(Result.m_Data.m_Info.m_Time.value(), ETimeFormat::HOURS_CENTISECS, aTime, sizeof(aTime));
 			str_format(aBuf, sizeof(aBuf), "Showing the checkpoint times for '%s' with a race time of %s", Result.m_Data.m_Info.m_aRequestedPlayer, aTime);
 			GameServer()->SendChatTarget(m_ClientId, aBuf);
 			break;

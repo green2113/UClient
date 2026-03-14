@@ -1,9 +1,8 @@
+#include <base/net.h>
 #include <base/system.h>
 
 #include <engine/client.h>
 #include <engine/discord.h>
-
-#include <algorithm>
 
 #if defined(CONF_DISCORD)
 #include <discord_game_sdk.h>
@@ -33,21 +32,13 @@ class CDiscord : public IDiscord
 	DiscordActivity m_Activity;
 	bool m_UpdateActivity = false;
 	int64_t m_LastActivityUpdate = 0;
-	int m_RichPresenceImageIndex = 0;
 
 	IDiscordCore *m_pCore;
 	IDiscordActivityEvents m_ActivityEvents;
 	IDiscordActivityManager *m_pActivityManager;
-	bool m_Enabled = false;
-	FDiscordCreate m_pfnDiscordCreate = nullptr;
 
-	const char *RichPresenceImageKey() const
-	{
-		static const char *const s_apImages[] = {"ddnet_rich_0", "ddnet_rich_1", "ddnet_rich_2", "ddnet_rich_3"};
-		const int ImageCount = (int)(sizeof(s_apImages) / sizeof(s_apImages[0]));
-		const int Index = std::clamp(m_RichPresenceImageIndex, 0, ImageCount - 1);
-		return s_apImages[Index];
-	}
+	FDiscordCreate m_pfnDiscordCreate;
+	bool m_Enabled;
 
 public:
 	bool Init(FDiscordCreate pfnDiscordCreate)
@@ -75,7 +66,8 @@ public:
 		DiscordCreateParams Params;
 		DiscordCreateParamsSetDefault(&Params);
 
-		Params.client_id = 1431955226436567141; // UClient
+		// Params.client_id = 752165779117441075; // DDNet
+		Params.client_id = 1325361453988970527; // TClient
 		Params.flags = EDiscordCreateFlags::DiscordCreateFlags_NoRequireDiscord;
 		Params.event_data = this;
 		Params.activity_events = &m_ActivityEvents;
@@ -126,8 +118,8 @@ public:
 	{
 		mem_zero(&m_Activity, sizeof(DiscordActivity));
 
-		str_copy(m_Activity.assets.large_image, RichPresenceImageKey(), sizeof(m_Activity.assets.large_image));
-		str_copy(m_Activity.assets.large_text, "UClient logo", sizeof(m_Activity.assets.large_text));
+		str_copy(m_Activity.assets.large_image, "tclient_logo", sizeof(m_Activity.assets.large_image));
+		str_copy(m_Activity.assets.large_text, "TClient logo", sizeof(m_Activity.assets.large_text));
 		m_Activity.timestamps.start = time_timestamp();
 		str_copy(m_Activity.details, "Offline", sizeof(m_Activity.details));
 		m_Activity.instance = false;
@@ -135,18 +127,18 @@ public:
 		m_UpdateActivity = true;
 	}
 
-	void SetGameInfo(const CServerInfo &ServerInfo, const char *pMapName, bool Registered) override
+	void SetGameInfo(const CServerInfo &ServerInfo, bool Registered) override
 	{
 		mem_zero(&m_Activity, sizeof(DiscordActivity));
 
-		str_copy(m_Activity.assets.large_image, RichPresenceImageKey(), sizeof(m_Activity.assets.large_image));
-		str_copy(m_Activity.assets.large_text, "UClient logo", sizeof(m_Activity.assets.large_text));
+		str_copy(m_Activity.assets.large_image, "tclient_logo", sizeof(m_Activity.assets.large_image));
+		str_copy(m_Activity.assets.large_text, "TClient logo", sizeof(m_Activity.assets.large_text));
 		m_Activity.timestamps.start = time_timestamp();
 		str_copy(m_Activity.name, "Online", sizeof(m_Activity.name));
 		m_Activity.instance = true;
 
 		str_copy(m_Activity.details, ServerInfo.m_aName, sizeof(m_Activity.details));
-		str_copy(m_Activity.state, pMapName, sizeof(m_Activity.state));
+		str_copy(m_Activity.state, ServerInfo.m_aMap, sizeof(m_Activity.state));
 		m_Activity.party.size.current_size = ServerInfo.m_NumClients;
 		m_Activity.party.size.max_size = ServerInfo.m_MaxClients;
 		// private makes it so the game isn't public to join, but there's 'Ask to Join' button instead
@@ -164,7 +156,7 @@ public:
 		m_UpdateActivity = true;
 	}
 
-	void UpdateServerInfo(const CServerInfo &ServerInfo, const char *pMapName) override
+	void UpdateServerInfo(const CServerInfo &ServerInfo) override
 	{
 		if(!m_Activity.instance)
 			return;
@@ -172,7 +164,7 @@ public:
 		UpdateServerIp(ServerInfo);
 
 		str_copy(m_Activity.details, ServerInfo.m_aName, sizeof(m_Activity.details));
-		str_copy(m_Activity.state, pMapName, sizeof(m_Activity.state));
+		str_copy(m_Activity.state, ServerInfo.m_aMap, sizeof(m_Activity.state));
 		m_Activity.party.size.max_size = ServerInfo.m_MaxClients;
 		m_UpdateActivity = true;
 	}
@@ -189,19 +181,12 @@ public:
 		m_UpdateActivity = true;
 	}
 
-	void SetRichPresenceImageIndex(int Index) override
-	{
-		static const int s_ImageCount = 4;
-		m_RichPresenceImageIndex = std::clamp(Index, 0, s_ImageCount - 1);
-		m_UpdateActivity = true;
-	}
-
 	void UpdateServerIp(const CServerInfo &ServerInfo)
 	{
 		if(!m_Activity.instance)
 			return;
 
-		// secret is only shared when player is joining the game, or when he's invited for private games
+		// secret is only shared when player is joining the game, or when they are invited for private games
 		if(str_length(ServerInfo.m_aAddress) < (int)sizeof(m_Activity.secrets.join))
 		{
 			str_copy(m_Activity.secrets.join, ServerInfo.m_aAddress, sizeof(m_Activity.secrets.join));
@@ -263,10 +248,9 @@ class CDiscordStub : public IDiscord
 {
 	void Update(bool Enabled) override {}
 	void ClearGameInfo() override {}
-	void SetGameInfo(const CServerInfo &ServerInfo, const char *pMapName, bool Registered) override {}
-	void UpdateServerInfo(const CServerInfo &ServerInfo, const char *pMapName) override {}
+	void SetGameInfo(const CServerInfo &ServerInfo, bool Registered) override {}
+	void UpdateServerInfo(const CServerInfo &ServerInfo) override {}
 	void UpdatePlayerCount(int Count) override {}
-	void SetRichPresenceImageIndex(int Index) override {}
 };
 
 IDiscord *CreateDiscord()

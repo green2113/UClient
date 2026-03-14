@@ -12,6 +12,7 @@
 
 #include <game/mapitems.h>
 #include <game/server/entities/character.h>
+#include <game/server/gamecontext.h>
 #include <game/team_state.h>
 
 CGameTeams::CGameTeams(CGameContext *pGameContext) :
@@ -115,7 +116,7 @@ void CGameTeams::OnCharacterStart(int ClientId)
 			str_format(
 				aBuf,
 				sizeof(aBuf),
-				"%s has finished and didn't go through start yet, wait for him or join another team.",
+				"%s has finished and didn't go through start yet, wait for them or join another team.",
 				Server()->ClientName(i));
 			GameServer()->SendChatTarget(ClientId, aBuf);
 			m_aLastChat[ClientId] = Tick;
@@ -203,7 +204,7 @@ void CGameTeams::OnCharacterFinish(int ClientId)
 			if(TimeTicks <= 0)
 				return;
 			char aTimestamp[TIMESTAMP_STR_LENGTH];
-			str_timestamp_format(aTimestamp, sizeof(aTimestamp), FORMAT_SPACE); // 2019-04-02 19:41:58
+			str_timestamp_format(aTimestamp, sizeof(aTimestamp), TimestampFormat::SPACE); // 2019-04-02 19:41:58
 
 			OnFinish(pPlayer, TimeTicks, aTimestamp);
 		}
@@ -370,7 +371,7 @@ void CGameTeams::CheckTeamFinished(int Team)
 			}
 
 			char aTimestamp[TIMESTAMP_STR_LENGTH];
-			str_timestamp_format(aTimestamp, sizeof(aTimestamp), FORMAT_SPACE); // 2019-04-02 19:41:58
+			str_timestamp_format(aTimestamp, sizeof(aTimestamp), TimestampFormat::SPACE); // 2019-04-02 19:41:58
 
 			for(unsigned int i = 0; i < PlayersCount; ++i)
 				OnFinish(apTeamPlayers[i], TimeTicks, aTimestamp);
@@ -741,35 +742,32 @@ void CGameTeams::OnTeamFinish(int Team, CPlayer **Players, unsigned int Size, in
 		GameServer()->Score()->SaveTeamScore(Team, aPlayerCids, Size, TimeTicks, pTimestamp);
 }
 
-void CGameTeams::OnFinish(CPlayer *Player, int TimeTicks, const char *pTimestamp)
+void CGameTeams::OnFinish(CPlayer *pPlayer, int TimeTicks, const char *pTimestamp)
 {
-	if(!Player || !Player->IsPlaying())
+	if(!pPlayer || !pPlayer->IsPlaying())
 		return;
 
 	float Time = TimeTicks / (float)Server()->TickSpeed();
 
 	// TODO:DDRace:btd: this ugly
-	const int ClientId = Player->GetCid();
+	const int ClientId = pPlayer->GetCid();
 	CPlayerData *pData = GameServer()->Score()->PlayerData(ClientId);
 
-	char aTimeText[64];
-	str_format(aTimeText, sizeof(aTimeText), "%d minute(s) %5.2f second(s)", (int)Time / 60,
-		Time - ((int)Time / 60 * 60));
-
 	char aBuf[128];
-	SetLastTimeCp(Player, -1);
+	SetLastTimeCp(pPlayer, -1);
 	// Note that the "finished in" message is parsed by the client
 	str_format(aBuf, sizeof(aBuf),
-		"%s finished in: %s",
-		Server()->ClientName(ClientId), aTimeText);
+		"%s finished in: %d minute(s) %5.2f second(s)",
+		Server()->ClientName(ClientId), (int)Time / 60,
+		Time - ((int)Time / 60 * 60));
 	if(g_Config.m_SvHideScore)
 		GameServer()->SendChatTarget(ClientId, aBuf, CGameContext::FLAG_SIX);
 	else
 		GameServer()->SendChat(-1, TEAM_ALL, aBuf, -1., CGameContext::FLAG_SIX);
 
-	float Diff = absolute(Time - pData->m_BestTime);
+	float Diff = absolute(Time - pData->m_BestTime.value_or(0.0f));
 
-	if(Time - pData->m_BestTime < 0)
+	if(Time - pData->m_BestTime.value_or(0.0f) < 0)
 	{
 		// new record \o/
 		pData->m_RecordStopTick = Server()->Tick() + Server()->TickSpeed();
@@ -786,7 +784,7 @@ void CGameTeams::OnFinish(CPlayer *Player, int TimeTicks, const char *pTimestamp
 		else
 			GameServer()->SendChat(-1, TEAM_ALL, aBuf, -1, CGameContext::FLAG_SIX);
 	}
-	else if(pData->m_BestTime != 0) // tee has already finished?
+	else if(pData->m_BestTime.has_value()) // tee has already finished?
 	{
 		Server()->StopRecord(ClientId);
 
@@ -819,7 +817,7 @@ void CGameTeams::OnFinish(CPlayer *Player, int TimeTicks, const char *pTimestamp
 	if(!pData->m_BestTime || Time < pData->m_BestTime)
 	{
 		// update the score
-		pData->Set(Time, GetCurrentTimeCp(Player));
+		pData->Set(Time, GetCurrentTimeCp(pPlayer));
 		CallSaveScore = true;
 		NeedToSendNewPersonalRecord = true;
 	}
@@ -827,11 +825,11 @@ void CGameTeams::OnFinish(CPlayer *Player, int TimeTicks, const char *pTimestamp
 	if(CallSaveScore)
 		if(g_Config.m_SvNamelessScore || !str_startswith(Server()->ClientName(ClientId), "nameless tee"))
 			GameServer()->Score()->SaveScore(ClientId, TimeTicks, pTimestamp,
-				GetCurrentTimeCp(Player), Player->m_NotEligibleForFinish);
+				GetCurrentTimeCp(pPlayer), pPlayer->m_NotEligibleForFinish);
 
 	bool NeedToSendNewServerRecord = false;
 	// update server best time
-	if(GameServer()->m_pController->m_CurrentRecord == 0)
+	if(!GameServer()->m_pController->m_CurrentRecord.has_value())
 	{
 		GameServer()->Score()->LoadBestTime();
 	}
@@ -845,7 +843,7 @@ void CGameTeams::OnFinish(CPlayer *Player, int TimeTicks, const char *pTimestamp
 		}
 	}
 
-	SetDDRaceState(Player, ERaceState::FINISHED);
+	SetDDRaceState(pPlayer, ERaceState::FINISHED);
 	if(NeedToSendNewServerRecord)
 	{
 		for(int i = 0; i < MAX_CLIENTS; i++)
@@ -856,21 +854,20 @@ void CGameTeams::OnFinish(CPlayer *Player, int TimeTicks, const char *pTimestamp
 			}
 		}
 	}
-	if(!NeedToSendNewServerRecord && NeedToSendNewPersonalRecord && Player->GetClientVersion() >= VERSION_DDRACE)
+	if(!NeedToSendNewServerRecord && NeedToSendNewPersonalRecord && pPlayer->GetClientVersion() >= VERSION_DDRACE)
 	{
 		GameServer()->SendRecord(ClientId);
 	}
 
-	GameServer()->SendFinishWebhook(ClientId, aTimeText, NeedToSendNewServerRecord);
-
 	int TTime = (int)Time;
-	if(!Player->m_Score.has_value() || TTime < Player->m_Score.value())
+	std::optional<float> Score = GameServer()->Score()->PlayerData(ClientId)->m_BestTime;
+	if(!Score.has_value() || TTime < Score.value())
 	{
-		Player->m_Score = TTime;
+		Server()->SetClientScore(ClientId, TTime);
 	}
 
 	// Confetti
-	CCharacter *pChar = Player->GetCharacter();
+	CCharacter *pChar = pPlayer->GetCharacter();
 	m_pGameContext->CreateFinishEffect(pChar->m_Pos, pChar->TeamMask());
 }
 
@@ -1238,7 +1235,21 @@ void CGameTeams::OnCharacterDeath(int ClientId, int Weapon)
 			ChangeTeamState(Team, ETeamState::OPEN);
 
 			if(!m_pGameContext->PracticeByDefault())
+			{
+				if(!g_Config.m_SvPauseable)
+				{
+					for(int ClientId1 = 0; ClientId1 < MAX_CLIENTS; ClientId1++)
+					{
+						if(m_Core.Team(ClientId1) == Team)
+						{
+							CPlayer *pPlayer = GameServer()->m_apPlayers[ClientId1];
+							if(pPlayer && pPlayer->IsPaused() == -1 * CPlayer::PAUSE_SPEC)
+								pPlayer->Pause(CPlayer::PAUSE_PAUSED, true);
+						}
+					}
+				}
 				m_aPractice[Team] = false;
+			}
 
 			if(Count(Team) > 1)
 			{

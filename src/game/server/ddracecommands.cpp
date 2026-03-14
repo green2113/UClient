@@ -1,23 +1,19 @@
 /* (c) Shereef Marzouk. See "licence DDRace.txt" and the readme.txt in the root of the distribution for more information. */
 #include "gamecontext.h"
 
-#include <base/system.h>
+#include <base/io.h>
+#include <base/log.h>
+#include <base/time.h>
 
 #include <engine/antibot.h>
-#include <engine/http.h>
 #include <engine/shared/config.h>
-#include <engine/shared/http.h>
-#include <engine/shared/json.h>
 
+#include <game/mapitems.h>
 #include <game/server/entities/character.h>
-#include <game/server/gamemodes/DDRace.h>
+#include <game/server/gamemodes/ddnet.h>
 #include <game/server/player.h>
-#include <game/server/score.h>
 #include <game/server/save.h>
 #include <game/server/teams.h>
-
-#include <memory>
-#include <algorithm>
 
 void CGameContext::ConGoLeft(IConsole::IResult *pResult, void *pUserData)
 {
@@ -156,7 +152,7 @@ void CGameContext::ConSuper(IConsole::IResult *pResult, void *pUserData)
 	if(pChr && !pChr->IsSuper())
 	{
 		pChr->SetSuper(true);
-		pChr->UnFreeze();
+		pChr->Unfreeze();
 	}
 }
 
@@ -175,6 +171,8 @@ void CGameContext::ConUnSuper(IConsole::IResult *pResult, void *pUserData)
 void CGameContext::ConToggleInvincible(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(!CheckClientId(pResult->m_ClientId))
+		return;
 	CCharacter *pChr = pSelf->GetPlayerChar(pResult->m_ClientId);
 	if(pChr)
 		pChr->SetInvincible(pResult->NumArguments() == 0 ? !pChr->Core()->m_Invincible : pResult->GetInteger(0));
@@ -210,14 +208,14 @@ void CGameContext::ConFreeze(IConsole::IResult *pResult, void *pUserData)
 		pChr->Freeze();
 }
 
-void CGameContext::ConUnFreeze(IConsole::IResult *pResult, void *pUserData)
+void CGameContext::ConUnfreeze(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
 	if(!CheckClientId(pResult->m_ClientId))
 		return;
 	CCharacter *pChr = pSelf->GetPlayerChar(pResult->m_ClientId);
 	if(pChr)
-		pChr->UnFreeze();
+		pChr->Unfreeze();
 }
 
 void CGameContext::ConDeep(IConsole::IResult *pResult, void *pUserData)
@@ -239,7 +237,7 @@ void CGameContext::ConUnDeep(IConsole::IResult *pResult, void *pUserData)
 	if(pChr)
 	{
 		pChr->SetDeepFrozen(false);
-		pChr->UnFreeze();
+		pChr->Unfreeze();
 	}
 }
 
@@ -345,6 +343,32 @@ void CGameContext::ConUnEndlessJump(IConsole::IResult *pResult, void *pUserData)
 		pChr->SetEndlessJump(false);
 }
 
+void CGameContext::ConSetSwitch(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = (CGameContext *)pUserData;
+	CCharacter *pChr = pSelf->GetPlayerChar(pResult->m_ClientId);
+	if(!pChr)
+	{
+		log_info("chatresp", "You can't set switch while you are dead/a spectator.");
+		return;
+	}
+	const int Team = pChr->Team();
+	const int Switch = pResult->GetInteger(0);
+	if(!in_range(Switch, (int)pSelf->Switchers().size() - 1))
+	{
+		log_info("chatresp", "Invalid switch ID");
+		return;
+	}
+	const bool State = pResult->NumArguments() == 1 ? !pSelf->Switchers()[Switch].m_aStatus[Team] : pResult->GetInteger(1) != 0;
+	const int EndTick = pResult->NumArguments() == 3 ? pSelf->Server()->Tick() + 1 + pResult->GetInteger(2) * pSelf->Server()->TickSpeed() : 0;
+	pSelf->Switchers()[Switch].m_aStatus[Team] = State;
+	pSelf->Switchers()[Switch].m_aEndTick[Team] = EndTick;
+	if(State)
+		pSelf->Switchers()[Switch].m_aType[Team] = EndTick ? TILE_SWITCHTIMEDOPEN : TILE_SWITCHOPEN;
+	else
+		pSelf->Switchers()[Switch].m_aType[Team] = EndTick ? TILE_SWITCHTIMEDCLOSE : TILE_SWITCHCLOSE;
+}
+
 void CGameContext::ConUnWeapons(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
@@ -436,6 +460,8 @@ void CGameContext::ConToCheckTeleporter(IConsole::IResult *pResult, void *pUserD
 void CGameContext::ConTeleport(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(!CheckClientId(pResult->m_ClientId))
+		return;
 	int Tele = pResult->NumArguments() == 2 ? pResult->GetInteger(0) : pResult->m_ClientId;
 	int TeleTo = pResult->NumArguments() ? pResult->GetInteger(pResult->NumArguments() - 1) : pResult->m_ClientId;
 	int AuthLevel = pSelf->Server()->GetAuthedState(pResult->m_ClientId);
@@ -460,7 +486,7 @@ void CGameContext::ConTeleport(IConsole::IResult *pResult, void *pUserData)
 		}
 		pSelf->Teleport(pChr, Pos);
 		pChr->ResetJumps();
-		pChr->UnFreeze();
+		pChr->Unfreeze();
 		pChr->SetVelocity(vec2(0, 0));
 	}
 }
@@ -556,15 +582,15 @@ void CGameContext::ConVoteNo(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
 
-	pSelf->ForceVote(pResult->m_ClientId, false);
+	pSelf->ForceVote(false);
 }
 
 void CGameContext::ConDrySave(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
-
+	if(!CheckClientId(pResult->m_ClientId))
+		return;
 	CPlayer *pPlayer = pSelf->m_apPlayers[pResult->m_ClientId];
-
 	if(!pPlayer || !pSelf->Server()->IsRconAuthedAdmin(pResult->m_ClientId))
 		return;
 
@@ -577,7 +603,7 @@ void CGameContext::ConDrySave(IConsole::IResult *pResult, void *pUserData)
 	char aTimestamp[32];
 	str_timestamp(aTimestamp, sizeof(aTimestamp));
 	char aBuf[64];
-	str_format(aBuf, sizeof(aBuf), "%s_%s_%s.save", pSelf->Server()->GetMapName(), aTimestamp, pSelf->Server()->GetAuthName(pResult->m_ClientId));
+	str_format(aBuf, sizeof(aBuf), "%s_%s_%s.save", pSelf->Map()->BaseName(), aTimestamp, pSelf->Server()->GetAuthName(pResult->m_ClientId));
 	IOHANDLE File = pSelf->Storage()->OpenFile(aBuf, IOFLAG_WRITE, IStorage::TYPE_SAVE);
 	if(!File)
 		return;
@@ -603,220 +629,6 @@ void CGameContext::ConAntibot(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
 	pSelf->Antibot()->ConsoleCommand(pResult->GetString(0));
-}
-
-void CGameContext::ConReport(IConsole::IResult *pResult, void *pUserData)
-{
-	CGameContext *pSelf = static_cast<CGameContext *>(pUserData);
-
-	if(!CheckClientId(pResult->m_ClientId))
-		return;
-
-	if(pResult->NumArguments() < 2)
-	{
-		pSelf->SendChatTarget(pResult->m_ClientId, "Usage: /report <player name> <reason>");
-		return;
-	}
-
-	if(g_Config.m_SvReportWebhookUrl[0] == '\0')
-	{
-		pSelf->SendChatTarget(pResult->m_ClientId, "Reporting is disabled on this server.");
-		return;
-	}
-
-	const char *pTargetNameArg = pResult->GetString(0);
-	const char *pReasonArg = pResult->GetString(1);
-
-	if(!pTargetNameArg || !pTargetNameArg[0] || !pReasonArg || !pReasonArg[0])
-	{
-		pSelf->SendChatTarget(pResult->m_ClientId, "Usage: /report <player name> <reason>");
-		return;
-	}
-
-	int TargetId = -1;
-	for(int i = 0; i < MAX_CLIENTS; ++i)
-	{
-		if(!pSelf->m_apPlayers[i])
-			continue;
-
-		if(str_utf8_comp_nocase(pSelf->Server()->ClientName(i), pTargetNameArg) == 0)
-		{
-			TargetId = i;
-			break;
-		}
-	}
-
-	if(TargetId < 0)
-	{
-		pSelf->SendChatTarget(pResult->m_ClientId, "Player not found.");
-		return;
-	}
-
-	if(TargetId == pResult->m_ClientId)
-	{
-		pSelf->SendChatTarget(pResult->m_ClientId, "You cannot report yourself.");
-		return;
-	}
-
-	char aReporterAddr[NETADDR_MAXSTRSIZE];
-	str_copy(aReporterAddr, pSelf->Server()->ClientAddrString(pResult->m_ClientId, false), sizeof(aReporterAddr));
-	char aTargetAddr[NETADDR_MAXSTRSIZE];
-	str_copy(aTargetAddr, pSelf->Server()->ClientAddrString(TargetId, false), sizeof(aTargetAddr));
-	char aReason[256];
-	str_copy(aReason, pReasonArg, sizeof(aReason));
-
-	bool DuplicateReport = false;
-	int AutoAction = REPORT_ACTION_NONE;
-	int AutoDurationSeconds = 0;
-	pSelf->HandleAutoPunish(pResult->m_ClientId, aReporterAddr, TargetId, aReason, DuplicateReport, AutoAction, AutoDurationSeconds);
-	if(DuplicateReport)
-	{
-		pSelf->SendChatTarget(pResult->m_ClientId, "You have already reported this player recently.");
-		return;
-	}
-
-	char aTimestamp[64];
-	str_timestamp_format(aTimestamp, sizeof(aTimestamp), FORMAT_SPACE);
-
-	const char *pReporterName = pSelf->Server()->ClientName(pResult->m_ClientId);
-	const char *pTargetName = pSelf->Server()->ClientName(TargetId);
-	const char *pServerName = g_Config.m_SvName[0] ? g_Config.m_SvName : g_Config.m_SvSqlServerName;
-
-	if(pSelf->m_pHttp != nullptr)
-	{
-		char aEscReporter[192];
-		char aEscTarget[192];
-		char aEscReason[1024];
-		char aEscTimestamp[96];
-		char aEscReporterAddr[192];
-		char aEscTargetAddr[192];
-		char aEscMap[96];
-		char aEscServer[192];
-
-		EscapeJson(aEscReporter, sizeof(aEscReporter), pReporterName);
-		EscapeJson(aEscTarget, sizeof(aEscTarget), pTargetName);
-		EscapeJson(aEscReason, sizeof(aEscReason), aReason);
-		EscapeJson(aEscTimestamp, sizeof(aEscTimestamp), aTimestamp);
-		EscapeJson(aEscReporterAddr, sizeof(aEscReporterAddr), aReporterAddr);
-		EscapeJson(aEscTargetAddr, sizeof(aEscTargetAddr), aTargetAddr);
-		EscapeJson(aEscMap, sizeof(aEscMap), pSelf->Server()->GetMapName());
-		EscapeJson(aEscServer, sizeof(aEscServer), pServerName ? pServerName : "");
-
-		char aJson[1536];
-		str_format(aJson, sizeof(aJson),
-			"{\"content\":\"**새로운 신고가 접수되었어요!**\\n서버: %s\\n신고자: %s (%s)\\n신고 대상: %s (%s)\\n사유: %s\\n시간: %s\\n맵: %s\",\"allowed_mentions\":{\"parse\":[]}}",
-			aEscServer[0] ? aEscServer : "알 수 없음",
-			aEscReporter[0] ? aEscReporter : "알 수 없음",
-			aEscReporterAddr[0] ? aEscReporterAddr : "알 수 없음",
-			aEscTarget[0] ? aEscTarget : "알 수 없음",
-			aEscTargetAddr[0] ? aEscTargetAddr : "알 수 없음",
-			aEscReason[0] ? aEscReason : "(비어있음)",
-			aEscTimestamp[0] ? aEscTimestamp : "알 수 없음",
-			aEscMap[0] ? aEscMap : "알 수 없음");
-
-		auto pUniqueReq = HttpPostJson(g_Config.m_SvReportWebhookUrl, aJson);
-		if(pUniqueReq)
-		{
-			std::shared_ptr<IHttpRequest> pReq(
-				pUniqueReq.release(),
-				[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
-
-			pSelf->m_pHttp->Run(pReq);
-		}
-		else
-		{
-			pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "chatresp", "Report recorded, but the webhook rejected the payload.");
-		}
-	}
-	else
-	{
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "chatresp", "Report recorded, but the webhook service is unavailable.");
-	}
-
-	pSelf->SendChatTarget(pResult->m_ClientId, "신고가 접수되었습니다.");
-	pSelf->SendChatTarget(pResult->m_ClientId, "반복 신고 또는 허위 신고 등은 제재 사유가 될 수 있습니다. 주의해 주세요.");
-
-	char aLog[512];
-	if(AutoAction == REPORT_ACTION_MUTE)
-	{
-		const int DurationMinutes = AutoDurationSeconds / 60;
-		str_format(aLog, sizeof(aLog), "신고 '%s' (%s) -> '%s' (%s): %s [auto mute %d minute%s]",
-			pReporterName,
-			aReporterAddr[0] ? aReporterAddr : "알 수 없음",
-			pTargetName,
-			aTargetAddr[0] ? aTargetAddr : "알 수 없음",
-			aReason,
-			DurationMinutes,
-			DurationMinutes == 1 ? "" : "s");
-	}
-	else if(AutoAction == REPORT_ACTION_BAN)
-	{
-		const int DurationMinutes = AutoDurationSeconds / 60;
-		str_format(aLog, sizeof(aLog), "신고 '%s' (%s) -> '%s' (%s): %s [auto ban %d minute%s]",
-			pReporterName,
-			aReporterAddr[0] ? aReporterAddr : "알 수 없음",
-			pTargetName,
-			aTargetAddr[0] ? aTargetAddr : "알 수 없음",
-			aReason,
-			DurationMinutes,
-			DurationMinutes == 1 ? "" : "s");
-	}
-	else
-	{
-		str_format(aLog, sizeof(aLog), "신고 '%s' (%s) -> '%s' (%s): %s",
-			pReporterName,
-			aReporterAddr[0] ? aReporterAddr : "알 수 없음",
-			pTargetName,
-			aTargetAddr[0] ? aTargetAddr : "알 수 없음",
-			aReason);
-	}
-	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "report", aLog);
-
-	if(CScore *pScore = pSelf->Score())
-	{
-		pScore->AddReportEntry(pReporterName, aReporterAddr, pTargetName, aTargetAddr, aReason, pSelf->Server()->GetMapName(), pServerName, AutoAction, AutoDurationSeconds);
-	}
-
-	CPlayer *pTargetPlayer = pSelf->m_apPlayers[TargetId];
-	if(pTargetPlayer)
-	{
-		const int64_t Now = pSelf->Server()->Tick();
-		const int64_t Cooldown = pSelf->Server()->TickSpeed() * 30;
-		if(Now >= pTargetPlayer->m_NextHookDemoRecordTick)
-		{
-			if(pSelf->Server()->StartReportDemoRecord(pResult->m_ClientId, TargetId, aReason))
-			{
-				pTargetPlayer->m_NextHookDemoRecordTick = Now + Cooldown;
-				pSelf->SendChatTarget(pResult->m_ClientId, "신고 대상의 플레이를 기록 중이에요. 잠시만 기다려주세요.");
-			}
-		}
-	}
-
-	if(AutoAction == REPORT_ACTION_MUTE)
-	{
-		const NETADDR *pTargetNetAddr = pSelf->Server()->ClientAddr(TargetId);
-		if(pTargetNetAddr)
-		{
-			pSelf->MuteWithMessage(pTargetNetAddr, AutoDurationSeconds, "Automatic report mute", pSelf->Server()->ClientName(TargetId));
-			const int DurationMinutes = std::max(1, AutoDurationSeconds / 60);
-			char aMsg[256];
-			str_format(aMsg, sizeof(aMsg), "'%s' has been automatically muted for %d minute%s due to player reports.",
-				pTargetName, DurationMinutes, DurationMinutes == 1 ? "" : "s");
-			pSelf->SendChat(-1, TEAM_ALL, aMsg);
-		}
-	}
-	else if(AutoAction == REPORT_ACTION_BAN)
-	{
-		const int DurationMinutes = std::max(1, AutoDurationSeconds / 60);
-		char aCmd[256];
-		str_format(aCmd, sizeof(aCmd), "ban %s %d Automatic report ban", aTargetAddr, DurationMinutes);
-		pSelf->Console()->ExecuteLine(aCmd);
-
-		char aMsg[256];
-		str_format(aMsg, sizeof(aMsg), "'%s' has been automatically banned for %d minute%s due to player reports.",
-			pTargetName, DurationMinutes, DurationMinutes == 1 ? "" : "s");
-		pSelf->SendChat(-1, TEAM_ALL, aMsg);
-	}
 }
 
 void CGameContext::ConDumpLog(IConsole::IResult *pResult, void *pUserData)
@@ -865,175 +677,5 @@ void CGameContext::LogEvent(const char *Description, int ClientId)
 		pNewEntry->m_ClientVersion = Server()->GetClientVersion(ClientId);
 		str_copy(pNewEntry->m_aClientAddrStr, Server()->ClientAddrString(ClientId, false));
 		str_copy(pNewEntry->m_aClientName, Server()->ClientName(ClientId));
-	}
-}
-
-void CGameContext::ConNet(IConsole::IResult *pResult, void *pUserData)
-{
-	auto *pSelf = static_cast<CGameContext *>(pUserData);
-	const int ClientId = pResult->m_ClientId;
-
-	if(!CheckClientId(ClientId))
-		return;
-
-	if(!pSelf->m_apPlayers[ClientId])
-		return;
-
-	int Seconds = 10;
-	if(pResult->NumArguments() >= 1)
-		Seconds = std::clamp(pResult->GetInteger(0), 1, 30);
-
-	char aBuf[128];
-	if(pSelf->m_apPlayers[ClientId]->IsNetStatsMeasurementActive())
-		str_format(aBuf, sizeof(aBuf), "네트워크 상태를 %d초 동안 다시 측정중이에요. 잠시만 기다려주세요...", Seconds);
-	else
-		str_format(aBuf, sizeof(aBuf), "%d초 동안 네트워크 상태를 측정하고 알려드릴게요. 잠시만 기다려주세요...", Seconds);
-	pSelf->SendChatTarget(ClientId, aBuf);
-
-	pSelf->m_apPlayers[ClientId]->StartNetStatsMeasurement(Seconds);
-}
-
-void CGameContext::ConTrailPermAdd(IConsole::IResult *pResult, void *pUserData)
-{
-	auto *pSelf = static_cast<CGameContext *>(pUserData);
-	const char *pIp = pResult->GetString(0);
-	NETADDR Addr;
-	bool Wildcard = str_comp(pIp, "*") == 0;
-	if(!Wildcard && net_addr_from_str(&Addr, pIp) != 0)
-	{
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Invalid IP address.");
-		return;
-	}
-	int Mask = pResult->GetInteger(1);
-	if(Mask < 0 || Mask > 7)
-	{
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Mask must be 0..7.");
-		return;
-	}
-	if(Mask == 0)
-	{
-		if(Wildcard)
-			pSelf->RemoveTrailPermWildcard();
-		else
-			pSelf->RemoveTrailPerm(&Addr);
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission removed.");
-		return;
-	}
-	if(Wildcard)
-		pSelf->SetTrailPermWildcard(Mask);
-	else
-		pSelf->SetTrailPerm(&Addr, Mask);
-	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission set.");
-	for(int i = 0; i < MAX_CLIENTS; i++)
-		pSelf->UpdateTrailForClient(i);
-}
-
-void CGameContext::ConTrailPermAddNamed(IConsole::IResult *pResult, void *pUserData)
-{
-	auto *pSelf = static_cast<CGameContext *>(pUserData);
-	const char *pIp = pResult->GetString(0);
-	if(str_comp(pIp, "*") == 0)
-	{
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Use trail_perm_add for wildcard IP without name.");
-		return;
-	}
-	NETADDR Addr;
-	if(net_addr_from_str(&Addr, pIp) != 0)
-	{
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Invalid IP address.");
-		return;
-	}
-	const char *pName = pResult->GetString(1);
-	if(pName[0] == '\0')
-	{
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Name required.");
-		return;
-	}
-	int Mask = pResult->GetInteger(2);
-	if(Mask < 0 || Mask > 7)
-	{
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Mask must be 0..7.");
-		return;
-	}
-	if(Mask == 0)
-	{
-		pSelf->RemoveTrailPermNamed(&Addr, pName);
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission removed.");
-		for(int i = 0; i < MAX_CLIENTS; i++)
-			pSelf->UpdateTrailForClient(i);
-		return;
-	}
-	pSelf->SetTrailPermNamed(&Addr, pName, Mask);
-	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission set.");
-	for(int i = 0; i < MAX_CLIENTS; i++)
-		pSelf->UpdateTrailForClient(i);
-}
-
-void CGameContext::ConTrailPermDel(IConsole::IResult *pResult, void *pUserData)
-{
-	auto *pSelf = static_cast<CGameContext *>(pUserData);
-	const char *pIp = pResult->GetString(0);
-	NETADDR Addr;
-	bool Wildcard = str_comp(pIp, "*") == 0;
-	if(!Wildcard && net_addr_from_str(&Addr, pIp) != 0)
-	{
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Invalid IP address.");
-		return;
-	}
-	if(Wildcard ? pSelf->RemoveTrailPermWildcard() : pSelf->RemoveTrailPerm(&Addr))
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission removed.");
-	else
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "No entry for IP.");
-	for(int i = 0; i < MAX_CLIENTS; i++)
-		pSelf->UpdateTrailForClient(i);
-}
-
-void CGameContext::ConTrailPermDelNamed(IConsole::IResult *pResult, void *pUserData)
-{
-	auto *pSelf = static_cast<CGameContext *>(pUserData);
-	const char *pIp = pResult->GetString(0);
-	if(str_comp(pIp, "*") == 0)
-	{
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Use trail_perm_del for wildcard IP without name.");
-		return;
-	}
-	NETADDR Addr;
-	if(net_addr_from_str(&Addr, pIp) != 0)
-	{
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Invalid IP address.");
-		return;
-	}
-	const char *pName = pResult->GetString(1);
-	if(pName[0] == '\0')
-	{
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Name required.");
-		return;
-	}
-	if(pSelf->RemoveTrailPermNamed(&Addr, pName))
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "Trail permission removed.");
-	else
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "No entry for IP+name.");
-	for(int i = 0; i < MAX_CLIENTS; i++)
-		pSelf->UpdateTrailForClient(i);
-}
-
-void CGameContext::ConTrailPermList(IConsole::IResult *pResult, void *pUserData)
-{
-	auto *pSelf = static_cast<CGameContext *>(pUserData);
-	if(pSelf->m_vTrailPerms.empty())
-	{
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", "No trail permissions set.");
-		return;
-	}
-	for(const auto &Entry : pSelf->m_vTrailPerms)
-	{
-		char aAddr[NETADDR_MAXSTRSIZE];
-		net_addr_str(&Entry.m_Addr, aAddr, sizeof(aAddr), false);
-		char aBuf[128];
-		if(Entry.m_aName[0])
-			str_format(aBuf, sizeof(aBuf), "%s %s -> %d", aAddr, Entry.m_aName, Entry.m_Mask);
-		else
-			str_format(aBuf, sizeof(aBuf), "%s -> %d", aAddr, Entry.m_Mask);
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "trailperm", aBuf);
 	}
 }

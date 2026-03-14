@@ -7,9 +7,12 @@
 #include "databases/connection_pool.h"
 #include "register.h"
 
+#include <base/bytes.h>
+#include <base/fs.h>
+#include <base/io.h>
 #include <base/logger.h>
 #include <base/math.h>
-#include <base/system.h>
+#include <base/secure.h>
 
 #include <engine/config.h>
 #include <engine/console.h>
@@ -27,8 +30,6 @@
 #include <engine/shared/host_lookup.h>
 #include <engine/shared/http.h>
 #include <engine/shared/json.h>
-#include <memory>
-#include <type_traits>
 #include <engine/shared/jsonwriter.h>
 #include <engine/shared/linereader.h>
 #include <engine/shared/masterserver.h>
@@ -39,7 +40,6 @@
 #include <engine/shared/protocol7.h>
 #include <engine/shared/protocol_ex.h>
 #include <engine/shared/rust_version.h>
-#include <algorithm>
 #include <engine/shared/snapshot.h>
 #include <engine/storage.h>
 
@@ -50,8 +50,6 @@
 #include <chrono>
 #include <vector>
 
-static std::unique_ptr<CHttpRequest> CreateWebhookFileRequest(const char *pUrl, const char *pJsonPayload, const char *pFilename, const unsigned char *pFileData, size_t FileSize);
-
 using namespace std::chrono_literals;
 
 #if defined(CONF_PLATFORM_ANDROID)
@@ -60,8 +58,9 @@ extern std::vector<std::string> FetchAndroidServerCommandQueue();
 
 void CServerBan::InitServerBan(IConsole *pConsole, IStorage *pStorage, CServer *pServer)
 {
-	m_pServer = pServer;
 	CNetBan::Init(pConsole, pStorage);
+
+	m_pServer = pServer;
 
 	// overwrites base command, todo: improve this
 	Console()->Register("ban", "s[ip|id] ?i[minutes] r[reason]", CFGFLAG_SERVER | CFGFLAG_STORE, ConBanExt, this, "Ban player with ip/client id for x minutes for any reason");
@@ -113,38 +112,6 @@ int CServerBan::BanExt(T *pBanPool, const typename T::CDataType *pData, int Seco
 	if(Result != 0)
 		return Result;
 
-	char aTargetName[MAX_NAME_LENGTH] = {0};
-	char aTargetAddr[NETADDR_MAXSTRSIZE] = {0};
-	if(Server())
-	{
-		using TDataType = typename T::CDataType;
-		if constexpr(std::is_same_v<TDataType, NETADDR>)
-		{
-			const NETADDR *pAddr = static_cast<const NETADDR *>(pData);
-			for(int i = 0; i < MAX_CLIENTS; ++i)
-			{
-				if(Server()->m_aClients[i].m_State == CServer::CClient::STATE_EMPTY)
-					continue;
-
-				if(NetMatch(pAddr, Server()->ClientAddr(i)))
-				{
-					if(Server()->m_aClients[i].m_aName[0])
-						str_copy(aTargetName, Server()->m_aClients[i].m_aName);
-					else
-						str_copy(aTargetName, Server()->ClientName(i));
-					break;
-				}
-			}
-		}
-		else if constexpr(std::is_same_v<TDataType, CNetRange>)
-		{
-			const CNetRange *pRange = pData;
-			(void)pRange;
-		}
-
-		Server()->SendBanWebhook(aTargetName[0] ? aTargetName : nullptr, aTargetAddr[0] ? aTargetAddr : nullptr, Seconds, pReason);
-	}
-
 	// drop banned clients
 	typename T::CDataType Data = *pData;
 	for(int i = 0; i < MAX_CLIENTS; ++i)
@@ -164,546 +131,9 @@ int CServerBan::BanExt(T *pBanPool, const typename T::CDataType *pData, int Seco
 	return Result;
 }
 
-void CServer::SendBanWebhook(const char *pTargetName, const char *pTargetAddr, int Seconds, const char *pReason)
-{
-	if(g_Config.m_SvBanWebhookUrl[0] == '\0')
-	{
-		return;
-	}
-
-	(void)Seconds;
-
-	const bool HasTargetName = pTargetName && pTargetName[0];
-	if(!HasTargetName)
-	{
-		return;
-	}
-
-	const char *pDisplayName = pTargetName;
-	const char *pReasonText = (pReason && pReason[0]) ? pReason : "no reason specified";
-
-	char aEscDisplayName[192];
-	char aEscReason[256];
-	EscapeJson(aEscDisplayName, sizeof(aEscDisplayName), pDisplayName);
-	EscapeJson(aEscReason, sizeof(aEscReason), pReasonText);
-
-	char aMessage[768];
-	str_format(aMessage, sizeof(aMessage), "%s님이 밴을 당하셨습니다. (사유: %s)", aEscDisplayName, aEscReason);
-
-	if(pTargetAddr && pTargetAddr[0])
-	{
-		char aEscAddr[256];
-		EscapeJson(aEscAddr, sizeof(aEscAddr), pTargetAddr);
-		str_append(aMessage, " (IP: ", sizeof(aMessage));
-		str_append(aMessage, aEscAddr, sizeof(aMessage));
-		str_append(aMessage, ")", sizeof(aMessage));
-	}
-
-	char aJson[1024];
-	str_format(aJson, sizeof(aJson), "{\"content\":\"%s\",\"allowed_mentions\":{\"parse\":[]}}", aMessage);
-
-	auto pUniqueReq = HttpPostJson(g_Config.m_SvBanWebhookUrl, aJson);
-	if(!pUniqueReq)
-	{
-		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "ban_webhook", "Failed to create ban webhook request.");
-		return;
-	}
-
-	std::shared_ptr<IHttpRequest> pReq(
-		pUniqueReq.release(),
-		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
-	m_Http.Run(pReq);
-}
-
-void CServer::SendHookSpamWebhook(int ClientId, float HooksPerSecond, const char *pAddr)
-{
-	if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')
-		return;
-
-	const char *pName = (ClientId >= 0 && ClientId < MAX_CLIENTS) ? ClientName(ClientId) : "Unknown player";
-	const char *pServerName = g_Config.m_SvName[0] ? g_Config.m_SvName : "DDNet Server";
-	const char *pAddrStr = (pAddr && pAddr[0]) ? pAddr : "알 수 없음";
-
-	char aDesc[512];
-	str_format(aDesc, sizeof(aDesc),
-		"%s님이 초당 %.1f번의 갈고리를 사용하셨어요.\n서버: %s%s%s",
-		pName && pName[0] ? pName : "알 수 없음",
-		HooksPerSecond,
-		pServerName,
-		pAddrStr[0] ? "\nIP: " : "",
-		pAddrStr[0] ? pAddrStr : "");
-
-	char aEscDesc[768];
-	EscapeJson(aEscDesc, sizeof(aEscDesc), aDesc);
-
-	char aJson[1152];
-	str_format(aJson, sizeof(aJson),
-		"{\"username\":\"안티치트 로그\",\"embeds\":[{\"title\":\"비정상적인 갈고리 사용이 감지되었어요.\",\"description\":\"%s\",\"color\":16737792}],\"allowed_mentions\":{\"parse\":[]}}",
-		aEscDesc);
-
-	auto pUniqueReq = HttpPostJson(g_Config.m_SvAntiHookWebhookUrl, aJson);
-	if(!pUniqueReq)
-	{
-		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "anti_hook_webhook", "Failed to create anti-hook webhook request.");
-		return;
-	}
-
-	std::shared_ptr<IHttpRequest> pReq(
-		pUniqueReq.release(),
-		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
-	m_Http.Run(pReq);
-}
-
-void CServer::SendHookAngleWebhook(int ClientId, float AngleDelta, int IntervalTicks, const char *pAddr)
-{
-	if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')
-		return;
-
-	const char *pName = (ClientId >= 0 && ClientId < MAX_CLIENTS) ? ClientName(ClientId) : "Unknown player";
-	const char *pServerName = g_Config.m_SvName[0] ? g_Config.m_SvName : "DDNet Server";
-	const char *pAddrStr = (pAddr && pAddr[0]) ? pAddr : "알 수 없음";
-	const float IntervalSeconds = IntervalTicks > 0 ? static_cast<float>(IntervalTicks) / TickSpeed() : 0.0f;
-
-	char aDesc[512];
-	str_format(aDesc, sizeof(aDesc),
-		"%s님이 %.1f°의 갈고리 각도를 약 %.2f초(%d tick) 이내에 연속적으로 변경했어요.\n서버: %s%s%s",
-		pName && pName[0] ? pName : "알 수 없음",
-		AngleDelta,
-		IntervalSeconds,
-		IntervalTicks,
-		pServerName,
-		pAddrStr[0] ? "\nIP: " : "",
-		pAddrStr[0] ? pAddrStr : "");
-
-	char aEscDesc[768];
-	EscapeJson(aEscDesc, sizeof(aEscDesc), aDesc);
-
-	char aJson[1152];
-	str_format(aJson, sizeof(aJson),
-		"{\"username\":\"안티치트 로그\",\"embeds\":[{\"title\":\"비정상적인 갈고리 각도 조작이 감지되었어요.\",\"description\":\"%s\",\"color\":16737792}],\"allowed_mentions\":{\"parse\":[]}}",
-		aEscDesc);
-
-	auto pUniqueReq = HttpPostJson(g_Config.m_SvAntiHookWebhookUrl, aJson);
-	if(!pUniqueReq)
-	{
-		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "anti_hook_webhook", "Failed to create hook angle webhook request.");
-		return;
-	}
-
-	std::shared_ptr<IHttpRequest> pReq(
-		pUniqueReq.release(),
-		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
-	m_Http.Run(pReq);
-}
-
-bool CServer::StartHookSpamDemoRecord(int ClientId, float HooksPerSecond)
-{
-	if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')
-	{
-		return false;
-	}
-	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
-	{
-		return false;
-	}
-	if(m_aClients[ClientId].m_State != CClient::STATE_INGAME)
-	{
-		return false;
-	}
-
-	Storage()->CreateFolder("demos", IStorage::TYPE_SAVE);
-	Storage()->CreateFolder("demos/hook", IStorage::TYPE_SAVE);
-
-	const char *pClientName = ClientName(ClientId);
-	char aSanitizedName[64];
-	str_copy(aSanitizedName, pClientName && pClientName[0] ? pClientName : "player", sizeof(aSanitizedName));
-	str_sanitize_filename(aSanitizedName);
-	if(aSanitizedName[0] == '\0')
-	{
-		str_copy(aSanitizedName, "player", sizeof(aSanitizedName));
-	}
-
-	char aTimestamp[20];
-	str_timestamp(aTimestamp, sizeof(aTimestamp));
-
-	char aFilename[IO_MAX_PATH_LENGTH];
-	str_format(aFilename, sizeof(aFilename), "demos/hook/%s_%s_cid%d.demo", aSanitizedName, aTimestamp, ClientId);
-
-	auto pRecorder = std::make_unique<CDemoRecorder>(&m_SnapshotDelta, false);
-	if(pRecorder->Start(
-		   Storage(),
-		   Console(),
-		   aFilename,
-		   GameServer()->NetVersion(),
-		   GetMapName(),
-		   m_aCurrentMapSha256[MAP_TYPE_SIX],
-		   m_aCurrentMapCrc[MAP_TYPE_SIX],
-		   "server",
-		   m_aCurrentMapSize[MAP_TYPE_SIX],
-		   m_apCurrentMapData[MAP_TYPE_SIX],
-		   nullptr,
-		   nullptr,
-		   nullptr) == -1)
-	{
-		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Failed to start hook demo recorder.");
-		return false;
-	}
-
-	CHookDemoSession Session;
-	Session.m_Type = CHookDemoSession::EType::HOOK_SPAM;
-	Session.m_pRecorder = std::move(pRecorder);
-	Session.m_ClientId = ClientId;
-	Session.m_EndTick = Tick() + TickSpeed() * 20;
-	str_copy(Session.m_aFilename, aFilename, sizeof(Session.m_aFilename));
-	const char *pBase = strrchr(aFilename, '/');
-	if(!pBase)
-		pBase = aFilename;
-	else
-		pBase++;
-	str_copy(Session.m_aUploadName, pBase, sizeof(Session.m_aUploadName));
-	const char *pName = (pClientName && pClientName[0]) ? pClientName : "알 수 없음";
-	str_copy(Session.m_aPlayerName, pName, sizeof(Session.m_aPlayerName));
-	const char *pAddr = ClientAddrString(ClientId, false);
-	if(pAddr)
-		str_copy(Session.m_aPlayerAddr, pAddr, sizeof(Session.m_aPlayerAddr));
-	else
-	Session.m_aPlayerAddr[0] = '\0';
-	Session.m_HooksPerSecond = HooksPerSecond;
-	Session.m_aReporterName[0] = '\0';
-	Session.m_aReporterAddr[0] = '\0';
-	Session.m_aReportReason[0] = '\0';
-
-	m_vHookDemoSessions.push_back(std::move(Session));
-	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Started hook demo recording session.");
-	return true;
-}
-
-bool CServer::StartReportDemoRecord(int ReporterId, int TargetId, const char *pReason)
-{
-	if(g_Config.m_SvReportWebhookUrl[0] == '\0')
-	{
-		return false;
-	}
-	if(TargetId < 0 || TargetId >= MAX_CLIENTS)
-	{
-		return false;
-	}
-	if(m_aClients[TargetId].m_State != CClient::STATE_INGAME)
-	{
-		return false;
-	}
-
-	Storage()->CreateFolder("demos", IStorage::TYPE_SAVE);
-	Storage()->CreateFolder("demos/report", IStorage::TYPE_SAVE);
-
-	const char *pClientName = ClientName(TargetId);
-	char aSanitizedName[64];
-	str_copy(aSanitizedName, pClientName && pClientName[0] ? pClientName : "player", sizeof(aSanitizedName));
-	str_sanitize_filename(aSanitizedName);
-	if(aSanitizedName[0] == '\0')
-	{
-		str_copy(aSanitizedName, "player", sizeof(aSanitizedName));
-	}
-
-	char aTimestamp[20];
-	str_timestamp(aTimestamp, sizeof(aTimestamp));
-
-	char aFilename[IO_MAX_PATH_LENGTH];
-	str_format(aFilename, sizeof(aFilename), "demos/report/%s_%s_cid%d.demo", aSanitizedName, aTimestamp, TargetId);
-
-	auto pRecorder = std::make_unique<CDemoRecorder>(&m_SnapshotDelta, false);
-	if(pRecorder->Start(
-		   Storage(),
-		   Console(),
-		   aFilename,
-		   GameServer()->NetVersion(),
-		   GetMapName(),
-		   m_aCurrentMapSha256[MAP_TYPE_SIX],
-		   m_aCurrentMapCrc[MAP_TYPE_SIX],
-		   "server",
-		   m_aCurrentMapSize[MAP_TYPE_SIX],
-		   m_apCurrentMapData[MAP_TYPE_SIX],
-		   nullptr,
-		   nullptr,
-		   nullptr) == -1)
-	{
-		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "report_demo", "Failed to start report demo recorder.");
-		return false;
-	}
-
-	CHookDemoSession Session;
-	Session.m_Type = CHookDemoSession::EType::REPORT;
-	Session.m_pRecorder = std::move(pRecorder);
-	Session.m_ClientId = TargetId;
-	Session.m_EndTick = Tick() + TickSpeed() * 20;
-	str_copy(Session.m_aFilename, aFilename, sizeof(Session.m_aFilename));
-	const char *pBase = strrchr(aFilename, '/');
-	if(!pBase)
-		pBase = aFilename;
-	else
-		pBase++;
-	str_copy(Session.m_aUploadName, pBase, sizeof(Session.m_aUploadName));
-
-	const char *pTargetName = (pClientName && pClientName[0]) ? pClientName : "알 수 없음";
-	str_copy(Session.m_aPlayerName, pTargetName, sizeof(Session.m_aPlayerName));
-	const char *pTargetAddr = ClientAddrString(TargetId, false);
-	if(pTargetAddr)
-		str_copy(Session.m_aPlayerAddr, pTargetAddr, sizeof(Session.m_aPlayerAddr));
-	else
-		Session.m_aPlayerAddr[0] = '\0';
-
-	const char *pReporterName = (ReporterId >= 0 && ReporterId < MAX_CLIENTS) ? ClientName(ReporterId) : nullptr;
-	str_copy(Session.m_aReporterName, (pReporterName && pReporterName[0]) ? pReporterName : "알 수 없음", sizeof(Session.m_aReporterName));
-	const char *pReporterAddr = (ReporterId >= 0 && ReporterId < MAX_CLIENTS) ? ClientAddrString(ReporterId, false) : nullptr;
-	if(pReporterAddr)
-		str_copy(Session.m_aReporterAddr, pReporterAddr, sizeof(Session.m_aReporterAddr));
-	else
-		Session.m_aReporterAddr[0] = '\0';
-
-	if(pReason && pReason[0])
-		str_copy(Session.m_aReportReason, pReason, sizeof(Session.m_aReportReason));
-	else
-		Session.m_aReportReason[0] = '\0';
-
-	Session.m_HooksPerSecond = 0.f;
-	m_vHookDemoSessions.push_back(std::move(Session));
-	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "report_demo", "Started report demo recording session.");
-	return true;
-}
-
-bool CServer::HookDemoRecordingActive() const
-{
-	for(const auto &Session : m_vHookDemoSessions)
-	{
-		if(Session.m_pRecorder && Session.m_pRecorder->IsRecording())
-			return true;
-	}
-	return false;
-}
-
-void CServer::RecordHookDemoSnapshot(int Tick, const char *pData, int Size)
-{
-	for(auto &Session : m_vHookDemoSessions)
-	{
-		if(Session.m_pRecorder && Session.m_pRecorder->IsRecording())
-			Session.m_pRecorder->RecordSnapshot(Tick, pData, Size);
-	}
-}
-
-void CServer::RecordHookDemoMessage(const void *pData, int Size)
-{
-	for(auto &Session : m_vHookDemoSessions)
-	{
-		if(Session.m_pRecorder && Session.m_pRecorder->IsRecording())
-			Session.m_pRecorder->RecordMessage(pData, Size);
-	}
-}
-
-void CServer::ProcessHookDemoSessions()
-{
-	if(m_vHookDemoSessions.empty())
-		return;
-
-	const int64_t Now = Tick();
-	auto RemoveIt = std::remove_if(m_vHookDemoSessions.begin(), m_vHookDemoSessions.end(), [&](CHookDemoSession &Session) {
-		if(Session.m_pRecorder && Now >= Session.m_EndTick)
-		{
-			Session.m_pRecorder->Stop(IDemoRecorder::EStopMode::KEEP_FILE);
-			Session.m_pRecorder.reset();
-			QueueHookDemoUpload(Session);
-			return true;
-		}
-		return false;
-	});
-	m_vHookDemoSessions.erase(RemoveIt, m_vHookDemoSessions.end());
-}
-
-void CServer::AbortHookDemoSessions()
-{
-	if(m_vHookDemoSessions.empty())
-		return;
-
-	for(auto &Session : m_vHookDemoSessions)
-	{
-		if(Session.m_pRecorder && Session.m_pRecorder->IsRecording())
-		{
-			Session.m_pRecorder->Stop(IDemoRecorder::EStopMode::REMOVE_FILE);
-		}
-		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
-	}
-	m_vHookDemoSessions.clear();
-}
-
-bool CServer::QueueHookDemoUpload(const CHookDemoSession &Session)
-{
-	const char *pWebhookUrl = nullptr;
-	if(Session.m_Type == CHookDemoSession::EType::HOOK_SPAM)
-	{
-		if(g_Config.m_SvAntiHookWebhookUrl[0] == '\0')
-		{
-			Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
-			return false;
-		}
-		pWebhookUrl = g_Config.m_SvAntiHookWebhookUrl;
-	}
-	else
-	{
-		if(g_Config.m_SvReportWebhookUrl[0] == '\0')
-		{
-			Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
-			return false;
-		}
-		pWebhookUrl = g_Config.m_SvReportWebhookUrl;
-	}
-
-	IOHANDLE File = Storage()->OpenFile(Session.m_aFilename, IOFLAG_READ, IStorage::TYPE_SAVE);
-	if(!File)
-	{
-		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Failed to open hook demo for upload.");
-		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
-		return false;
-	}
-
-	const int64_t FileSize = io_length(File);
-	if(FileSize <= 0 || FileSize > 25LL * 1024 * 1024)
-	{
-		char aBuf[160];
-		str_format(aBuf, sizeof(aBuf), "Skipping hook demo upload, invalid size (%lld bytes).", (long long)FileSize);
-		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", aBuf);
-		io_close(File);
-		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
-		return false;
-	}
-
-	std::vector<unsigned char> vData(static_cast<size_t>(FileSize));
-	const int BytesRead = io_read(File, vData.data(), static_cast<unsigned>(vData.size()));
-	io_close(File);
-	if(BytesRead != (int)vData.size())
-	{
-		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Failed to read hook demo for upload.");
-		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
-		return false;
-	}
-
-	const char *pServerName = g_Config.m_SvName[0] ? g_Config.m_SvName : "DDNet Server";
-	const char *pAddr = Session.m_aPlayerAddr[0] ? Session.m_aPlayerAddr : "알 수 없음";
-
-	char aJson[1472];
-	if(Session.m_Type == CHookDemoSession::EType::HOOK_SPAM)
-	{
-		char aEscName[192];
-		EscapeJson(aEscName, sizeof(aEscName), Session.m_aPlayerName[0] ? Session.m_aPlayerName : "알 수 없음");
-
-		str_format(aJson, sizeof(aJson),
-			"{\"content\":\"%s님의 비정상적인 갈고리 사용에 대한 서버 데모가 도착했어요. 관리자분들은 확인 후 처리 부탁드립니다.\",\"username\":\"안티치트 로그\",\"allowed_mentions\":{\"parse\":[]}}",
-			aEscName[0] ? aEscName : "알 수 없음");
-	}
-	else
-	{
-		const char *pReporterName = Session.m_aReporterName[0] ? Session.m_aReporterName : "알 수 없음";
-		const char *pReporterAddr = Session.m_aReporterAddr[0] ? Session.m_aReporterAddr : "알 수 없음";
-		const char *pReason = Session.m_aReportReason[0] ? Session.m_aReportReason : "(사유 미입력)";
-
-		char aMessage[768];
-		str_format(aMessage, sizeof(aMessage),
-			"서버: %s\\n신고 대상: %s (%s)\\n신고자: %s (%s)\\n사유: %s",
-			pServerName,
-			Session.m_aPlayerName[0] ? Session.m_aPlayerName : "알 수 없음",
-			pAddr,
-			pReporterName,
-			pReporterAddr,
-			pReason);
-		char aEscMessage[1024];
-		EscapeJson(aEscMessage, sizeof(aEscMessage), aMessage);
-
-		str_format(aJson, sizeof(aJson),
-			"{\"content\":\"신고 데모가 도착했어요!\\n%s\",\"allowed_mentions\":{\"parse\":[]}}",
-			aEscMessage);
-	}
-
-	const char *pUploadName = Session.m_aUploadName[0] ? Session.m_aUploadName : "hook-demo.demo";
-	auto pUniqueReq = CreateWebhookFileRequest(pWebhookUrl, aJson, pUploadName, vData.data(), vData.size());
-	if(!pUniqueReq)
-	{
-		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Failed to create webhook request for hook demo upload.");
-		Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
-		return false;
-	}
-
-	std::shared_ptr<IHttpRequest> pReq(
-		pUniqueReq.release(),
-		[](IHttpRequest *p) { delete static_cast<CHttpRequest *>(p); });
-	m_Http.Run(pReq);
-
-	Storage()->RemoveFile(Session.m_aFilename, IStorage::TYPE_SAVE);
-	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "hook_demo", "Queued hook demo upload.");
-	return true;
-}
-
-static std::unique_ptr<CHttpRequest> CreateWebhookFileRequest(const char *pUrl, const char *pJsonPayload, const char *pFilename, const unsigned char *pFileData, size_t FileSize)
-{
-	if(!pUrl || !pJsonPayload || !pFilename || !pFileData || FileSize == 0)
-	{
-		return nullptr;
-	}
-
-	unsigned char aRandom[8];
-	secure_random_fill(aRandom, sizeof(aRandom));
-	char aBoundary[64];
-	str_format(aBoundary, sizeof(aBoundary), "------------------------DDNetHookDemo-%02x%02x%02x%02x", aRandom[0], aRandom[1], aRandom[2], aRandom[3]);
-
-	std::vector<unsigned char> vBody;
-	vBody.reserve(FileSize + 512);
-
-	const auto AppendString = [&vBody](const char *pStr) {
-		if(!pStr)
-			return;
-		for(const char *p = pStr; *p; ++p)
-		{
-			vBody.emplace_back(static_cast<unsigned char>(*p));
-		}
-	};
-	const auto AppendData = [&vBody](const unsigned char *pData, size_t Size) {
-		vBody.insert(vBody.end(), pData, pData + Size);
-	};
-
-	AppendString("--");
-	AppendString(aBoundary);
-	AppendString("\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n");
-	AppendString(pJsonPayload);
-	AppendString("\r\n--");
-	AppendString(aBoundary);
-	AppendString("\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"");
-	AppendString(pFilename);
-	AppendString("\"\r\nContent-Type: application/octet-stream\r\n\r\n");
-	if(pFileData && FileSize > 0)
-		AppendData(pFileData, FileSize);
-	AppendString("\r\n--");
-	AppendString(aBoundary);
-	AppendString("--\r\n");
-
-	auto pRequest = std::make_unique<CHttpRequest>(pUrl);
-	if(!pRequest)
-	{
-		return nullptr;
-	}
-
-	pRequest->Post(vBody.data(), vBody.size());
-	char aHeader[128];
-	str_format(aHeader, sizeof(aHeader), "Content-Type: multipart/form-data; boundary=%s", aBoundary);
-	pRequest->Header(aHeader);
-	pRequest->Timeout(CTimeout{4000, 30000, 500, 5});
-	return pRequest;
-}
-
 int CServerBan::BanAddr(const NETADDR *pAddr, int Seconds, const char *pReason, bool VerbatimReason)
 {
-	int Result = BanExt(&m_BanAddrPool, pAddr, Seconds, pReason, VerbatimReason);
-	if(Result == 0 && Seconds <= 0 && !m_LoadingPersistentBans && !m_SyncingPersistentBans)
-	{
-		AppendPersistentBan(pAddr, pReason);
-	}
-	return Result;
+	return BanExt(&m_BanAddrPool, pAddr, Seconds, pReason, VerbatimReason);
 }
 
 int CServerBan::BanRange(const CNetRange *pRange, int Seconds, const char *pReason)
@@ -798,7 +228,6 @@ void CServer::CClient::Reset()
 	m_NextMapChunk = 0;
 	m_Flags = 0;
 	m_RedirectDropTime = 0;
-	m_DnsblBanPending = false;
 }
 
 CServer::CServer()
@@ -825,8 +254,6 @@ CServer::CServer()
 	m_MapReload = false;
 	m_SameMapReload = false;
 	m_ReloadedWhenEmpty = false;
-	m_aCurrentMap[0] = '\0';
-	m_pCurrentMapName = m_aCurrentMap;
 	m_aMapDownloadUrl[0] = '\0';
 
 	m_RconClientId = IServer::RCON_CID_SERV;
@@ -834,7 +261,6 @@ CServer::CServer()
 
 	m_ServerInfoFirstRequest = 0;
 	m_ServerInfoNumRequests = 0;
-	m_ServerInfoNeedsUpdate = false;
 
 #ifdef CONF_FAMILY_UNIX
 	m_ConnLoggingSocketCreated = false;
@@ -1098,6 +524,7 @@ void CServer::Ban(int ClientId, int Seconds, const char *pReason, bool VerbatimR
 void CServer::ReconnectClient(int ClientId)
 {
 	dbg_assert(0 <= ClientId && ClientId < MAX_CLIENTS, "Invalid ClientId: %d", ClientId);
+	dbg_assert(m_aClients[ClientId].m_State != CClient::STATE_EMPTY, "Client slot empty: %d", ClientId);
 
 	if(GetClientVersion(ClientId) < VERSION_DDNET_RECONNECT)
 	{
@@ -1121,6 +548,7 @@ void CServer::ReconnectClient(int ClientId)
 void CServer::RedirectClient(int ClientId, int Port)
 {
 	dbg_assert(0 <= ClientId && ClientId < MAX_CLIENTS, "Invalid ClientId: %d", ClientId);
+	dbg_assert(m_aClients[ClientId].m_State != CClient::STATE_EMPTY, "Client slot empty: %d", ClientId);
 
 	bool SupportsRedirect = GetClientVersion(ClientId) >= VERSION_DDNET_REDIRECT;
 
@@ -1300,12 +728,10 @@ const NETADDR *CServer::ClientAddr(int ClientId) const
 {
 	dbg_assert(ClientId >= 0 && ClientId < MAX_CLIENTS, "Invalid ClientId: %d", ClientId);
 	dbg_assert(m_aClients[ClientId].m_State != CServer::CClient::STATE_EMPTY, "Client slot %d is empty", ClientId);
-#ifdef CONF_DEBUG
 	if(m_aClients[ClientId].m_DebugDummy)
 	{
 		return &m_aClients[ClientId].m_DebugDummyAddr;
 	}
-#endif
 	return m_NetServer.ClientAddr(ClientId);
 }
 
@@ -1313,12 +739,10 @@ const std::array<char, NETADDR_MAXSTRSIZE> &CServer::ClientAddrStringImpl(int Cl
 {
 	dbg_assert(ClientId >= 0 && ClientId < MAX_CLIENTS, "Invalid ClientId: %d", ClientId);
 	dbg_assert(m_aClients[ClientId].m_State != CServer::CClient::STATE_EMPTY, "Client slot %d is empty", ClientId);
-#ifdef CONF_DEBUG
 	if(m_aClients[ClientId].m_DebugDummy)
 	{
 		return IncludePort ? m_aClients[ClientId].m_aDebugDummyAddrString : m_aClients[ClientId].m_aDebugDummyAddrStringNoPort;
 	}
-#endif
 	return m_NetServer.ClientAddrString(ClientId, IncludePort);
 }
 
@@ -1501,7 +925,6 @@ int CServer::SendMsg(CMsgPacker *pMsg, int Flags, int ClientId)
 			for(auto &Recorder : m_aDemoRecorder)
 				if(Recorder.IsRecording())
 					Recorder.RecordMessage(Pack6.Data(), Pack6.Size());
-			RecordHookDemoMessage(Pack6.Data(), Pack6.Size());
 		}
 
 		if(!(Flags & MSGFLAG_NOSEND))
@@ -1547,7 +970,6 @@ int CServer::SendMsg(CMsgPacker *pMsg, int Flags, int ClientId)
 				m_aDemoRecorder[RECORDER_MANUAL].RecordMessage(Pack.Data(), Pack.Size());
 			if(m_aDemoRecorder[RECORDER_AUTO].IsRecording())
 				m_aDemoRecorder[RECORDER_AUTO].RecordMessage(Pack.Data(), Pack.Size());
-			RecordHookDemoMessage(Pack.Data(), Pack.Size());
 		}
 
 		if(!(Flags & MSGFLAG_NOSEND))
@@ -1580,14 +1002,14 @@ void CServer::DoSnapshot()
 {
 	bool IsGlobalSnap = Config()->m_SvHighBandwidth || (m_CurrentGameTick % 2) == 0;
 
-	if(m_aDemoRecorder[RECORDER_MANUAL].IsRecording() || m_aDemoRecorder[RECORDER_AUTO].IsRecording() || HookDemoRecordingActive())
+	if(m_aDemoRecorder[RECORDER_MANUAL].IsRecording() || m_aDemoRecorder[RECORDER_AUTO].IsRecording())
 	{
 		// create snapshot for demo recording
 		char aData[CSnapshot::MAX_SIZE];
 
 		// build snap and possibly add some messages
 		m_SnapshotBuilder.Init();
-		GameServer()->OnSnap(-1, IsGlobalSnap);
+		GameServer()->OnSnap(-1, IsGlobalSnap, true);
 		int SnapshotSize = m_SnapshotBuilder.Finish(aData);
 
 		// write snapshot
@@ -1595,8 +1017,6 @@ void CServer::DoSnapshot()
 			m_aDemoRecorder[RECORDER_MANUAL].RecordSnapshot(Tick(), aData, SnapshotSize);
 		if(m_aDemoRecorder[RECORDER_AUTO].IsRecording())
 			m_aDemoRecorder[RECORDER_AUTO].RecordSnapshot(Tick(), aData, SnapshotSize);
-		if(HookDemoRecordingActive())
-			RecordHookDemoSnapshot(Tick(), aData, SnapshotSize);
 	}
 
 	// create snapshots for all clients
@@ -1622,7 +1042,7 @@ void CServer::DoSnapshot()
 			m_SnapshotBuilder.Init(m_aClients[i].m_Sixup);
 
 			// only snap events on global ticks
-			GameServer()->OnSnap(i, IsGlobalSnap);
+			GameServer()->OnSnap(i, IsGlobalSnap, m_aDemoRecorder[i].IsRecording());
 
 			// finish snapshot
 			char aData[CSnapshot::MAX_SIZE];
@@ -1903,14 +1323,6 @@ void CServer::SendRconType(int ClientId, bool UsernameReq)
 	SendMsg(&Msg, MSGFLAG_VITAL, ClientId);
 }
 
-void CServer::GetMapInfo(char *pMapName, int MapNameSize, int *pMapSize, SHA256_DIGEST *pMapSha256, int *pMapCrc)
-{
-	str_copy(pMapName, GetMapName(), MapNameSize);
-	*pMapSize = m_aCurrentMapSize[MAP_TYPE_SIX];
-	*pMapSha256 = m_aCurrentMapSha256[MAP_TYPE_SIX];
-	*pMapCrc = m_aCurrentMapCrc[MAP_TYPE_SIX];
-}
-
 void CServer::SendCapabilities(int ClientId)
 {
 	CMsgPacker Msg(NETMSG_CAPABILITIES, true);
@@ -1924,7 +1336,7 @@ void CServer::SendMap(int ClientId)
 	int MapType = IsSixup(ClientId) ? MAP_TYPE_SIXUP : MAP_TYPE_SIX;
 	{
 		CMsgPacker Msg(NETMSG_MAP_DETAILS, true);
-		Msg.AddString(GetMapName(), 0);
+		Msg.AddString(GameServer()->Map()->BaseName(), 0);
 		Msg.AddRaw(&m_aCurrentMapSha256[MapType].data, sizeof(m_aCurrentMapSha256[MapType].data));
 		Msg.AddInt(m_aCurrentMapCrc[MapType]);
 		Msg.AddInt(m_aCurrentMapSize[MapType]);
@@ -1940,13 +1352,13 @@ void CServer::SendMap(int ClientId)
 	}
 	{
 		CMsgPacker Msg(NETMSG_MAP_CHANGE, true);
-		Msg.AddString(GetMapName(), 0);
+		Msg.AddString(GameServer()->Map()->BaseName(), 0);
 		Msg.AddInt(m_aCurrentMapCrc[MapType]);
 		Msg.AddInt(m_aCurrentMapSize[MapType]);
 		if(MapType == MAP_TYPE_SIXUP)
 		{
 			Msg.AddInt(Config()->m_SvMapWindow);
-			Msg.AddInt(1024 - 128);
+			Msg.AddInt(NET_MAX_CHUNK_SIZE - 128);
 			Msg.AddRaw(m_aCurrentMapSha256[MapType].data, sizeof(m_aCurrentMapSha256[MapType].data));
 		}
 		SendMsg(&Msg, MSGFLAG_VITAL | MSGFLAG_FLUSH, ClientId);
@@ -1958,7 +1370,7 @@ void CServer::SendMap(int ClientId)
 void CServer::SendMapData(int ClientId, int Chunk)
 {
 	int MapType = IsSixup(ClientId) ? MAP_TYPE_SIXUP : MAP_TYPE_SIX;
-	unsigned int ChunkSize = 1024 - 128;
+	unsigned int ChunkSize = NET_MAX_CHUNK_SIZE - 128;
 	unsigned int Offset = Chunk * ChunkSize;
 	int Last = 0;
 
@@ -2152,7 +1564,7 @@ void CServer::UpdateClientMaplistEntries(int ClientId)
 	if((size_t)Client.m_MaplistEntryToSend < m_vMaplistEntries.size())
 	{
 		CMsgPacker Msg(NETMSG_MAPLIST_ADD, true);
-		int Limit = NET_MAX_PAYLOAD - 128;
+		int Limit = NET_MAX_CHUNK_SIZE - 128;
 		while((size_t)Client.m_MaplistEntryToSend < m_vMaplistEntries.size())
 		{
 			// Space for null termination not included in Limit
@@ -2271,31 +1683,40 @@ void CServer::ProcessClientPacket(CNetChunk *pPacket)
 		SendMsg(&Packer, MSGFLAG_VITAL, ClientId);
 	}
 
+	{
+		bool VitalFlag = (pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0;
+		bool NonVitalMsg = Sys && (Msg == NETMSG_INPUT || Msg == NETMSG_PING || Msg == NETMSG_PINGEX);
+		if(!VitalFlag && !NonVitalMsg)
+		{
+			if(g_Config.m_Debug)
+			{
+				log_debug(
+					"server",
+					"strange message ClientId=%d msg=%d data_size=%d (missing vital flag)",
+					ClientId,
+					Msg,
+					pPacket->m_DataSize);
+			}
+			return;
+		}
+	}
+
 	if(Sys)
 	{
 		// system message
 		if(Msg == NETMSG_CLIENTVER)
 		{
-			if((pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && m_aClients[ClientId].m_State == CClient::STATE_PREAUTH)
-			{
-				CUuid *pConnectionId = (CUuid *)Unpacker.GetRaw(sizeof(*pConnectionId));
-				int DDNetVersion = Unpacker.GetInt();
-				const char *pDDNetVersionStr = Unpacker.GetString(CUnpacker::SANITIZE_CC);
-				if(Unpacker.Error() || DDNetVersion < 0)
-				{
-					return;
-				}
-				m_aClients[ClientId].m_ConnectionId = *pConnectionId;
-				m_aClients[ClientId].m_DDNetVersion = DDNetVersion;
-				str_copy(m_aClients[ClientId].m_aDDNetVersionStr, pDDNetVersionStr);
-				m_aClients[ClientId].m_DDNetVersionSettled = true;
-				m_aClients[ClientId].m_GotDDNetVersionPacket = true;
-				m_aClients[ClientId].m_State = CClient::STATE_AUTH;
-			}
+			CUuid *pConnectionId = (CUuid *)Unpacker.GetRaw(sizeof(*pConnectionId));
+			int DDNetVersion = Unpacker.GetInt();
+			const char *pDDNetVersionStr = Unpacker.GetString(CUnpacker::SANITIZE_CC);
+			if(Unpacker.Error())
+				return;
+
+			OnNetMsgClientVer(ClientId, pConnectionId, DDNetVersion, pDDNetVersionStr);
 		}
 		else if(Msg == NETMSG_INFO)
 		{
-			if((pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && (m_aClients[ClientId].m_State == CClient::STATE_PREAUTH || m_aClients[ClientId].m_State == CClient::STATE_AUTH))
+			if((m_aClients[ClientId].m_State == CClient::STATE_PREAUTH || m_aClients[ClientId].m_State == CClient::STATE_AUTH))
 			{
 				const char *pVersion = Unpacker.GetString(CUnpacker::SANITIZE_CC);
 				if(Unpacker.Error())
@@ -2347,7 +1768,7 @@ void CServer::ProcessClientPacket(CNetChunk *pPacket)
 		}
 		else if(Msg == NETMSG_REQUEST_MAP_DATA)
 		{
-			if((pPacket->m_Flags & NET_CHUNKFLAG_VITAL) == 0 || m_aClients[ClientId].m_State < CClient::STATE_CONNECTING)
+			if(m_aClients[ClientId].m_State < CClient::STATE_CONNECTING)
 				return;
 
 			if(m_aClients[ClientId].m_Sixup)
@@ -2382,44 +1803,11 @@ void CServer::ProcessClientPacket(CNetChunk *pPacket)
 		}
 		else if(Msg == NETMSG_READY)
 		{
-			if((pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && (m_aClients[ClientId].m_State == CClient::STATE_CONNECTING))
-			{
-				char aBuf[256];
-				str_format(aBuf, sizeof(aBuf), "player is ready. ClientId=%d addr=<{%s}> secure=%s", ClientId, ClientAddrString(ClientId, true), m_NetServer.HasSecurityToken(ClientId) ? "yes" : "no");
-				Console()->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "server", aBuf);
-
-				void *pPersistentData = nullptr;
-				if(m_aClients[ClientId].m_HasPersistentData)
-				{
-					pPersistentData = m_aClients[ClientId].m_pPersistentData;
-					m_aClients[ClientId].m_HasPersistentData = false;
-				}
-				m_aClients[ClientId].m_State = CClient::STATE_READY;
-				GameServer()->OnClientConnected(ClientId, pPersistentData);
-			}
-
-			SendConnectionReady(ClientId);
+			OnNetMsgReady(ClientId);
 		}
 		else if(Msg == NETMSG_ENTERGAME)
 		{
-			if((pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && m_aClients[ClientId].m_State == CClient::STATE_READY && GameServer()->IsClientReady(ClientId))
-			{
-				char aBuf[256];
-				str_format(aBuf, sizeof(aBuf), "player has entered the game. ClientId=%d addr=<{%s}> sixup=%d", ClientId, ClientAddrString(ClientId, true), IsSixup(ClientId));
-				Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "server", aBuf);
-				m_aClients[ClientId].m_State = CClient::STATE_INGAME;
-				if(!IsSixup(ClientId))
-				{
-					SendServerInfo(ClientAddr(ClientId), -1, SERVERINFO_EXTENDED, false);
-				}
-				else
-				{
-					CMsgPacker ServerInfoMessage(protocol7::NETMSG_SERVERINFO, true, true);
-					GetServerInfoSixup(&ServerInfoMessage, false);
-					SendMsg(&ServerInfoMessage, MSGFLAG_VITAL | MSGFLAG_FLUSH, ClientId);
-				}
-				GameServer()->OnClientEnter(ClientId);
-			}
+			OnNetMsgEnterGame(ClientId);
 		}
 		else if(Msg == NETMSG_INPUT)
 		{
@@ -2522,144 +1910,23 @@ void CServer::ProcessClientPacket(CNetChunk *pPacket)
 		{
 			const char *pCmd = Unpacker.GetString();
 			if(Unpacker.Error())
-			{
 				return;
-			}
-			if(!str_comp(pCmd, "crashmeplx"))
-			{
-				int Version = m_aClients[ClientId].m_DDNetVersion;
-				if(GameServer()->PlayerExists(ClientId) && Version < VERSION_DDNET_OLD)
-				{
-					m_aClients[ClientId].m_DDNetVersion = VERSION_DDNET_OLD;
-				}
-			}
-			else if((pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && IsRconAuthed(ClientId))
-			{
-				if(GameServer()->PlayerExists(ClientId))
-				{
-					log_info("server", "ClientId=%d key='%s' rcon='%s'", ClientId, GetAuthName(ClientId), pCmd);
-					m_RconClientId = ClientId;
-					m_RconAuthLevel = GetAuthedState(ClientId);
-					{
-						CRconClientLogger Logger(this, ClientId);
-						CLogScope Scope(&Logger);
-						Console()->ExecuteLineFlag(pCmd, CFGFLAG_SERVER, ClientId);
-					}
-					m_RconClientId = IServer::RCON_CID_SERV;
-					m_RconAuthLevel = AUTHED_ADMIN;
-				}
-			}
+
+			OnNetMsgRconCmd(ClientId, pCmd);
 		}
 		else if(Msg == NETMSG_RCON_AUTH)
 		{
-			if((pPacket->m_Flags & NET_CHUNKFLAG_VITAL) == 0)
-			{
-				return;
-			}
 			const char *pName = "";
 			if(!IsSixup(ClientId))
-			{
 				pName = Unpacker.GetString(CUnpacker::SANITIZE_CC); // login name, now used
-			}
 			const char *pPw = Unpacker.GetString(CUnpacker::SANITIZE_CC);
+			bool SendRconCmds = true;
+			if(!IsSixup(ClientId))
+				SendRconCmds = Unpacker.GetInt() != 0;
 			if(Unpacker.Error())
-			{
 				return;
-			}
 
-			int AuthLevel = -1;
-			int KeySlot = -1;
-
-			if(!pName[0])
-			{
-				if(m_AuthManager.CheckKey((KeySlot = m_AuthManager.DefaultKey(RoleName::ADMIN)), pPw))
-					AuthLevel = AUTHED_ADMIN;
-				else if(m_AuthManager.CheckKey((KeySlot = m_AuthManager.DefaultKey(RoleName::MODERATOR)), pPw))
-					AuthLevel = AUTHED_MOD;
-				else if(m_AuthManager.CheckKey((KeySlot = m_AuthManager.DefaultKey(RoleName::HELPER)), pPw))
-					AuthLevel = AUTHED_HELPER;
-			}
-			else
-			{
-				KeySlot = m_AuthManager.FindKey(pName);
-				if(m_AuthManager.CheckKey(KeySlot, pPw))
-					AuthLevel = m_AuthManager.KeyLevel(KeySlot);
-			}
-
-			if(AuthLevel != -1)
-			{
-				if(GetAuthedState(ClientId) != AuthLevel)
-				{
-					if(!IsSixup(ClientId))
-					{
-						CMsgPacker Msgp(NETMSG_RCON_AUTH_STATUS, true);
-						Msgp.AddInt(1); //authed
-						Msgp.AddInt(1); //cmdlist
-						SendMsg(&Msgp, MSGFLAG_VITAL, ClientId);
-					}
-					else
-					{
-						CMsgPacker Msgp(protocol7::NETMSG_RCON_AUTH_ON, true, true);
-						SendMsg(&Msgp, MSGFLAG_VITAL, ClientId);
-					}
-
-					m_aClients[ClientId].m_AuthKey = KeySlot;
-					int SendRconCmds = IsSixup(ClientId) ? true : Unpacker.GetInt();
-					if(!Unpacker.Error() && SendRconCmds)
-					{
-						m_aClients[ClientId].m_pRconCmdToSend = Console()->FirstCommandInfo(ClientId, CFGFLAG_SERVER);
-						SendRconCmdGroupStart(ClientId);
-						if(m_aClients[ClientId].m_pRconCmdToSend == nullptr)
-						{
-							SendRconCmdGroupEnd(ClientId);
-						}
-					}
-
-					const char *pIdent = m_AuthManager.KeyIdent(KeySlot);
-					switch(AuthLevel)
-					{
-					case AUTHED_ADMIN:
-					{
-						SendRconLine(ClientId, "Admin authentication successful. Full remote console access granted.");
-						log_info("server", "ClientId=%d authed with key='%s' (admin)", ClientId, pIdent);
-						break;
-					}
-					case AUTHED_MOD:
-					{
-						SendRconLine(ClientId, "Moderator authentication successful. Limited remote console access granted.");
-						log_info("server", "ClientId=%d authed with key='%s' (moderator)", ClientId, pIdent);
-						break;
-					}
-					case AUTHED_HELPER:
-					{
-						SendRconLine(ClientId, "Helper authentication successful. Limited remote console access granted.");
-						log_info("server", "ClientId=%d authed with key='%s' (helper)", ClientId, pIdent);
-						break;
-					}
-					}
-
-					// DDRace
-					GameServer()->OnSetAuthed(ClientId, AuthLevel);
-				}
-			}
-			else if(Config()->m_SvRconMaxTries)
-			{
-				m_aClients[ClientId].m_AuthTries++;
-				char aBuf[128];
-				str_format(aBuf, sizeof(aBuf), "Wrong password %d/%d.", m_aClients[ClientId].m_AuthTries, Config()->m_SvRconMaxTries);
-				SendRconLine(ClientId, aBuf);
-				if(m_aClients[ClientId].m_AuthTries >= Config()->m_SvRconMaxTries)
-				{
-					if(!Config()->m_SvRconBantime)
-						m_NetServer.Drop(ClientId, "Too many remote console authentication tries");
-					else
-						m_ServerBan.BanAddr(ClientAddr(ClientId), Config()->m_SvRconBantime * 60, "Too many remote console authentication tries", false);
-				}
-			}
-			else
-			{
-				SendRconLine(ClientId, "Wrong password.");
-			}
+			OnNetMsgRconAuth(ClientId, pName, pPw, SendRconCmds);
 		}
 		else if(Msg == NETMSG_PING)
 		{
@@ -2694,10 +1961,202 @@ void CServer::ProcessClientPacket(CNetChunk *pPacket)
 			}
 		}
 	}
-	else if((pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && m_aClients[ClientId].m_State >= CClient::STATE_READY)
+	else if(m_aClients[ClientId].m_State >= CClient::STATE_READY)
 	{
 		// game message
 		GameServer()->OnMessage(Msg, &Unpacker, ClientId);
+	}
+}
+
+void CServer::OnNetMsgClientVer(int ClientId, CUuid *pConnectionId, int DDNetVersion, const char *pDDNetVersionStr)
+{
+	if(m_aClients[ClientId].m_State != CClient::STATE_PREAUTH)
+		return;
+	if(DDNetVersion < 0)
+		return;
+
+	m_aClients[ClientId].m_ConnectionId = *pConnectionId;
+	m_aClients[ClientId].m_DDNetVersion = DDNetVersion;
+	str_copy(m_aClients[ClientId].m_aDDNetVersionStr, pDDNetVersionStr);
+	m_aClients[ClientId].m_DDNetVersionSettled = true;
+	m_aClients[ClientId].m_GotDDNetVersionPacket = true;
+	m_aClients[ClientId].m_State = CClient::STATE_AUTH;
+}
+
+void CServer::OnNetMsgReady(int ClientId)
+{
+	if(m_aClients[ClientId].m_State == CClient::STATE_CONNECTING)
+	{
+		log_debug(
+			"server",
+			"player is ready. ClientId=%d addr=<{%s}> secure=%s",
+			ClientId,
+			ClientAddrString(ClientId, true),
+			m_NetServer.HasSecurityToken(ClientId) ? "yes" : "no");
+
+		void *pPersistentData = nullptr;
+		if(m_aClients[ClientId].m_HasPersistentData)
+		{
+			pPersistentData = m_aClients[ClientId].m_pPersistentData;
+			m_aClients[ClientId].m_HasPersistentData = false;
+		}
+		m_aClients[ClientId].m_State = CClient::STATE_READY;
+		GameServer()->OnClientConnected(ClientId, pPersistentData);
+	}
+
+	// Make rejoining session possible before timeout protection triggers
+	// https://github.com/ddnet/ddnet/pull/301
+	SendConnectionReady(ClientId);
+}
+
+void CServer::OnNetMsgEnterGame(int ClientId)
+{
+	if(m_aClients[ClientId].m_State != CClient::STATE_READY)
+		return;
+	if(!GameServer()->IsClientReady(ClientId))
+		return;
+
+	log_info(
+		"server",
+		"player has entered the game. ClientId=%d addr=<{%s}> sixup=%d",
+		ClientId,
+		ClientAddrString(ClientId, true),
+		IsSixup(ClientId));
+	m_aClients[ClientId].m_State = CClient::STATE_INGAME;
+	if(!IsSixup(ClientId))
+	{
+		SendServerInfo(ClientAddr(ClientId), -1, SERVERINFO_EXTENDED, false);
+	}
+	else
+	{
+		CMsgPacker ServerInfoMessage(protocol7::NETMSG_SERVERINFO, true, true);
+		GetServerInfoSixup(&ServerInfoMessage, false);
+		SendMsg(&ServerInfoMessage, MSGFLAG_VITAL | MSGFLAG_FLUSH, ClientId);
+	}
+	GameServer()->OnClientEnter(ClientId);
+}
+
+void CServer::OnNetMsgRconCmd(int ClientId, const char *pCmd)
+{
+	if(!str_comp(pCmd, "crashmeplx"))
+	{
+		int Version = m_aClients[ClientId].m_DDNetVersion;
+		if(GameServer()->PlayerExists(ClientId) && Version < VERSION_DDNET_OLD)
+		{
+			m_aClients[ClientId].m_DDNetVersion = VERSION_DDNET_OLD;
+		}
+	}
+	else if(IsRconAuthed(ClientId))
+	{
+		if(GameServer()->PlayerExists(ClientId))
+		{
+			log_info("server", "ClientId=%d key='%s' rcon='%s'", ClientId, GetAuthName(ClientId), pCmd);
+			m_RconClientId = ClientId;
+			m_RconAuthLevel = GetAuthedState(ClientId);
+			{
+				CRconClientLogger Logger(this, ClientId);
+				CLogScope Scope(&Logger);
+				Console()->ExecuteLineFlag(pCmd, CFGFLAG_SERVER, ClientId);
+			}
+			m_RconClientId = IServer::RCON_CID_SERV;
+			m_RconAuthLevel = AUTHED_ADMIN;
+		}
+	}
+}
+
+void CServer::OnNetMsgRconAuth(int ClientId, const char *pName, const char *pPw, bool SendRconCmds)
+{
+	int AuthLevel = -1;
+	int KeySlot = -1;
+
+	if(!pName[0])
+	{
+		if(m_AuthManager.CheckKey((KeySlot = m_AuthManager.DefaultKey(RoleName::ADMIN)), pPw))
+			AuthLevel = AUTHED_ADMIN;
+		else if(m_AuthManager.CheckKey((KeySlot = m_AuthManager.DefaultKey(RoleName::MODERATOR)), pPw))
+			AuthLevel = AUTHED_MOD;
+		else if(m_AuthManager.CheckKey((KeySlot = m_AuthManager.DefaultKey(RoleName::HELPER)), pPw))
+			AuthLevel = AUTHED_HELPER;
+	}
+	else
+	{
+		KeySlot = m_AuthManager.FindKey(pName);
+		if(m_AuthManager.CheckKey(KeySlot, pPw))
+			AuthLevel = m_AuthManager.KeyLevel(KeySlot);
+	}
+
+	if(AuthLevel != -1)
+	{
+		if(GetAuthedState(ClientId) != AuthLevel)
+		{
+			if(!IsSixup(ClientId))
+			{
+				CMsgPacker Msgp(NETMSG_RCON_AUTH_STATUS, true);
+				Msgp.AddInt(1); //authed
+				Msgp.AddInt(1); //cmdlist
+				SendMsg(&Msgp, MSGFLAG_VITAL, ClientId);
+			}
+			else
+			{
+				CMsgPacker Msgp(protocol7::NETMSG_RCON_AUTH_ON, true, true);
+				SendMsg(&Msgp, MSGFLAG_VITAL, ClientId);
+			}
+
+			m_aClients[ClientId].m_AuthKey = KeySlot;
+			if(SendRconCmds)
+			{
+				m_aClients[ClientId].m_pRconCmdToSend = Console()->FirstCommandInfo(ClientId, CFGFLAG_SERVER);
+				SendRconCmdGroupStart(ClientId);
+				if(m_aClients[ClientId].m_pRconCmdToSend == nullptr)
+				{
+					SendRconCmdGroupEnd(ClientId);
+				}
+			}
+
+			const char *pIdent = m_AuthManager.KeyIdent(KeySlot);
+			switch(AuthLevel)
+			{
+			case AUTHED_ADMIN:
+			{
+				SendRconLine(ClientId, "Admin authentication successful. Full remote console access granted.");
+				log_info("server", "ClientId=%d authed with key='%s' (admin)", ClientId, pIdent);
+				break;
+			}
+			case AUTHED_MOD:
+			{
+				SendRconLine(ClientId, "Moderator authentication successful. Limited remote console access granted.");
+				log_info("server", "ClientId=%d authed with key='%s' (moderator)", ClientId, pIdent);
+				break;
+			}
+			case AUTHED_HELPER:
+			{
+				SendRconLine(ClientId, "Helper authentication successful. Limited remote console access granted.");
+				log_info("server", "ClientId=%d authed with key='%s' (helper)", ClientId, pIdent);
+				break;
+			}
+			}
+
+			// DDRace
+			GameServer()->OnSetAuthed(ClientId, AuthLevel);
+		}
+	}
+	else if(Config()->m_SvRconMaxTries)
+	{
+		m_aClients[ClientId].m_AuthTries++;
+		char aBuf[128];
+		str_format(aBuf, sizeof(aBuf), "Wrong password %d/%d.", m_aClients[ClientId].m_AuthTries, Config()->m_SvRconMaxTries);
+		SendRconLine(ClientId, aBuf);
+		if(m_aClients[ClientId].m_AuthTries >= Config()->m_SvRconMaxTries)
+		{
+			if(!Config()->m_SvRconBantime)
+				m_NetServer.Drop(ClientId, "Too many remote console authentication tries");
+			else
+				m_ServerBan.BanAddr(ClientAddr(ClientId), Config()->m_SvRconBantime * 60, "Too many remote console authentication tries", false);
+		}
+	}
+	else
+	{
+		SendRconLine(ClientId, "Wrong password.");
 	}
 }
 
@@ -2812,7 +2271,7 @@ void CServer::CacheServerInfo(CCache *pCache, int Type, bool SendClients)
 			p.AddString(aBuf, 64);
 		}
 	}
-	p.AddString(GetMapName(), 32);
+	p.AddString(GameServer()->Map()->BaseName(), 32);
 
 	if(Type == SERVERINFO_EXTENDED)
 	{
@@ -2936,8 +2395,8 @@ void CServer::CacheServerInfo(CCache *pCache, int Type, bool SendClients)
 			if(m_aClients[i].m_Score.has_value())
 			{
 				Score = m_aClients[i].m_Score.value();
-				if(Score == 9999)
-					Score = -10000;
+				if(Score == -FinishTime::NOT_FINISHED_TIMESCORE)
+					Score = FinishTime::NOT_FINISHED_TIMESCORE - 1;
 				else if(Score == 0) // 0 time isn't displayed otherwise.
 					Score = -1;
 				else
@@ -2945,7 +2404,7 @@ void CServer::CacheServerInfo(CCache *pCache, int Type, bool SendClients)
 			}
 			else
 			{
-				Score = -9999;
+				Score = FinishTime::NOT_FINISHED_TIMESCORE;
 			}
 
 			ADD_INT(q, Score); // client score
@@ -3016,7 +2475,7 @@ void CServer::CacheServerInfoSixup(CCache *pCache, bool SendClients, int MaxCons
 		Packer.AddString(aName, 64);
 	}
 	Packer.AddString(Config()->m_SvHostname, 128);
-	Packer.AddString(GetMapName(), 32);
+	Packer.AddString(GameServer()->Map()->BaseName(), 32);
 
 	// gametype
 	Packer.AddString(GameServer()->GameType(), 16);
@@ -3159,6 +2618,12 @@ void CServer::ExpireServerInfo()
 	m_ServerInfoNeedsUpdate = true;
 }
 
+void CServer::ExpireServerInfoAndQueueResend()
+{
+	m_ServerInfoNeedsUpdate = true;
+	m_ServerInfoNeedsResend = true;
+}
+
 void CServer::UpdateRegisterServerInfo()
 {
 	// count the players
@@ -3210,7 +2675,7 @@ void CServer::UpdateRegisterServerInfo()
 	JsonWriter.WriteAttribute("map");
 	JsonWriter.BeginObject();
 	JsonWriter.WriteAttribute("name");
-	JsonWriter.WriteStrValue(GetMapName());
+	JsonWriter.WriteStrValue(GameServer()->Map()->BaseName());
 	JsonWriter.WriteAttribute("sha256");
 	JsonWriter.WriteStrValue(aMapSha256);
 	JsonWriter.WriteAttribute("size");
@@ -3229,7 +2694,7 @@ void CServer::UpdateRegisterServerInfo()
 	JsonWriter.WriteStrValue("time"); // "points" or "time"
 
 	JsonWriter.WriteAttribute("requires_login");
-	JsonWriter.WriteBoolValue(g_Config.m_SvRequiredLogin);
+	JsonWriter.WriteBoolValue(false);
 
 	{
 		bool FoundFlags = false;
@@ -3279,7 +2744,7 @@ void CServer::UpdateRegisterServerInfo()
 			JsonWriter.WriteIntValue(m_aClients[i].m_Country); // ISO 3166-1 numeric
 
 			JsonWriter.WriteAttribute("score");
-			JsonWriter.WriteIntValue(m_aClients[i].m_Score.value_or(-9999));
+			JsonWriter.WriteIntValue(m_aClients[i].m_Score.value_or(FinishTime::NOT_FINISHED_TIMESCORE));
 
 			JsonWriter.WriteAttribute("is_player");
 			JsonWriter.WriteBoolValue(GameServer()->IsClientPlayer(i));
@@ -3326,6 +2791,7 @@ void CServer::UpdateServerInfo(bool Resend)
 				}
 			}
 		}
+		m_ServerInfoNeedsResend = false;
 	}
 
 	m_ServerInfoNeedsUpdate = false;
@@ -3432,15 +2898,10 @@ void CServer::PumpNetwork(bool PacketWaiting)
 	m_Econ.Update();
 }
 
-const char *CServer::GetMapName() const
-{
-	return m_pCurrentMapName;
-}
-
 void CServer::ChangeMap(const char *pMap)
 {
 	str_copy(Config()->m_SvMap, pMap);
-	m_MapReload = str_comp(Config()->m_SvMap, m_aCurrentMap) != 0;
+	m_MapReload = str_comp(Config()->m_SvMap, GameServer()->Map()->FullName()) != 0;
 }
 
 void CServer::ReloadMap()
@@ -3464,7 +2925,7 @@ int CServer::LoadMap(const char *pMapName)
 	{
 		return 0;
 	}
-	if(!m_pMap->Load(aBuf))
+	if(!GameServer()->Map()->Load(pMapName, Storage(), aBuf, IStorage::TYPE_ALL))
 	{
 		return 0;
 	}
@@ -3473,22 +2934,13 @@ int CServer::LoadMap(const char *pMapName)
 	m_IdPool.TimeoutIds();
 
 	// get the crc of the map
-	m_aCurrentMapSha256[MAP_TYPE_SIX] = m_pMap->Sha256();
-	m_aCurrentMapCrc[MAP_TYPE_SIX] = m_pMap->Crc();
+	m_aCurrentMapSha256[MAP_TYPE_SIX] = GameServer()->Map()->Sha256();
+	m_aCurrentMapCrc[MAP_TYPE_SIX] = GameServer()->Map()->Crc();
 	char aBufMsg[256];
 	char aSha256[SHA256_MAXSTRSIZE];
 	sha256_str(m_aCurrentMapSha256[MAP_TYPE_SIX], aSha256, sizeof(aSha256));
 	str_format(aBufMsg, sizeof(aBufMsg), "%s sha256 is %s", aBuf, aSha256);
 	Console()->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "server", aBufMsg);
-
-	str_copy(m_aCurrentMap, pMapName);
-	m_pCurrentMapName = fs_filename(m_aCurrentMap);
-
-	// Execute server-configured auto cfg on every map change, if set.
-	if(g_Config.m_SvMapAutoCfg[0] != '\0')
-	{
-		Console()->ExecuteFile(g_Config.m_SvMapAutoCfg, IConsole::CLIENT_ID_UNSPECIFIED, true, IStorage::TYPE_ALL);
-	}
 
 	// load complete map into memory for download
 	{
@@ -3580,7 +3032,7 @@ void CServer::UpdateDebugDummies(bool ForceDisconnect)
 			Client.m_DebugDummyAddr.ip[11] = 0x00;
 			uint_to_bytes_be(&Client.m_DebugDummyAddr.ip[12], ClientId);
 			// Port: random like normal clients
-			Client.m_DebugDummyAddr.port = (secure_rand() % (65535 - 1024)) + 1024;
+			Client.m_DebugDummyAddr.port = secure_rand_below(65535 - 1024) + 1024;
 			net_addr_str(&Client.m_DebugDummyAddr, Client.m_aDebugDummyAddrString.data(), Client.m_aDebugDummyAddrString.size(), true);
 			net_addr_str(&Client.m_DebugDummyAddr, Client.m_aDebugDummyAddrStringNoPort.data(), Client.m_aDebugDummyAddrStringNoPort.size(), false);
 
@@ -3736,7 +3188,7 @@ int CServer::Run()
 
 		m_GameStartTime = time_get();
 
-		UpdateServerInfo();
+		UpdateServerInfo(false);
 		while(m_RunServer < STOPPING)
 		{
 			if(NonActive)
@@ -3751,7 +3203,6 @@ int CServer::Run()
 			if(m_MapReload || m_SameMapReload || m_CurrentGameTick >= MAX_TICK) // force reload to make sure the ticks stay within a valid range
 			{
 				const bool SameMapReload = m_SameMapReload;
-				AbortHookDemoSessions();
 				// load map
 				if(LoadMap(Config()->m_SvMap))
 				{
@@ -3815,20 +3266,19 @@ int CServer::Run()
 					{
 						break;
 					}
-					UpdateServerInfo(true);
+					ExpireServerInfo();
 				}
 				else
 				{
 					str_format(aBuf, sizeof(aBuf), "failed to load map. mapname='%s'", Config()->m_SvMap);
 					Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "server", aBuf);
-					str_copy(Config()->m_SvMap, m_aCurrentMap);
+					str_copy(Config()->m_SvMap, GameServer()->Map()->FullName());
 				}
 			}
 
 			while(LastTime > TickStartTime(m_CurrentGameTick + 1))
 			{
 				GameServer()->OnPreTickTeehistorian();
-
 				UpdateDebugDummies(false);
 
 				for(int c = 0; c < MAX_CLIENTS; c++)
@@ -3888,7 +3338,6 @@ int CServer::Run()
 				UpdateClientMaplistEntries(CommandSendingClientId);
 
 				m_Fifo.Update();
-				ProcessHookDemoSessions();
 
 #if defined(CONF_PLATFORM_ANDROID)
 				std::vector<std::string> vAndroidCommandQueue = FetchAndroidServerCommandQueue();
@@ -3902,7 +3351,9 @@ int CServer::Run()
 				m_pRegister->Update();
 
 				if(m_ServerInfoNeedsUpdate)
-					UpdateServerInfo();
+				{
+					UpdateServerInfo(m_ServerInfoNeedsResend);
+				}
 
 				Antibot()->OnEngineTick();
 
@@ -3940,27 +3391,9 @@ int CServer::Run()
 
 								if(Config()->m_SvDnsblBan)
 								{
-									if(m_aClients[ClientId].m_State >= CClient::STATE_READY)
-									{
-										m_NetServer.NetBan()->BanAddr(ClientAddr(ClientId), 60, Config()->m_SvDnsblBanReason, true);
-									}
-									else
-									{
-										m_aClients[ClientId].m_DnsblBanPending = true;
-									}
+									m_NetServer.NetBan()->BanAddr(ClientAddr(ClientId), 60, Config()->m_SvDnsblBanReason, true);
 								}
 							}
-						}
-					}
-				}
-				if(Config()->m_SvDnsblBan)
-				{
-					for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
-					{
-						if(m_aClients[ClientId].m_DnsblBanPending && m_aClients[ClientId].m_State >= CClient::STATE_READY)
-						{
-							m_aClients[ClientId].m_DnsblBanPending = false;
-							m_NetServer.NetBan()->BanAddr(ClientAddr(ClientId), 60, Config()->m_SvDnsblBanReason, true);
 						}
 					}
 				}
@@ -4032,7 +3465,6 @@ int CServer::Run()
 			}
 		}
 	}
-	AbortHookDemoSessions();
 	const char *pDisconnectReason = "Server shutdown";
 	if(m_aShutdownReason[0])
 		pDisconnectReason = m_aShutdownReason;
@@ -4055,7 +3487,7 @@ int CServer::Run()
 	Engine()->ShutdownJobs();
 
 	GameServer()->OnShutdown(nullptr);
-	m_pMap->Unload();
+	GameServer()->Map()->Unload();
 	DbPool()->OnShutdown();
 
 #if defined(CONF_UPNP)
@@ -4407,13 +3839,13 @@ void CServer::DemoRecorder_HandleAutoStart()
 		char aTimestamp[20];
 		str_timestamp(aTimestamp, sizeof(aTimestamp));
 		char aFilename[IO_MAX_PATH_LENGTH];
-		str_format(aFilename, sizeof(aFilename), "demos/auto/server/%s_%s.demo", GetMapName(), aTimestamp);
+		str_format(aFilename, sizeof(aFilename), "demos/auto/server/%s_%s.demo", GameServer()->Map()->BaseName(), aTimestamp);
 		m_aDemoRecorder[RECORDER_AUTO].Start(
 			Storage(),
 			m_pConsole,
 			aFilename,
 			GameServer()->NetVersion(),
-			GetMapName(),
+			GameServer()->Map()->BaseName(),
 			m_aCurrentMapSha256[MAP_TYPE_SIX],
 			m_aCurrentMapCrc[MAP_TYPE_SIX],
 			"server",
@@ -4437,7 +3869,7 @@ void CServer::SaveDemo(int ClientId, float Time)
 	if(IsRecording(ClientId))
 	{
 		char aNewFilename[IO_MAX_PATH_LENGTH];
-		str_format(aNewFilename, sizeof(aNewFilename), "demos/%s_%s_%05.2f.demo", GetMapName(), m_aClients[ClientId].m_aName, Time);
+		str_format(aNewFilename, sizeof(aNewFilename), "demos/%s_%s_%05.2f.demo", GameServer()->Map()->BaseName(), m_aClients[ClientId].m_aName, Time);
 		m_aDemoRecorder[ClientId].Stop(IDemoRecorder::EStopMode::KEEP_FILE, aNewFilename);
 	}
 }
@@ -4447,13 +3879,13 @@ void CServer::StartRecord(int ClientId)
 	if(Config()->m_SvPlayerDemoRecord)
 	{
 		char aFilename[IO_MAX_PATH_LENGTH];
-		str_format(aFilename, sizeof(aFilename), "demos/%s_%d_%d_tmp.demo", GetMapName(), m_NetServer.Address().port, ClientId);
+		str_format(aFilename, sizeof(aFilename), "demos/%s_%d_%d_tmp.demo", GameServer()->Map()->BaseName(), m_NetServer.Address().port, ClientId);
 		m_aDemoRecorder[ClientId].Start(
 			Storage(),
 			Console(),
 			aFilename,
 			GameServer()->NetVersion(),
-			GetMapName(),
+			GameServer()->Map()->BaseName(),
 			m_aCurrentMapSha256[MAP_TYPE_SIX],
 			m_aCurrentMapCrc[MAP_TYPE_SIX],
 			"server",
@@ -4515,7 +3947,7 @@ void CServer::ConRecord(IConsole::IResult *pResult, void *pUser)
 		pServer->Console(),
 		aFilename,
 		pServer->GameServer()->NetVersion(),
-		pServer->GetMapName(),
+		pServer->GameServer()->Map()->BaseName(),
 		pServer->m_aCurrentMapSha256[MAP_TYPE_SIX],
 		pServer->m_aCurrentMapCrc[MAP_TYPE_SIX],
 		"server",
@@ -4695,7 +4127,7 @@ void CServer::ConchainSpecialInfoupdate(IConsole::IResult *pResult, void *pUserD
 	{
 		CServer *pThis = static_cast<CServer *>(pUserData);
 		str_clean_whitespaces(pThis->Config()->m_SvName);
-		pThis->UpdateServerInfo(true);
+		pThis->ExpireServerInfoAndQueueResend();
 	}
 }
 
@@ -4844,11 +4276,11 @@ void CServer::ConchainRconHelperPasswordChange(IConsole::IResult *pResult, void 
 
 void CServer::ConchainMapUpdate(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
 {
+	CServer *pThis = static_cast<CServer *>(pUserData);
 	pfnCallback(pResult, pCallbackUserData);
-	if(pResult->NumArguments() >= 1)
+	if(pResult->NumArguments() >= 1 && pThis->GameServer()->Map()->IsLoaded())
 	{
-		CServer *pThis = static_cast<CServer *>(pUserData);
-		pThis->m_MapReload = str_comp(pThis->Config()->m_SvMap, pThis->m_aCurrentMap) != 0;
+		pThis->m_MapReload = str_comp(pThis->Config()->m_SvMap, pThis->GameServer()->Map()->FullName()) != 0;
 	}
 }
 
@@ -4856,8 +4288,10 @@ void CServer::ConchainSixupUpdate(IConsole::IResult *pResult, void *pUserData, I
 {
 	pfnCallback(pResult, pCallbackUserData);
 	CServer *pThis = static_cast<CServer *>(pUserData);
-	if(pResult->NumArguments() >= 1 && pThis->m_aCurrentMap[0] != '\0')
+	if(pResult->NumArguments() >= 1 && pThis->GameServer()->Map()->IsLoaded())
+	{
 		pThis->m_MapReload |= (pThis->m_apCurrentMapData[MAP_TYPE_SIXUP] != nullptr) != (pResult->GetInteger(0) != 0);
+	}
 }
 
 void CServer::ConchainRegisterCommunityTokenRedact(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
@@ -4951,7 +4385,6 @@ void CServer::RegisterCommands()
 {
 	m_pConsole = Kernel()->RequestInterface<IConsole>();
 	m_pGameServer = Kernel()->RequestInterface<IGameServer>();
-	m_pMap = Kernel()->RequestInterface<IEngineMap>();
 	m_pStorage = Kernel()->RequestInterface<IStorage>();
 	m_pAntibot = Kernel()->RequestInterface<IEngineAntibot>();
 
@@ -5031,8 +4464,7 @@ void CServer::SnapFreeId(int Id)
 
 void *CServer::SnapNewItem(int Type, int Id, int Size)
 {
-	dbg_assert(Id >= -1 && Id <= 0xffff, "Invalid snap item Id: %d", Id);
-	return Id < 0 ? nullptr : m_SnapshotBuilder.NewItem(Type, Id, Size);
+	return m_SnapshotBuilder.NewItem(Type, Id, Size);
 }
 
 void CServer::SnapSetStaticsize(int ItemType, int Size)

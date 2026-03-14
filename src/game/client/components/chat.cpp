@@ -3,6 +3,9 @@
 
 #include "chat.h"
 
+#include <base/io.h>
+#include <base/time.h>
+
 #include <engine/editor.h>
 #include <engine/external/regex.h>
 #include <engine/graphics.h>
@@ -20,10 +23,8 @@
 #include <game/client/components/skins.h>
 #include <game/client/components/sounds.h>
 #include <game/client/components/tclient/colored_parts.h>
-#include <game/client/components/under/translator.h>
 #include <game/client/gameclient.h>
 #include <game/localization.h>
-#include <game/client/component.h>
 
 char CChat::ms_aDisplayText[MAX_LINE_LENGTH] = "";
 
@@ -51,7 +52,6 @@ CChat::CChat()
 {
 	m_Mode = MODE_NONE;
 
-	m_Input.SetClipboardLineCallback([this](const char *pStr) { SendChatQueued(pStr); });
 	m_Input.SetCalculateOffsetCallback([this]() { return m_IsInputCensored; });
 	m_Input.SetDisplayTextCallback([this](char *pStr, size_t NumChars) {
 		m_IsInputCensored = false;
@@ -266,65 +266,6 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	}
 	else if(Event.m_Flags & IInput::FLAG_PRESS && (Event.m_Key == KEY_RETURN || Event.m_Key == KEY_KP_ENTER))
 	{
-		const char *pText = m_Input.GetString();
-
-		if(pText && str_length(pText) >= 6 && str_comp_nocase_num(pText, "/skin ", 6) == 0)
-		{
-			const char *pNameStart = pText + 6;
-			char aName[256];
-			str_copy(aName, pNameStart, sizeof(aName));
-
-			int len = str_length(aName);
-			int start = 0;
-			while(start < len && aName[start] == ' ')
-				start++;
-			int end = len - 1;
-			while(end >= start && aName[end] == ' ')
-			{
-				aName[end] = '\0';
-				end--;
-			}
-
-			int trimmedLen = end - start + 1;
-			if(start > 0 && trimmedLen > 0)
-				memmove(aName, aName + start, trimmedLen);
-			aName[trimmedLen] = '\0';
-
-			{
-				int j = 0;
-				for(int i = 0; i < trimmedLen; i++)
-				{
-					if(aName[i] != '"')
-						aName[j++] = aName[i];
-				}
-				aName[j] = '\0';
-			}
-
-			const char *pTargetName = aName;
-
-			bool AddEntry = false;
-
-			if(pTargetName[0] != '\0')
-			{
-				GameClient()->m_SkinSwitch.ChangeSkinByName(pTargetName);
-				AddEntry = true;
-			}
-
-			if(AddEntry)
-			{
-				const int Length = str_length(pText);
-				CHistoryEntry *pEntry = m_History.Allocate(sizeof(CHistoryEntry) + Length);
-				pEntry->m_Team = m_Mode == MODE_ALL ? 0 : 1;
-				str_copy(pEntry->m_aText, pText, Length + 1);
-			}
-
-			m_Input.Clear();
-			m_Show = false;
-			m_pHistoryEntry = nullptr;
-			DisableMode();
-			return true;
-		}
-
 		if(m_ServerCommandsNeedSorting)
 		{
 			std::sort(m_vServerCommands.begin(), m_vServerCommands.end());
@@ -346,8 +287,6 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	{
 		const bool ShiftPressed = Input()->ShiftIsPressed();
 
-		const bool CtrlPressed = Input()->KeyIsPressed(KEY_LCTRL);
-
 		// fill the completion buffer
 		if(!m_CompletionUsed)
 		{
@@ -364,70 +303,27 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 
 		if(!m_CompletionUsed && m_aCompletionBuffer[0] != '/')
 		{
-			const int LocalId = GameClient()->m_aLocalIds[0];
-			const vec2 CamCenter = GameClient()->m_Camera.m_Center;
-
 			// Create the completion list of player names through which the player can iterate
 			const char *PlayerName, *FoundInput;
 			m_PlayerCompletionListLength = 0;
-
-			if(CtrlPressed)
+			for(auto &PlayerInfo : GameClient()->m_Snap.m_apInfoByName)
 			{
-				struct SPair
+				if(PlayerInfo)
 				{
-					float m_Dist;
-					int m_ClientId;
-				};
-				std::vector<SPair> List;
-				List.reserve(MAX_CLIENTS);
-				for(auto &pInfo : GameClient()->m_Snap.m_apInfoByName)
-				{
-					if(!pInfo)
-						continue;
-
-					const int ClientId = pInfo->m_ClientId;
-					if(ClientId == LocalId)
-						continue;
-
-					const vec2 Pos = GameClient()->m_aClients[ClientId].m_Predicted.m_Pos;
-					const float Dx = Pos.x - CamCenter.x;
-					const float Dy = Pos.y - CamCenter.y;
-					List.push_back({Dx * Dx + Dy * Dy, ClientId});
-				}
-				std::sort(List.begin(), List.end(), [](const SPair &a, const SPair &b) { return a.m_Dist < b.m_Dist; });
-				for(const auto &Entry : List)
-				{
-					auto &Completion = m_aPlayerCompletionList[m_PlayerCompletionListLength];
-					Completion.m_ClientId = Entry.m_ClientId;
-					Completion.m_Score = int(Entry.m_Dist);
-					++m_PlayerCompletionListLength;
-
-					if(m_PlayerCompletionListLength >= MAX_CLIENTS)
-						break;
-				}
-			}
-			else
-			{
-				for(auto &pInfo : GameClient()->m_Snap.m_apInfoByName)
-				{
-					if(!pInfo)
-						continue;
-
-					PlayerName = GameClient()->m_aClients[pInfo->m_ClientId].m_aName;
+					PlayerName = GameClient()->m_aClients[PlayerInfo->m_ClientId].m_aName;
 					FoundInput = str_utf8_find_nocase(PlayerName, m_aCompletionBuffer);
 					if(FoundInput != nullptr)
 					{
-						m_aPlayerCompletionList[m_PlayerCompletionListLength].m_ClientId = pInfo->m_ClientId;
+						m_aPlayerCompletionList[m_PlayerCompletionListLength].m_ClientId = PlayerInfo->m_ClientId;
 						// The score for suggesting a player name is determined by the distance of the search input to the beginning of the player name
 						m_aPlayerCompletionList[m_PlayerCompletionListLength].m_Score = (int)(FoundInput - PlayerName);
-						++m_PlayerCompletionListLength;
+						m_PlayerCompletionListLength++;
 					}
 				}
 			}
-
 			std::stable_sort(m_aPlayerCompletionList, m_aPlayerCompletionList + m_PlayerCompletionListLength,
-				[](const CRateablePlayer &p1, const CRateablePlayer &p2) -> bool {
-					return p1.m_Score < p2.m_Score;
+				[](const CRateablePlayer &Player1, const CRateablePlayer &Player2) -> bool {
+					return Player1.m_Score < Player2.m_Score;
 				});
 		}
 
@@ -749,7 +645,7 @@ void CChat::StoreSave(const char *pText)
 	str_truncate(aSaveCode, sizeof(aSaveCode), pMid + 13, (pOn ? pOn : pEnd) - pMid - 13);
 
 	char aTimestamp[20];
-	str_timestamp_format(aTimestamp, sizeof(aTimestamp), FORMAT_SPACE);
+	str_timestamp_format(aTimestamp, sizeof(aTimestamp), TimestampFormat::SPACE);
 
 	const bool SavesFileExists = Storage()->FileExists(SAVES_FILE, IStorage::TYPE_SAVE);
 	IOHANDLE File = Storage()->OpenFile(SAVES_FILE, IOFLAG_APPEND, IStorage::TYPE_SAVE);
@@ -759,7 +655,7 @@ void CChat::StoreSave(const char *pText)
 	const char *apColumns[4] = {
 		aTimestamp,
 		aName,
-		Client()->GetCurrentMap(),
+		GameClient()->Map()->BaseName(),
 		aSaveCode,
 	};
 
@@ -1143,7 +1039,6 @@ void CChat::OnPrepareLines(float y)
 			}
 		}
 
-
 		// get the y offset (calculate it if we haven't done that yet)
 		if(Line.m_aYOffset[OffsetType] < 0.0f)
 		{
@@ -1469,22 +1364,6 @@ void CChat::OnRender()
 				}
 			}
 		}
-
-		if(g_Config.m_UcTranslate)
-		{
-			CTextCursor NoticeCursor;
-			const float NoticeFontSize = ScaledFontSize * 0.6f;
-			NoticeCursor.SetPosition(vec2(x, y - NoticeFontSize - NoticeFontSize * 0.25f));
-			NoticeCursor.m_FontSize = NoticeFontSize;
-			NoticeCursor.m_LineWidth = InputCursor.m_LineWidth;
-			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.7f);
-			
-			char aBuf[128];
-			str_format(aBuf, sizeof(aBuf), Localize("Auto-translation is disabled. (%s)"), g_Config.m_UcTranslateTarget);
-
-			TextRender()->TextEx(&NoticeCursor, aBuf);
-			TextRender()->TextColor(TextRender()->DefaultTextColor());
-		}
 	}
 
 #if defined(CONF_VIDEORECORDER)
@@ -1590,80 +1469,9 @@ void CChat::EnsureCoherentWidth() const
 
 void CChat::SendChat(int Team, const char *pLine)
 {
-	SendChatImpl(Team, pLine, true);
-}
-
-void CChat::SendChatTranslated(int Team, const char *pLine)
-{
-	SendChatImpl(Team, pLine, false);
-}
-
-void CChat::SendChatImpl(int Team, const char *pLine, bool AllowTranslation)
-{
 	// don't send empty messages
 	if(*str_utf8_skip_whitespaces(pLine) == '\0')
 		return;
-
-	if(AllowTranslation && GameClient()->m_UcTranslator.IsEnabled())
-	{
-		bool Handled = false;
-		if(pLine[0] != '/')
-		{
-			Handled = GameClient()->m_UcTranslator.TranslateAsync(Team, pLine, this);
-		}
-		else
-		{
-			const auto TryWhisperTranslate = [&](const char *pAfterCommand) -> bool {
-				while(*pAfterCommand == ' ' || *pAfterCommand == '\t')
-					++pAfterCommand;
-				if(*pAfterCommand == '\0')
-					return false;
-				const char *pNameEnd = pAfterCommand;
-				while(*pNameEnd && *pNameEnd != ' ')
-					++pNameEnd;
-				if(!*pNameEnd)
-					return false;
-				const char *pMsg = pNameEnd;
-				while(*pMsg == ' ')
-					++pMsg;
-				if(*pMsg == '\0')
-					return false;
-				std::string Prefix;
-				Prefix.assign(pLine, pMsg - pLine);
-				return GameClient()->m_UcTranslator.TranslateAsyncWithPrefix(Team, pMsg, this, std::move(Prefix));
-			};
-
-			const auto TryConverseTranslate = [&](const char *pAfterCommand) -> bool {
-				while(*pAfterCommand == ' ' || *pAfterCommand == '\t')
-					++pAfterCommand;
-				if(*pAfterCommand == '\0')
-					return false;
-				std::string Prefix;
-				Prefix.assign(pLine, pAfterCommand - pLine);
-				return GameClient()->m_UcTranslator.TranslateAsyncWithPrefix(Team, pAfterCommand, this, std::move(Prefix));
-			};
-
-			const char *pLineStart = pLine;
-			if(str_comp_nocase_num(pLineStart, "/w", 2) == 0 && (pLineStart[2] == ' ' || pLineStart[2] == '\t'))
-			{
-				Handled = TryWhisperTranslate(pLineStart + 2);
-			}
-			else if(str_comp_nocase_num(pLineStart, "/whisper", 8) == 0 && (pLineStart[8] == ' ' || pLineStart[8] == '\t'))
-			{
-				Handled = TryWhisperTranslate(pLineStart + 8);
-			}
-			else if(str_comp_nocase_num(pLineStart, "/c", 2) == 0 && (pLineStart[2] == ' ' || pLineStart[2] == '\t'))
-			{
-				Handled = TryConverseTranslate(pLineStart + 2);
-			}
-			else if(str_comp_nocase_num(pLineStart, "/converse", 9) == 0 && (pLineStart[9] == ' ' || pLineStart[9] == '\t'))
-			{
-				Handled = TryConverseTranslate(pLineStart + 9);
-			}
-		}
-		if(Handled)
-			return;
-	}
 
 	m_LastChatSend = time();
 

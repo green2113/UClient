@@ -5,36 +5,22 @@
 
 // ddnet
 #define GAME_NAME "DDNet"
-#define DDNET_VERSION_NUMBER 19070
+#define DDNET_VERSION_NUMBER 19080
 extern const char *GIT_SHORTREV_HASH;
 #ifndef GAME_RELEASE_VERSION_INTERNAL
-#define GAME_RELEASE_VERSION_INTERNAL 19.7
+#define GAME_RELEASE_VERSION_INTERNAL 19.8
 #endif
 #define GAME_RELEASE_VERSION STRINGIFY(GAME_RELEASE_VERSION_INTERNAL)
 
-// uclient
-#ifndef UCLIENT_VERSION
-#define UCLIENT_VERSION "1.5.0"
-#endif
-#ifndef UCLIENT_NAME
-#define UCLIENT_NAME "UClient"
-#endif
-#ifndef UCLIENT_INFO_URL
-#define UCLIENT_INFO_URL "https://ddnet.under1111.com/update/info.json"
-#endif
-#ifndef UCLIENT_UPDATE_BASE_URL
-#define UCLIENT_UPDATE_BASE_URL "https://ddnet.under1111.com/update"
-#endif
-
 // teeworlds
 #define CLIENT_VERSION7 0x0705
-#define GAME_VERSION "0.1, " GAME_RELEASE_VERSION
+#define GAME_VERSION "0.6.4, " GAME_RELEASE_VERSION
 #define GAME_NETVERSION "0.6 626fce9a778df4d4"
 #define GAME_NETVERSION7 "0.7 802f1be60a05665f"
 
 // TClient
 #ifndef TCLIENT_VERSION
-#define TCLIENT_VERSION "10.7.0"
+#define TCLIENT_VERSION "10.8.7"
 #endif
 
 // custom
