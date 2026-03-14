@@ -162,6 +162,13 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	char aUcVersion[64];
 	str_format(aUcVersion, sizeof(aUcVersion), "%s %s", UCLIENT_NAME, UCLIENT_VERSION);
 	Ui()->DoLabel(&UcVersion, aUcVersion, 12.0f, TEXTALIGN_MR);
+
+	CUIRect TClientVersion;
+	MainView.HSplitTop(15.0f, &TClientVersion, &MainView);
+	TClientVersion.VSplitRight(40.0f, &TClientVersion, nullptr);
+	char aTBuf[64];
+	str_format(aTBuf, sizeof(aTBuf), CLIENT_NAME " %s", CLIENT_RELEASE_VERSION);
+	Ui()->DoLabel(&TClientVersion, aTBuf, 14.0f, TEXTALIGN_MR);
 #if defined(CONF_AUTOUPDATE)
 	CUIRect UpdateToDateText;
 	MainView.HSplitTop(15.0f, &UpdateToDateText, nullptr);
