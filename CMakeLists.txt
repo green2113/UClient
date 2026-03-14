@@ -3321,7 +3321,7 @@ if((GTEST_FOUND OR DOWNLOAD_GTEST) AND SERVER)
     unix_test.cpp
     uuid_test.cpp
     vmath_test.cpp
-    windows_test.cpp
+    shell_execute_test.cpp
   )
   set(TESTS_EXTRA
     src/engine/client/blocklist_driver.cpp
