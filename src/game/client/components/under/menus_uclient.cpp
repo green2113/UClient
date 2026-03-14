@@ -3,6 +3,7 @@
 #include <base/system.h>
 
 #include <engine/graphics.h>
+#include <engine/font_icons.h>
 #include <engine/shared/config.h>
 #include <engine/shared/linereader.h>
 #include <engine/shared/localization.h>
@@ -35,7 +36,7 @@ enum
 	NUMBER_OF_UCLIENT_TABS
 };
 
-using namespace FontIcons;
+using namespace FontIcon;
 
 const float EditBoxFontSize = 12.0f;
 const float LineSize = 20.0f;

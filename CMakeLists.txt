@@ -2649,6 +2649,17 @@ if(CLIENT)
     components/tclient/translate.h
     components/tclient/warlist.cpp
     components/tclient/warlist.h
+    components/under/autochat.cpp
+    components/under/autochat.h
+    components/under/autoreply.cpp
+    components/under/autoreply.h
+    components/under/chatskin.cpp
+    components/under/chatskin.h
+    components/under/menus_uclient.cpp
+    components/under/skinswitch.cpp
+    components/under/skinswitch.h
+    components/under/translator.cpp
+    components/under/translator.h
     components/tooltips.cpp
     components/tooltips.h
     components/touch_controls.cpp

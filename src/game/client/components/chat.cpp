@@ -1364,6 +1364,21 @@ void CChat::OnRender()
 				}
 			}
 		}
+
+		if(g_Config.m_UcTranslate)
+		{
+			CTextCursor NoticeCursor;
+			const float NoticeFontSize = ScaledFontSize * 0.6f;
+			NoticeCursor.SetPosition(vec2(x, y - NoticeFontSize - NoticeFontSize * 0.25f));
+			NoticeCursor.m_FontSize = NoticeFontSize;
+			NoticeCursor.m_LineWidth = InputCursor.m_LineWidth;
+			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.7f);
+
+			char aBuf[128];
+			str_format(aBuf, sizeof(aBuf), Localize("Auto-translation is enabled. (%s)"), g_Config.m_UcTranslateTarget);
+			TextRender()->TextEx(&NoticeCursor, aBuf);
+			TextRender()->TextColor(TextRender()->DefaultTextColor());
+		}
 	}
 
 #if defined(CONF_VIDEORECORDER)
@@ -1473,6 +1488,12 @@ void CChat::SendChat(int Team, const char *pLine)
 	if(*str_utf8_skip_whitespaces(pLine) == '\0')
 		return;
 
+	if(GameClient()->m_UcTranslator.IsEnabled() && pLine[0] != '/')
+	{
+		if(GameClient()->m_UcTranslator.TranslateAsync(Team, pLine, this))
+			return;
+	}
+
 	m_LastChatSend = time();
 
 	if(GameClient()->Client()->IsSixup())
@@ -1486,6 +1507,29 @@ void CChat::SendChat(int Team, const char *pLine)
 	}
 
 	// send chat message
+	CNetMsg_Cl_Say Msg;
+	Msg.m_Team = Team;
+	Msg.m_pMessage = pLine;
+	Client()->SendPackMsgActive(&Msg, MSGFLAG_VITAL);
+}
+
+void CChat::SendChatTranslated(int Team, const char *pLine)
+{
+	if(*str_utf8_skip_whitespaces(pLine) == '\0')
+		return;
+
+	m_LastChatSend = time();
+
+	if(GameClient()->Client()->IsSixup())
+	{
+		protocol7::CNetMsg_Cl_Say Msg7;
+		Msg7.m_Mode = Team == 1 ? protocol7::CHAT_TEAM : protocol7::CHAT_ALL;
+		Msg7.m_Target = -1;
+		Msg7.m_pMessage = pLine;
+		Client()->SendPackMsgActive(&Msg7, MSGFLAG_VITAL, true);
+		return;
+	}
+
 	CNetMsg_Cl_Say Msg;
 	Msg.m_Team = Team;
 	Msg.m_pMessage = pLine;

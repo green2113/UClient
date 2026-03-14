@@ -218,6 +218,7 @@ public:
 	// @param Team MODE_ALL=0 MODE_TEAM=1
 	// @param pLine the chat message
 	void SendChat(int Team, const char *pLine);
+	void SendChatTranslated(int Team, const char *pLine);
 
 	// Sends a chat message to the server.
 	//

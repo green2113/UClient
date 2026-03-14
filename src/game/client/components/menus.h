@@ -693,6 +693,7 @@ public:
 		SETTINGS_TCLIENT,
 		SETTINGS_PROFILES,
 		SETTINGS_CONFIGS,
+		SETTINGS_UCLIENT,
 
 		SETTINGS_LENGTH,
 	};
@@ -853,6 +854,8 @@ private:
 	void RenderSettingsTClientStatusBar(CUIRect MainView);
 	void RenderSettingsTClientProfiles(CUIRect MainView);
 	void RenderSettingsTClientConfigs(CUIRect MainView);
+	void RenderSettingsUClient(CUIRect MainView);
+	void RenderSettingsUClientConfig(CUIRect MainView);
 	void RenderTeeCute(const CAnimState *pAnim, const CTeeRenderInfo *pInfo, int Emote, vec2 Dir, vec2 Pos, bool CuteEyes, float Alpha = 1.0f);
 
 	const CWarType *m_pRemoveWarType = nullptr;

@@ -142,4 +142,6 @@ tags
 *.zip
 /build
 
+node_modules/
+
 !steam_api.dll

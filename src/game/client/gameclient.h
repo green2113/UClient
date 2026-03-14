@@ -85,6 +85,11 @@
 #include "components/tclient/warlist.h"
 #include "components/tooltips.h"
 #include "components/touch_controls.h"
+#include "components/under/autochat.h"
+#include "components/under/autoreply.h"
+#include "components/under/chatskin.h"
+#include "components/under/skinswitch.h"
+#include "components/under/translator.h"
 #include "components/voting.h"
 
 #include <memory>
@@ -234,6 +239,11 @@ public:
 	CCustomCommunities m_CustomCommunities;
 	CMovingTiles m_MovingTilesBackground = CMovingTiles{ false };
 	CMovingTiles m_MovingTilesForeground = CMovingTiles{ true };
+	CAutochat m_AutoChat;
+	CAutoreply m_AutoReply;
+	CChatskin m_ChatSkin;
+	CSkinswitch m_SkinSwitch;
+	CUcTranslator m_UcTranslator;
 
 private:
 	std::vector<class CComponent *> m_vpAll;
@@ -289,6 +299,7 @@ private:
 	static void ConTeam(IConsole::IResult *pResult, void *pUserData);
 	static void ConKill(IConsole::IResult *pResult, void *pUserData);
 	static void ConReadyChange7(IConsole::IResult *pResult, void *pUserData);
+	static void ConUcSwitchMySkin(IConsole::IResult *pResult, void *pUserData);
 
 	static void ConchainLanguageUpdate(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainSpecialInfoupdate(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
