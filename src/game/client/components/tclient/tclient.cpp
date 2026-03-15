@@ -613,7 +613,12 @@ void CTClient::FinishTClientInfo()
 {
 	json_value *pJson = m_pTClientInfoTask->ResultJson();
 	if(!pJson)
+	{
+		m_aVersionStr[0] = '0';
+		m_aVersionStr[1] = '\0';
+		m_FetchedTClientInfo = true;
 		return;
+	}
 	const json_value &Json = *pJson;
 	const json_value &CurrentVersion = Json["version"];
 
@@ -632,8 +637,13 @@ void CTClient::FinishTClientInfo()
 			m_aVersionStr[0] = '0';
 			m_aVersionStr[1] = '\0';
 		}
-		m_FetchedTClientInfo = true;
 	}
+	else
+	{
+		m_aVersionStr[0] = '0';
+		m_aVersionStr[1] = '\0';
+	}
+	m_FetchedTClientInfo = true;
 
 	json_value_free(pJson);
 }
