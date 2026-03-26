@@ -7,6 +7,7 @@
 #include <base/time.h>
 
 #include <engine/editor.h>
+#include <engine/console.h>
 #include <engine/external/regex.h>
 #include <engine/graphics.h>
 #include <engine/keys.h>
@@ -25,6 +26,8 @@
 #include <game/client/components/tclient/colored_parts.h>
 #include <game/client/gameclient.h>
 #include <game/localization.h>
+
+#include <vector>
 
 char CChat::ms_aDisplayText[MAX_LINE_LENGTH] = "";
 
@@ -286,6 +289,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	if(Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_TAB)
 	{
 		const bool ShiftPressed = Input()->ShiftIsPressed();
+		const bool CtrlPressed = Input()->KeyIsPressed(KEY_LCTRL) || Input()->KeyIsPressed(KEY_RCTRL);
 
 		// fill the completion buffer
 		if(!m_CompletionUsed)
@@ -303,24 +307,70 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 
 		if(!m_CompletionUsed && m_aCompletionBuffer[0] != '/')
 		{
-			// Create the completion list of player names through which the player can iterate
-			const char *PlayerName, *FoundInput;
 			m_PlayerCompletionListLength = 0;
-			for(auto &PlayerInfo : GameClient()->m_Snap.m_apInfoByName)
+
+			if(CtrlPressed)
 			{
-				if(PlayerInfo)
+				const int LocalId = GameClient()->m_aLocalIds[0];
+				const vec2 CamCenter = GameClient()->m_Camera.m_Center;
+
+				struct SPair
 				{
-					PlayerName = GameClient()->m_aClients[PlayerInfo->m_ClientId].m_aName;
-					FoundInput = str_utf8_find_nocase(PlayerName, m_aCompletionBuffer);
-					if(FoundInput != nullptr)
+					float m_Dist;
+					int m_ClientId;
+				};
+
+				std::vector<SPair> vList;
+				vList.reserve(MAX_CLIENTS);
+				for(auto &pInfo : GameClient()->m_Snap.m_apInfoByName)
+				{
+					if(!pInfo)
+						continue;
+
+					const int ClientId = pInfo->m_ClientId;
+					if(ClientId == LocalId)
+						continue;
+
+					const vec2 Pos = GameClient()->m_aClients[ClientId].m_Predicted.m_Pos;
+					const float Dx = Pos.x - CamCenter.x;
+					const float Dy = Pos.y - CamCenter.y;
+					vList.push_back({Dx * Dx + Dy * Dy, ClientId});
+				}
+
+				std::sort(vList.begin(), vList.end(), [](const SPair &a, const SPair &b) { return a.m_Dist < b.m_Dist; });
+				for(const auto &Entry : vList)
+				{
+					auto &Completion = m_aPlayerCompletionList[m_PlayerCompletionListLength];
+					Completion.m_ClientId = Entry.m_ClientId;
+					Completion.m_Score = (int)Entry.m_Dist;
+					++m_PlayerCompletionListLength;
+
+					if(m_PlayerCompletionListLength >= MAX_CLIENTS)
+						break;
+				}
+			}
+			else
+			{
+				// Create the completion list of player names through which the player can iterate
+				const char *PlayerName;
+				const char *FoundInput;
+				for(auto &PlayerInfo : GameClient()->m_Snap.m_apInfoByName)
+				{
+					if(PlayerInfo)
 					{
-						m_aPlayerCompletionList[m_PlayerCompletionListLength].m_ClientId = PlayerInfo->m_ClientId;
-						// The score for suggesting a player name is determined by the distance of the search input to the beginning of the player name
-						m_aPlayerCompletionList[m_PlayerCompletionListLength].m_Score = (int)(FoundInput - PlayerName);
-						m_PlayerCompletionListLength++;
+						PlayerName = GameClient()->m_aClients[PlayerInfo->m_ClientId].m_aName;
+						FoundInput = str_utf8_find_nocase(PlayerName, m_aCompletionBuffer);
+						if(FoundInput != nullptr)
+						{
+							m_aPlayerCompletionList[m_PlayerCompletionListLength].m_ClientId = PlayerInfo->m_ClientId;
+							// The score for suggesting a player name is determined by the distance of the search input to the beginning of the player name
+							m_aPlayerCompletionList[m_PlayerCompletionListLength].m_Score = (int)(FoundInput - PlayerName);
+							m_PlayerCompletionListLength++;
+						}
 					}
 				}
 			}
+
 			std::stable_sort(m_aPlayerCompletionList, m_aPlayerCompletionList + m_PlayerCompletionListLength,
 				[](const CRateablePlayer &Player1, const CRateablePlayer &Player2) -> bool {
 					return Player1.m_Score < Player2.m_Score;
@@ -1543,7 +1593,12 @@ void CChat::SendChatQueued(const char *pLine)
 
 	bool AddEntry = false;
 
-	if(m_LastChatSend + time_freq() < time())
+	if(pLine[0] == '/' && pLine[1] != '\0')
+	{
+		Console()->ExecuteLineFlag(pLine + 1, CFGFLAG_CHAT, IConsole::CLIENT_ID_GAME);
+		AddEntry = true;
+	}
+	else if(m_LastChatSend + time_freq() < time())
 	{
 		SendChat(m_Mode == MODE_ALL ? 0 : 1, pLine);
 		AddEntry = true;
