@@ -1595,15 +1595,27 @@ void CChat::SendChatQueued(const char *pLine)
 
 	if(pLine[0] == '/' && pLine[1] != '\0')
 	{
-		Console()->ExecuteLineFlag(pLine + 1, CFGFLAG_CHAT, IConsole::CLIENT_ID_GAME);
-		AddEntry = true;
+		char aCommand[IConsole::TEMPCMD_NAME_LENGTH];
+		int CommandLength = 0;
+		const char *pCommand = pLine + 1;
+		while(*pCommand != '\0' && *pCommand != ' ' && CommandLength < (int)sizeof(aCommand) - 1)
+		{
+			aCommand[CommandLength++] = *pCommand++;
+		}
+		aCommand[CommandLength] = '\0';
+
+		if(CommandLength > 0 && Console()->GetCommandInfo(aCommand, CFGFLAG_CHAT, false) != nullptr)
+		{
+			Console()->ExecuteLineFlag(pLine + 1, CFGFLAG_CHAT, IConsole::CLIENT_ID_GAME);
+			AddEntry = true;
+		}
 	}
-	else if(m_LastChatSend + time_freq() < time())
+	if(!AddEntry && m_LastChatSend + time_freq() < time())
 	{
 		SendChat(m_Mode == MODE_ALL ? 0 : 1, pLine);
 		AddEntry = true;
 	}
-	else if(m_PendingChatCounter < 3)
+	else if(!AddEntry && m_PendingChatCounter < 3)
 	{
 		++m_PendingChatCounter;
 		AddEntry = true;

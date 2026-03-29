@@ -875,7 +875,8 @@ void CGameClient::OnRender()
 	for(auto &pComponent : m_vpAll)
 		pComponent->OnRender();
 
-	if(g_Config.m_ClShowhud && g_Config.m_TcUpdateNotice && Client()->State() == IClient::STATE_ONLINE && m_TClient.NeedUpdate() && !m_Menus.IsActive())
+	const bool UClientUpdateAvailable = m_TClient.m_FetchedTClientInfo && m_TClient.NeedUpdate();
+	if(g_Config.m_ClShowhud && g_Config.m_TcUpdateNotice && Client()->State() == IClient::STATE_ONLINE && UClientUpdateAvailable && !m_Menus.IsActive())
 	{
 		Ui()->MapScreen();
 		const CUIRect *pScreen = Ui()->Screen();
