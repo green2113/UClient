@@ -22,39 +22,39 @@ else()
   message(FATAL_ERROR "Couldn't parse version from src/game/version.h")
 endif()
 
-# <TClient>
+# <UClient>
 
 set(DATA_VERSION_FILE "${CMAKE_BINARY_DIR}/data/data_version.txt")
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/data")
 
 file(WRITE "${DATA_VERSION_FILE}" "DDNet ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}\n")
 
-file(STRINGS src/game/version.h TCLIENT_VERSION_LINE
+file(STRINGS src/game/version.h UCLIENT_VERSION_LINE
   LIMIT_COUNT 1
-  REGEX "^#define TCLIENT_VERSION "
+  REGEX "^#define UCLIENT_VERSION "
 )
 
-if(TCLIENT_VERSION_LINE MATCHES "([0-9]+)\\.([0-9]+)\\.([0-9]+)")
-  set(TCLIENT_VERSION_MAJOR ${CMAKE_MATCH_1})
-  set(TCLIENT_VERSION_MINOR ${CMAKE_MATCH_2})
-  set(TCLIENT_VERSION_PATCH ${CMAKE_MATCH_3})
-elseif(TCLIENT_VERSION_LINE MATCHES "([0-9]+)\\.([0-9]+)")
-  set(TCLIENT_VERSION_MAJOR ${CMAKE_MATCH_1})
-  set(TCLIENT_VERSION_MINOR ${CMAKE_MATCH_2})
-  set(TCLIENT_VERSION_PATCH "0")
+if(UCLIENT_VERSION_LINE MATCHES "([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+  set(UCLIENT_VERSION_MAJOR ${CMAKE_MATCH_1})
+  set(UCLIENT_VERSION_MINOR ${CMAKE_MATCH_2})
+  set(UCLIENT_VERSION_PATCH ${CMAKE_MATCH_3})
+elseif(UCLIENT_VERSION_LINE MATCHES "([0-9]+)\\.([0-9]+)")
+  set(UCLIENT_VERSION_MAJOR ${CMAKE_MATCH_1})
+  set(UCLIENT_VERSION_MINOR ${CMAKE_MATCH_2})
+  set(UCLIENT_VERSION_PATCH "0")
 else()
-  message(FATAL_ERROR "Couldn't parse TClient version from src/game/version.h")
+  message(FATAL_ERROR "Couldn't parse UClient version from src/game/version.h")
 endif()
 
-if(TCLIENT_VERSION_PATCH STREQUAL "0")
-  project(TClient VERSION ${TCLIENT_VERSION_MAJOR}.${TCLIENT_VERSION_MINOR})
+if(UCLIENT_VERSION_PATCH STREQUAL "0")
+  project(UClient VERSION ${UCLIENT_VERSION_MAJOR}.${UCLIENT_VERSION_MINOR})
 else()
-  project(TClient VERSION ${TCLIENT_VERSION_MAJOR}.${TCLIENT_VERSION_MINOR}.${TCLIENT_VERSION_PATCH})
+  project(UClient VERSION ${UCLIENT_VERSION_MAJOR}.${UCLIENT_VERSION_MINOR}.${UCLIENT_VERSION_PATCH})
 endif()
 
-file(APPEND "${DATA_VERSION_FILE}" "TClient ${TCLIENT_VERSION_MAJOR}.${TCLIENT_VERSION_MINOR}.${TCLIENT_VERSION_PATCH}\n")
+file(APPEND "${DATA_VERSION_FILE}" "UClient ${UCLIENT_VERSION_MAJOR}.${UCLIENT_VERSION_MINOR}.${UCLIENT_VERSION_PATCH}\n")
 
-# </TClient>
+# </UClient>
 
 # <BestClient>
 
@@ -2746,6 +2746,7 @@ if(CLIENT)
   set_src(GAME_CLIENT GLOB_RECURSE src/game/client
     animstate.cpp
     animstate.h
+    bc_ui_animations.h
     component.cpp
     component.h
     components/background.cpp
@@ -2758,6 +2759,7 @@ if(CLIENT)
     components/bestclient/afterimage.h
     components/bestclient/bestclient.cpp
     components/bestclient/bestclient.h
+    components/bestclient/version.h
     components/bestclient/clientindicator/browser_cache.cpp
     components/bestclient/clientindicator/browser_cache.h
     components/bestclient/clientindicator/client_indicator.cpp
@@ -2788,6 +2790,7 @@ if(CLIENT)
     components/bestclient/visualizer/smoother.cpp
     components/bestclient/visualizer/smoother.h
     components/bestclient/visualizer/source.h
+    components/bestclient/visualizer/source_priority.h
     components/bestclient/visualizer/source_passive.cpp
     components/bestclient/visualizer/source_pulse.cpp
     components/bestclient/visualizer/source_wasapi.cpp
@@ -2799,6 +2802,7 @@ if(CLIENT)
     components/bestclient/r_trail.cpp
     components/bestclient/r_trail.h
     components/bestclient/voice/protocol.h
+    components/bestclient/voice/server.cpp
     components/bestclient/voice/voice.cpp
     components/bestclient/voice/voice.h
     components/bestclient/menus_bestclient.cpp
@@ -3591,7 +3595,31 @@ list(APPEND CHECKSUM_SRC
   ${PROJECT_SOURCE_DIR}/CMakeLists.txt
   ${PROJECT_SOURCE_DIR}/scripts/checksum.py
 )
-configure_file(cmake/checksummed_extra.txt checksummed_extra.txt)
+set(CHECKSUM_EXTRA_CONTENT
+  "${CMAKE_VERSION}\n"
+  "${PROJECT_VERSION}\n"
+  "${TARGET_BITS}\n"
+  "${TARGET_CPU_ARCHITECTURE}\n"
+  "${CMAKE_SYSTEM_NAME}\n"
+  "${WEBSOCKETS}\n"
+  "${MYSQL}\n"
+  "${AUTOUPDATE}\n"
+  "${INFORM_UPDATE}\n"
+  "${VIDEORECORDER}\n"
+  "${UPNP}\n"
+  "${ANTIBOT}\n"
+  "${HEADLESS_CLIENT}\n"
+  "${CLIENT}\n"
+  "${SERVER}\n"
+  "${TOOLS}\n"
+  "${STEAM}\n"
+  "${DISCORD}\n"
+  "${DISCORD_DYNAMIC}\n"
+  "${DEV}\n"
+  "${CMAKE_BUILD_TYPE}\n"
+  "${CMAKE_CXX_COMPILER_ID}\n"
+)
+file(WRITE ${PROJECT_BINARY_DIR}/checksummed_extra.txt "${CHECKSUM_EXTRA_CONTENT}")
 string(REPLACE ";" "\n" CHECKSUM_SRC_FILE "${CHECKSUM_SRC}")
 file(WRITE ${PROJECT_BINARY_DIR}/checksummed_files.txt ${CHECKSUM_SRC_FILE})
 
@@ -3806,7 +3834,7 @@ function(regex_inverted VAR)
   set(${VAR} ${RESULT} PARENT_SCOPE)
 endfunction()
 
-set(CPACK_PACKAGE_NAME "bestclient")
+set(CPACK_PACKAGE_NAME "uclient")
 set(CPACK_GENERATOR TGZ TXZ)
 set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
 if(TARGET_OS STREQUAL "mac")
@@ -3824,10 +3852,10 @@ if(CPACK_STRIP_FILES AND (NOT CMAKE_STRIP OR CMAKE_STRIP STREQUAL "CMAKE_STRIP-N
 endif()
 set(CPACK_COMPONENTS_ALL portable)
 set(CPACK_SOURCE_GENERATOR ZIP TGZ TBZ2 TXZ)
-set(CPACK_PACKAGE_VERSION_MAJOR ${BESTCLIENT_VERSION_MAJOR})
-set(CPACK_PACKAGE_VERSION_MINOR ${BESTCLIENT_VERSION_MINOR})
-set(CPACK_PACKAGE_VERSION_PATCH ${BESTCLIENT_VERSION_PATCH})
-set(CPACK_PACKAGE_VERSION ${BESTCLIENT_PACKAGE_VERSION})
+set(CPACK_PACKAGE_VERSION_MAJOR ${UCLIENT_VERSION_MAJOR})
+set(CPACK_PACKAGE_VERSION_MINOR ${UCLIENT_VERSION_MINOR})
+set(CPACK_PACKAGE_VERSION_PATCH ${UCLIENT_VERSION_PATCH})
+set(CPACK_PACKAGE_VERSION ${UCLIENT_VERSION_MAJOR}.${UCLIENT_VERSION_MINOR}.${UCLIENT_VERSION_PATCH})
 set(CPACK_SYSTEM_NAME ${CMAKE_SYSTEM_NAME})
 
 if(TARGET_OS AND TARGET_BITS)

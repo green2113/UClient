@@ -20,9 +20,14 @@ extern const char *GIT_SHORTREV_HASH;
 #define GAME_NETVERSION "0.6 626fce9a778df4d4"
 #define GAME_NETVERSION7 "0.7 802f1be60a05665f"
 
-// TClient
+// UClient
+#ifndef UCLIENT_VERSION
+#define UCLIENT_VERSION "2.0.0"
+#endif
+
+// TClient compatibility
 #ifndef TCLIENT_VERSION
-#define TCLIENT_VERSION "10.8.7"
+#define TCLIENT_VERSION "2.0.0"
 #endif
 
 // BestClient
@@ -31,7 +36,7 @@ extern const char *GIT_SHORTREV_HASH;
 #endif
 
 // custom
-#define CLIENT_NAME "BestClient"
-#define CLIENT_RELEASE_VERSION TCLIENT_VERSION
+#define CLIENT_NAME "UClient"
+#define CLIENT_RELEASE_VERSION UCLIENT_VERSION
 
 #endif

@@ -3388,7 +3388,7 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 			str_copy(aBuf, Localize("Updating…"));
 		else if(State == IUpdater::NEED_RESTART)
 		{
-			str_copy(aBuf, Localize("BestClient Client updated!"));
+			str_copy(aBuf, Localize("UClient updated!"));
 			m_NeedRestartUpdate = true;
 		}
 		else

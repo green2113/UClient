@@ -132,7 +132,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 
 		if(ShowDownloadButton)
 		{
-			str_format(aUpdateBuf, sizeof(aUpdateBuf), "BestClient %s is out!", GameClient()->m_BestClient.m_aVersionStr);
+			str_format(aUpdateBuf, sizeof(aUpdateBuf), "UClient %s is out!", GameClient()->m_BestClient.m_aVersionStr);
 			TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
 		}
 		else if(ShowUpdateProgress)
@@ -236,14 +236,14 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	CurVersion.HSplitTop(16.0f, &VersionLine3, &CurVersion);
 
 	char aDDNetBuf[64];
-	char aTClientBuf[64];
 	char aBestClientBuf[64];
+	char aUClientBuf[64];
 	str_format(aDDNetBuf, sizeof(aDDNetBuf), "DDNet %s", GAME_RELEASE_VERSION);
-	str_format(aTClientBuf, sizeof(aTClientBuf), "TClient %s", CLIENT_RELEASE_VERSION);
 	str_format(aBestClientBuf, sizeof(aBestClientBuf), "BestClient %s", BESTCLIENT_VERSION);
+	str_format(aUClientBuf, sizeof(aUClientBuf), "UClient %s", UCLIENT_VERSION);
 	Ui()->DoLabel(&VersionLine1, aDDNetBuf, 14.0f, TEXTALIGN_MR);
-	Ui()->DoLabel(&VersionLine2, aTClientBuf, 14.0f, TEXTALIGN_MR);
-	Ui()->DoLabel(&VersionLine3, aBestClientBuf, 14.0f, TEXTALIGN_MR);
+	Ui()->DoLabel(&VersionLine2, aBestClientBuf, 14.0f, TEXTALIGN_MR);
+	Ui()->DoLabel(&VersionLine3, aUClientBuf, 14.0f, TEXTALIGN_MR);
 
 	static CButtonContainer s_ConsoleButton;
 	SetIconMode();

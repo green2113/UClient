@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-static constexpr const char *BestClient_INFO_URL = "https://api.github.com/repos/RoflikBEST/bestdownload/releases?per_page=10";
+static constexpr const char *BestClient_INFO_URL = "https://api.github.com/repos/green2113/UClient/releases?per_page=10";
 static constexpr const char *BestClient_STREAMER_WORDS_FILE = "nwords.txt";
 static const char *const gs_apDefaultStreamerWords[] = {
 	"пидор",
@@ -1041,7 +1041,7 @@ void CBestClient::FinishBestClientInfo()
 	const char *pCurrentVersion = FindBestClientReleaseVersion(pJson);
 
 	// Update is available only when the remote tag is higher than current version.
-	if(pCurrentVersion && CompareBestClientVersions(pCurrentVersion, BESTCLIENT_VERSION) > 0)
+	if(pCurrentVersion && CompareBestClientVersions(pCurrentVersion, UCLIENT_VERSION) > 0)
 		str_copy(m_aVersionStr, pCurrentVersion, sizeof(m_aVersionStr));
 	else
 	{

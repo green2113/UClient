@@ -18,9 +18,9 @@
 #include <string>
 #include <vector>
 
-static constexpr const char *GITHUB_RELEASES_URL = "https://api.github.com/repos/RoflikBEST/bestdownload/releases?per_page=10";
-static constexpr const char *UPDATE_ARCHIVE_PATH = "update/bestclient-release.zip";
-static constexpr const char *UPDATE_SCRIPT_PATH = "update/apply_bestclient_update.ps1";
+static constexpr const char *GITHUB_RELEASES_URL = "https://api.github.com/repos/green2113/UClient/releases?per_page=10";
+static constexpr const char *UPDATE_ARCHIVE_PATH = "update/uclient-release.zip";
+static constexpr const char *UPDATE_SCRIPT_PATH = "update/apply_uclient_update.ps1";
 
 static void BuildGitHubReleasesUrl(char *pBuf, int BufSize)
 {
@@ -119,7 +119,7 @@ static int ScoreArchiveAsset(const char *pAssetName)
 
 	if(Lower.find("windows") != std::string::npos || Lower.find("win") != std::string::npos)
 		Score += 20;
-	if(Lower.find("bestclient") != std::string::npos)
+	if(Lower.find("uclient") != std::string::npos)
 		Score += 10;
 
 #if defined(CONF_ARCH_AMD64)
@@ -351,7 +351,7 @@ bool CUpdater::ParseReleaseTask()
 	}
 
 	// Update is available only when the remote tag is higher than current version.
-	if(CompareVersionStrings(m_aLatestVersion, BESTCLIENT_VERSION) <= 0)
+	if(CompareVersionStrings(m_aLatestVersion, UCLIENT_VERSION) <= 0)
 	{
 		SetStatus("No new release found");
 		SetCurrentState(IUpdater::CLEAN);
