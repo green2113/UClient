@@ -2299,15 +2299,15 @@ void CChat::RenderPendingUploadPreview(float X, float Y, float Width, float Heig
 	float PreviewW = 0.0f;
 	float PreviewH = 0.0f;
 	PendingUploadPreviewSize(Width, FontSize, PreviewW, PreviewH);
-	const float Border = maximum(1.0f, FontSize * 0.08f);
-	const float Rounding = maximum(4.0f, FontSize * 0.5f);
-	const float InnerX = X + Border;
-	const float InnerY = Y + Border;
-	const float InnerW = maximum(1.0f, PreviewW - Border * 2.0f);
-	const float InnerH = maximum(1.0f, PreviewH - Border * 2.0f);
-	const float InnerRounding = maximum(0.0f, Rounding - Border);
+	const float PreviewBorder = maximum(0.35f, FontSize * 0.025f);
+	const float PreviewRounding = minimum(minimum(PreviewW, PreviewH) / 2.0f, maximum(4.0f, FontSize * 0.55f));
+	const float InnerX = X + PreviewBorder;
+	const float InnerY = Y + PreviewBorder;
+	const float InnerW = maximum(1.0f, PreviewW - PreviewBorder * 2.0f);
+	const float InnerH = maximum(1.0f, PreviewH - PreviewBorder * 2.0f);
+	const float InnerRounding = maximum(0.0f, PreviewRounding - PreviewBorder);
 
-	Graphics()->DrawRect(X, Y, PreviewW, PreviewH, ColorRGBA(1.0f, 1.0f, 1.0f, 0.35f), IGraphics::CORNER_ALL, Rounding);
+	Graphics()->DrawRect(X, Y, PreviewW, PreviewH, ColorRGBA(1.0f, 1.0f, 1.0f, 0.35f), IGraphics::CORNER_ALL, PreviewRounding);
 	Graphics()->DrawRect(InnerX, InnerY, InnerW, InnerH, ColorRGBA(0.07f, 0.07f, 0.07f, 0.85f), IGraphics::CORNER_ALL, InnerRounding);
 
 	Graphics()->WrapClamp();
@@ -2435,8 +2435,69 @@ void CChat::UpdateLinkPolicy()
 	m_LinkPolicyCache.m_pRequest.reset();
 }
 
+namespace
+{
+	bool IsDirectDownloadPath(std::string_view Url)
+	{
+		// Extract the path component from URL
+		std::string_view Remainder;
+		if(Url.rfind("https://", 0) == 0)
+			Remainder = Url.substr(8);
+		else if(Url.rfind("http://", 0) == 0)
+			Remainder = Url.substr(7);
+		else
+			return false;
+
+		// Skip authority (host:port)
+		const size_t AuthorityEnd = Remainder.find_first_of("/?#");
+		if(AuthorityEnd == std::string_view::npos)
+			return false;
+
+		std::string_view Path = Remainder.substr(AuthorityEnd);
+		std::string_view Host = Remainder.substr(0, AuthorityEnd);
+
+		// Check for direct download patterns
+		const char *apDangerousPatterns[] = {
+			"/releases/download/", // GitHub
+			"/archive/",           // GitHub archive
+			"/raw/",               // Raw content
+			"/files/download/",    // File hosting
+			"/download/",          // Generic download
+		};
+
+		for(const char *pPattern : apDangerousPatterns)
+		{
+			if(Path.find(pPattern) != std::string_view::npos)
+				return true;
+		}
+
+		// Check for known download domains
+		const char *apDownloadDomains[] = {
+			"sourceforge.net",
+			"mediafire.com",
+			"mega.nz",
+			"dropbox.com",
+			"1drv.ms",
+			"gofile.io",
+			"wetransfer.com",
+		};
+
+		for(const char *pDomain : apDownloadDomains)
+		{
+			if(Host.find(pDomain) != std::string_view::npos)
+				return true;
+		}
+
+		return false;
+	}
+} // namespace
+
 CChat::ELinkSafety CChat::ClassifyLink(const std::string &Link) const
 {
+	// Check for direct download links first (block even from safe domains)
+	if(IsDirectDownloadPath(Link))
+		return ELinkSafety::DANGER;
+
 	std::string NormalizedHost;
 	bool Https = false;
 	bool Http = false;
@@ -2454,6 +2515,8 @@ CChat::ELinkSafety CChat::ClassifyLink(const std::string &Link) const
 void CChat::HandleLinkActivation(const std::string &Link, bool AlwaysConfirm)
 {
 	const ELinkSafety Safety = ClassifyLink(Link);
+	const bool IsDownloadLink = IsDirectDownloadPath(Link);
+
 	if(AlwaysConfirm)
 	{
 		if(Safety == ELinkSafety::SAFE)
@@ -2464,8 +2527,16 @@ void CChat::HandleLinkActivation(const std::string &Link, bool AlwaysConfirm)
 		if(Safety == ELinkSafety::DANGER)
 		{
 			char aDangerMessage[512];
-			str_format(aDangerMessage, sizeof(aDangerMessage), Localize("This website was classified as dangerous because of inappropriate content such as hacks or cheats.\n\n%s"), Link.c_str());
-			GameClient()->m_Menus.PopupConfirmOpenLink(Localize("Unsafe link"), aDangerMessage, Localize("Open anyway"), Localize("Do not open"), Link.c_str(), true);
+			if(IsDownloadLink)
+			{
+				str_format(aDangerMessage, sizeof(aDangerMessage), Localize("The link you are trying to access may trigger an unwanted file download. Please verify before proceeding.\n\n%s"), Link.c_str());
+				GameClient()->m_Menus.PopupConfirmOpenLink(Localize("Download Warning"), aDangerMessage, Localize("Download"), Localize("Cancel"), Link.c_str(), true);
+			}
+			else
+			{
+				str_format(aDangerMessage, sizeof(aDangerMessage), Localize("This website was classified as dangerous because of inappropriate content such as hacks or cheats.\n\n%s"), Link.c_str());
+				GameClient()->m_Menus.PopupConfirmOpenLink(Localize("Unsafe link"), aDangerMessage, Localize("Open anyway"), Localize("Do not open"), Link.c_str(), true);
+			}
 			return;
 		}
 		if(Safety == ELinkSafety::WARNING)
@@ -2485,8 +2556,16 @@ void CChat::HandleLinkActivation(const std::string &Link, bool AlwaysConfirm)
 	case ELinkSafety::DANGER:
 	{
 		char aMessage[512];
-		str_format(aMessage, sizeof(aMessage), Localize("This website was classified as dangerous because of inappropriate content such as hacks or cheats.\n\n%s"), Link.c_str());
-		GameClient()->m_Menus.PopupConfirmOpenLink(Localize("Unsafe link"), aMessage, Localize("Open anyway"), Localize("Do not open"), Link.c_str(), true);
+		if(IsDownloadLink)
+		{
+			str_format(aMessage, sizeof(aMessage), Localize("The link you are trying to access may trigger an unwanted file download. Please verify before proceeding.\n\n%s"), Link.c_str());
+			GameClient()->m_Menus.PopupConfirmOpenLink(Localize("Download Warning"), aMessage, Localize("Download"), Localize("Cancel"), Link.c_str(), true);
+		}
+		else
+		{
+			str_format(aMessage, sizeof(aMessage), Localize("This website was classified as dangerous because of inappropriate content such as hacks or cheats.\n\n%s"), Link.c_str());
+			GameClient()->m_Menus.PopupConfirmOpenLink(Localize("Unsafe link"), aMessage, Localize("Open anyway"), Localize("Do not open"), Link.c_str(), true);
+		}
 		break;
 	}
 	case ELinkSafety::WARNING:

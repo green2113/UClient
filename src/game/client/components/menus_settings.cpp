@@ -2402,6 +2402,8 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		static CButtonContainer s_ClientMessageColor;
 		// TClient
 		DoLine_ColorPicker(&s_ClientMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, aBuf, &g_Config.m_ClMessageClientColor, ColorRGBA(0.5f, 0.78f, 1.0f), true, &g_Config.m_TcShowChatClient);
+		static CButtonContainer s_LinkMessageColor;
+		DoLine_ColorPicker(&s_LinkMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, Localize("Link message"), &g_Config.m_ClMessageLinkColor, ColorRGBA(81.0f / 255.0f, 150.0f / 255.0f, 234.0f / 255.0f));
 
 		// ***** Chat Preview ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Preview"), HeadlineFontSize,
@@ -2418,6 +2420,7 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		ColorRGBA FriendColor = color_cast<ColorRGBA, ColorHSLA>(ColorHSLA(g_Config.m_ClMessageFriendColor));
 		ColorRGBA NormalColor = color_cast<ColorRGBA, ColorHSLA>(ColorHSLA(g_Config.m_ClMessageColor));
 		ColorRGBA ClientColor = color_cast<ColorRGBA, ColorHSLA>(ColorHSLA(g_Config.m_ClMessageClientColor));
+		ColorRGBA LinkColor = color_cast<ColorRGBA, ColorHSLA>(ColorHSLA(g_Config.m_ClMessageLinkColor));
 		ColorRGBA DefaultNameColor(0.8f, 0.8f, 0.8f, 1.0f);
 
 		const float RealFontSize = Chat.FontSize() * 2;
@@ -2448,10 +2451,15 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			bool m_Friend;
 			bool m_Player;
 			bool m_Client;
+			bool m_Link;
 			bool m_Highlighted;
 			int m_TimesRepeated;
 
 			CTeeRenderInfo m_RenderInfo;
+			std::string m_LinkUrl;
+			STextBoundingBox m_LinkBounds;
+			float m_LinkFontSize;
+			bool m_LinkBoundsValid;
 		};
 
 		static std::vector<SPreviewLine> s_vLines;
@@ -2461,7 +2469,8 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			FLAG_TEAM = 1 << 0,
 			FLAG_FRIEND = 1 << 1,
 			FLAG_HIGHLIGHT = 1 << 2,
-			FLAG_CLIENT = 1 << 3
+			FLAG_CLIENT = 1 << 3,
+			FLAG_LINK = 1 << 4
 		};
 		enum
 		{
@@ -2470,9 +2479,10 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			PREVIEW_TEAM,
 			PREVIEW_FRIEND,
 			PREVIEW_SPAMMER,
-			PREVIEW_CLIENT
+			PREVIEW_CLIENT,
+			PREVIEW_LINK
 		};
-		auto &&SetPreviewLine = [](int Index, int ClientId, const char *pName, const char *pText, int Flag, int Repeats) {
+		auto &&SetPreviewLine = [](int Index, int ClientId, const char *pName, const char *pText, int Flag, int Repeats, const char *pLink = nullptr) {
 			SPreviewLine *pLine;
 			if((int)s_vLines.size() <= Index)
 			{
@@ -2489,9 +2499,12 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			pLine->m_Player = ClientId >= 0;
 			pLine->m_Highlighted = Flag & FLAG_HIGHLIGHT;
 			pLine->m_Client = Flag & FLAG_CLIENT;
+			pLine->m_Link = Flag & FLAG_LINK;
 			pLine->m_TimesRepeated = Repeats;
+			pLine->m_LinkBoundsValid = false;
 			str_copy(pLine->m_aName, pName);
 			str_copy(pLine->m_aText, pText);
+			pLine->m_LinkUrl = pLink ? pLink : "";
 		};
 		auto &&SetLineSkin = [RealTeeSize](int Index, const CSkin *pSkin) {
 			if(Index >= (int)s_vLines.size())
@@ -2574,7 +2587,9 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 
 			if(Render)
 			{
-				if(Line.m_Highlighted)
+				if(Line.m_Link)
+					TextRender()->TextColor(LinkColor);
+				else if(Line.m_Highlighted)
 					TextRender()->TextColor(HighlightedColor);
 				else if(Line.m_Team)
 					TextRender()->TextColor(TeamColor);
@@ -2582,7 +2597,26 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 					TextRender()->TextColor(NormalColor);
 			}
 
-			TextRender()->TextEx(&AppendCursor, Line.m_aText, -1);
+			// Store link text position and size for interactivity
+			if(Line.m_Link && LineIndex < (int)s_vLines.size())
+			{
+				const float TextStartX = AppendCursor.m_X;
+				const float TextStartY = AppendCursor.m_Y;
+				TextRender()->TextEx(&AppendCursor, Line.m_aText, -1);
+				if(Render)
+				{
+					s_vLines[LineIndex].m_LinkBounds.m_X = TextStartX;
+					s_vLines[LineIndex].m_LinkBounds.m_Y = TextStartY;
+					s_vLines[LineIndex].m_LinkBounds.m_W = AppendCursor.m_X - TextStartX;
+					s_vLines[LineIndex].m_LinkBounds.m_H = RealFontSize;
+					s_vLines[LineIndex].m_LinkFontSize = RealFontSize;
+					s_vLines[LineIndex].m_LinkBoundsValid = true;
+				}
+			}
+			else
+			{
+				TextRender()->TextEx(&AppendCursor, Line.m_aText, -1);
+			}
 			if(Render)
 				TextRender()->TextColor(TextRender()->DefaultTextColor());
 
@@ -2603,6 +2637,7 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			SetPreviewLine(PREVIEW_FRIEND, 8, "Friend", "Hello there", FLAG_FRIEND, 0);
 			SetPreviewLine(PREVIEW_SPAMMER, 9, "Spammer", "Hey fools, I'm spamming here!", 0, 5);
 			SetPreviewLine(PREVIEW_CLIENT, -1, "— ", "Echo command executed", FLAG_CLIENT, 0);
+			SetPreviewLine(PREVIEW_LINK, -1, "Link: ", "https://ddnet.org/", FLAG_LINK, 0, "https://ddnet.org/");
 		}
 
 		SetLineSkin(1, GameClient()->m_Skins.Find("pinky"));
@@ -2651,6 +2686,8 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 				TempY += RenderMessageBackground(PREVIEW_CLIENT);
 			}
 
+			TempY += RenderMessageBackground(PREVIEW_LINK);
+
 			Graphics()->QuadsEnd();
 		}
 
@@ -2690,7 +2727,32 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		// Client
 		if(g_Config.m_TcShowChatClient)
 		{
-			RenderPreview(PREVIEW_CLIENT, X, Y);
+			Y += RenderPreview(PREVIEW_CLIENT, X, Y).y;
+		}
+
+		// Link example (always visible so color/preview changes are easy to verify)
+		RenderPreview(PREVIEW_LINK, X, Y);
+
+		// Handle link preview interaction
+		if((int)s_vLines.size() > PREVIEW_LINK && s_vLines[PREVIEW_LINK].m_LinkBoundsValid && !s_vLines[PREVIEW_LINK].m_LinkUrl.empty())
+		{
+			const STextBoundingBox &LinkBounds = s_vLines[PREVIEW_LINK].m_LinkBounds;
+			vec2 MousePos = Ui()->MousePos();
+			const bool MouseOverLink = MousePos.x >= LinkBounds.m_X && MousePos.x <= LinkBounds.m_X + LinkBounds.m_W &&
+									  MousePos.y >= LinkBounds.m_Y && MousePos.y <= LinkBounds.m_Y + LinkBounds.m_H;
+			if(MouseOverLink)
+			{
+				// Draw underline for link hover
+				Graphics()->TextureClear();
+				Graphics()->SetColor(LinkColor);
+				Graphics()->LinesBegin();
+				const float UnderlineY = LinkBounds.m_Y + LinkBounds.m_H + 0.35f;
+				IGraphics::CLineItem UnderlineLine(LinkBounds.m_X, UnderlineY, LinkBounds.m_X + LinkBounds.m_W, UnderlineY);
+				Graphics()->LinesDraw(&UnderlineLine, 1);
+				Graphics()->LinesEnd();
+				if(Ui()->MouseButton(0))
+					Client()->ViewLink(s_vLines[PREVIEW_LINK].m_LinkUrl.c_str());
+			}
 		}
 
 		TextRender()->TextColor(TextRender()->DefaultTextColor());
