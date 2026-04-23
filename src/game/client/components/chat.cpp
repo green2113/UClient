@@ -1817,6 +1817,9 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 			pChat->AddHistoryEntry(Team, aLine);
 			if(!pChat->GameClient()->m_Translate.TryTranslateOutgoingChat(Team, aLine))
 				pChat->SendChatPayloadQueued(Team, aLine);
+			
+			// Properly close scroll region before closing popup
+			pChat->m_GiphyScrollRegion.End();
 			return CUi::POPUP_CLOSE_CURRENT;
 		}
 	}
