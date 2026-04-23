@@ -649,15 +649,37 @@ void CIrcChat::NetworkMain()
 
 	char aTarget[320];
 	str_format(aTarget, sizeof(aTarget), "%s:%d", g_Config.m_BcIrcHost, g_Config.m_BcIrcPort);
-	BIO *pBio = BIO_new_ssl_connect(pCtx);
-	if(!pBio)
+	SSL *pSsl = SSL_new(pCtx);
+	if(!pSsl)
 	{
+		SSL_CTX_free(pCtx);
+		QueueEvent("{\"type\":\"client.error\",\"message\":\"Could not create TLS session.\"}");
+		return;
+	}
+	SSL_set_connect_state(pSsl);
+	SSL_set_tlsext_host_name(pSsl, g_Config.m_BcIrcHost);
+
+	BIO *pConnectBio = BIO_new_connect(aTarget);
+	if(!pConnectBio)
+	{
+		SSL_free(pSsl);
+		SSL_CTX_free(pCtx);
+		QueueEvent("{\"type\":\"client.error\",\"message\":\"Could not create TCP BIO.\"}");
+		return;
+	}
+	BIO_set_nbio(pConnectBio, 1);
+
+	BIO *pSslBio = BIO_new(BIO_f_ssl());
+	if(!pSslBio)
+	{
+		BIO_free_all(pConnectBio);
+		SSL_free(pSsl);
 		SSL_CTX_free(pCtx);
 		QueueEvent("{\"type\":\"client.error\",\"message\":\"Could not create TLS BIO.\"}");
 		return;
 	}
-	BIO_set_conn_hostname(pBio, aTarget);
-	BIO_set_nbio(pBio, 1);
+	BIO_set_ssl(pSslBio, pSsl, BIO_CLOSE);
+	BIO *pBio = BIO_push(pSslBio, pConnectBio);
 
 	while(!m_StopThread && BIO_do_connect(pBio) <= 0)
 	{
@@ -671,15 +693,30 @@ void CIrcChat::NetworkMain()
 		std::this_thread::sleep_for(20ms);
 	}
 
-	SSL *pSsl = nullptr;
-	BIO_get_ssl(pBio, &pSsl);
-	if(!pSsl)
+	while(!m_StopThread)
+	{
+		const int HandshakeResult = SSL_do_handshake(pSsl);
+		if(HandshakeResult == 1)
+			break;
+
+		const int Error = SSL_get_error(pSsl, HandshakeResult);
+		if(Error != SSL_ERROR_WANT_READ && Error != SSL_ERROR_WANT_WRITE)
+		{
+			BIO_free_all(pBio);
+			SSL_CTX_free(pCtx);
+			QueueEvent("{\"type\":\"client.error\",\"message\":\"TLS handshake failed.\"}");
+			return;
+		}
+		std::this_thread::sleep_for(20ms);
+	}
+
+	if(m_StopThread)
 	{
 		BIO_free_all(pBio);
 		SSL_CTX_free(pCtx);
-		QueueEvent("{\"type\":\"client.error\",\"message\":\"TLS handshake failed.\"}");
 		return;
 	}
+
 	X509 *pCert = SSL_get_peer_certificate(pSsl);
 	if(!pCert)
 	{

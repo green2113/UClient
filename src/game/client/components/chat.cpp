@@ -7229,6 +7229,9 @@ void CChat::OnRender()
 				if(HoveredLinkIndex >= 0)
 				{
 					m_HoveredLink = Line.m_vLinks[HoveredLinkIndex];
+					STextBoundingBox HoveredLinkUnion{};
+					bool HasHoveredLinkUnion = false;
+					const void *pHoveredLinkTooltipId = &Line.m_vLinks[HoveredLinkIndex];
 					for(size_t LinkIndex = 0; LinkIndex < NumLinks; ++LinkIndex)
 					{
 						if(Line.m_vLinks[LinkIndex] != m_HoveredLink)
@@ -7237,9 +7240,22 @@ void CChat::OnRender()
 						Bounds.m_X += LinkOffsetX;
 						Bounds.MoveBy(vec2(0.0f, TextOffsetY));
 						Bounds = TightenLinkHoverBounds(Bounds, Line.m_vLinkFontSizes[LinkIndex]);
+						HoveredLinkUnion = HasHoveredLinkUnion ? UnionLinkBounds(HoveredLinkUnion, Bounds) : Bounds;
+						HasHoveredLinkUnion = true;
 						const float UnderlineY = Bounds.Bottom() + 0.35f;
 						const float UnderlineOffsetX = 0.35f;
 						vUnderlineSegments.emplace_back(Bounds.m_X + UnderlineOffsetX, UnderlineY, Bounds.Right() + UnderlineOffsetX, UnderlineY);
+					}
+
+					if(HasHoveredLinkUnion)
+					{
+						const CUIRect LinkTooltipRect = {
+							HoveredLinkUnion.m_X / UiToChatScale.x,
+							HoveredLinkUnion.m_Y / UiToChatScale.y,
+							HoveredLinkUnion.m_W / UiToChatScale.x,
+							HoveredLinkUnion.m_H / UiToChatScale.y};
+						Ui()->SetHotItem(pHoveredLinkTooltipId);
+						GameClient()->m_Tooltips.DoToolTip(pHoveredLinkTooltipId, &LinkTooltipRect, m_HoveredLink.c_str(), 280.0f);
 					}
 				}
 
