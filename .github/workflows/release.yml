@@ -17,6 +17,10 @@ on:
         description: 'Run ID of the build workflow to download artifacts from'
         required: true
 
+permissions:
+  contents: write
+  actions: read
+
 jobs:
   release:
     runs-on: ubuntu-latest
