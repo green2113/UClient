@@ -1811,12 +1811,17 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 		if(Clicked)
 		{
 			char aLine[MAX_LINE_LENGTH];
-			str_copy(aLine, pResult->m_Url.c_str(), sizeof(aLine));
+			const char *pInputText = pChat->m_Input.GetString();
+			if(pInputText[0] != '\0')
+				str_format(aLine, sizeof(aLine), "%s %s", pInputText, pResult->m_Url.c_str());
+			else
+				str_copy(aLine, pResult->m_Url.c_str(), sizeof(aLine));
 
 			const int Team = pChat->m_Mode == MODE_TEAM ? 1 : 0;
 			pChat->AddHistoryEntry(Team, aLine);
 			if(!pChat->GameClient()->m_Translate.TryTranslateOutgoingChat(Team, aLine))
 				pChat->SendChatPayloadQueued(Team, aLine);
+			pChat->DisableMode();
 			
 			// Properly close scroll region before closing popup
 			pChat->m_GiphyScrollRegion.End();
@@ -2343,9 +2348,36 @@ void CChat::RenderPendingUploadPreview(float X, float Y, float Width, float Heig
 		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.95f);
 		TextRender()->TextEx(&CloseCursor, "x");
 		TextRender()->TextColor(TextRender()->DefaultTextColor());
+
 	}
 	else
 		m_PendingUploadCloseRectValid = false;
+
+	// Edit button
+	const float EditButtonSize = FontSize * 0.85f;
+	const float EditButtonPadding = FontSize * 0.2f;
+	m_ImageEditorEditButtonRect.m_X = X + EditButtonPadding;
+	m_ImageEditorEditButtonRect.m_Y = Y + EditButtonPadding;
+	m_ImageEditorEditButtonRect.m_W = EditButtonSize;
+	m_ImageEditorEditButtonRect.m_H = EditButtonSize;
+	m_ImageEditorEditButtonRectValid = true;
+
+	const bool EditHovered = MousePos.x >= m_ImageEditorEditButtonRect.m_X && MousePos.x <= m_ImageEditorEditButtonRect.m_X + m_ImageEditorEditButtonRect.m_W &&
+		MousePos.y >= m_ImageEditorEditButtonRect.m_Y && MousePos.y <= m_ImageEditorEditButtonRect.m_Y + m_ImageEditorEditButtonRect.m_H;
+	const ColorRGBA EditBgColor = EditHovered ? ColorRGBA(0.12f, 0.48f, 0.75f, 0.92f) : ColorRGBA(0.0f, 0.0f, 0.0f, 0.68f);
+	const float EditRounding = maximum(2.0f, m_ImageEditorEditButtonRect.m_W * 0.35f);
+	Graphics()->DrawRect(m_ImageEditorEditButtonRect.m_X, m_ImageEditorEditButtonRect.m_Y, m_ImageEditorEditButtonRect.m_W, m_ImageEditorEditButtonRect.m_H, EditBgColor, IGraphics::CORNER_ALL, EditRounding);
+
+	const float EditLabelFontSize = maximum(8.0f, m_ImageEditorEditButtonRect.m_H * 0.65f);
+	const float EditLabelWidth = TextRender()->TextWidth(EditLabelFontSize, "✎", -1, -1);
+	CTextCursor EditCursor;
+	EditCursor.SetPosition(vec2(
+		m_ImageEditorEditButtonRect.m_X + maximum(0.0f, (m_ImageEditorEditButtonRect.m_W - EditLabelWidth) / 2.0f),
+		m_ImageEditorEditButtonRect.m_Y + maximum(0.0f, (m_ImageEditorEditButtonRect.m_H - EditLabelFontSize) / 2.0f)));
+	EditCursor.m_FontSize = EditLabelFontSize;
+	TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.95f);
+	TextRender()->TextEx(&EditCursor, "✎");
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
 
 	const bool Uploading = m_PendingUploadImage.m_State == EPendingUploadState::UPLOADING;
 	const bool Failed = m_PendingUploadImage.m_State == EPendingUploadState::FAILED;
@@ -2366,6 +2398,417 @@ void CChat::RenderPendingUploadPreview(float X, float Y, float Width, float Heig
 	}
 
 	(void)Height;
+}
+
+void CChat::OpenImageEditor()
+{
+	if(!m_PendingUploadImage.HasImage())
+		return;
+
+	m_ImageEditor.m_Active = true;
+	m_ImageEditor.m_vStrokes.clear();
+	m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
+	m_ImageEditor.m_CurrentTool = EImageEditorTool::PEN;
+	m_ImageEditor.m_PenColor = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
+	m_ImageEditor.m_PenThickness = 3.0f;
+	m_ImageEditor.m_IsDrawing = false;
+	m_ImageEditor.m_MouseDownLastFrame = false;
+}
+
+void CChat::CloseImageEditor()
+{
+	m_ImageEditor.m_Active = false;
+	m_ImageEditor.m_vStrokes.clear();
+	m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
+	m_ImageEditor.m_IsDrawing = false;
+	m_ImageEditor.m_MouseDownLastFrame = false;
+}
+
+void CChat::SaveImageEditorChanges()
+{
+	if(!m_ImageEditor.m_Active)
+		return;
+
+	// TODO: Rasterize edited strokes into the upload texture/PNG.
+	CloseImageEditor();
+}
+
+void CChat::UpdateImageEditorInput()
+{
+	if(!m_ImageEditor.m_Active || !m_PendingUploadImage.HasImage())
+		return;
+
+	const float ScreenW = maximum(1.0f, (float)Graphics()->WindowWidth());
+	const float ScreenH = maximum(1.0f, (float)Graphics()->WindowHeight());
+	const vec2 WindowSize(ScreenW, ScreenH);
+	const vec2 UiMousePos = Ui()->UpdatedMousePos() * vec2(Ui()->Screen()->w, Ui()->Screen()->h) / WindowSize;
+	const vec2 MousePos(UiMousePos.x * ScreenW / Ui()->Screen()->w, UiMousePos.y * ScreenH / Ui()->Screen()->h);
+	const bool MouseDown = Input()->KeyIsPressed(KEY_MOUSE_1);
+	const bool MouseClicked = MouseDown && !m_ImageEditor.m_MouseDownLastFrame;
+	const bool MouseReleased = !MouseDown && m_ImageEditor.m_MouseDownLastFrame;
+
+	const ColorRGBA aPalette[6] = {
+		ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f),
+		ColorRGBA(0.12f, 0.12f, 0.12f, 1.0f),
+		ColorRGBA(0.96f, 0.31f, 0.27f, 1.0f),
+		ColorRGBA(0.23f, 0.74f, 0.36f, 1.0f),
+		ColorRGBA(0.21f, 0.56f, 0.94f, 1.0f),
+		ColorRGBA(0.99f, 0.81f, 0.20f, 1.0f),
+	};
+
+	auto InRect = [&](const SRenderRect &Rect) {
+		return MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
+			MousePos.y >= Rect.m_Y && MousePos.y <= Rect.m_Y + Rect.m_H;
+	};
+
+	if(MouseClicked && InRect(m_ImageEditorPenButtonRect))
+		m_ImageEditor.m_CurrentTool = EImageEditorTool::PEN;
+
+	if(MouseClicked && InRect(m_ImageEditorEraserButtonRect))
+		m_ImageEditor.m_CurrentTool = EImageEditorTool::ERASER;
+
+	if(MouseClicked && InRect(m_ImageEditorClearButtonRect))
+	{
+		m_ImageEditor.m_vStrokes.clear();
+		m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
+		m_ImageEditor.m_IsDrawing = false;
+	}
+
+	if(MouseClicked && InRect(m_ImageEditorSaveButtonRect))
+	{
+		SaveImageEditorChanges();
+		m_ImageEditor.m_MouseDownLastFrame = MouseDown;
+		return;
+	}
+
+	if(MouseClicked && InRect(m_ImageEditorCancelButtonRect))
+	{
+		CloseImageEditor();
+		m_ImageEditor.m_MouseDownLastFrame = MouseDown;
+		return;
+	}
+
+	for(size_t i = 0; i < std::size(m_aImageEditorColorRects); ++i)
+	{
+		if(MouseClicked && InRect(m_aImageEditorColorRects[i]))
+			m_ImageEditor.m_PenColor = aPalette[i];
+	}
+
+	if(MouseClicked && InRect(m_ImageEditorThicknessMinusRect))
+		m_ImageEditor.m_PenThickness = maximum(1.0f, m_ImageEditor.m_PenThickness - 1.0f);
+
+	if(MouseClicked && InRect(m_ImageEditorThicknessPlusRect))
+		m_ImageEditor.m_PenThickness = minimum(14.0f, m_ImageEditor.m_PenThickness + 1.0f);
+
+	if(MouseDown && InRect(m_ImageEditorThicknessRect))
+	{
+		const float T = std::clamp((MousePos.x - m_ImageEditorThicknessRect.m_X) / maximum(1.0f, m_ImageEditorThicknessRect.m_W), 0.0f, 1.0f);
+		m_ImageEditor.m_PenThickness = 1.0f + T * 13.0f;
+	}
+
+	const bool MouseOverCanvas = InRect(m_ImageEditorCanvasRect);
+
+	if(m_ImageEditor.m_CurrentTool == EImageEditorTool::PEN)
+	{
+		if(MouseDown && MouseOverCanvas)
+		{
+			if(!m_ImageEditor.m_IsDrawing)
+			{
+				m_ImageEditor.m_IsDrawing = true;
+				m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
+				m_ImageEditor.m_CurrentStroke.m_Color = m_ImageEditor.m_PenColor;
+				m_ImageEditor.m_CurrentStroke.m_Thickness = m_ImageEditor.m_PenThickness;
+				m_ImageEditor.m_CurrentStroke.m_Tool = EImageEditorTool::PEN;
+				m_ImageEditor.m_CurrentStroke.m_vPoints.push_back(MousePos);
+			}
+
+			if(m_ImageEditor.m_CurrentStroke.m_vPoints.empty())
+				m_ImageEditor.m_CurrentStroke.m_vPoints.push_back(MousePos);
+			else
+			{
+				const vec2 Prev = m_ImageEditor.m_CurrentStroke.m_vPoints.back();
+				const vec2 Delta = MousePos - Prev;
+				if(Delta.x * Delta.x + Delta.y * Delta.y >= 0.8f)
+					m_ImageEditor.m_CurrentStroke.m_vPoints.push_back(MousePos);
+			}
+		}
+		else if(m_ImageEditor.m_IsDrawing && (MouseReleased || !MouseDown))
+		{
+			if(m_ImageEditor.m_CurrentStroke.m_vPoints.size() > 1)
+				m_ImageEditor.m_vStrokes.push_back(m_ImageEditor.m_CurrentStroke);
+
+			m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
+			m_ImageEditor.m_IsDrawing = false;
+		}
+	}
+	else
+	{
+		if(m_ImageEditor.m_IsDrawing && MouseReleased)
+		{
+			m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
+			m_ImageEditor.m_IsDrawing = false;
+		}
+
+		if(MouseDown && MouseOverCanvas)
+		{
+			const float EraseRadius = maximum(7.0f, m_ImageEditor.m_PenThickness * 2.0f);
+			const float RadiusSq = EraseRadius * EraseRadius;
+
+			for(auto It = m_ImageEditor.m_vStrokes.rbegin(); It != m_ImageEditor.m_vStrokes.rend(); ++It)
+			{
+				bool Hit = false;
+				for(const vec2 &Point : It->m_vPoints)
+				{
+					const vec2 Delta = Point - MousePos;
+					if(Delta.x * Delta.x + Delta.y * Delta.y <= RadiusSq)
+					{
+						Hit = true;
+						break;
+					}
+				}
+
+				if(Hit)
+				{
+					m_ImageEditor.m_vStrokes.erase(std::next(It).base());
+					break;
+				}
+			}
+		}
+	}
+
+	m_ImageEditor.m_MouseDownLastFrame = MouseDown;
+}
+
+void CChat::RenderImageEditor()
+{
+	if(!m_ImageEditor.m_Active || !m_PendingUploadImage.HasImage())
+		return;
+
+	const float ScreenW = maximum(1.0f, (float)Graphics()->WindowWidth());
+	const float ScreenH = maximum(1.0f, (float)Graphics()->WindowHeight());
+	const vec2 WindowSize(ScreenW, ScreenH);
+	const vec2 UiMousePos = Ui()->UpdatedMousePos() * vec2(Ui()->Screen()->w, Ui()->Screen()->h) / WindowSize;
+	const vec2 MousePos(UiMousePos.x * ScreenW / Ui()->Screen()->w, UiMousePos.y * ScreenH / Ui()->Screen()->h);
+
+	const ColorRGBA aPalette[6] = {
+		ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f),
+		ColorRGBA(0.12f, 0.12f, 0.12f, 1.0f),
+		ColorRGBA(0.96f, 0.31f, 0.27f, 1.0f),
+		ColorRGBA(0.23f, 0.74f, 0.36f, 1.0f),
+		ColorRGBA(0.21f, 0.56f, 0.94f, 1.0f),
+		ColorRGBA(0.99f, 0.81f, 0.20f, 1.0f),
+	};
+
+	auto InRect = [&](const SRenderRect &Rect) {
+		return MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
+			MousePos.y >= Rect.m_Y && MousePos.y <= Rect.m_Y + Rect.m_H;
+	};
+
+	const float WindowMargin = 18.0f;
+	const float WindowX = WindowMargin;
+	const float WindowY = WindowMargin;
+	const float WindowW = ScreenW - WindowMargin * 2.0f;
+	const float WindowH = ScreenH - WindowMargin * 2.0f;
+	const float ToolbarH = 88.0f;
+	const float ToolbarPad = 16.0f;
+	const float ButtonH = ToolbarH - ToolbarPad * 2.0f;
+
+	m_ImageEditorPenButtonRect = {WindowX + 18.0f, WindowY + ToolbarPad, 100.0f, ButtonH};
+	m_ImageEditorEraserButtonRect = {m_ImageEditorPenButtonRect.m_X + m_ImageEditorPenButtonRect.m_W + 10.0f, WindowY + ToolbarPad, 124.0f, ButtonH};
+	m_ImageEditorClearButtonRect = {m_ImageEditorEraserButtonRect.m_X + m_ImageEditorEraserButtonRect.m_W + 10.0f, WindowY + ToolbarPad, 96.0f, ButtonH};
+	m_ImageEditorCancelButtonRect = {WindowX + WindowW - 226.0f, WindowY + ToolbarPad, 96.0f, ButtonH};
+	m_ImageEditorSaveButtonRect = {WindowX + WindowW - 118.0f, WindowY + ToolbarPad, 100.0f, ButtonH};
+
+	const float ColorStartX = m_ImageEditorClearButtonRect.m_X + m_ImageEditorClearButtonRect.m_W + 28.0f;
+	const float ColorSize = 28.0f;
+	for(size_t i = 0; i < std::size(m_aImageEditorColorRects); ++i)
+	{
+		m_aImageEditorColorRects[i] = {ColorStartX + (float)i * (ColorSize + 8.0f), WindowY + 16.0f, ColorSize, ColorSize};
+	}
+
+	m_ImageEditorThicknessMinusRect = {ColorStartX, WindowY + 54.0f, 26.0f, 14.0f};
+	m_ImageEditorThicknessRect = {m_ImageEditorThicknessMinusRect.m_X + 32.0f, WindowY + 54.0f, 156.0f, 14.0f};
+	m_ImageEditorThicknessPlusRect = {m_ImageEditorThicknessRect.m_X + m_ImageEditorThicknessRect.m_W + 6.0f, WindowY + 54.0f, 26.0f, 14.0f};
+
+	const float CanvasPad = 16.0f;
+	const float CanvasX = WindowX + CanvasPad;
+	const float CanvasY = WindowY + ToolbarH + CanvasPad;
+	const float CanvasW = WindowW - CanvasPad * 2.0f;
+	const float CanvasH = WindowH - ToolbarH - CanvasPad * 2.0f;
+
+	const float ImgW = (float)m_PendingUploadImage.m_Width;
+	const float ImgH = (float)m_PendingUploadImage.m_Height;
+	const float Scale = minimum(CanvasW / maximum(1.0f, ImgW), CanvasH / maximum(1.0f, ImgH));
+	const float FinalW = maximum(1.0f, ImgW * Scale);
+	const float FinalH = maximum(1.0f, ImgH * Scale);
+	const float ImgX = CanvasX + (CanvasW - FinalW) / 2.0f;
+	const float ImgY = CanvasY + (CanvasH - FinalH) / 2.0f;
+	m_ImageEditorCanvasRect = {ImgX, ImgY, FinalW, FinalH};
+
+	UpdateImageEditorInput();
+
+	Graphics()->DrawRect(0.0f, 0.0f, ScreenW, ScreenH, ColorRGBA(0.02f, 0.03f, 0.05f, 0.84f), 0, 0);
+	Graphics()->DrawRect(WindowX, WindowY, WindowW, WindowH, ColorRGBA(0.11f, 0.13f, 0.17f, 0.97f), IGraphics::CORNER_ALL, 10.0f);
+	Graphics()->DrawRect(WindowX + 1.0f, WindowY + 1.0f, WindowW - 2.0f, WindowH - 2.0f, ColorRGBA(0.16f, 0.18f, 0.23f, 0.96f), IGraphics::CORNER_ALL, 9.0f);
+	Graphics()->DrawRect(WindowX + 2.0f, WindowY + 2.0f, WindowW - 4.0f, ToolbarH, ColorRGBA(0.08f, 0.10f, 0.14f, 0.96f), IGraphics::CORNER_T, 9.0f);
+
+	CTextCursor Cursor;
+	Cursor.SetPosition(vec2(WindowX + 18.0f, WindowY + 8.0f));
+	Cursor.m_FontSize = 18.0f;
+	TextRender()->TextColor(0.86f, 0.90f, 0.97f, 0.95f);
+	TextRender()->TextEx(&Cursor, "Image Editor");
+
+	auto DrawButton = [&](const SRenderRect &Rect, const char *pLabel, bool Active, const ColorRGBA &HoverColor) {
+		const bool Hovered = InRect(Rect);
+		const ColorRGBA Bg = Active ? ColorRGBA(0.20f, 0.36f, 0.62f, 0.96f) : (Hovered ? HoverColor : ColorRGBA(0.19f, 0.22f, 0.29f, 0.96f));
+		Graphics()->DrawRect(Rect.m_X, Rect.m_Y, Rect.m_W, Rect.m_H, Bg, IGraphics::CORNER_ALL, 4.0f);
+		Graphics()->DrawRect(Rect.m_X + 1.0f, Rect.m_Y + 1.0f, Rect.m_W - 2.0f, Rect.m_H - 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.06f), IGraphics::CORNER_ALL, 3.0f);
+
+		const float LabelSize = 12.0f;
+		const float LabelWidth = TextRender()->TextWidth(LabelSize, pLabel, -1, -1);
+		CTextCursor ButtonCursor;
+		ButtonCursor.SetPosition(vec2(Rect.m_X + maximum(4.0f, (Rect.m_W - LabelWidth) * 0.5f), Rect.m_Y + (Rect.m_H - LabelSize) * 0.5f));
+		ButtonCursor.m_FontSize = LabelSize;
+		TextRender()->TextColor(0.97f, 0.98f, 1.0f, 0.98f);
+		TextRender()->TextEx(&ButtonCursor, pLabel);
+	};
+
+	DrawButton(m_ImageEditorPenButtonRect, "Pen", m_ImageEditor.m_CurrentTool == EImageEditorTool::PEN, ColorRGBA(0.24f, 0.36f, 0.54f, 0.96f));
+	DrawButton(m_ImageEditorEraserButtonRect, "Eraser", m_ImageEditor.m_CurrentTool == EImageEditorTool::ERASER, ColorRGBA(0.30f, 0.26f, 0.24f, 0.96f));
+	DrawButton(m_ImageEditorClearButtonRect, "Clear", false, ColorRGBA(0.45f, 0.20f, 0.20f, 0.96f));
+	DrawButton(m_ImageEditorCancelButtonRect, "Cancel", false, ColorRGBA(0.30f, 0.24f, 0.24f, 0.96f));
+	DrawButton(m_ImageEditorSaveButtonRect, "Save", false, ColorRGBA(0.19f, 0.44f, 0.28f, 0.96f));
+
+	for(size_t i = 0; i < std::size(m_aImageEditorColorRects); ++i)
+	{
+		const SRenderRect &Rect = m_aImageEditorColorRects[i];
+		const bool Selected =
+			absolute(m_ImageEditor.m_PenColor.r - aPalette[i].r) < 0.001f &&
+			absolute(m_ImageEditor.m_PenColor.g - aPalette[i].g) < 0.001f &&
+			absolute(m_ImageEditor.m_PenColor.b - aPalette[i].b) < 0.001f;
+		const float Border = Selected ? 2.0f : 1.0f;
+		Graphics()->DrawRect(Rect.m_X - Border, Rect.m_Y - Border, Rect.m_W + Border * 2.0f, Rect.m_H + Border * 2.0f, ColorRGBA(0.96f, 0.98f, 1.0f, Selected ? 0.95f : 0.35f), IGraphics::CORNER_ALL, 3.0f);
+		Graphics()->DrawRect(Rect.m_X, Rect.m_Y, Rect.m_W, Rect.m_H, aPalette[i], IGraphics::CORNER_ALL, 3.0f);
+	}
+
+	Graphics()->DrawRect(m_ImageEditorThicknessMinusRect.m_X, m_ImageEditorThicknessMinusRect.m_Y, m_ImageEditorThicknessMinusRect.m_W, m_ImageEditorThicknessMinusRect.m_H, ColorRGBA(0.17f, 0.20f, 0.27f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
+	Graphics()->DrawRect(m_ImageEditorThicknessPlusRect.m_X, m_ImageEditorThicknessPlusRect.m_Y, m_ImageEditorThicknessPlusRect.m_W, m_ImageEditorThicknessPlusRect.m_H, ColorRGBA(0.17f, 0.20f, 0.27f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
+
+	Graphics()->DrawRect(m_ImageEditorThicknessRect.m_X, m_ImageEditorThicknessRect.m_Y, m_ImageEditorThicknessRect.m_W, m_ImageEditorThicknessRect.m_H, ColorRGBA(0.12f, 0.15f, 0.21f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
+	const float ThicknessT = std::clamp((m_ImageEditor.m_PenThickness - 1.0f) / 13.0f, 0.0f, 1.0f);
+	const float KnobX = m_ImageEditorThicknessRect.m_X + m_ImageEditorThicknessRect.m_W * ThicknessT;
+	Graphics()->DrawRect(KnobX - 2.0f, m_ImageEditorThicknessRect.m_Y - 1.5f, 4.0f, m_ImageEditorThicknessRect.m_H + 3.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.95f), IGraphics::CORNER_ALL, 1.5f);
+
+	Cursor.SetPosition(vec2(m_ImageEditorThicknessRect.m_X - 16.0f, m_ImageEditorThicknessRect.m_Y - 2.0f));
+	Cursor.m_FontSize = 11.0f;
+	TextRender()->TextColor(0.89f, 0.92f, 0.97f, 0.95f);
+	TextRender()->TextEx(&Cursor, "-");
+
+	Cursor.SetPosition(vec2(m_ImageEditorThicknessPlusRect.m_X + 7.0f, m_ImageEditorThicknessPlusRect.m_Y - 2.0f));
+	Cursor.m_FontSize = 11.0f;
+	TextRender()->TextEx(&Cursor, "+");
+
+	char aThickness[32];
+	str_format(aThickness, sizeof(aThickness), "%.1f px", m_ImageEditor.m_PenThickness);
+	Cursor.SetPosition(vec2(m_ImageEditorThicknessPlusRect.m_X + 36.0f, m_ImageEditorThicknessPlusRect.m_Y - 2.0f));
+	Cursor.m_FontSize = 11.0f;
+	TextRender()->TextEx(&Cursor, aThickness);
+
+	Graphics()->DrawRect(CanvasX, CanvasY, CanvasW, CanvasH, ColorRGBA(0.07f, 0.09f, 0.13f, 0.98f), IGraphics::CORNER_ALL, 5.0f);
+	Graphics()->DrawRect(ImgX - 2.0f, ImgY - 2.0f, FinalW + 4.0f, FinalH + 4.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.24f), IGraphics::CORNER_ALL, 4.0f);
+
+	Graphics()->WrapClamp();
+	Graphics()->TextureSet(m_PendingUploadImage.m_Texture);
+	Graphics()->QuadsBegin();
+	Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+	Graphics()->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
+	Graphics()->DrawRectExt(ImgX, ImgY, FinalW, FinalH, 4.0f, IGraphics::CORNER_ALL);
+	Graphics()->QuadsEnd();
+	Graphics()->TextureClear();
+
+	Graphics()->LinesBegin();
+
+	auto DrawStroke = [&](const SImageEditorStroke &Stroke) {
+		if(Stroke.m_vPoints.size() < 2)
+			return;
+
+		const float StrokeRadius = maximum(0.75f, Stroke.m_Thickness * 0.7f);
+		const int Layers = std::clamp((int)ceilf(StrokeRadius), 1, 18);
+		const float OffsetStep = maximum(0.65f, StrokeRadius / (float)Layers);
+
+		for(size_t i = 0; i + 1 < Stroke.m_vPoints.size(); ++i)
+		{
+			const vec2 P0 = Stroke.m_vPoints[i];
+			const vec2 P1 = Stroke.m_vPoints[i + 1];
+			const vec2 Segment = P1 - P0;
+			const float SegmentLenSq = Segment.x * Segment.x + Segment.y * Segment.y;
+			if(SegmentLenSq < 0.0001f)
+				continue;
+
+			const float SegmentLen = sqrtf(SegmentLenSq);
+			const vec2 Normal(-Segment.y / SegmentLen, Segment.x / SegmentLen);
+			std::vector<IGraphics::CLineItem> vItems;
+			vItems.reserve((Layers * 2 + 1));
+
+			for(int Layer = -Layers; Layer <= Layers; ++Layer)
+			{
+				const float Offset = (float)Layer * OffsetStep;
+				vItems.emplace_back(P0 + Normal * Offset, P1 + Normal * Offset);
+			}
+
+			Graphics()->SetColor(Stroke.m_Color);
+			Graphics()->LinesDraw(vItems.data(), vItems.size());
+		}
+	};
+
+	for(const auto &Stroke : m_ImageEditor.m_vStrokes)
+		DrawStroke(Stroke);
+
+	if(m_ImageEditor.m_IsDrawing && m_ImageEditor.m_CurrentStroke.m_vPoints.size() > 1)
+		DrawStroke(m_ImageEditor.m_CurrentStroke);
+
+	Graphics()->LinesEnd();
+
+	const bool MouseInsideEditor = MousePos.x >= WindowX && MousePos.x <= WindowX + WindowW &&
+		MousePos.y >= WindowY && MousePos.y <= WindowY + WindowH;
+	const bool MouseInsideCanvas = InRect(m_ImageEditorCanvasRect);
+
+	if(MouseInsideEditor)
+	{
+		const float CrosshairRadius = maximum(14.0f, m_ImageEditor.m_PenThickness * 2.2f);
+		const float InnerRadius = maximum(4.0f, m_ImageEditor.m_PenThickness * 0.8f);
+		const ColorRGBA CursorAccent = m_ImageEditor.m_CurrentTool == EImageEditorTool::PEN ? m_ImageEditor.m_PenColor : ColorRGBA(1.0f, 0.48f, 0.48f, 1.0f);
+
+		Graphics()->DrawRect(MousePos.x - CrosshairRadius, MousePos.y - 1.0f, CrosshairRadius * 2.0f, 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
+		Graphics()->DrawRect(MousePos.x - 1.0f, MousePos.y - CrosshairRadius, 2.0f, CrosshairRadius * 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
+		Graphics()->DrawRect(MousePos.x - CrosshairRadius + 1.0f, MousePos.y - 0.5f, CrosshairRadius * 2.0f - 2.0f, 1.0f, CursorAccent, IGraphics::CORNER_ALL, 0.5f);
+		Graphics()->DrawRect(MousePos.x - 0.5f, MousePos.y - CrosshairRadius + 1.0f, 1.0f, CrosshairRadius * 2.0f - 2.0f, CursorAccent, IGraphics::CORNER_ALL, 0.5f);
+		Graphics()->DrawRect(MousePos.x - InnerRadius, MousePos.y - InnerRadius, InnerRadius * 2.0f, InnerRadius * 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.80f), IGraphics::CORNER_ALL, 1.0f);
+		Graphics()->DrawRect(MousePos.x - InnerRadius + 1.0f, MousePos.y - InnerRadius + 1.0f, maximum(1.0f, InnerRadius * 2.0f - 2.0f), maximum(1.0f, InnerRadius * 2.0f - 2.0f), CursorAccent.WithAlpha(0.95f), IGraphics::CORNER_ALL, 1.0f);
+
+		if(m_ImageEditor.m_CurrentTool == EImageEditorTool::PEN)
+		{
+			if(MouseInsideCanvas)
+			{
+				const float CursorSize = maximum(10.0f, m_ImageEditor.m_PenThickness * 1.4f + 6.0f);
+				Graphics()->DrawRect(MousePos.x - CursorSize, MousePos.y + CrosshairRadius + 8.0f, CursorSize * 2.0f, 5.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.82f), IGraphics::CORNER_ALL, 2.0f);
+				Graphics()->DrawRect(MousePos.x - CursorSize + 1.0f, MousePos.y + CrosshairRadius + 9.0f, maximum(1.0f, CursorSize * 2.0f - 2.0f), 3.0f, CursorAccent.WithAlpha(0.96f), IGraphics::CORNER_ALL, 1.5f);
+			}
+		}
+		else
+		{
+			if(MouseInsideCanvas)
+			{
+				const float CursorSize = maximum(14.0f, m_ImageEditor.m_PenThickness * 2.1f + 8.0f);
+				Graphics()->DrawRect(MousePos.x - CursorSize, MousePos.y - CursorSize, CursorSize * 2.0f, CursorSize * 2.0f, ColorRGBA(1.0f, 0.72f, 0.72f, 0.20f), IGraphics::CORNER_ALL, 2.0f);
+				Graphics()->DrawRect(MousePos.x - CursorSize, MousePos.y - CursorSize, CursorSize * 2.0f, 2.0f, ColorRGBA(1.0f, 0.60f, 0.60f, 0.95f), IGraphics::CORNER_ALL, 1.0f);
+				Graphics()->DrawRect(MousePos.x - CursorSize, MousePos.y + CursorSize - 2.0f, CursorSize * 2.0f, 2.0f, ColorRGBA(1.0f, 0.60f, 0.60f, 0.95f), IGraphics::CORNER_ALL, 1.0f);
+				Graphics()->DrawRect(MousePos.x - CursorSize, MousePos.y - CursorSize, 2.0f, CursorSize * 2.0f, ColorRGBA(1.0f, 0.60f, 0.60f, 0.95f), IGraphics::CORNER_ALL, 1.0f);
+				Graphics()->DrawRect(MousePos.x + CursorSize - 2.0f, MousePos.y - CursorSize, 2.0f, CursorSize * 2.0f, ColorRGBA(1.0f, 0.60f, 0.60f, 0.95f), IGraphics::CORNER_ALL, 1.0f);
+			}
+		}
+	}
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
 }
 
 void CChat::ConfirmPasteWarning(bool DontAskAgain)
@@ -4866,6 +5309,13 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	const bool ChatInputActive = m_Mode != MODE_NONE;
 	const bool ChatInteractionActive = ChatInputActive || m_Show;
 
+	// Handle image editor ESC key
+	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_ESCAPE && m_ImageEditor.m_Active)
+	{
+		CloseImageEditor();
+		return true;
+	}
+
 	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && g_Config.m_BcChatMediaPreview &&
 		(Client()->State() == IClient::STATE_ONLINE || Client()->State() == IClient::STATE_DEMOPLAYBACK))
 	{
@@ -4933,6 +5383,18 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 				ClearPendingUploadImage();
 				return true;
 			}
+		}
+	}
+
+	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && m_ImageEditorEditButtonRectValid)
+	{
+		const vec2 MousePos = ChatMousePos();
+		const bool InsideEditButton = MousePos.x >= m_ImageEditorEditButtonRect.m_X && MousePos.x <= m_ImageEditorEditButtonRect.m_X + m_ImageEditorEditButtonRect.m_W &&
+			MousePos.y >= m_ImageEditorEditButtonRect.m_Y && MousePos.y <= m_ImageEditorEditButtonRect.m_Y + m_ImageEditorEditButtonRect.m_H;
+		if(InsideEditButton)
+		{
+			OpenImageEditor();
+			return true;
 		}
 	}
 
@@ -6696,6 +7158,20 @@ void CChat::OnRender()
 	UpdateGiphyPreviewCache();
 	UpdatePendingUpload();
 	UpdateLinkPolicy();
+	
+	// Render image editor if active
+	if(m_ImageEditor.m_Active && m_PendingUploadImage.HasImage())
+	{
+		// Save current graphics state
+		const vec2 WindowSize(maximum(1.0f, (float)Graphics()->WindowWidth()), maximum(1.0f, (float)Graphics()->WindowHeight()));
+		Graphics()->MapScreen(0.0f, 0.0f, WindowSize.x, WindowSize.y);
+		RenderImageEditor();
+		const float Height = 300.0f;
+		const float Width = Height * Graphics()->ScreenAspect();
+		Graphics()->MapScreen(0.0f, 0.0f, Width, Height);
+		return;
+	}
+	
 	m_HoveredLink.clear();
 	if(m_MediaViewerOpen && (!g_Config.m_BcChatMediaPreview || !g_Config.m_BcChatMediaViewer))
 		CloseMediaViewer();

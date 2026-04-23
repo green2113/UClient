@@ -108,6 +108,32 @@ class CChat : public CComponent
 		}
 	};
 
+	enum class EImageEditorTool
+	{
+		PEN = 0,
+		ERASER = 1,
+	};
+
+	struct SImageEditorStroke
+	{
+		std::vector<vec2> m_vPoints;
+		ColorRGBA m_Color;
+		float m_Thickness;
+		EImageEditorTool m_Tool;
+	};
+
+	struct SImageEditorState
+	{
+		bool m_Active = false;
+		std::vector<SImageEditorStroke> m_vStrokes;
+		SImageEditorStroke m_CurrentStroke;
+		EImageEditorTool m_CurrentTool = EImageEditorTool::PEN;
+		ColorRGBA m_PenColor = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
+		float m_PenThickness = 3.0f;
+		bool m_IsDrawing = false;
+		bool m_MouseDownLastFrame = false;
+	};
+
 	class CMediaDecodeJob;
 
 	CLineInputBuffered<MAX_LINE_LENGTH> m_Input;
@@ -355,6 +381,19 @@ class CChat : public CComponent
 	bool m_PendingUploadClosePressed;
 	bool m_PendingUploadCloseRectValid;
 	SRenderRect m_PendingUploadCloseRect;
+	SImageEditorState m_ImageEditor;
+	SRenderRect m_ImageEditorEditButtonRect;
+	bool m_ImageEditorEditButtonRectValid = false;
+	SRenderRect m_ImageEditorPenButtonRect;
+	SRenderRect m_ImageEditorEraserButtonRect;
+	std::array<SRenderRect, 6> m_aImageEditorColorRects;
+	SRenderRect m_ImageEditorCanvasRect;
+	SRenderRect m_ImageEditorThicknessRect;
+	SRenderRect m_ImageEditorThicknessMinusRect;
+	SRenderRect m_ImageEditorThicknessPlusRect;
+	SRenderRect m_ImageEditorClearButtonRect;
+	SRenderRect m_ImageEditorSaveButtonRect;
+	SRenderRect m_ImageEditorCancelButtonRect;
 	CGiphyBrowser m_GiphyBrowser;
 	CLineInputBuffered<128> m_GiphySearchInput;
 	CLineInputBuffered<128> m_GiphyCaptionInput;
@@ -435,6 +474,11 @@ class CChat : public CComponent
 	float PendingUploadPreviewHeight(float Width, float FontSize) const;
 	bool PendingUploadCloseButtonRect(float X, float Y, float Width, float FontSize, SRenderRect &ButtonRect) const;
 	void RenderPendingUploadPreview(float X, float Y, float Width, float Height, float FontSize);
+	void OpenImageEditor();
+	void CloseImageEditor();
+	void RenderImageEditor();
+	void UpdateImageEditorInput();
+	void SaveImageEditorChanges();
 	void ConfirmPasteWarning(bool DontAskAgain);
 	void CancelPasteWarning();
 	void SendChatQueuedInternal(int Team, const char *pLine);
