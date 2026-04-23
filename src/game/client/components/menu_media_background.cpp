@@ -12,6 +12,7 @@ namespace
 constexpr int MENU_MEDIA_MAX_VIDEO_FRAME_MS = 250;
 constexpr int MENU_MEDIA_DEFAULT_VIDEO_FRAME_MS = 33;
 
+#if defined(CONF_VIDEORECORDER)
 bool DecodeFirstFrameFromFile(const char *pAbsolutePath, CImageInfo &ImageOut)
 {
 	ImageOut.Free();
@@ -158,6 +159,14 @@ bool DecodeFirstFrameFromFile(const char *pAbsolutePath, CImageInfo &ImageOut)
 
 	return Success;
 }
+#else
+bool DecodeFirstFrameFromFile(const char *pAbsolutePath, CImageInfo &ImageOut)
+{
+	(void)pAbsolutePath;
+	ImageOut.Free();
+	return false;
+}
+#endif
 }
 
 CMenuMediaBackground::~CMenuMediaBackground()
@@ -188,6 +197,8 @@ void CMenuMediaBackground::ClearVideoState()
 {
 	if(m_pGraphics != nullptr)
 		m_pGraphics->UnloadTexture(&m_VideoTexture);
+
+#if defined(CONF_VIDEORECORDER)
 	if(m_pPacket)
 		av_packet_free(&m_pPacket);
 	if(m_pFrameRgba)
@@ -208,7 +219,9 @@ void CMenuMediaBackground::ClearVideoState()
 	m_pPacket = nullptr;
 	m_pSwsCtx = nullptr;
 	m_VideoStream = -1;
-	m_LastVideoPts = AV_NOPTS_VALUE;
+	m_LastVideoPts = 0;
+
+#endif
 	m_NextFrameTime = std::chrono::nanoseconds::zero();
 	m_vVideoUploadBuffer.clear();
 }
@@ -356,6 +369,7 @@ bool CMenuMediaBackground::LoadStaticMedia(const char *pPath, int StorageType)
 	return true;
 }
 
+#if defined(CONF_VIDEORECORDER)
 bool CMenuMediaBackground::UploadCurrentVideoFrame(const char *pContextName, int DurationMs)
 {
 	if(m_pGraphics == nullptr || m_pFrame == nullptr || m_pFrameRgba == nullptr || m_pSwsCtx == nullptr || m_Width <= 0 || m_Height <= 0)
@@ -532,6 +546,28 @@ bool CMenuMediaBackground::LoadVideo(const char *pPath, int StorageType)
 	SetStatus("Loaded video.");
 	return true;
 }
+#else
+bool CMenuMediaBackground::UploadCurrentVideoFrame(const char *pContextName, int DurationMs)
+{
+	(void)pContextName;
+	(void)DurationMs;
+	return false;
+}
+
+bool CMenuMediaBackground::DecodeNextVideoFrame(bool LoopOnEof)
+{
+	(void)LoopOnEof;
+	return false;
+}
+
+bool CMenuMediaBackground::LoadVideo(const char *pPath, int StorageType)
+{
+	(void)pPath;
+	(void)StorageType;
+	SetError("Video background is unavailable in this build.");
+	return false;
+}
+#endif
 
 void CMenuMediaBackground::ReloadFromConfig(int Enabled, const char *pPath)
 {
@@ -559,7 +595,14 @@ void CMenuMediaBackground::ReloadFromConfig(int Enabled, const char *pPath)
 
 	bool Success = false;
 	if(MediaDecoder::IsLikelyVideoExtension(Ext))
+	{
+#if defined(CONF_VIDEORECORDER)
 		Success = LoadVideo(aPath, StorageType);
+#else
+		SetError("Video background is unavailable in this build.");
+		Success = false;
+#endif
+	}
 	else
 		Success = LoadStaticMedia(aPath, StorageType);
 

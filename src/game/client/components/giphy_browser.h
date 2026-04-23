@@ -27,7 +27,7 @@ public:
 
 	void SetQuery(const char *pQuery);
 	std::string BuildSearchUrl(int PageOffset) const;
-	void ParseGiphyResponse(json_value *pRoot);
+	void ParseGiphyResponse(json_value *pRoot, bool Append);
 	void ClearResults();
 	void SetPage(int Page);
 

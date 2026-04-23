@@ -19,6 +19,7 @@
 #include <game/client/lineinput.h>
 #include <game/client/render.h>
 #include <game/client/ui.h>
+#include <game/client/ui_scrollregion.h>
 
 #include <memory>
 #include <optional>
@@ -331,7 +332,9 @@ class CChat : public CComponent
 	CButtonContainer m_GiphySearchButton;
 	CButtonContainer m_GiphyPrevButton;
 	CButtonContainer m_GiphyNextButton;
-	std::array<CButtonContainer, CGiphyBrowser::RESULTS_PER_PAGE> m_aGiphyResultButtons;
+	std::vector<CButtonContainer> m_vGiphyResultButtons;
+	CScrollRegion m_GiphyScrollRegion;
+	vec2 m_GiphyScrollOffset;
 	SPopupMenuId m_GiphyPopupId;
 	bool m_GiphyButtonPressed;
 	bool m_GiphyButtonRectValid;
@@ -357,6 +360,11 @@ class CChat : public CComponent
 	CLineInputBuffered<128> m_GiphyCaptionInput;
 	std::shared_ptr<CHttpRequest> m_pGiphyRequest;
 	bool m_GiphySearching;
+	bool m_GiphyLoadingMore;
+	bool m_GiphyHasMoreResults;
+	int m_GiphyRequestedPage;
+	int m_GiphyNextPageToLoad;
+	std::unordered_set<std::string> m_GiphyVisibleResultIds;
 	std::string m_GiphyStatusText;
 	struct SGiphyPreviewEntry
 	{
@@ -413,7 +421,7 @@ class CChat : public CComponent
 	void OpenGiphyPopup(const CUIRect &ButtonRect);
 	void RenderGiphyButton(const CUIRect &ButtonRect);
 	static CUi::EPopupMenuFunctionResult PopupGiphyBrowser(void *pContext, CUIRect View, bool Active);
-	void BeginGiphySearch();
+	void BeginGiphySearch(bool LoadMore = false);
 	void UpdateGiphySearch();
 	void ClearGiphyPreviewCache();
 	void UpdateGiphyPreviewCache();

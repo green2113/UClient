@@ -69,6 +69,19 @@ static constexpr size_t CHAT_MEDIA_MAX_ANIMATED_MEMORY_BYTES = 48ull * 1024ull *
 static constexpr bool CHAT_MEDIA_ANIMATE_VIDEOS = true;
 static constexpr float CHAT_MEDIA_MIN_PREVIEW_SIDE = 28.0f;
 
+static ColorRGBA GiphySkeletonColor(size_t Seed)
+{
+	static const ColorRGBA s_aPalette[] = {
+		ColorRGBA(0.43f, 0.51f, 0.84f, 0.88f),
+		ColorRGBA(0.55f, 0.60f, 0.90f, 0.88f),
+		ColorRGBA(0.49f, 0.72f, 0.78f, 0.88f),
+		ColorRGBA(0.62f, 0.69f, 0.83f, 0.88f),
+		ColorRGBA(0.58f, 0.54f, 0.86f, 0.88f),
+		ColorRGBA(0.50f, 0.64f, 0.88f, 0.88f),
+	};
+	return s_aPalette[Seed % std::size(s_aPalette)];
+}
+
 static float NormalizeMediaPreviewCoord(float Value, float Start, float Length)
 {
 	if(Length <= 0.0f)
@@ -489,6 +502,12 @@ CChat::CChat()
 	m_PendingUploadClosePressed = false;
 	m_PendingUploadCloseRectValid = false;
 	m_GiphySearching = false;
+	m_GiphyLoadingMore = false;
+	m_GiphyHasMoreResults = false;
+	m_GiphyRequestedPage = 0;
+	m_GiphyNextPageToLoad = 0;
+	m_GiphyScrollOffset = vec2(0.0f, 0.0f);
+	m_GiphyVisibleResultIds.clear();
 	m_aPreviousDisplayedInputText[0] = '\0';
 	m_ChatOpenAnimationStart = 0;
 	m_vTypingGlyphAnims.clear();
@@ -1152,6 +1171,12 @@ void CChat::Reset()
 	m_PendingUploadClosePressed = false;
 	m_PendingUploadCloseRectValid = false;
 	m_GiphySearching = false;
+	m_GiphyLoadingMore = false;
+	m_GiphyHasMoreResults = false;
+	m_GiphyRequestedPage = 0;
+	m_GiphyNextPageToLoad = 0;
+	m_GiphyScrollOffset = vec2(0.0f, 0.0f);
+	m_GiphyVisibleResultIds.clear();
 	m_GiphyStatusText.clear();
 	m_GiphySearchInput.Clear();
 	m_GiphyCaptionInput.Clear();
@@ -1604,7 +1629,7 @@ void CChat::OpenGiphyPopup(const CUIRect &ButtonRect)
 	}
 	m_Input.Deactivate();
 
-	const float PopupWidth = 430.0f;
+	const float PopupWidth = 400.0f;
 	const float PopupX = maximum(10.0f, ButtonRect.x + ButtonRect.w - PopupWidth);
 	const float PopupY = maximum(10.0f, ButtonRect.y - 10.0f);
 	Ui()->DoPopupMenu(&m_GiphyPopupId, PopupX, PopupY, PopupWidth, 360.0f, this, PopupGiphyBrowser);
@@ -1637,7 +1662,7 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 	const float Spacing = 5.0f;
 	const float RowHeight = 22.0f;
 	const float CellSpacing = 6.0f;
-	const int Columns = 3;
+	const int Columns = 2;
 
 	CUIRect Row;
 	View.HSplitTop(16.0f, &Row, &View);
@@ -1655,13 +1680,13 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 	if(SearchPressed)
 	{
 		pChat->m_GiphyBrowser.SetQuery(pChat->m_GiphySearchInput.GetString());
-		pChat->BeginGiphySearch();
+		pChat->BeginGiphySearch(false);
 	}
 
 	View.HSplitTop(Spacing, nullptr, &View);
 	View.HSplitTop(16.0f, &Row, &View);
 	if(pChat->m_GiphySearching)
-		pChat->Ui()->DoLabel(&Row, Localize("Searching..."), 10.0f, TEXTALIGN_ML);
+		pChat->Ui()->DoLabel(&Row, pChat->m_GiphyLoadingMore ? "Loading more..." : Localize("Searching..."), 10.0f, TEXTALIGN_ML);
 	else if(!pChat->m_GiphyStatusText.empty())
 		pChat->Ui()->DoLabel(&Row, pChat->m_GiphyStatusText.c_str(), 10.0f, TEXTALIGN_ML);
 	else
@@ -1701,109 +1726,130 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 	}
 
 	View.HSplitTop(Spacing, nullptr, &View);
-	CUIRect Footer;
-	View.HSplitBottom(RowHeight, &View, &Footer);
-	Footer.HSplitTop(Spacing, nullptr, &Footer);
+
+	const auto &vResults = pChat->m_GiphyBrowser.GetResults();
+	const int PlaceholderCount = pChat->m_GiphySearching ? 6 : 0;
+	const size_t TotalSlots = vResults.size() + (size_t)PlaceholderCount;
+	pChat->m_GiphyVisibleResultIds.clear();
+	if(pChat->m_vGiphyResultButtons.size() < TotalSlots)
+		pChat->m_vGiphyResultButtons.resize(TotalSlots);
+
+	CScrollRegionParams ScrollParams;
+	ScrollParams.m_ScrollbarWidth = 8.0f;
+	ScrollParams.m_ScrollbarMargin = 0.0f;
+	ScrollParams.m_ScrollbarNoMarginRight = true;
+	ScrollParams.m_SliderMinHeight = 18.0f;
+	ScrollParams.m_ScrollUnit = 18.0f;
+	ScrollParams.m_ClipBgColor = ColorRGBA(0.0f, 0.0f, 0.0f, 0.0f);
+	ScrollParams.m_ScrollbarBgColor = ColorRGBA(0.0f, 0.0f, 0.0f, 0.0f);
+	ScrollParams.m_RailBgColor = ColorRGBA(1.0f, 1.0f, 1.0f, 0.08f);
+	pChat->m_GiphyScrollRegion.Begin(&View, &pChat->m_GiphyScrollOffset, &ScrollParams);
+
+	CUIRect Content = View;
+	Content.y += pChat->m_GiphyScrollOffset.y;
 
 	const float CellWidth = (View.w - CellSpacing * (Columns - 1)) / Columns;
-	const float CellHeight = (View.h - CellSpacing * 3.0f) / 4.0f;
-	const auto &vResults = pChat->m_GiphyBrowser.GetResults();
-	for(int Index = 0; Index < CGiphyBrowser::RESULTS_PER_PAGE; ++Index)
+	float aColumnHeights[Columns] = {0.0f, 0.0f};
+
+	for(size_t Index = 0; Index < TotalSlots; ++Index)
 	{
-		const int Col = Index % Columns;
-		const int RowIndex = Index / Columns;
-		CUIRect Cell = {View.x + Col * (CellWidth + CellSpacing), View.y + RowIndex * (CellHeight + CellSpacing), CellWidth, CellHeight};
-		const bool Disabled = Index >= (int)vResults.size();
-		const bool Clicked = pChat->GameClient()->m_Menus.DoButton_Menu(&pChat->m_aGiphyResultButtons[Index], "", Disabled ? -1 : 0, &Cell);
+		const bool IsPlaceholder = Index >= vResults.size();
+		const SGifResult *pResult = IsPlaceholder ? nullptr : &vResults[Index];
+
+		const int Column = aColumnHeights[0] <= aColumnHeights[1] ? 0 : 1;
+		float CardHeight = CellWidth * 0.85f;
+		if(pResult && pResult->m_Width > 0 && pResult->m_Height > 0)
+		{
+			const float Aspect = std::clamp((float)pResult->m_Height / (float)pResult->m_Width, 0.55f, 1.65f);
+			CardHeight = CellWidth * Aspect;
+		}
+		CardHeight = std::clamp(CardHeight, 72.0f, 210.0f);
+
+		CUIRect Card = {Content.x + Column * (CellWidth + CellSpacing), Content.y + aColumnHeights[Column], CellWidth, CardHeight};
+		aColumnHeights[Column] += CardHeight + CellSpacing;
+
+		const bool Visible = pChat->m_GiphyScrollRegion.AddRect(Card);
+		if(!Visible)
+			continue;
 
 		CUIRect Inner;
-		Cell.Margin(4.0f, &Inner);
-		if(!Disabled)
+		Card.Margin(2.0f, &Inner);
+
+		if(IsPlaceholder)
 		{
-			IGraphics::CTextureHandle Texture;
-			int Width = 0;
-			int Height = 0;
-			if(pChat->GetGiphyPreviewTexture(vResults[Index], Texture, Width, Height))
+			Inner.Draw(GiphySkeletonColor(Index), IGraphics::CORNER_ALL, 4.0f);
+			continue;
+		}
+
+		const bool Clicked = pChat->GameClient()->m_Menus.DoButton_Menu(&pChat->m_vGiphyResultButtons[Index], "", 0, &Card);
+		pChat->m_GiphyVisibleResultIds.insert(pResult->m_Id);
+
+		IGraphics::CTextureHandle Texture;
+		int Width = 0;
+		int Height = 0;
+		if(pChat->GetGiphyPreviewTexture(*pResult, Texture, Width, Height))
+		{
+			DrawRoundedMediaPreview(pChat->Graphics(), Texture, Inner.x, Inner.y, Inner.w, Inner.h, 4.0f, 1.0f);
+		}
+		else
+		{
+			auto It = pChat->m_GiphyPreviewCache.find(pResult->m_Id);
+			if(It != pChat->m_GiphyPreviewCache.end() && It->second.m_State == EMediaState::FAILED)
 			{
-				float PreviewW = Inner.w;
-				float PreviewH = Inner.h - 18.0f;
-				if(Width > 0 && Height > 0)
-				{
-					const float Scale = minimum(PreviewW / Width, PreviewH / Height);
-					PreviewW = maximum(1.0f, Width * Scale);
-					PreviewH = maximum(1.0f, Height * Scale);
-				}
-				const float PreviewX = Inner.x + (Inner.w - PreviewW) / 2.0f;
-				const float PreviewY = Inner.y;
-				DrawRoundedMediaPreview(pChat->Graphics(), Texture, PreviewX, PreviewY, PreviewW, PreviewH, 4.0f, 1.0f);
+				Inner.Draw(ColorRGBA(0.10f, 0.10f, 0.10f, 0.70f), IGraphics::CORNER_ALL, 4.0f);
+				pChat->Ui()->DoLabel(&Inner, Localize("Failed"), 10.0f, TEXTALIGN_MC);
 			}
 			else
 			{
-				Inner.Draw(ColorRGBA(0.08f, 0.08f, 0.08f, 0.55f), IGraphics::CORNER_ALL, 4.0f);
-				const char *pLabel = "...";
-				auto It = pChat->m_GiphyPreviewCache.find(vResults[Index].m_Id);
-				if(It != pChat->m_GiphyPreviewCache.end() && It->second.m_State == EMediaState::FAILED)
-					pLabel = Localize("Failed");
-				else if(It != pChat->m_GiphyPreviewCache.end() && It->second.m_State == EMediaState::LOADING)
-					pLabel = Localize("Loading");
-				else if(It != pChat->m_GiphyPreviewCache.end() && It->second.m_State == EMediaState::DECODING)
-					pLabel = Localize("Decoding");
-				pChat->Ui()->DoLabel(&Inner, pLabel, 11.0f, TEXTALIGN_MC);
+				size_t Seed = Index;
+				for(char C : pResult->m_Id)
+					Seed = Seed * 131u + (unsigned char)C;
+				Inner.Draw(GiphySkeletonColor(Seed), IGraphics::CORNER_ALL, 4.0f);
 			}
+		}
 
-			CUIRect TitleRect = Inner;
-			TitleRect.HSplitTop(Inner.h - 16.0f, nullptr, &TitleRect);
-			pChat->Ui()->DoLabel(&TitleRect, vResults[Index].m_Title.empty() ? "Giphy" : vResults[Index].m_Title.c_str(), 9.0f, TEXTALIGN_ML, {.m_MaxWidth = TitleRect.w});
+		if(Clicked)
+		{
+			char aLine[MAX_LINE_LENGTH];
+			str_copy(aLine, pResult->m_Url.c_str(), sizeof(aLine));
 
-			if(Clicked)
-			{
-				char aLine[MAX_LINE_LENGTH];
-				str_copy(aLine, vResults[Index].m_Url.c_str(), sizeof(aLine));
-
-				const int Team = pChat->m_Mode == MODE_TEAM ? 1 : 0;
-				pChat->AddHistoryEntry(Team, aLine);
-				if(!pChat->GameClient()->m_Translate.TryTranslateOutgoingChat(Team, aLine))
-					pChat->SendChatPayloadQueued(Team, aLine);
-				return CUi::POPUP_CLOSE_CURRENT;
-			}
+			const int Team = pChat->m_Mode == MODE_TEAM ? 1 : 0;
+			pChat->AddHistoryEntry(Team, aLine);
+			if(!pChat->GameClient()->m_Translate.TryTranslateOutgoingChat(Team, aLine))
+				pChat->SendChatPayloadQueued(Team, aLine);
+			return CUi::POPUP_CLOSE_CURRENT;
 		}
 	}
 
-	if(pChat->m_GiphyBrowser.GetTotalPages() > 1)
-	{
-		CUIRect PrevButton, PageLabel, NextButton;
-		Footer.VSplitLeft(80.0f, &PrevButton, &Footer);
-		Footer.VSplitRight(80.0f, &Footer, &NextButton);
-		PageLabel = Footer;
+	pChat->m_GiphyScrollRegion.End();
 
-		const int CurrentPage = pChat->m_GiphyBrowser.GetCurrentPage();
-		const int TotalPages = pChat->m_GiphyBrowser.GetTotalPages();
-		if(pChat->GameClient()->m_Menus.DoButton_Menu(&pChat->m_GiphyPrevButton, Localize("Prev"), CurrentPage > 0 ? 0 : -1, &PrevButton) && CurrentPage > 0)
-		{
-			pChat->m_GiphyBrowser.SetPage(CurrentPage - 1);
-			pChat->BeginGiphySearch();
-		}
+	const float ContentHeight = maximum(aColumnHeights[0], aColumnHeights[1]);
+	const float ContentBottom = Content.y + ContentHeight;
+	const float NearBottomThreshold = 140.0f;
+	if(!pChat->m_GiphySearching && pChat->m_GiphyHasMoreResults && !vResults.empty() && ContentBottom < View.y + View.h + NearBottomThreshold)
+		pChat->BeginGiphySearch(true);
 
-		char aPage[64];
-		str_format(aPage, sizeof(aPage), "%d / %d", CurrentPage + 1, TotalPages);
-		pChat->Ui()->DoLabel(&PageLabel, aPage, 10.0f, TEXTALIGN_MC);
-
-		if(pChat->GameClient()->m_Menus.DoButton_Menu(&pChat->m_GiphyNextButton, Localize("Next"), CurrentPage + 1 < TotalPages ? 0 : -1, &NextButton) && CurrentPage + 1 < TotalPages)
-		{
-			pChat->m_GiphyBrowser.SetPage(CurrentPage + 1);
-			pChat->BeginGiphySearch();
-		}
-	}
+	if(!pChat->m_GiphySearching && pChat->m_GiphyStatusText == "No search results")
+		pChat->Ui()->DoLabel(&View, "No search results", 12.0f, TEXTALIGN_MC);
 
 	return CUi::POPUP_KEEP_OPEN;
 }
 
-void CChat::BeginGiphySearch()
+void CChat::BeginGiphySearch(bool LoadMore)
 {
 	if(m_pGiphyRequest)
 	{
 		m_pGiphyRequest->Abort();
 		m_pGiphyRequest.reset();
+	}
+
+	if(!LoadMore)
+	{
+		m_GiphyNextPageToLoad = 0;
+		m_GiphyRequestedPage = 0;
+		m_GiphyHasMoreResults = false;
+		m_GiphyScrollOffset = vec2(0.0f, 0.0f);
+		m_GiphyVisibleResultIds.clear();
 	}
 
 	if(m_GiphySearchInput.GetString()[0] == '\0')
@@ -1824,9 +1870,12 @@ void CChat::BeginGiphySearch()
 		return;
 	}
 
+	const int PageToLoad = LoadMore ? m_GiphyNextPageToLoad : 0;
+	m_GiphyRequestedPage = maximum(0, PageToLoad);
+	m_GiphyLoadingMore = LoadMore;
 	m_GiphySearching = true;
-	m_GiphyStatusText = Localize("Searching...");
-	const std::string Url = m_GiphyBrowser.BuildSearchUrl(m_GiphyBrowser.GetCurrentPage() * CGiphyBrowser::RESULTS_PER_PAGE);
+	m_GiphyStatusText = m_GiphyLoadingMore ? "Loading more..." : Localize("Searching...");
+	const std::string Url = m_GiphyBrowser.BuildSearchUrl(m_GiphyRequestedPage * CGiphyBrowser::RESULTS_PER_PAGE);
 	std::shared_ptr<CHttpRequest> pGet = HttpGet(Url.c_str());
 	pGet->Timeout(CTimeout{4000, 0, 4096, 5});
 	pGet->MaxResponseSize(2 * 1024 * 1024);
@@ -1847,18 +1896,27 @@ void CChat::UpdateGiphySearch()
 
 	if(pRequest->State() == EHttpState::DONE && pRequest->StatusCode() >= 200 && pRequest->StatusCode() < 400 && pRequest->ResultJson() != nullptr)
 	{
-		m_GiphyBrowser.ParseGiphyResponse(pRequest->ResultJson());
-		ClearGiphyPreviewCache();
-		m_GiphyStatusText = m_GiphyBrowser.GetResults().empty() ? Localize("No GIFs found") : std::string();
+		m_GiphyBrowser.ParseGiphyResponse(pRequest->ResultJson(), m_GiphyLoadingMore);
+		if(!m_GiphyLoadingMore)
+			ClearGiphyPreviewCache();
+
+		const int LoadedCount = (int)m_GiphyBrowser.GetResults().size();
+		const int TotalCount = m_GiphyBrowser.GetTotalCount();
+		m_GiphyHasMoreResults = LoadedCount < TotalCount;
+		m_GiphyNextPageToLoad = m_GiphyRequestedPage + 1;
+		m_GiphyStatusText = m_GiphyBrowser.GetResults().empty() ? "No search results" : std::string();
 	}
 	else
 	{
 		char aBuf[128];
 		str_format(aBuf, sizeof(aBuf), "%s (%d)", Localize("Giphy request failed"), pRequest->StatusCode());
 		m_GiphyStatusText = aBuf;
+		m_GiphyHasMoreResults = false;
 		m_GiphyBrowser.ClearResults();
 		ClearGiphyPreviewCache();
 	}
+
+	m_GiphyLoadingMore = false;
 }
 
 void CChat::ClearGiphyPreviewCache()
@@ -1880,9 +1938,10 @@ void CChat::UpdateGiphyPreviewCache()
 		return;
 
 	const auto &vResults = m_GiphyBrowser.GetResults();
+	const auto &vVisibleIds = m_GiphyVisibleResultIds;
 	for(auto It = m_GiphyPreviewCache.begin(); It != m_GiphyPreviewCache.end();)
 	{
-		const bool StillVisible = std::any_of(vResults.begin(), vResults.end(), [&](const SGifResult &Result) { return Result.m_Id == It->first; });
+		const bool StillVisible = vVisibleIds.find(It->first) != vVisibleIds.end();
 		if(StillVisible)
 		{
 			++It;
@@ -1900,6 +1959,9 @@ void CChat::UpdateGiphyPreviewCache()
 	int ActiveDownloads = 0;
 	for(const auto &Result : vResults)
 	{
+		if(vVisibleIds.find(Result.m_Id) == vVisibleIds.end())
+			continue;
+
 		auto &Entry = m_GiphyPreviewCache[Result.m_Id];
 		Entry.m_LastUsedTick = time_get();
 		if(Entry.m_State == EMediaState::LOADING && Entry.m_pRequest && !Entry.m_pRequest->Done())
@@ -1908,6 +1970,9 @@ void CChat::UpdateGiphyPreviewCache()
 
 	for(const auto &Result : vResults)
 	{
+		if(vVisibleIds.find(Result.m_Id) == vVisibleIds.end())
+			continue;
+
 		auto &Entry = m_GiphyPreviewCache[Result.m_Id];
 		if(Entry.m_State != EMediaState::NONE || ActiveDownloads >= 2)
 			continue;
@@ -1932,6 +1997,9 @@ void CChat::UpdateGiphyPreviewCache()
 
 	for(const auto &Result : vResults)
 	{
+		if(vVisibleIds.find(Result.m_Id) == vVisibleIds.end())
+			continue;
+
 		auto It = m_GiphyPreviewCache.find(Result.m_Id);
 		if(It == m_GiphyPreviewCache.end())
 			continue;
@@ -2154,6 +2222,7 @@ void CChat::UpdatePendingUpload()
 		if(!GameClient()->m_Translate.TryTranslateOutgoingChat(m_PendingUploadImage.m_Team, aLine))
 			SendChatPayloadQueued(m_PendingUploadImage.m_Team, aLine);
 		DisableMode();
+		GameClient()->OnRelease();
 		ClearPendingUploadImage();
 		return;
 	}
@@ -4758,6 +4827,9 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	if(ChatInputActive && (Ui()->IsPopupOpen(&m_TranslateSettingsPopupId) || Ui()->IsPopupOpen(&m_GiphyPopupId)) && Ui()->OnInput(Event))
 		return true;
 
+	if(ChatInputActive && Ui()->IsPopupOpen(&m_GiphyPopupId))
+		return true;
+
 	if(ChatInputActive && Event.m_Key == KEY_MOUSE_1 && m_PendingUploadCloseRectValid)
 	{
 		const vec2 MousePos = ChatMousePos();
@@ -5093,6 +5165,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	if(Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_TAB)
 	{
 		const bool ShiftPressed = Input()->ShiftIsPressed();
+		const bool CtrlPressed = Input()->KeyIsPressed(KEY_LCTRL) || Input()->KeyIsPressed(KEY_RCTRL);
 
 		// fill the completion buffer
 		if(!m_CompletionUsed)
@@ -5110,21 +5183,64 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 
 		if(!m_CompletionUsed && m_aCompletionBuffer[0] != '/' && m_aCompletionBuffer[0] != '!')
 		{
-			// Create the completion list of player names through which the player can iterate
-			const char *PlayerName, *FoundInput;
 			m_PlayerCompletionListLength = 0;
-			for(auto &PlayerInfo : GameClient()->m_Snap.m_apInfoByName)
+			if(CtrlPressed)
 			{
-				if(PlayerInfo)
+				const int LocalId = GameClient()->m_aLocalIds[0];
+				const vec2 CamCenter = GameClient()->m_Camera.m_Center;
+
+				struct SPair
 				{
-					PlayerName = GameClient()->m_aClients[PlayerInfo->m_ClientId].m_aName;
-					FoundInput = str_utf8_find_nocase(PlayerName, m_aCompletionBuffer);
-					if(FoundInput != nullptr)
+					float m_Dist;
+					int m_ClientId;
+				};
+
+				std::vector<SPair> vList;
+				vList.reserve(MAX_CLIENTS);
+				for(auto &pInfo : GameClient()->m_Snap.m_apInfoByName)
+				{
+					if(!pInfo)
+						continue;
+
+					const int ClientId = pInfo->m_ClientId;
+					if(ClientId == LocalId)
+						continue;
+
+					const vec2 Pos = GameClient()->m_aClients[ClientId].m_Predicted.m_Pos;
+					const float Dx = Pos.x - CamCenter.x;
+					const float Dy = Pos.y - CamCenter.y;
+					vList.push_back({Dx * Dx + Dy * Dy, ClientId});
+				}
+
+				std::sort(vList.begin(), vList.end(), [](const SPair &a, const SPair &b) { return a.m_Dist < b.m_Dist; });
+				for(const auto &Entry : vList)
+				{
+					auto &Completion = m_aPlayerCompletionList[m_PlayerCompletionListLength];
+					Completion.m_ClientId = Entry.m_ClientId;
+					Completion.m_Score = (int)Entry.m_Dist;
+					++m_PlayerCompletionListLength;
+
+					if(m_PlayerCompletionListLength >= MAX_CLIENTS)
+						break;
+				}
+			}
+			else
+			{
+				// Create the completion list of player names through which the player can iterate
+				const char *PlayerName, *FoundInput;
+				for(auto &PlayerInfo : GameClient()->m_Snap.m_apInfoByName)
+				{
+					if(PlayerInfo)
 					{
-						m_aPlayerCompletionList[m_PlayerCompletionListLength].m_ClientId = PlayerInfo->m_ClientId;
-						// The score for suggesting a player name is determined by the distance of the search input to the beginning of the player name
-						m_aPlayerCompletionList[m_PlayerCompletionListLength].m_Score = (int)(FoundInput - PlayerName);
-						m_PlayerCompletionListLength++;
+						PlayerName = GameClient()->m_aClients[PlayerInfo->m_ClientId].m_aName;
+						FoundInput = str_utf8_find_nocase(PlayerName, m_aCompletionBuffer);
+						if(FoundInput != nullptr)
+						{
+							m_aPlayerCompletionList[m_PlayerCompletionListLength].m_ClientId = PlayerInfo->m_ClientId;
+							// The score for suggesting a player name is determined by the distance of the search input to the beginning of the player name
+							m_aPlayerCompletionList[m_PlayerCompletionListLength].m_Score = (int)(FoundInput - PlayerName);
+							m_PlayerCompletionListLength++;
+						}
 					}
 				}
 			}
@@ -6571,6 +6687,7 @@ void CChat::OnRender()
 	}
 	if(ChatInteractionActive)
 	{
+		const bool GiphyPopupOpen = Ui()->IsPopupOpen(&m_GiphyPopupId);
 		if(!m_MediaViewerOpen && !m_ScrollbarDragging)
 		{
 			if(!m_MouseIsPress && MouseDown)
@@ -6651,7 +6768,10 @@ void CChat::OnRender()
 			pMouseSelection->m_Offset.y = ScrollOffset;
 		}
 
-			m_Input.Activate(EInputPriority::CHAT); // Ensure that the input is active
+			if(!GiphyPopupOpen)
+				m_Input.Activate(EInputPriority::CHAT); // Ensure that the input is active
+			else
+				m_Input.Deactivate();
 			const CUIRect InputCursorRect = {InputCursor.m_X, InputCursor.m_Y - ScrollOffset, 0.0f, 0.0f};
 			const bool WasChanged = m_Input.WasChanged();
 			const bool WasCursorChanged = m_Input.WasCursorChanged();
@@ -6761,7 +6881,7 @@ void CChat::OnRender()
 			m_HasSelection = false;
 
 		// Autocompletion hint
-		if(m_Input.GetString()[0] == '/' && m_Input.GetString()[1] != '\0' && !m_vServerCommands.empty())
+		if(!GiphyPopupOpen && m_Input.GetString()[0] == '/' && m_Input.GetString()[1] != '\0' && !m_vServerCommands.empty())
 		{
 			for(const auto &Command : m_vServerCommands)
 			{
@@ -6776,7 +6896,7 @@ void CChat::OnRender()
 				}
 			}
 		}
-		else if(m_Input.GetString()[0] == '!' && m_Input.GetString()[1] != '\0')
+		else if(!GiphyPopupOpen && m_Input.GetString()[0] == '!' && m_Input.GetString()[1] != '\0')
 		{
 			const char *pIn = m_Input.GetString();
 			bool HasSpace = false;

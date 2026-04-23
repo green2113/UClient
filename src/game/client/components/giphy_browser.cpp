@@ -83,10 +83,13 @@ std::string CGiphyBrowser::BuildSearchUrl(int PageOffset) const
 	return Url.str();
 }
 
-void CGiphyBrowser::ParseGiphyResponse(json_value *pRoot)
+void CGiphyBrowser::ParseGiphyResponse(json_value *pRoot, bool Append)
 {
-	m_vResults.clear();
-	m_TotalCount = 0;
+	if(!Append)
+	{
+		m_vResults.clear();
+		m_TotalCount = 0;
+	}
 
 	const json_value *pPagination = FindObjectValue(pRoot, "pagination");
 	if(const json_value *pTotalCount = FindObjectValue(pPagination, "total_count"))
@@ -96,7 +99,10 @@ void CGiphyBrowser::ParseGiphyResponse(json_value *pRoot)
 	if(pData == nullptr || pData->type != json_array)
 		return;
 
-	m_vResults.reserve(pData->u.array.length);
+	if(Append)
+		m_vResults.reserve(m_vResults.size() + pData->u.array.length);
+	else
+		m_vResults.reserve(pData->u.array.length);
 	for(unsigned Index = 0; Index < pData->u.array.length; ++Index)
 	{
 		const json_value *pItem = pData->u.array.values[Index];
@@ -134,7 +140,13 @@ void CGiphyBrowser::ParseGiphyResponse(json_value *pRoot)
 			Result.m_Url = Result.m_PreviewUrl;
 
 		if(!Result.m_Id.empty() && !Result.m_Url.empty())
-			m_vResults.push_back(std::move(Result));
+		{
+			const bool Exists = std::any_of(m_vResults.begin(), m_vResults.end(), [&](const SGifResult &Existing) {
+				return Existing.m_Id == Result.m_Id;
+			});
+			if(!Exists)
+				m_vResults.push_back(std::move(Result));
+		}
 	}
 }
 

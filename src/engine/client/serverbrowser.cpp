@@ -57,6 +57,39 @@ static NETADDR CommunityAddressKey(const NETADDR &Addr)
 	return AddressKey;
 }
 
+static void NormalizeIndicatorPlayerName(const char *pName, char *pOut, int OutSize)
+{
+	str_copy(pOut, pName ? pName : "", OutSize);
+	str_utf8_trim_right(pOut);
+	const char *pTrimmed = str_utf8_skip_whitespaces(pOut);
+	if(pTrimmed != pOut)
+		str_copy(pOut, pTrimmed, OutSize);
+}
+
+static bool HasBestClientNameMatch(const std::unordered_set<std::string> &vPlayers, const char *pClientName)
+{
+	if(!pClientName || pClientName[0] == '\0')
+		return false;
+
+	if(vPlayers.find(pClientName) != vPlayers.end())
+		return true;
+
+	char aNormalizedClientName[MAX_NAME_LENGTH];
+	NormalizeIndicatorPlayerName(pClientName, aNormalizedClientName, sizeof(aNormalizedClientName));
+	for(const std::string &PlayerName : vPlayers)
+	{
+		if(str_utf8_comp_nocase(PlayerName.c_str(), pClientName) == 0)
+			return true;
+
+		char aNormalizedEntryName[MAX_NAME_LENGTH];
+		NormalizeIndicatorPlayerName(PlayerName.c_str(), aNormalizedEntryName, sizeof(aNormalizedEntryName));
+		if(str_utf8_comp_nocase(aNormalizedEntryName, aNormalizedClientName) == 0)
+			return true;
+	}
+
+	return false;
+}
+
 CServerBrowser::CServerBrowser() :
 	m_CommunityCache(this),
 	m_CountriesFilter(&m_CommunityCache),
@@ -1749,7 +1782,7 @@ void CServerBrowser::UpdateServerBestClients(CServerInfo *pInfo) const
 	{
 		CServerInfo::CClient &Client = pInfo->m_aClients[ClientIndex];
 		Client.m_BestClient = std::any_of(vpAddressMatches.begin(), vpAddressMatches.end(), [&](const std::unordered_set<std::string> *pPlayers) {
-			return pPlayers->find(Client.m_aName) != pPlayers->end();
+			return pPlayers && HasBestClientNameMatch(*pPlayers, Client.m_aName);
 		});
 		if(Client.m_BestClient)
 			pInfo->m_NumBestClientPlayers++;

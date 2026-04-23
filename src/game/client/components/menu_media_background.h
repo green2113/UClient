@@ -13,11 +13,19 @@
 #include <cstdint>
 #include <vector>
 
+#if defined(CONF_VIDEORECORDER)
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
 }
+#else
+struct AVFormatContext;
+struct AVCodecContext;
+struct AVFrame;
+struct AVPacket;
+struct SwsContext;
+#endif
 
 class CMenuMediaBackground
 {
@@ -46,7 +54,7 @@ class CMenuMediaBackground
 	AVPacket *m_pPacket = nullptr;
 	SwsContext *m_pSwsCtx = nullptr;
 	int m_VideoStream = -1;
-	int64_t m_LastVideoPts = AV_NOPTS_VALUE;
+	int64_t m_LastVideoPts = 0;
 	IGraphics::CTextureHandle m_VideoTexture;
 	std::chrono::nanoseconds m_NextFrameTime{0};
 	std::vector<uint8_t> m_vVideoUploadBuffer;
