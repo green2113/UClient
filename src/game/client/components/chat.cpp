@@ -2352,7 +2352,7 @@ void CChat::RenderPendingUploadPreview(float X, float Y, float Width, float Heig
 	if(Uploading || Failed)
 	{
 		const ColorRGBA OverlayColor = Uploading ? ColorRGBA(0.0f, 0.0f, 0.0f, 0.48f) : ColorRGBA(0.25f, 0.05f, 0.05f, 0.60f);
-		Graphics()->DrawRect(InnerX, InnerY, InnerW, InnerH, OverlayColor, IGraphics::CORNER_ALL, maximum(0.0f, Rounding - Border));
+		Graphics()->DrawRect(InnerX, InnerY, InnerW, InnerH, OverlayColor, IGraphics::CORNER_ALL, InnerRounding);
 
 		const char *pLabel = Uploading ? "Uploading photo..." : (m_PendingUploadImage.m_aError[0] != '\0' ? m_PendingUploadImage.m_aError : "Upload failed.");
 		const float LabelFontSize = FontSize * 0.68f;
