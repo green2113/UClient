@@ -28,12 +28,6 @@ MACRO_CONFIG_STR(BcChatMediaAllowedDomains, bc_chat_media_allowed_domains, 512, 
 MACRO_CONFIG_INT(BcChatMediaPreviewMaxWidth, bc_chat_media_preview_max_width, 220, 120, 400, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum width of chat media previews")
 MACRO_CONFIG_INT(BcChatMediaViewer, bc_chat_media_viewer, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable fullscreen media viewer for chat previews")
 MACRO_CONFIG_INT(BcChatMediaViewerMaxZoom, bc_chat_media_viewer_max_zoom, 800, 100, 2000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum zoom of the chat media viewer in percent")
-MACRO_CONFIG_STR(UcChatGiphyApiKey, uc_chat_giphy_api_key, 128, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Giphy API key used for chat GIF search")
-MACRO_CONFIG_INT(UcChatPasteUpload, uc_chat_paste_upload, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Allow uploading clipboard images from chat input")
-MACRO_CONFIG_STR(UcChatPasteUploadUrl, uc_chat_paste_upload_url, 256, "https://ddnet.under1111.com/api/media/upload", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Upload endpoint used for pasted chat images")
-MACRO_CONFIG_INT(UcChatPasteUploadMaxBytes, uc_chat_paste_upload_max_bytes, 10485760, 0, 67108864, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum PNG size in bytes for pasted chat image uploads")
-MACRO_CONFIG_INT(UcChatPasteImageWarningSkip, uc_chat_paste_image_warning_skip, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Skip the clipboard image privacy warning before attaching an image to chat")
-MACRO_CONFIG_STR(UcInstallUuid, uc_install_uuid, 64, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "BestClient install UUID generated once on first start")
 
 MACRO_CONFIG_INT(BcCrystalLaser, bc_crystal_laser, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Render rifle and shotgun lasers with crystal shards and icy glow")
 MACRO_CONFIG_INT(BcPrevMouseMaxDistance45Degrees, bc_prev_mouse_max_distance_45_degrees, 400, 0, 5000, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_INSENSITIVE, "Previous maximum cursor distance for 45 degrees")
@@ -251,7 +245,6 @@ MACRO_CONFIG_STR(BcClientIndicatorServerAddress, bc_client_indicator_server_addr
 MACRO_CONFIG_STR(BcClientIndicatorBrowserUrl, bc_client_indicator_browser_url, 256, "https://150.241.70.188:8779/users.json", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Client indicator browser JSON URL")
 MACRO_CONFIG_STR(BcClientIndicatorTokenUrl, bc_client_indicator_token_url, 256, "https://150.241.70.188:8779/token.json", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Client indicator token bootstrap URL")
 MACRO_CONFIG_STR(BcClientIndicatorSharedToken, bc_client_indicator_shared_token, 256, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Client indicator shared token for signed UDP packets")
-MACRO_CONFIG_STR(UcPresenceApiBaseUrl, uc_presence_api_base_url, 256, "https://ddnet.under1111.com/api/presence", CFGFLAG_CLIENT | CFGFLAG_SAVE, "HTTP presence API base URL used for join/heartbeat/leave/switch updates")
 MACRO_CONFIG_INT(BrFilterBestclient, br_filter_bestclient, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Filter out servers with no BestClient users")
 
 // BestGram

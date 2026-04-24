@@ -327,6 +327,7 @@ class CChat : public CComponent
 	bool m_ServerSupportsCommandInfo;
 
 	std::string m_HoveredLink;
+	std::string m_HoveredPlayerName;
 
 	enum class ELinkSafety
 	{
@@ -348,6 +349,7 @@ class CChat : public CComponent
 
 	void UpdateLinkPolicy();
 	void HandleLinkActivation(const std::string &Link, bool AlwaysConfirm);
+	std::string BuildPlayerSearchUrl(const char *pPlayerName) const;
 	ELinkSafety ClassifyLink(const std::string &Link) const;
 
 	CButtonContainer m_TranslateSettingsButton;

@@ -5,6 +5,7 @@
 
 #include <base/io.h>
 #include <base/log.h>
+#include <base/system.h>
 #include <base/time.h>
 
 #include <engine/engine.h>
@@ -3280,6 +3281,24 @@ void CChat::HandleLinkActivation(const std::string &Link, bool AlwaysConfirm)
 	}
 }
 
+std::string CChat::BuildPlayerSearchUrl(const char *pPlayerName) const
+{
+	if(!pPlayerName || pPlayerName[0] == '\0')
+		return {};
+
+	char aEscapedName[256];
+	EscapeUrl(aEscapedName, sizeof(aEscapedName), pPlayerName);
+	if(aEscapedName[0] == '\0')
+		return {};
+
+	char aUrl[512];
+	if(g_Config.m_UcChatPlayerSearchEngine == 1)
+		str_format(aUrl, sizeof(aUrl), "https://ddstats.tw/player/%s", aEscapedName);
+	else
+		str_format(aUrl, sizeof(aUrl), "https://ddnet.org/players/%s/", aEscapedName);
+	return aUrl;
+}
+
 namespace
 {
 static bool IsUrlStart(const char *pStr)
@@ -5756,6 +5775,14 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		return true;
 	}
 
+	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && !m_HoveredPlayerName.empty())
+	{
+		const std::string Url = BuildPlayerSearchUrl(m_HoveredPlayerName.c_str());
+		if(!Url.empty())
+			Client()->ViewLink(Url.c_str());
+		return true;
+	}
+
 	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && m_HideMediaByBind && !m_MediaViewerOpen)
 	{
 		const vec2 MousePos = ChatMousePos();
@@ -7455,6 +7482,7 @@ void CChat::OnRender()
 	}
 	
 	m_HoveredLink.clear();
+	m_HoveredPlayerName.clear();
 	if(m_MediaViewerOpen && (!g_Config.m_BcChatMediaPreview || !g_Config.m_BcChatMediaViewer))
 		CloseMediaViewer();
 
@@ -8025,6 +8053,24 @@ void CChat::OnRender()
 				Line.m_NameRectValid = true;
 			}
 			TextRender()->RenderTextContainer(Line.m_TextContainerIndex, TextColor, TextOutlineColor, ChatOpenOffsetX + BcLineXOffset, TextOffsetY);
+
+			if((m_Mode != MODE_NONE || m_Show) && Line.m_NameRectValid && Line.m_aName[0] != '\0')
+			{
+				const bool HoveredName =
+					MousePos.x >= Line.m_NameRect.m_X && MousePos.x <= Line.m_NameRect.m_X + Line.m_NameRect.m_W &&
+					MousePos.y >= Line.m_NameRect.m_Y && MousePos.y <= Line.m_NameRect.m_Y + Line.m_NameRect.m_H;
+				if(HoveredName)
+				{
+					m_HoveredPlayerName = Line.m_aName;
+					const float UnderlineY = Line.m_NameRect.m_Y + Line.m_NameRect.m_H + 0.35f;
+					Graphics()->TextureClear();
+					Graphics()->SetColor(ChatLinkColor().WithMultipliedAlpha(Blend));
+					Graphics()->LinesBegin();
+					const IGraphics::CLineItem Underline(Line.m_NameRect.m_X, UnderlineY, Line.m_NameRect.m_X + Line.m_NameRect.m_W, UnderlineY);
+					Graphics()->LinesDraw(&Underline, 1);
+					Graphics()->LinesEnd();
+				}
+			}
 
 			if((m_Mode != MODE_NONE || m_Show) && !Line.m_vLinkBounds.empty())
 			{

@@ -13,3 +13,6 @@ SET_CONFIG_DOMAIN(ConfigDomain::TCLIENT)
 
 SET_CONFIG_DOMAIN(ConfigDomain::BESTCLIENT)
 #include "config_variables_bestclient.h"
+
+SET_CONFIG_DOMAIN(ConfigDomain::UCLIENT)
+#include "config_variables_uclient.h"

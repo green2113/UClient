@@ -2698,7 +2698,7 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			const float ColorPickerLineSpacing = 5.0f;
 			const bool ShowRealHitboxEnabled = g_Config.m_BcShowRealHitbox != 0;
 			const float ColorPickerHeight = ShowRealHitboxEnabled ? (ColorPickerLineSize + ColorPickerLineSpacing) : 0.0f;
-			const float ContentHeight = LineSize + MarginSmall + 10.0f * LineSize + ColorPickerHeight;
+			const float ContentHeight = LineSize + MarginSmall + 11.0f * LineSize + ColorPickerHeight;
 			CUIRect Content, Label, Row;
 			BeginBlock(Column, ContentHeight, Content);
 
@@ -2716,6 +2716,19 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcEmoticonShadow, BCLocalize("Shadow of Emotions"), &g_Config.m_BcEmoticonShadow, &Content, LineSize);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcChatSaveDraft, BCLocalize("Save unsent messages"), &g_Config.m_BcChatSaveDraft, &Content, LineSize);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcChatAltCommandLayout, BCLocalize("Commands in other layout"), &g_Config.m_BcChatAltCommandLayout, &Content, LineSize);
+			Content.HSplitTop(LineSize, &Row, &Content);
+			CUIRect SearchEngineLabel, SearchEngineDropDown;
+			Row.VSplitMid(&SearchEngineLabel, &SearchEngineDropDown, 8.0f);
+			Ui()->DoLabel(&SearchEngineLabel, BCLocalize("Chat player search engine"), 13.0f, TEXTALIGN_ML);
+			static CUi::SDropDownState s_ChatPlayerSearchEngineState;
+			static CScrollRegion s_ChatPlayerSearchEngineScrollRegion;
+			s_ChatPlayerSearchEngineState.m_SelectionPopupContext.m_pScrollRegion = &s_ChatPlayerSearchEngineScrollRegion;
+			const char *apChatPlayerSearchEngines[] = {
+				BCLocalize("DDNet"),
+				BCLocalize("DDStats"),
+			};
+			g_Config.m_UcChatPlayerSearchEngine = std::clamp(g_Config.m_UcChatPlayerSearchEngine, 0, 1);
+			g_Config.m_UcChatPlayerSearchEngine = Ui()->DoDropDown(&SearchEngineDropDown, g_Config.m_UcChatPlayerSearchEngine, apChatPlayerSearchEngines, (int)std::size(apChatPlayerSearchEngines), s_ChatPlayerSearchEngineState);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcCinematicCamera, BCLocalize("Cinematic camera"), &g_Config.m_BcCinematicCamera, &Content, LineSize);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcShowhudDummyCoordIndicator, BCLocalize("Show player below indicator"), &g_Config.m_BcShowhudDummyCoordIndicator, &Content, LineSize);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcShowRealHitbox, BCLocalize("Show real hitbox"), &g_Config.m_BcShowRealHitbox, &Content, LineSize);
