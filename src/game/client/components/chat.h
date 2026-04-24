@@ -95,6 +95,7 @@ class CChat : public CComponent
 		EPendingUploadState m_State = EPendingUploadState::NONE;
 		IGraphics::CTextureHandle m_Texture;
 		std::shared_ptr<CHttpRequest> m_pRequest;
+		std::vector<uint8_t> m_vOriginalPng;
 		std::vector<uint8_t> m_vPng;
 		int m_Width = 0;
 		int m_Height = 0;
@@ -365,6 +366,11 @@ class CChat : public CComponent
 	bool m_GiphyButtonPressed;
 	bool m_GiphyButtonRectValid;
 	SRenderRect m_GiphyButtonRect;
+	bool m_GiphyPopupHasStoredPos = false;
+	vec2 m_GiphyPopupPos = vec2(0.0f, 0.0f);
+	bool m_GiphyPopupDragging = false;
+	vec2 m_GiphyPopupDragOffset = vec2(0.0f, 0.0f);
+	bool m_GiphyPopupReopenRequested = false;
 	int m_HoveredTranslateLineIndex = -1;
 
 	bool m_HideMediaByBind;

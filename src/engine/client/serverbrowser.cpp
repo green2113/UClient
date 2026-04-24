@@ -139,11 +139,31 @@ void CServerBrowser::OnInit()
 void CServerBrowser::SetBestClientPlayers(const std::vector<CBestClientPlayerEntry> &vPlayers)
 {
 	m_BestClientPlayersByServer.clear();
+	auto AddPlayerEntry = [&](const char *pKey, const char *pName) {
+		if(!pKey || pKey[0] == '\0' || !pName || pName[0] == '\0')
+			return;
+		m_BestClientPlayersByServer[pKey].insert(pName);
+	};
+
 	for(const auto &Entry : vPlayers)
 	{
 		if(Entry.m_aServerAddress[0] == '\0' || Entry.m_aName[0] == '\0')
 			continue;
-		m_BestClientPlayersByServer[Entry.m_aServerAddress].insert(Entry.m_aName);
+
+		NETADDR Addr;
+		if(net_addr_from_url(&Addr, Entry.m_aServerAddress, nullptr, 0) == 0 || net_addr_from_str(&Addr, Entry.m_aServerAddress) == 0)
+		{
+			char aAddrWithPort[NETADDR_MAXSTRSIZE];
+			char aAddrIpOnly[NETADDR_MAXSTRSIZE];
+			net_addr_str(&Addr, aAddrWithPort, sizeof(aAddrWithPort), true);
+			net_addr_str(&Addr, aAddrIpOnly, sizeof(aAddrIpOnly), false);
+			AddPlayerEntry(aAddrWithPort, Entry.m_aName);
+			AddPlayerEntry(aAddrIpOnly, Entry.m_aName);
+		}
+		else
+		{
+			AddPlayerEntry(Entry.m_aServerAddress, Entry.m_aName);
+		}
 	}
 
 	for(CServerEntry *pEntry : m_vpServerlist)
@@ -1768,11 +1788,18 @@ void CServerBrowser::UpdateServerBestClients(CServerInfo *pInfo) const
 	vpAddressMatches.reserve(pInfo->m_NumAddresses);
 	for(int AddressIndex = 0; AddressIndex < pInfo->m_NumAddresses; ++AddressIndex)
 	{
-		char aAddress[NETADDR_MAXSTRSIZE];
-		net_addr_str(&pInfo->m_aAddresses[AddressIndex], aAddress, sizeof(aAddress), true);
-		const auto It = m_BestClientPlayersByServer.find(aAddress);
-		if(It != m_BestClientPlayersByServer.end())
-			vpAddressMatches.push_back(&It->second);
+		char aAddressWithPort[NETADDR_MAXSTRSIZE];
+		char aAddressIpOnly[NETADDR_MAXSTRSIZE];
+		net_addr_str(&pInfo->m_aAddresses[AddressIndex], aAddressWithPort, sizeof(aAddressWithPort), true);
+		net_addr_str(&pInfo->m_aAddresses[AddressIndex], aAddressIpOnly, sizeof(aAddressIpOnly), false);
+
+		const auto ItWithPort = m_BestClientPlayersByServer.find(aAddressWithPort);
+		if(ItWithPort != m_BestClientPlayersByServer.end())
+			vpAddressMatches.push_back(&ItWithPort->second);
+
+		const auto ItIpOnly = m_BestClientPlayersByServer.find(aAddressIpOnly);
+		if(ItIpOnly != m_BestClientPlayersByServer.end())
+			vpAddressMatches.push_back(&ItIpOnly->second);
 	}
 
 	if(vpAddressMatches.empty())

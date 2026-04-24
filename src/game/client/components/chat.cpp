@@ -1630,8 +1630,26 @@ void CChat::OpenGiphyPopup(const CUIRect &ButtonRect)
 	m_Input.Deactivate();
 
 	const float PopupWidth = 400.0f;
-	const float PopupX = maximum(10.0f, ButtonRect.x + ButtonRect.w - PopupWidth);
-	const float PopupY = maximum(10.0f, ButtonRect.y - 10.0f);
+	const float PopupHeight = 360.0f;
+	const float ScreenW = Ui()->Screen()->w;
+	const float ScreenH = Ui()->Screen()->h;
+	const float Margin = 10.0f;
+
+	float PopupX = maximum(Margin, ButtonRect.x + ButtonRect.w - PopupWidth);
+	float PopupY = maximum(Margin, ButtonRect.y - 10.0f);
+	if(m_GiphyPopupHasStoredPos)
+	{
+		PopupX = m_GiphyPopupPos.x;
+		PopupY = m_GiphyPopupPos.y;
+	}
+
+	PopupX = std::clamp(PopupX, Margin, maximum(Margin, ScreenW - PopupWidth - Margin));
+	PopupY = std::clamp(PopupY, Margin, maximum(Margin, ScreenH - PopupHeight - Margin));
+	m_GiphyPopupPos = vec2(PopupX, PopupY);
+	m_GiphyPopupHasStoredPos = true;
+	m_GiphySearchInput.Activate(EInputPriority::CHAT);
+	Ui()->SetActiveItem(&m_GiphySearchInput);
+
 	Ui()->DoPopupMenu(&m_GiphyPopupId, PopupX, PopupY, PopupWidth, 360.0f, this, PopupGiphyBrowser);
 }
 
@@ -1663,6 +1681,50 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 	const float RowHeight = 22.0f;
 	const float CellSpacing = 6.0f;
 	const int Columns = 2;
+
+	if(Active)
+	{
+		const float PopupWidth = 400.0f;
+		const float PopupHeight = 360.0f;
+		const float Margin = 10.0f;
+		const float PopupPadding = 5.0f; // popup border + margin in CUi
+		const vec2 MousePos(pChat->Ui()->MouseX(), pChat->Ui()->MouseY());
+		const vec2 PopupTopLeft(View.x - PopupPadding, View.y - PopupPadding);
+		CUIRect DragRect = View;
+		DragRect.HSplitTop(16.0f, &DragRect, nullptr);
+
+		const bool HeaderHovered = MousePos.x >= DragRect.x && MousePos.x <= DragRect.x + DragRect.w &&
+			MousePos.y >= DragRect.y && MousePos.y <= DragRect.y + DragRect.h;
+
+		if(!pChat->m_GiphyPopupDragging && pChat->Ui()->MouseButtonClicked(0) && HeaderHovered)
+		{
+			pChat->m_GiphyPopupDragging = true;
+			pChat->m_GiphyPopupDragOffset = MousePos - PopupTopLeft;
+		}
+
+		if(pChat->m_GiphyPopupDragging)
+		{
+			if(!pChat->Ui()->MouseButton(0))
+			{
+				pChat->m_GiphyPopupDragging = false;
+			}
+			else
+			{
+				const float ScreenW = pChat->Ui()->Screen()->w;
+				const float ScreenH = pChat->Ui()->Screen()->h;
+				const float NewX = std::clamp(MousePos.x - pChat->m_GiphyPopupDragOffset.x, Margin, maximum(Margin, ScreenW - PopupWidth - Margin));
+				const float NewY = std::clamp(MousePos.y - pChat->m_GiphyPopupDragOffset.y, Margin, maximum(Margin, ScreenH - PopupHeight - Margin));
+				const vec2 NewPos(NewX, NewY);
+				if(distance(NewPos, pChat->m_GiphyPopupPos) > 0.01f)
+				{
+					pChat->m_GiphyPopupPos = NewPos;
+					pChat->m_GiphyPopupHasStoredPos = true;
+					pChat->m_GiphyPopupReopenRequested = true;
+					return CUi::POPUP_CLOSE_CURRENT;
+				}
+			}
+		}
+	}
 
 	CUIRect Row;
 	View.HSplitTop(16.0f, &Row, &View);
@@ -2073,6 +2135,11 @@ void CChat::ClearPendingUploadImage()
 	m_PendingUploadImage = SPendingUploadImage();
 	m_PendingUploadClosePressed = false;
 	m_PendingUploadCloseRectValid = false;
+	m_ImageEditor.m_vStrokes.clear();
+	m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
+	m_ImageEditor.m_IsDrawing = false;
+	m_ImageEditor.m_Active = false;
+	m_ImageEditor.m_MouseDownLastFrame = false;
 }
 
 bool CChat::SetPendingUploadImage(const IInput::SClipboardImage &Image)
@@ -2113,9 +2180,15 @@ bool CChat::SetPendingUploadImage(const IInput::SClipboardImage &Image)
 	}
 
 	m_PendingUploadImage.m_vPng.assign(Writer.Data(), Writer.Data() + Writer.Size());
+	m_PendingUploadImage.m_vOriginalPng = m_PendingUploadImage.m_vPng;
 	m_PendingUploadImage.m_Width = Image.m_Width;
 	m_PendingUploadImage.m_Height = Image.m_Height;
 	m_PendingUploadImage.m_State = EPendingUploadState::READY;
+	m_ImageEditor.m_vStrokes.clear();
+	m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
+	m_ImageEditor.m_IsDrawing = false;
+	m_ImageEditor.m_Active = false;
+	m_ImageEditor.m_MouseDownLastFrame = false;
 	return true;
 }
 
@@ -2317,15 +2390,7 @@ void CChat::RenderPendingUploadPreview(float X, float Y, float Width, float Heig
 
 	Graphics()->DrawRect(X, Y, PreviewW, PreviewH, ColorRGBA(1.0f, 1.0f, 1.0f, 0.35f), IGraphics::CORNER_ALL, PreviewRounding);
 	Graphics()->DrawRect(InnerX, InnerY, InnerW, InnerH, ColorRGBA(0.07f, 0.07f, 0.07f, 0.85f), IGraphics::CORNER_ALL, InnerRounding);
-
-	Graphics()->WrapClamp();
-	Graphics()->TextureSet(m_PendingUploadImage.m_Texture);
-	Graphics()->QuadsBegin();
-	Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
-	Graphics()->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
-	Graphics()->DrawRectExt(InnerX, InnerY, InnerW, InnerH, InnerRounding, IGraphics::CORNER_ALL);
-	Graphics()->QuadsEnd();
-	Graphics()->TextureClear();
+	DrawRoundedMediaPreview(Graphics(), m_PendingUploadImage.m_Texture, InnerX, InnerY, InnerW, InnerH, InnerRounding, 1.0f);
 
 	const vec2 MousePos = ChatMousePos();
 
@@ -2406,11 +2471,10 @@ void CChat::OpenImageEditor()
 		return;
 
 	m_ImageEditor.m_Active = true;
-	m_ImageEditor.m_vStrokes.clear();
 	m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
 	m_ImageEditor.m_CurrentTool = EImageEditorTool::PEN;
 	m_ImageEditor.m_PenColor = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
-	m_ImageEditor.m_PenThickness = 3.0f;
+	m_ImageEditor.m_PenThickness = maximum(1.0f, m_ImageEditor.m_PenThickness);
 	m_ImageEditor.m_IsDrawing = false;
 	m_ImageEditor.m_MouseDownLastFrame = false;
 }
@@ -2418,7 +2482,6 @@ void CChat::OpenImageEditor()
 void CChat::CloseImageEditor()
 {
 	m_ImageEditor.m_Active = false;
-	m_ImageEditor.m_vStrokes.clear();
 	m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
 	m_ImageEditor.m_IsDrawing = false;
 	m_ImageEditor.m_MouseDownLastFrame = false;
@@ -2428,8 +2491,177 @@ void CChat::SaveImageEditorChanges()
 {
 	if(!m_ImageEditor.m_Active)
 		return;
+	if(!m_PendingUploadImage.HasImage() || m_PendingUploadImage.m_vOriginalPng.empty())
+	{
+		CloseImageEditor();
+		return;
+	}
 
-	// TODO: Rasterize edited strokes into the upload texture/PNG.
+	if(m_ImageEditor.m_vStrokes.empty() && m_ImageEditor.m_CurrentStroke.m_vPoints.empty())
+	{
+		CloseImageEditor();
+		return;
+	}
+
+	CImageInfo BaseImage;
+	if(!Graphics()->LoadPng(BaseImage, m_PendingUploadImage.m_vOriginalPng.data(), m_PendingUploadImage.m_vOriginalPng.size(), "chat-paste-editor-save"))
+	{
+		Echo("Unable to decode the pending image for editing.");
+		return;
+	}
+
+	if(BaseImage.m_Format != CImageInfo::FORMAT_RGBA)
+	{
+		CImageInfo RgbaImage;
+		RgbaImage.m_Width = BaseImage.m_Width;
+		RgbaImage.m_Height = BaseImage.m_Height;
+		RgbaImage.m_Format = CImageInfo::FORMAT_RGBA;
+		RgbaImage.m_pData = (uint8_t *)malloc(RgbaImage.DataSize());
+		if(RgbaImage.m_pData == nullptr)
+		{
+			BaseImage.Free();
+			Echo("Unable to allocate image buffer for editor save.");
+			return;
+		}
+
+		for(size_t y = 0; y < BaseImage.m_Height; ++y)
+			for(size_t x = 0; x < BaseImage.m_Width; ++x)
+				RgbaImage.SetPixelColor(x, y, BaseImage.PixelColor(x, y));
+
+		BaseImage.Free();
+		BaseImage = std::move(RgbaImage);
+	}
+
+	struct SRasterColor
+	{
+		float m_R = 1.0f;
+		float m_G = 1.0f;
+		float m_B = 1.0f;
+		float m_A = 1.0f;
+	};
+
+	auto BlendOver = [&](uint8_t *pDstRgba, const SRasterColor &Color) {
+		const float SrcA = std::clamp(Color.m_A, 0.0f, 1.0f);
+		const float DstA = pDstRgba[3] / 255.0f;
+		const float OutA = SrcA + DstA * (1.0f - SrcA);
+
+		const float DstR = pDstRgba[0] / 255.0f;
+		const float DstG = pDstRgba[1] / 255.0f;
+		const float DstB = pDstRgba[2] / 255.0f;
+
+		float OutR = 0.0f;
+		float OutG = 0.0f;
+		float OutB = 0.0f;
+		if(OutA > 0.0f)
+		{
+			OutR = (Color.m_R * SrcA + DstR * DstA * (1.0f - SrcA)) / OutA;
+			OutG = (Color.m_G * SrcA + DstG * DstA * (1.0f - SrcA)) / OutA;
+			OutB = (Color.m_B * SrcA + DstB * DstA * (1.0f - SrcA)) / OutA;
+		}
+
+		pDstRgba[0] = (uint8_t)std::clamp((int)roundf(OutR * 255.0f), 0, 255);
+		pDstRgba[1] = (uint8_t)std::clamp((int)roundf(OutG * 255.0f), 0, 255);
+		pDstRgba[2] = (uint8_t)std::clamp((int)roundf(OutB * 255.0f), 0, 255);
+		pDstRgba[3] = (uint8_t)std::clamp((int)roundf(OutA * 255.0f), 0, 255);
+	};
+
+	auto CanvasToImage = [&](const vec2 &CanvasPoint) {
+		const float X = (CanvasPoint.x - m_ImageEditorCanvasRect.m_X) / maximum(1.0f, m_ImageEditorCanvasRect.m_W);
+		const float Y = (CanvasPoint.y - m_ImageEditorCanvasRect.m_Y) / maximum(1.0f, m_ImageEditorCanvasRect.m_H);
+		return vec2(
+			std::clamp(X, 0.0f, 1.0f) * maximum(1.0f, (float)BaseImage.m_Width - 1.0f),
+			std::clamp(Y, 0.0f, 1.0f) * maximum(1.0f, (float)BaseImage.m_Height - 1.0f));
+	};
+
+	auto StampCircle = [&](const vec2 &Center, float Radius, const SRasterColor &Color) {
+		if(BaseImage.m_pData == nullptr || Radius <= 0.0f)
+			return;
+
+		const int W = (int)BaseImage.m_Width;
+		const int H = (int)BaseImage.m_Height;
+		const float RadiusSq = Radius * Radius;
+
+		const int MinX = std::clamp((int)floorf(Center.x - Radius), 0, W - 1);
+		const int MaxX = std::clamp((int)ceilf(Center.x + Radius), 0, W - 1);
+		const int MinY = std::clamp((int)floorf(Center.y - Radius), 0, H - 1);
+		const int MaxY = std::clamp((int)ceilf(Center.y + Radius), 0, H - 1);
+
+		for(int y = MinY; y <= MaxY; ++y)
+		{
+			for(int x = MinX; x <= MaxX; ++x)
+			{
+				const float Dx = ((float)x + 0.5f) - Center.x;
+				const float Dy = ((float)y + 0.5f) - Center.y;
+				if(Dx * Dx + Dy * Dy > RadiusSq)
+					continue;
+
+				uint8_t *pDst = &BaseImage.m_pData[((size_t)y * (size_t)W + (size_t)x) * 4ull];
+				BlendOver(pDst, Color);
+			}
+		}
+	};
+
+	auto RasterizeStroke = [&](const SImageEditorStroke &Stroke) {
+		if(Stroke.m_Tool != EImageEditorTool::PEN || Stroke.m_vPoints.empty())
+			return;
+
+		const float ScaleX = (float)BaseImage.m_Width / maximum(1.0f, m_ImageEditorCanvasRect.m_W);
+		const float ScaleY = (float)BaseImage.m_Height / maximum(1.0f, m_ImageEditorCanvasRect.m_H);
+		const float ThicknessPx = maximum(1.0f, Stroke.m_Thickness * (ScaleX + ScaleY) * 0.5f);
+		const float Radius = maximum(0.75f, ThicknessPx * 0.7f);
+		const SRasterColor Color{
+			std::clamp(Stroke.m_Color.r, 0.0f, 1.0f),
+			std::clamp(Stroke.m_Color.g, 0.0f, 1.0f),
+			std::clamp(Stroke.m_Color.b, 0.0f, 1.0f),
+			std::clamp(Stroke.m_Color.a, 0.0f, 1.0f)};
+
+		vec2 Prev = CanvasToImage(Stroke.m_vPoints.front());
+		StampCircle(Prev, Radius, Color);
+
+		for(size_t i = 1; i < Stroke.m_vPoints.size(); ++i)
+		{
+			const vec2 Next = CanvasToImage(Stroke.m_vPoints[i]);
+			const vec2 Delta = Next - Prev;
+			const float Length = length(Delta);
+			const float Step = maximum(0.5f, Radius * 0.5f);
+			const int Segments = maximum(1, (int)ceilf(Length / Step));
+
+			for(int s = 1; s <= Segments; ++s)
+			{
+				const float T = (float)s / (float)Segments;
+				StampCircle(mix(Prev, Next, T), Radius, Color);
+			}
+
+			Prev = Next;
+		}
+	};
+
+	for(const SImageEditorStroke &Stroke : m_ImageEditor.m_vStrokes)
+		RasterizeStroke(Stroke);
+	if(!m_ImageEditor.m_CurrentStroke.m_vPoints.empty())
+		RasterizeStroke(m_ImageEditor.m_CurrentStroke);
+
+	CByteBufferWriter Writer;
+	if(!CImageLoader::SavePng(Writer, BaseImage))
+	{
+		BaseImage.Free();
+		Echo("Unable to save edited image.");
+		return;
+	}
+
+	const IGraphics::CTextureHandle NewTexture = Graphics()->LoadTextureRaw(BaseImage, 0, "chat-paste-upload-edited");
+	BaseImage.Free();
+	if(!NewTexture.IsValid())
+	{
+		Echo("Unable to upload edited image texture.");
+		return;
+	}
+
+	if(m_PendingUploadImage.m_Texture.IsValid())
+		Graphics()->UnloadTexture(&m_PendingUploadImage.m_Texture);
+	m_PendingUploadImage.m_Texture = NewTexture;
+	m_PendingUploadImage.m_vPng.assign(Writer.Data(), Writer.Data() + Writer.Size());
+
 	CloseImageEditor();
 }
 
@@ -5357,10 +5589,36 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	}
 
 	if(ChatInputActive && (Ui()->IsPopupOpen(&m_TranslateSettingsPopupId) || Ui()->IsPopupOpen(&m_GiphyPopupId)) && Ui()->OnInput(Event))
-		return true;
+	{
+		const bool IsGiphyButtonEvent = Event.m_Key == KEY_MOUSE_1 && m_GiphyButtonRectValid;
+		bool AllowPassToGiphyToggle = false;
+		if(IsGiphyButtonEvent)
+		{
+			const vec2 MousePos = ChatMousePos();
+			const bool InsideGiphyButton =
+				MousePos.x >= m_GiphyButtonRect.m_X && MousePos.x <= m_GiphyButtonRect.m_X + m_GiphyButtonRect.m_W &&
+				MousePos.y >= m_GiphyButtonRect.m_Y && MousePos.y <= m_GiphyButtonRect.m_Y + m_GiphyButtonRect.m_H;
+			AllowPassToGiphyToggle = InsideGiphyButton;
+		}
+		if(!AllowPassToGiphyToggle)
+			return true;
+	}
 
 	if(ChatInputActive && Ui()->IsPopupOpen(&m_GiphyPopupId))
-		return true;
+	{
+		const bool IsGiphyButtonEvent = Event.m_Key == KEY_MOUSE_1 && m_GiphyButtonRectValid;
+		bool AllowPassToGiphyToggle = false;
+		if(IsGiphyButtonEvent)
+		{
+			const vec2 MousePos = ChatMousePos();
+			const bool InsideGiphyButton =
+				MousePos.x >= m_GiphyButtonRect.m_X && MousePos.x <= m_GiphyButtonRect.m_X + m_GiphyButtonRect.m_W &&
+				MousePos.y >= m_GiphyButtonRect.m_Y && MousePos.y <= m_GiphyButtonRect.m_Y + m_GiphyButtonRect.m_H;
+			AllowPassToGiphyToggle = InsideGiphyButton;
+		}
+		if(!AllowPassToGiphyToggle)
+			return true;
+	}
 
 	if(ChatInputActive && Event.m_Key == KEY_MOUSE_1 && m_PendingUploadCloseRectValid)
 	{
@@ -6230,12 +6488,15 @@ void CChat::DisableMode()
 		ResetTypingAnimation();
 		m_aPreviousDisplayedInputText[0] = '\0';
 		ResetHiddenMediaReveals();
+		ClearPendingUploadImage();
 		m_GiphyButtonPressed = false;
 		m_PendingUploadClosePressed = false;
 		if(m_LastMousePos.has_value())
 			SetUiMousePos(m_LastMousePos.value());
 		const vec2 WindowSize(maximum(1.0f, (float)Graphics()->WindowWidth()), maximum(1.0f, (float)Graphics()->WindowHeight()));
 		m_LastMousePos = Ui()->UpdatedMousePos() * vec2(Ui()->Screen()->w, Ui()->Screen()->h) / WindowSize;
+		m_GiphySearchInput.Deactivate();
+		m_GiphyCaptionInput.Deactivate();
 		m_Input.Deactivate();
 
 		}
@@ -7245,6 +7506,14 @@ void CChat::OnRender()
 	}
 	if(ChatInteractionActive)
 	{
+		if(m_GiphyPopupReopenRequested)
+		{
+			m_GiphyPopupReopenRequested = false;
+			Ui()->ClosePopupMenu(&m_GiphyPopupId);
+			CUIRect AnchorRect = {m_GiphyButtonRect.m_X, m_GiphyButtonRect.m_Y, m_GiphyButtonRect.m_W, m_GiphyButtonRect.m_H};
+			OpenGiphyPopup(AnchorRect);
+		}
+
 		const bool GiphyPopupOpen = Ui()->IsPopupOpen(&m_GiphyPopupId);
 		if(!m_MediaViewerOpen && !m_ScrollbarDragging)
 		{
