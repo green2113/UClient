@@ -545,6 +545,10 @@ void CClientIndicator::SendPresenceHttpEvent(int ClientId, const char *pEventPat
 	Json.BeginObject();
 	Json.WriteAttribute("playerId");
 	Json.WriteStrValue(g_Config.m_UcInstallUuid);
+	char aSessionId[UUID_MAXSTRSIZE];
+	FormatUuid(m_ClientInstanceId, aSessionId, sizeof(aSessionId));
+	Json.WriteAttribute("sessionId");
+	Json.WriteStrValue(aSessionId);
 	if(pServerAddress[0] != '\0')
 	{
 		Json.WriteAttribute("server");
@@ -588,6 +592,10 @@ void CClientIndicator::SendPresenceHttpSwitchEvent(int ClientId, const char *pFr
 	Json.BeginObject();
 	Json.WriteAttribute("playerId");
 	Json.WriteStrValue(g_Config.m_UcInstallUuid);
+	char aSessionId[UUID_MAXSTRSIZE];
+	FormatUuid(m_ClientInstanceId, aSessionId, sizeof(aSessionId));
+	Json.WriteAttribute("sessionId");
+	Json.WriteStrValue(aSessionId);
 	Json.WriteAttribute("server");
 	Json.WriteStrValue(pFromServerAddress);
 	Json.WriteAttribute("toServer");
