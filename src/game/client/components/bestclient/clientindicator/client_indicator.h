@@ -73,6 +73,8 @@ private:
 	void ProcessIncomingPackets(bool Force = false);
 	void SyncLocalRegistrations(bool Force = false);
 	void SendPresencePacket(int ClientId, int PacketType);
+	void SendPresenceHttpEvent(int ClientId, const char *pEventPath);
+	void SendPresenceHttpSwitchEvent(int ClientId, const char *pFromServerAddress, const char *pToServerAddress);
 	void SendLeaveForAll();
 	const char *CurrentGameServerAddress();
 	const char *PlayerNameForClient(int ClientId) const;

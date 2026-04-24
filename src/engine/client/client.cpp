@@ -621,6 +621,23 @@ void CClient::GenerateTimeoutSeed()
 	secure_random_password(g_Config.m_ClTimeoutSeed, sizeof(g_Config.m_ClTimeoutSeed), 16);
 }
 
+void CClient::EnsureInstallUuid()
+{
+	CUuid Uuid = UUID_ZEROED;
+	bool HasValidUuid = g_Config.m_UcInstallUuid[0] != '\0' && ParseUuid(&Uuid, g_Config.m_UcInstallUuid) == 0;
+
+	if(!HasValidUuid)
+	{
+		Uuid = RandomUuid();
+		FormatUuid(Uuid, g_Config.m_UcInstallUuid, sizeof(g_Config.m_UcInstallUuid));
+		if(m_pConfigManager)
+			m_pConfigManager->Save();
+	}
+
+	str_copy(m_aInstallUuidLocked, g_Config.m_UcInstallUuid, sizeof(m_aInstallUuidLocked));
+	m_InstallUuidLocked = true;
+}
+
 void CClient::GenerateTimeoutCodes(const NETADDR *pAddrs, int NumAddrs)
 {
 	if(g_Config.m_ClTimeoutSeed[0])
@@ -3174,6 +3191,7 @@ void CClient::Run()
 #endif
 	m_aSnapshotParts[0] = 0;
 	m_aSnapshotParts[1] = 0;
+	EnsureInstallUuid();
 
 	if(m_GenerateTimeoutSeed)
 	{
@@ -4522,6 +4540,20 @@ void CClient::ConchainTimeoutSeed(IConsole::IResult *pResult, void *pUserData, I
 		pSelf->m_GenerateTimeoutSeed = false;
 }
 
+void CClient::ConchainInstallUuid(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
+{
+	CClient *pSelf = (CClient *)pUserData;
+	pfnCallback(pResult, pCallbackUserData);
+
+	if(!pResult->NumArguments())
+		return;
+
+	if(!pSelf->m_InstallUuidLocked)
+		pSelf->EnsureInstallUuid();
+
+	str_copy(g_Config.m_UcInstallUuid, pSelf->m_aInstallUuidLocked, sizeof(g_Config.m_UcInstallUuid));
+}
+
 void CClient::ConchainPassword(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
 {
 	CClient *pSelf = (CClient *)pUserData;
@@ -4624,6 +4656,7 @@ void CClient::RegisterCommands()
 	RustVersionRegister(*m_pConsole);
 
 	m_pConsole->Chain("cl_timeout_seed", ConchainTimeoutSeed, this);
+	m_pConsole->Chain("uc_install_uuid", ConchainInstallUuid, this);
 	m_pConsole->Chain("cl_replays", ConchainReplays, this);
 	m_pConsole->Chain("cl_input_fifo", ConchainInputFifo, this);
 	m_pConsole->Chain("cl_port", ConchainNetReset, this);

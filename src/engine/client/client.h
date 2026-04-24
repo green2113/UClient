@@ -133,6 +133,8 @@ class CClient : public IClient, public CDemoPlayer::IListener
 	char m_aTimeoutCodes[NUM_DUMMIES][32] = {"", ""};
 	bool m_aDidPostConnect[NUM_DUMMIES] = {false, false};
 	bool m_GenerateTimeoutSeed = true;
+	char m_aInstallUuidLocked[sizeof(g_Config.m_UcInstallUuid)] = "";
+	bool m_InstallUuidLocked = false;
 
 	// TClient
 	std::array<bool, NUM_DUMMIES> m_aExecuteOnJoinDone = {};
@@ -466,6 +468,7 @@ public:
 	static void ConchainWindowVSync(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainWindowResize(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainTimeoutSeed(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
+	static void ConchainInstallUuid(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainPassword(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainReplays(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainInputFifo(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
@@ -515,6 +518,7 @@ public:
 	// DDRace
 
 	void GenerateTimeoutSeed() override;
+	void EnsureInstallUuid();
 	void GenerateTimeoutCodes(const NETADDR *pAddrs, int NumAddrs);
 
 	void RaceRecord_Start(const char *pFilename) override;

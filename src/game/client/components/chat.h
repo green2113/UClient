@@ -94,6 +94,7 @@ class CChat : public CComponent
 	{
 		EPendingUploadState m_State = EPendingUploadState::NONE;
 		IGraphics::CTextureHandle m_Texture;
+		IGraphics::CTextureHandle m_OriginalTexture;
 		std::shared_ptr<CHttpRequest> m_pRequest;
 		std::vector<uint8_t> m_vOriginalPng;
 		std::vector<uint8_t> m_vPng;
@@ -127,6 +128,7 @@ class CChat : public CComponent
 	{
 		bool m_Active = false;
 		std::vector<SImageEditorStroke> m_vStrokes;
+		std::vector<SImageEditorStroke> m_vStrokeSnapshot;
 		SImageEditorStroke m_CurrentStroke;
 		EImageEditorTool m_CurrentTool = EImageEditorTool::PEN;
 		ColorRGBA m_PenColor = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
@@ -482,6 +484,7 @@ class CChat : public CComponent
 	void RenderPendingUploadPreview(float X, float Y, float Width, float Height, float FontSize);
 	void OpenImageEditor();
 	void CloseImageEditor();
+	void CancelImageEditor();
 	void RenderImageEditor();
 	void UpdateImageEditorInput();
 	void SaveImageEditorChanges();

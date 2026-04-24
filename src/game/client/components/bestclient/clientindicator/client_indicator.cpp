@@ -10,6 +10,7 @@
 #include <engine/serverbrowser.h>
 #include <engine/shared/config.h>
 #include <engine/shared/json.h>
+#include <engine/shared/jsonwriter.h>
 #include <engine/shared/network.h>
 
 #include <game/client/gameclient.h>
@@ -265,8 +266,10 @@ void CClientIndicator::OnUpdate()
 		m_RuntimeState = m_Socket ? ESubsystemRuntimeState::ACTIVE : ESubsystemRuntimeState::ARMED;
 		if(!m_pBrowserTask && (m_LastBrowserRefreshTick == 0 || Now - m_LastBrowserRefreshTick >= BrowserRefreshInterval))
 			RefreshBrowserCache(false);
-		if(!m_pTokenTask && (m_LastTokenRefreshTick == 0 || Now - m_LastTokenRefreshTick >= TokenRefreshInterval))
+		if(g_Config.m_BcClientIndicatorSendInfo && !m_pTokenTask && (m_LastTokenRefreshTick == 0 || Now - m_LastTokenRefreshTick >= TokenRefreshInterval))
 			RefreshToken(false);
+		if(!g_Config.m_BcClientIndicatorSendInfo && m_Socket)
+			ClosePresenceSocket();
 	}
 	else if(!PresenceEnabled)
 	{
@@ -485,32 +488,127 @@ const char *CClientIndicator::PlayerNameForClient(int ClientId) const
 
 void CClientIndicator::SendPresencePacket(int ClientId, int PacketType)
 {
-	if(!m_Socket || !m_HasServerAddr || ClientId < 0 || ClientId >= MAX_CLIENTS)
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
 		return;
+
 	const char *pSharedToken = EffectiveSharedToken();
-	if(!pSharedToken || pSharedToken[0] == '\0')
+	if(g_Config.m_BcClientIndicatorSendInfo && m_Socket && m_HasServerAddr && pSharedToken && pSharedToken[0] != '\0')
+	{
+		std::vector<uint8_t> vPacket;
+		vPacket.reserve(256);
+		BestClientIndicator::WriteHeader(vPacket, (BestClientIndicator::EPacketType)PacketType);
+		BestClientIndicator::WriteUuid(vPacket, m_ClientInstanceId);
+		const CUuid Nonce = RandomUuid();
+		BestClientIndicator::WriteUuid(vPacket, Nonce);
+		BestClientIndicator::WriteU64(vPacket, (uint64_t)time_timestamp());
+		BestClientIndicator::WriteString(vPacket, CurrentGameServerAddress());
+		BestClientIndicator::WriteString(vPacket, PlayerNameForClient(ClientId));
+		BestClientIndicator::WriteS16(vPacket, (int16_t)ClientId);
+		BestClientIndicator::AppendProof(vPacket, pSharedToken);
+
+		if(g_Config.m_DbgClientIndicator >= 2)
+			DumpUdpPacketBytes("sent", m_ServerAddr, vPacket.data(), (int)vPacket.size());
+
+		const int Sent = net_udp_send(m_Socket, &m_ServerAddr, vPacket.data(), (int)vPacket.size());
+		char aServerAddr[NETADDR_MAXSTRSIZE];
+		net_addr_str(&m_ServerAddr, aServerAddr, sizeof(aServerAddr), true);
+		DebugLogF("sent %s packet client_id=%d player='%s' game_server=%s indicator_server=%s bytes=%d result=%d",
+			PacketTypeName(PacketType), ClientId, PlayerNameForClient(ClientId), CurrentGameServerAddress(), aServerAddr, (int)vPacket.size(), Sent);
+	}
+
+	if(PacketType == BestClientIndicator::PACKET_JOIN)
+		SendPresenceHttpEvent(ClientId, "join");
+	else if(PacketType == BestClientIndicator::PACKET_HEARTBEAT)
+		SendPresenceHttpEvent(ClientId, "heartbeat");
+	else if(PacketType == BestClientIndicator::PACKET_LEAVE)
+		SendPresenceHttpEvent(ClientId, "leave");
+}
+
+void CClientIndicator::SendPresenceHttpEvent(int ClientId, const char *pEventPath)
+{
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS || !pEventPath || pEventPath[0] == '\0')
+		return;
+	if(g_Config.m_UcPresenceApiBaseUrl[0] == '\0' || g_Config.m_UcInstallUuid[0] == '\0')
 		return;
 
-	std::vector<uint8_t> vPacket;
-	vPacket.reserve(256);
-	BestClientIndicator::WriteHeader(vPacket, (BestClientIndicator::EPacketType)PacketType);
-	BestClientIndicator::WriteUuid(vPacket, m_ClientInstanceId);
-	const CUuid Nonce = RandomUuid();
-	BestClientIndicator::WriteUuid(vPacket, Nonce);
-	BestClientIndicator::WriteU64(vPacket, (uint64_t)time_timestamp());
-	BestClientIndicator::WriteString(vPacket, CurrentGameServerAddress());
-	BestClientIndicator::WriteString(vPacket, PlayerNameForClient(ClientId));
-	BestClientIndicator::WriteS16(vPacket, (int16_t)ClientId);
-	BestClientIndicator::AppendProof(vPacket, pSharedToken);
+	std::string Base = g_Config.m_UcPresenceApiBaseUrl;
+	while(!Base.empty() && Base.back() == '/')
+		Base.pop_back();
+	if(Base.empty())
+		return;
 
-	if(g_Config.m_DbgClientIndicator >= 2)
-		DumpUdpPacketBytes("sent", m_ServerAddr, vPacket.data(), (int)vPacket.size());
+	const char *pServerAddress = CurrentGameServerAddress();
+	if((str_comp(pEventPath, "join") == 0 || str_comp(pEventPath, "heartbeat") == 0) && pServerAddress[0] == '\0')
+		return;
 
-	const int Sent = net_udp_send(m_Socket, &m_ServerAddr, vPacket.data(), (int)vPacket.size());
-	char aServerAddr[NETADDR_MAXSTRSIZE];
-	net_addr_str(&m_ServerAddr, aServerAddr, sizeof(aServerAddr), true);
-	DebugLogF("sent %s packet client_id=%d player='%s' game_server=%s indicator_server=%s bytes=%d result=%d",
-		PacketTypeName(PacketType), ClientId, PlayerNameForClient(ClientId), CurrentGameServerAddress(), aServerAddr, (int)vPacket.size(), Sent);
+	CJsonStringWriter Json;
+	Json.BeginObject();
+	Json.WriteAttribute("playerId");
+	Json.WriteStrValue(g_Config.m_UcInstallUuid);
+	if(pServerAddress[0] != '\0')
+	{
+		Json.WriteAttribute("server");
+		Json.WriteStrValue(pServerAddress);
+	}
+	Json.WriteAttribute("name");
+	Json.WriteStrValue(PlayerNameForClient(ClientId));
+	Json.WriteAttribute("clientId");
+	char aClientId[16];
+	str_format(aClientId, sizeof(aClientId), "%d", ClientId);
+	Json.WriteStrValue(aClientId);
+	Json.EndObject();
+
+	std::string Payload = std::move(Json.GetOutputString());
+	std::string Url = Base + "/" + pEventPath;
+
+	std::shared_ptr<CHttpRequest> pPost = HttpPostJson(Url.c_str(), Payload.c_str());
+	pPost->Header("Content-Type: application/json");
+	pPost->Header("Accept: application/json");
+	pPost->FailOnErrorStatus(false);
+	pPost->LogProgress(HTTPLOG::FAILURE);
+	Http()->Run(pPost);
+}
+
+void CClientIndicator::SendPresenceHttpSwitchEvent(int ClientId, const char *pFromServerAddress, const char *pToServerAddress)
+{
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return;
+	if(!pFromServerAddress || pFromServerAddress[0] == '\0' || !pToServerAddress || pToServerAddress[0] == '\0')
+		return;
+	if(g_Config.m_UcPresenceApiBaseUrl[0] == '\0' || g_Config.m_UcInstallUuid[0] == '\0')
+		return;
+
+	std::string Base = g_Config.m_UcPresenceApiBaseUrl;
+	while(!Base.empty() && Base.back() == '/')
+		Base.pop_back();
+	if(Base.empty())
+		return;
+
+	CJsonStringWriter Json;
+	Json.BeginObject();
+	Json.WriteAttribute("playerId");
+	Json.WriteStrValue(g_Config.m_UcInstallUuid);
+	Json.WriteAttribute("server");
+	Json.WriteStrValue(pFromServerAddress);
+	Json.WriteAttribute("toServer");
+	Json.WriteStrValue(pToServerAddress);
+	Json.WriteAttribute("name");
+	Json.WriteStrValue(PlayerNameForClient(ClientId));
+	Json.WriteAttribute("clientId");
+	char aClientId[16];
+	str_format(aClientId, sizeof(aClientId), "%d", ClientId);
+	Json.WriteStrValue(aClientId);
+	Json.EndObject();
+
+	std::string Payload = std::move(Json.GetOutputString());
+	std::string Url = Base + "/switch";
+
+	std::shared_ptr<CHttpRequest> pPost = HttpPostJson(Url.c_str(), Payload.c_str());
+	pPost->Header("Content-Type: application/json");
+	pPost->Header("Accept: application/json");
+	pPost->FailOnErrorStatus(false);
+	pPost->LogProgress(HTTPLOG::FAILURE);
+	Http()->Run(pPost);
 }
 
 void CClientIndicator::SendLeaveForAll()
@@ -612,9 +710,6 @@ void CClientIndicator::ProcessIncomingPackets(bool Force)
 
 void CClientIndicator::SyncLocalRegistrations(bool Force)
 {
-	if(!m_Socket || !m_HasServerAddr)
-		return;
-
 	const int64_t Now = time_get();
 	if(!CSubsystemTicker::ShouldRunPeriodic(Now, m_LastRegistrationSyncTick, time_freq() / 4, Force))
 		return;
@@ -666,7 +761,7 @@ void CClientIndicator::UpdatePresence()
 		return;
 	}
 
-	if(EffectiveSharedToken()[0] == '\0')
+	if(g_Config.m_BcClientIndicatorSendInfo && EffectiveSharedToken()[0] == '\0')
 	{
 		SetPresenceBlockReason("presence update skipped: effective shared token is empty");
 		m_WasPresenceEnabled = PresenceEnabled;
@@ -674,12 +769,10 @@ void CClientIndicator::UpdatePresence()
 	}
 
 	EnsurePresenceSocket();
-	if(!m_Socket || !m_HasServerAddr)
+	if(g_Config.m_BcClientIndicatorSendInfo && (!m_Socket || !m_HasServerAddr))
 	{
 		if(m_LastPresenceBlockReason.empty())
 			SetPresenceBlockReason("presence update skipped: udp socket is not ready");
-		m_WasPresenceEnabled = PresenceEnabled;
-		return;
 	}
 
 	const char *pCurrentGameServer = CurrentGameServerAddress();
@@ -694,9 +787,15 @@ void CClientIndicator::UpdatePresence()
 		m_WasPresenceEnabled = PresenceEnabled;
 		return;
 	}
+	const std::string PreviousGameServer = m_PresenceCache.ServerAddress();
 	if(m_PresenceCache.SetServerAddress(pCurrentGameServer))
 	{
 		DebugLogF("presence server changed to game server %s", pCurrentGameServer);
+		if(!PreviousGameServer.empty() && str_comp(PreviousGameServer.c_str(), pCurrentGameServer) != 0)
+		{
+			for(const int ClientId : m_RegisteredClientIds)
+				SendPresenceHttpSwitchEvent(ClientId, PreviousGameServer.c_str(), pCurrentGameServer);
+		}
 		m_RegisteredClientIds.clear();
 		m_LastHeartbeatTick = 0;
 	}
@@ -843,7 +942,6 @@ bool CClientIndicator::IsPresenceEnabled() const
 {
 	const CGameClient *pGameClient = GameClient();
 	return g_Config.m_BcClientIndicator != 0 &&
-		g_Config.m_BcClientIndicatorSendInfo != 0 &&
 		Client()->State() == IClient::STATE_ONLINE &&
 		(!pGameClient || !pGameClient->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_OTHERS_CLIENT_INDICATOR));
 }

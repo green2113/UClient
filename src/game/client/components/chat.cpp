@@ -2132,10 +2132,13 @@ void CChat::ClearPendingUploadImage()
 	}
 	if(m_PendingUploadImage.m_Texture.IsValid())
 		Graphics()->UnloadTexture(&m_PendingUploadImage.m_Texture);
+	if(m_PendingUploadImage.m_OriginalTexture.IsValid())
+		Graphics()->UnloadTexture(&m_PendingUploadImage.m_OriginalTexture);
 	m_PendingUploadImage = SPendingUploadImage();
 	m_PendingUploadClosePressed = false;
 	m_PendingUploadCloseRectValid = false;
 	m_ImageEditor.m_vStrokes.clear();
+	m_ImageEditor.m_vStrokeSnapshot.clear();
 	m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
 	m_ImageEditor.m_IsDrawing = false;
 	m_ImageEditor.m_Active = false;
@@ -2171,9 +2174,18 @@ bool CChat::SetPendingUploadImage(const IInput::SClipboardImage &Image)
 	}
 
 	ClearPendingUploadImage();
+	m_PendingUploadImage.m_OriginalTexture = Graphics()->LoadTextureRaw(ClipboardImage, 0, "chat-paste-upload-original");
+	if(!m_PendingUploadImage.m_OriginalTexture.IsValid())
+	{
+		if(ClipboardImage.m_pData != nullptr)
+			ClipboardImage.Free();
+		return false;
+	}
 	m_PendingUploadImage.m_Texture = Graphics()->LoadTextureRawMove(ClipboardImage, 0, "chat-paste-upload");
 	if(!m_PendingUploadImage.m_Texture.IsValid())
 	{
+		if(m_PendingUploadImage.m_OriginalTexture.IsValid())
+			Graphics()->UnloadTexture(&m_PendingUploadImage.m_OriginalTexture);
 		if(ClipboardImage.m_pData != nullptr)
 			ClipboardImage.Free();
 		return false;
@@ -2185,6 +2197,7 @@ bool CChat::SetPendingUploadImage(const IInput::SClipboardImage &Image)
 	m_PendingUploadImage.m_Height = Image.m_Height;
 	m_PendingUploadImage.m_State = EPendingUploadState::READY;
 	m_ImageEditor.m_vStrokes.clear();
+	m_ImageEditor.m_vStrokeSnapshot.clear();
 	m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
 	m_ImageEditor.m_IsDrawing = false;
 	m_ImageEditor.m_Active = false;
@@ -2470,6 +2483,7 @@ void CChat::OpenImageEditor()
 	if(!m_PendingUploadImage.HasImage())
 		return;
 
+	m_ImageEditor.m_vStrokeSnapshot = m_ImageEditor.m_vStrokes;
 	m_ImageEditor.m_Active = true;
 	m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
 	m_ImageEditor.m_CurrentTool = EImageEditorTool::PEN;
@@ -2487,6 +2501,13 @@ void CChat::CloseImageEditor()
 	m_ImageEditor.m_MouseDownLastFrame = false;
 }
 
+void CChat::CancelImageEditor()
+{
+	m_ImageEditor.m_vStrokes = m_ImageEditor.m_vStrokeSnapshot;
+	m_ImageEditor.m_vStrokeSnapshot.clear();
+	CloseImageEditor();
+}
+
 void CChat::SaveImageEditorChanges()
 {
 	if(!m_ImageEditor.m_Active)
@@ -2499,6 +2520,7 @@ void CChat::SaveImageEditorChanges()
 
 	if(m_ImageEditor.m_vStrokes.empty() && m_ImageEditor.m_CurrentStroke.m_vPoints.empty())
 	{
+		m_ImageEditor.m_vStrokeSnapshot.clear();
 		CloseImageEditor();
 		return;
 	}
@@ -2661,6 +2683,7 @@ void CChat::SaveImageEditorChanges()
 		Graphics()->UnloadTexture(&m_PendingUploadImage.m_Texture);
 	m_PendingUploadImage.m_Texture = NewTexture;
 	m_PendingUploadImage.m_vPng.assign(Writer.Data(), Writer.Data() + Writer.Size());
+	m_ImageEditor.m_vStrokeSnapshot.clear();
 
 	CloseImageEditor();
 }
@@ -2715,7 +2738,7 @@ void CChat::UpdateImageEditorInput()
 
 	if(MouseClicked && InRect(m_ImageEditorCancelButtonRect))
 	{
-		CloseImageEditor();
+		CancelImageEditor();
 		m_ImageEditor.m_MouseDownLastFrame = MouseDown;
 		return;
 	}
@@ -2950,7 +2973,9 @@ void CChat::RenderImageEditor()
 	Graphics()->DrawRect(ImgX - 2.0f, ImgY - 2.0f, FinalW + 4.0f, FinalH + 4.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.24f), IGraphics::CORNER_ALL, 4.0f);
 
 	Graphics()->WrapClamp();
-	Graphics()->TextureSet(m_PendingUploadImage.m_Texture);
+	const IGraphics::CTextureHandle EditorBaseTexture =
+		m_PendingUploadImage.m_OriginalTexture.IsValid() ? m_PendingUploadImage.m_OriginalTexture : m_PendingUploadImage.m_Texture;
+	Graphics()->TextureSet(EditorBaseTexture);
 	Graphics()->QuadsBegin();
 	Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
 	Graphics()->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
@@ -2958,38 +2983,34 @@ void CChat::RenderImageEditor()
 	Graphics()->QuadsEnd();
 	Graphics()->TextureClear();
 
-	Graphics()->LinesBegin();
+	Graphics()->QuadsBegin();
 
 	auto DrawStroke = [&](const SImageEditorStroke &Stroke) {
-		if(Stroke.m_vPoints.size() < 2)
+		if(Stroke.m_Tool != EImageEditorTool::PEN || Stroke.m_vPoints.empty())
 			return;
 
 		const float StrokeRadius = maximum(0.75f, Stroke.m_Thickness * 0.7f);
-		const int Layers = std::clamp((int)ceilf(StrokeRadius), 1, 18);
-		const float OffsetStep = maximum(0.65f, StrokeRadius / (float)Layers);
+		auto StampCircle = [&](const vec2 &Pos) {
+			Graphics()->DrawRect(Pos.x - StrokeRadius, Pos.y - StrokeRadius, StrokeRadius * 2.0f, StrokeRadius * 2.0f, Stroke.m_Color, IGraphics::CORNER_ALL, StrokeRadius);
+		};
 
-		for(size_t i = 0; i + 1 < Stroke.m_vPoints.size(); ++i)
+		Graphics()->SetColor(Stroke.m_Color);
+		StampCircle(Stroke.m_vPoints.front());
+
+		for(size_t i = 1; i < Stroke.m_vPoints.size(); ++i)
 		{
-			const vec2 P0 = Stroke.m_vPoints[i];
-			const vec2 P1 = Stroke.m_vPoints[i + 1];
-			const vec2 Segment = P1 - P0;
-			const float SegmentLenSq = Segment.x * Segment.x + Segment.y * Segment.y;
-			if(SegmentLenSq < 0.0001f)
-				continue;
+			const vec2 Prev = Stroke.m_vPoints[i - 1];
+			const vec2 Next = Stroke.m_vPoints[i];
+			const vec2 Delta = Next - Prev;
+			const float Length = length(Delta);
+			const float Step = maximum(0.5f, StrokeRadius * 0.5f);
+			const int Segments = maximum(1, (int)ceilf(Length / Step));
 
-			const float SegmentLen = sqrtf(SegmentLenSq);
-			const vec2 Normal(-Segment.y / SegmentLen, Segment.x / SegmentLen);
-			std::vector<IGraphics::CLineItem> vItems;
-			vItems.reserve((Layers * 2 + 1));
-
-			for(int Layer = -Layers; Layer <= Layers; ++Layer)
+			for(int s = 1; s <= Segments; ++s)
 			{
-				const float Offset = (float)Layer * OffsetStep;
-				vItems.emplace_back(P0 + Normal * Offset, P1 + Normal * Offset);
+				const float T = (float)s / (float)Segments;
+				StampCircle(mix(Prev, Next, T));
 			}
-
-			Graphics()->SetColor(Stroke.m_Color);
-			Graphics()->LinesDraw(vItems.data(), vItems.size());
 		}
 	};
 
@@ -2999,7 +3020,7 @@ void CChat::RenderImageEditor()
 	if(m_ImageEditor.m_IsDrawing && m_ImageEditor.m_CurrentStroke.m_vPoints.size() > 1)
 		DrawStroke(m_ImageEditor.m_CurrentStroke);
 
-	Graphics()->LinesEnd();
+	Graphics()->QuadsEnd();
 
 	const bool MouseInsideEditor = MousePos.x >= WindowX && MousePos.x <= WindowX + WindowW &&
 		MousePos.y >= WindowY && MousePos.y <= WindowY + WindowH;
@@ -5544,7 +5565,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	// Handle image editor ESC key
 	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_ESCAPE && m_ImageEditor.m_Active)
 	{
-		CloseImageEditor();
+		CancelImageEditor();
 		return true;
 	}
 
