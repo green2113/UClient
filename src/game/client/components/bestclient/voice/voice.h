@@ -269,6 +269,8 @@ private:
 	float m_EnableYourGroupRevealPhase = 0.0f;
 	bool m_LastUseTeam0Mode = false;
 	bool m_LastEnableYourGroup = false;
+	int m_LastUcVoiceTeam = -1;
+	bool m_LastUcVoiceIncludeOwn = false;
 
 	std::vector<uint16_t> m_vSortedPeerIds;
 	std::vector<uint16_t> m_vVisibleMemberPeerIds;
@@ -310,6 +312,9 @@ private:
 	bool ShouldStartVoicePipeline(bool Online) const;
 	bool ShouldKeepVoicePipelineActive() const;
 	bool ShouldUseSecondaryTeamConnection() const;
+	bool IsUcTeamOverrideMode() const;
+	int UcTargetVoiceTeam() const;
+	bool IsUcIncludeOwnTeamMode() const;
 	bool HasPendingPlaybackAudio() const;
 	bool HasRecentVoiceActivity(int64_t Now) const;
 	bool OpenNetworking();

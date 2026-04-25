@@ -1708,12 +1708,6 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 			if(!pChat->Ui()->MouseButton(0))
 			{
 				pChat->m_GiphyPopupDragging = false;
-				if(distance(pChat->m_GiphyPopupPos, PopupTopLeft) > 0.01f)
-				{
-					pChat->m_GiphyPopupHasStoredPos = true;
-					pChat->m_GiphyPopupReopenRequested = true;
-					return CUi::POPUP_CLOSE_CURRENT;
-				}
 			}
 			else
 			{
@@ -1723,7 +1717,11 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 				const float NewY = std::clamp(MousePos.y - pChat->m_GiphyPopupDragOffset.y, Margin, maximum(Margin, ScreenH - PopupHeight - Margin));
 				const vec2 NewPos(NewX, NewY);
 				if(distance(NewPos, pChat->m_GiphyPopupPos) > 0.01f)
+				{
 					pChat->m_GiphyPopupPos = NewPos;
+					pChat->m_GiphyPopupHasStoredPos = true;
+					pChat->Ui()->SetPopupMenuPosition(&pChat->m_GiphyPopupId, NewPos.x, NewPos.y);
+				}
 			}
 		}
 	}

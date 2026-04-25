@@ -755,6 +755,7 @@ public:
 	// popup menu
 	void DoPopupMenu(const SPopupMenuId *pId, float X, float Y, float Width, float Height, void *pContext, FPopupMenuFunction pfnFunc, const SPopupMenuProperties &Props = {}, EButtonSoundType SoundType = EButtonSoundType::DEFAULT);
 	void RenderPopupMenus();
+	bool SetPopupMenuPosition(const SPopupMenuId *pId, float X, float Y);
 	void ClosePopupMenu(const SPopupMenuId *pId, bool IncludeDescendants = false);
 	void ClosePopupMenus();
 	bool IsPopupOpen() const;

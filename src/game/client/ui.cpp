@@ -1933,6 +1933,19 @@ void CUi::RenderPopupMenus()
 	}
 }
 
+bool CUi::SetPopupMenuPosition(const SPopupMenuId *pId, float X, float Y)
+{
+	auto PopupMenu = std::find_if(m_vPopupMenus.begin(), m_vPopupMenus.end(), [pId](const SPopupMenu &PopupMenu) {
+		return PopupMenu.m_pId == pId;
+	});
+	if(PopupMenu == m_vPopupMenus.end())
+		return false;
+
+	PopupMenu->m_Rect.x = X;
+	PopupMenu->m_Rect.y = Y;
+	return true;
+}
+
 void CUi::ClosePopupMenu(const SPopupMenuId *pId, bool IncludeDescendants)
 {
 	auto PopupMenuToClose = std::find_if(m_vPopupMenus.begin(), m_vPopupMenus.end(), [pId](const SPopupMenu PopupMenu) { return PopupMenu.m_pId == pId; });

@@ -588,6 +588,8 @@ void CVoiceChat::OnReset()
 	m_EnableYourGroupRevealPhase = g_Config.m_BcVoiceChatUseTeam0 ? 1.0f : 0.0f;
 	m_LastUseTeam0Mode = g_Config.m_BcVoiceChatUseTeam0 != 0;
 	m_LastEnableYourGroup = g_Config.m_BcVoiceChatUseTeam0 != 0 && g_Config.m_BcVoiceChatEnableYourGroup != 0;
+	m_LastUcVoiceTeam = g_Config.m_UcVoiceTeam;
+	m_LastUcVoiceIncludeOwn = g_Config.m_UcVoiceTeamIncludeOwn != 0;
 	ClearPeerState();
 	m_CapturePcm.Clear();
 	m_MicMonitorPcm.Clear();
@@ -697,11 +699,19 @@ void CVoiceChat::OnUpdate()
 		m_EnableYourGroupRevealPhase = UseTeam0Mode ? 1.0f : 0.0f;
 	}
 
-	const bool TeamModeChanged = UseTeam0Mode != m_LastUseTeam0Mode || EnableYourGroup != m_LastEnableYourGroup;
+	const int UcVoiceTeam = g_Config.m_UcVoiceTeam;
+	const bool UcVoiceIncludeOwn = g_Config.m_UcVoiceTeamIncludeOwn != 0;
+	const bool TeamModeChanged =
+		UseTeam0Mode != m_LastUseTeam0Mode ||
+		EnableYourGroup != m_LastEnableYourGroup ||
+		UcVoiceTeam != m_LastUcVoiceTeam ||
+		UcVoiceIncludeOwn != m_LastUcVoiceIncludeOwn;
 	if(TeamModeChanged)
 	{
 		m_LastUseTeam0Mode = UseTeam0Mode;
 		m_LastEnableYourGroup = EnableYourGroup;
+		m_LastUcVoiceTeam = UcVoiceTeam;
+		m_LastUcVoiceIncludeOwn = UcVoiceIncludeOwn;
 		if(m_PlaybackDevice)
 			SDL_ClearQueuedAudio(m_PlaybackDevice);
 		ClearPeerState();
@@ -3840,7 +3850,28 @@ bool CVoiceChat::ShouldKeepVoicePipelineActive() const
 
 bool CVoiceChat::ShouldUseSecondaryTeamConnection() const
 {
+	if(IsUcTeamOverrideMode())
+	{
+		const int OwnTeam = LocalOwnVoiceTeam();
+		return IsUcIncludeOwnTeamMode() && OwnTeam > 0 && OwnTeam != UcTargetVoiceTeam();
+	}
+
 	return IsEnableYourGroupMode() && LocalOwnVoiceTeam() > 0;
+}
+
+bool CVoiceChat::IsUcTeamOverrideMode() const
+{
+	return g_Config.m_UcVoiceTeam >= 0;
+}
+
+int CVoiceChat::UcTargetVoiceTeam() const
+{
+	return maximum(g_Config.m_UcVoiceTeam, 0);
+}
+
+bool CVoiceChat::IsUcIncludeOwnTeamMode() const
+{
+	return IsUcTeamOverrideMode() && g_Config.m_UcVoiceTeamIncludeOwn != 0;
 }
 
 int CVoiceChat::LocalTeam() const
@@ -3852,6 +3883,9 @@ int CVoiceChat::LocalTeam() const
 
 int CVoiceChat::LocalVoiceTeam() const
 {
+	if(IsUcTeamOverrideMode())
+		return UcTargetVoiceTeam();
+
 	return IsUseTeam0Mode() ? 0 : LocalOwnVoiceTeam();
 }
 
@@ -3874,6 +3908,13 @@ bool CVoiceChat::IsVoiceTeamAudible(int Team) const
 {
 	const int NormalizedTeam = maximum(Team, 0);
 	const int OwnTeam = LocalOwnVoiceTeam();
+	if(IsUcTeamOverrideMode())
+	{
+		const int TargetTeam = UcTargetVoiceTeam();
+		if(NormalizedTeam == TargetTeam)
+			return true;
+		return IsUcIncludeOwnTeamMode() && OwnTeam > 0 && OwnTeam != TargetTeam && NormalizedTeam == OwnTeam;
+	}
 
 	if(IsUseTeam0Mode())
 	{
@@ -4977,14 +5018,16 @@ void CVoiceChat::ConVoiceStatus(IConsole::IResult *pResult, void *pUserData)
 {
 	(void)pResult;
 	CVoiceChat *pSelf = static_cast<CVoiceChat *>(pUserData);
-	dbg_msg("voice", "enabled=%d connected=%d participants=%d server='%s' ptt=%d radius=%d radius_tiles=%d",
+	dbg_msg("voice", "enabled=%d connected=%d participants=%d server='%s' ptt=%d radius=%d radius_tiles=%d uc_team=%d uc_include_own=%d",
 		g_Config.m_BcVoiceChatEnable ? 1 : 0,
 		pSelf->m_Registered ? 1 : 0,
 		(int)pSelf->m_vVisibleMemberPeerIds.size(),
 		g_Config.m_BcVoiceChatServerAddress,
 		pSelf->m_PushToTalkPressed ? 1 : 0,
 		g_Config.m_BcVoiceChatRadiusEnabled ? 1 : 0,
-		std::clamp(g_Config.m_BcVoiceChatRadiusTiles, 1, 500));
+		std::clamp(g_Config.m_BcVoiceChatRadiusTiles, 1, 500),
+		g_Config.m_UcVoiceTeam,
+		g_Config.m_UcVoiceTeamIncludeOwn ? 1 : 0);
 }
 
 void CVoiceChat::ConToggleVoicePanel(IConsole::IResult *pResult, void *pUserData)
