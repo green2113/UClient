@@ -1651,7 +1651,7 @@ void CChat::OpenGiphyPopup(const CUIRect &ButtonRect)
 	m_GiphySearchInput.Activate(EInputPriority::CHAT);
 	Ui()->SetActiveItem(&m_GiphySearchInput);
 
-	Ui()->DoPopupMenu(&m_GiphyPopupId, PopupX, PopupY, PopupWidth, 360.0f, this, PopupGiphyBrowser);
+	Ui()->DoPopupMenu(&m_GiphyPopupId, PopupX, PopupY, PopupWidth, 360.0f, this, PopupGiphyBrowser, {}, CUi::EButtonSoundType::SILENT);
 }
 
 void CChat::RenderGiphyButton(const CUIRect &ButtonRect)
@@ -1708,6 +1708,12 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 			if(!pChat->Ui()->MouseButton(0))
 			{
 				pChat->m_GiphyPopupDragging = false;
+				if(distance(pChat->m_GiphyPopupPos, PopupTopLeft) > 0.01f)
+				{
+					pChat->m_GiphyPopupHasStoredPos = true;
+					pChat->m_GiphyPopupReopenRequested = true;
+					return CUi::POPUP_CLOSE_CURRENT;
+				}
 			}
 			else
 			{
@@ -1717,12 +1723,7 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 				const float NewY = std::clamp(MousePos.y - pChat->m_GiphyPopupDragOffset.y, Margin, maximum(Margin, ScreenH - PopupHeight - Margin));
 				const vec2 NewPos(NewX, NewY);
 				if(distance(NewPos, pChat->m_GiphyPopupPos) > 0.01f)
-				{
 					pChat->m_GiphyPopupPos = NewPos;
-					pChat->m_GiphyPopupHasStoredPos = true;
-					pChat->m_GiphyPopupReopenRequested = true;
-					return CUi::POPUP_CLOSE_CURRENT;
-				}
 			}
 		}
 	}
@@ -5621,6 +5622,8 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_ESCAPE && Ui()->IsPopupOpen())
 	{
 		Ui()->ClosePopupMenus();
+		m_GiphySearchInput.Deactivate();
+		Ui()->SetActiveItem(nullptr);
 		return true;
 	}
 
@@ -5717,7 +5720,11 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			{
 				CUIRect ButtonRect = {m_GiphyButtonRect.m_X, m_GiphyButtonRect.m_Y, m_GiphyButtonRect.m_W, m_GiphyButtonRect.m_H};
 				if(Ui()->IsPopupOpen(&m_GiphyPopupId))
+				{
 					Ui()->ClosePopupMenu(&m_GiphyPopupId);
+					m_GiphySearchInput.Deactivate();
+					Ui()->SetActiveItem(nullptr);
+				}
 				else
 					OpenGiphyPopup(ButtonRect);
 				return true;
@@ -6542,6 +6549,9 @@ void CChat::DisableMode()
 		m_GiphySearchInput.Deactivate();
 		m_GiphyCaptionInput.Deactivate();
 		m_Input.Deactivate();
+		Ui()->SetActiveItem(nullptr);
+		m_GiphyPopupDragging = false;
+		m_GiphyPopupReopenRequested = false;
 
 		}
 	}
