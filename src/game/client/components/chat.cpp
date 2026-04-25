@@ -2984,8 +2984,6 @@ void CChat::RenderImageEditor()
 	Graphics()->QuadsEnd();
 	Graphics()->TextureClear();
 
-	Graphics()->QuadsBegin();
-
 	auto DrawStroke = [&](const SImageEditorStroke &Stroke) {
 		if(Stroke.m_Tool != EImageEditorTool::PEN || Stroke.m_vPoints.empty())
 			return;
@@ -3020,8 +3018,6 @@ void CChat::RenderImageEditor()
 
 	if(m_ImageEditor.m_IsDrawing && m_ImageEditor.m_CurrentStroke.m_vPoints.size() > 1)
 		DrawStroke(m_ImageEditor.m_CurrentStroke);
-
-	Graphics()->QuadsEnd();
 
 	const bool MouseInsideEditor = MousePos.x >= WindowX && MousePos.x <= WindowX + WindowW &&
 		MousePos.y >= WindowY && MousePos.y <= WindowY + WindowH;
