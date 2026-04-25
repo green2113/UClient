@@ -6442,7 +6442,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 
 bool CChat::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
 {
-	if(m_Mode == MODE_NONE && !m_Show && !m_MediaViewerOpen)
+	if(m_Mode == MODE_NONE && !m_MediaViewerOpen && !Ui()->IsPopupOpen())
 		return false;
 
 	Ui()->ConvertMouseMove(&x, &y, CursorType);
@@ -8409,7 +8409,8 @@ void CChat::OnRender()
 		Graphics()->MapScreen(0.0f, 0.0f, Width, Height);
 	}
 
-	if(ChatInteractionActive)
+	const bool ChatCursorActive = m_Mode != MODE_NONE || m_MediaViewerOpen || Ui()->IsPopupOpen();
+	if(ChatCursorActive)
 		RenderTools()->RenderCursor(UiMousePos * UiToChatScale, 12.0f);
 }
 
