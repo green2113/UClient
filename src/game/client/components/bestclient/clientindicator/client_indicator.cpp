@@ -518,8 +518,6 @@ void CClientIndicator::SendPresencePacket(int ClientId, int PacketType)
 
 	if(PacketType == BestClientIndicator::PACKET_JOIN)
 		SendPresenceHttpEvent(ClientId, "join");
-	else if(PacketType == BestClientIndicator::PACKET_HEARTBEAT)
-		SendPresenceHttpEvent(ClientId, "heartbeat");
 	else if(PacketType == BestClientIndicator::PACKET_LEAVE)
 		SendPresenceHttpEvent(ClientId, "leave");
 }
@@ -791,6 +789,7 @@ void CClientIndicator::UpdatePresence()
 		{
 			m_RegisteredClientIds.clear();
 			m_LastHeartbeatTick = 0;
+			m_LastHttpHeartbeatTick = 0;
 		}
 		m_WasPresenceEnabled = PresenceEnabled;
 		return;
@@ -806,6 +805,7 @@ void CClientIndicator::UpdatePresence()
 		}
 		m_RegisteredClientIds.clear();
 		m_LastHeartbeatTick = 0;
+		m_LastHttpHeartbeatTick = 0;
 	}
 	ClearPresenceBlockReason();
 
@@ -819,6 +819,15 @@ void CClientIndicator::UpdatePresence()
 			SendPresencePacket(ClientId, BestClientIndicator::PACKET_HEARTBEAT);
 		m_LastHeartbeatTick = Now;
 		DebugLogF("heartbeat tick sent for %zu local clients", m_RegisteredClientIds.size());
+	}
+
+	const int64_t HttpHeartbeatIntervalSeconds = maximum(60, g_Config.m_UcPresenceHttpHeartbeatSeconds);
+	if(m_LastHttpHeartbeatTick == 0 || Now - m_LastHttpHeartbeatTick > time_freq() * HttpHeartbeatIntervalSeconds)
+	{
+		for(const int ClientId : m_RegisteredClientIds)
+			SendPresenceHttpEvent(ClientId, "heartbeat");
+		m_LastHttpHeartbeatTick = Now;
+		DebugLogF("http heartbeat tick sent for %zu local clients interval=%llds", m_RegisteredClientIds.size(), (long long)HttpHeartbeatIntervalSeconds);
 	}
 
 	m_WasPresenceEnabled = PresenceEnabled;
@@ -907,6 +916,7 @@ void CClientIndicator::ApplyBrowserSnapshot()
 void CClientIndicator::ResetPresenceState()
 {
 	m_LastHeartbeatTick = 0;
+	m_LastHttpHeartbeatTick = 0;
 	m_LastPresenceStartAttempt = 0;
 	m_WasPresenceEnabled = false;
 	m_RegisteredClientIds.clear();

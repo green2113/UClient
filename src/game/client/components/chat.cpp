@@ -1884,6 +1884,13 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 			if(!pChat->GameClient()->m_Translate.TryTranslateOutgoingChat(Team, aLine))
 				pChat->SendChatPayloadQueued(Team, aLine);
 			pChat->DisableMode();
+			pChat->GameClient()->OnRelease();
+			pChat->m_SavedInputPending = false;
+			pChat->m_aSavedInputText[0] = '\0';
+			pChat->m_pHistoryEntry = nullptr;
+			pChat->m_Input.Clear();
+			pChat->m_HasSelection = false;
+			pChat->m_WantsSelectionCopy = false;
 			
 			// Properly close scroll region before closing popup
 			pChat->m_GiphyScrollRegion.End();
@@ -2487,7 +2494,6 @@ void CChat::OpenImageEditor()
 	m_ImageEditor.m_Active = true;
 	m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
 	m_ImageEditor.m_CurrentTool = EImageEditorTool::PEN;
-	m_ImageEditor.m_PenColor = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
 	m_ImageEditor.m_PenThickness = maximum(1.0f, m_ImageEditor.m_PenThickness);
 	m_ImageEditor.m_IsDrawing = false;
 	m_ImageEditor.m_MouseDownLastFrame = false;
@@ -5574,7 +5580,7 @@ void CChat::ClampMediaViewerPan(const CLine &Line, float ScreenWidth, float Scre
 bool CChat::OnInput(const IInput::CEvent &Event)
 {
 	const bool ChatInputActive = m_Mode != MODE_NONE;
-	const bool ChatInteractionActive = ChatInputActive || m_Show;
+	const bool ChatInteractionActive = ChatInputActive || m_MediaViewerOpen || Ui()->IsPopupOpen();
 
 	// Handle image editor ESC key
 	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_ESCAPE && m_ImageEditor.m_Active)
@@ -5583,7 +5589,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		return true;
 	}
 
-	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && g_Config.m_BcChatMediaPreview &&
+	if(ChatInteractionActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && g_Config.m_BcChatMediaPreview &&
 		(Client()->State() == IClient::STATE_ONLINE || Client()->State() == IClient::STATE_DEMOPLAYBACK))
 	{
 		bool HasRetryTargets = false;
@@ -5923,13 +5929,13 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			return true;
 		}
 
-		if(Event.m_Key == KEY_MOUSE_WHEEL_UP)
+		if(ChatInputActive && Event.m_Key == KEY_MOUSE_WHEEL_UP)
 		{
 			m_BacklogCurLine = minimum(m_BacklogCurLine + 1, MAX_LINES - 1);
 			m_HasSelection = false;
 			return true;
 		}
-		if(Event.m_Key == KEY_MOUSE_WHEEL_DOWN)
+		if(ChatInputActive && Event.m_Key == KEY_MOUSE_WHEEL_DOWN)
 		{
 			m_BacklogCurLine = maximum(m_BacklogCurLine - 1, 0);
 			m_HasSelection = false;
@@ -6268,24 +6274,20 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 					Index = (m_CompletionChosen + i) % NumCommands;
 				}
 
-				auto &Command = m_vServerCommands[Index];
+				if(SearchType == 0 && str_comp_nocase_num(pCommandStart, m_vServerCommands[Index].m_aName, str_length(pCommandStart)) != 0)
+					continue;
 
-				if(str_startswith_nocase(Command.m_aName, pCommandStart))
-				{
-					pCompletionCommand = &Command;
-					m_CompletionChosen = Index + SearchType * NumCommands;
-					break;
-				}
+				if(SearchType == 1 && str_find_nocase(m_vServerCommands[Index].m_aName, pCommandStart) == 0)
+					continue;
+
+				pCompletionCommand = &m_vServerCommands[Index];
+				break;
 			}
 
-			// insert the command
 			if(pCompletionCommand)
 			{
 				char aBuf[MAX_LINE_LENGTH];
-				// add part before the name
 				str_truncate(aBuf, sizeof(aBuf), m_Input.GetString(), m_PlaceholderOffset);
-
-				// add the command
 				str_append(aBuf, "/");
 				str_append(aBuf, pCompletionCommand->m_aName);
 
@@ -6517,9 +6519,8 @@ void CChat::EnableMode(int Team)
 		SetUiMousePos(Ui()->Screen()->Center());
 		m_Input.Activate(EInputPriority::CHAT);
 		SyncTypingAnimationBaseline();
-
-		}
 	}
+}
 
 void CChat::DisableMode()
 {
@@ -6550,9 +6551,8 @@ void CChat::DisableMode()
 		Ui()->SetActiveItem(nullptr);
 		m_GiphyPopupDragging = false;
 		m_GiphyPopupReopenRequested = false;
-
-		}
 	}
+}
 
 void CChat::OnMessage(int MsgType, void *pRawMsg)
 {
@@ -6979,7 +6979,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 
 	const bool IsScoreBoardOpen = GameClient()->m_Scoreboard.IsActive() && (Graphics()->ScreenAspect() > 1.7f); // only assume scoreboard when screen ratio is widescreen(something around 16:9)
 	const bool ShowLargeArea = m_Show || (m_Mode != MODE_NONE && g_Config.m_ClShowChat == 1) || g_Config.m_ClShowChat == 2;
-	const bool ChatInteractionActive = m_Mode != MODE_NONE || m_Show;
+	const bool ChatInteractionActive = m_Mode != MODE_NONE || m_MediaViewerOpen || Ui()->IsPopupOpen();
 	const bool ModeActive = m_Mode != MODE_NONE;
 	const bool ChatSelectionActive = m_HasSelection && !m_MouseIsPress && !m_WantsSelectionCopy && !m_Input.HasSelection();
 	const bool ForceSelectionRefresh = m_MouseIsPress || m_WantsSelectionCopy || ChatSelectionActive != m_PrevChatSelectionActive;
@@ -7479,6 +7479,7 @@ void CChat::OnRender()
 		const vec2 WindowSize(maximum(1.0f, (float)Graphics()->WindowWidth()), maximum(1.0f, (float)Graphics()->WindowHeight()));
 		Graphics()->MapScreen(0.0f, 0.0f, WindowSize.x, WindowSize.y);
 		RenderImageEditor();
+
 		const float Height = 300.0f;
 		const float Width = Height * Graphics()->ScreenAspect();
 		Graphics()->MapScreen(0.0f, 0.0f, Width, Height);
@@ -7548,7 +7549,7 @@ void CChat::OnRender()
 		const float ChatOpenEase = BCUiAnimations::EaseInOutQuart(Progress);
 		ChatOpenOffsetX = -(x + maximum(Width - 190.0f, 190.0f) + 24.0f) * (1.0f - ChatOpenEase);
 	}
-	const bool ChatInteractionActive = m_Mode != MODE_NONE || m_Show;
+	const bool ChatInteractionActive = m_Mode != MODE_NONE || m_MediaViewerOpen || Ui()->IsPopupOpen();
 	if(m_MediaViewerOpen && !ChatInteractionActive)
 		CloseMediaViewer();
 	if(!ChatInteractionActive)
@@ -8448,8 +8449,6 @@ CUIRect CChat::GetHudRect(float HudWidth, float HudHeight, bool ForcePreview) co
 	float ExtraBottom = 0.0f;
 	float VisibleWidth = ChatWidth();
 
-	// In HUD editor preview and while chat input is open, include the input row and
-	// translate settings button in the hitbox/outline area.
 	if(ForcePreview || m_Mode != MODE_NONE)
 	{
 		const float ScaledFontSize = FontSize() * (8.0f / 6.0f);
@@ -8465,11 +8464,11 @@ CUIRect CChat::GetHudRect(float HudWidth, float HudHeight, bool ForcePreview) co
 		const float InputAndTranslateWidth = maximum(InputLineWidth, PrefixWidth + 40.0f + TranslateButtonGap + TranslateButtonSize);
 
 		VisibleWidth = maximum(VisibleWidth, InputAndTranslateWidth);
-		ExtraTop = ScaledFontSize;
-		ExtraBottom = maximum(2.25f * ScaledFontSize, maximum(ScaledFontSize + 4.0f, 16.0f));
+		ExtraTop = maximum(0.0f, MessagePaddingY() * 0.8f);
+		ExtraBottom = maximum(9.0f * Scale, FontSize() * 1.4f);
 	}
 
-	CUIRect Rect = {Layout.m_X, Layout.m_Y - VisibleHeight - ExtraTop, VisibleWidth, VisibleHeight + ExtraTop + ExtraBottom};
+	CUIRect Rect = {Layout.m_X, Layout.m_Y - ExtraTop, VisibleWidth, VisibleHeight + ExtraTop + ExtraBottom};
 	Rect.x = std::clamp(Rect.x, 0.0f, maximum(0.0f, HudWidth - Rect.w));
 	Rect.y = std::clamp(Rect.y, 0.0f, maximum(0.0f, HudHeight - Rect.h));
 	return Rect;
@@ -8480,7 +8479,7 @@ void CChat::RenderHud(bool ForcePreview)
 	if(!ForcePreview && !HudLayout::IsEnabled(HudLayout::MODULE_CHAT))
 		return;
 
-	if(ForcePreview && !m_aLines[m_CurrentLine].m_Initialized && m_Mode == MODE_NONE && !m_Show)
+	if(ForcePreview)
 	{
 		const float Height = HudLayout::CANVAS_HEIGHT;
 		const float Width = Height * Graphics()->ScreenAspect();
@@ -8510,6 +8509,7 @@ void CChat::RenderHud(bool ForcePreview)
 		}
 		return;
 	}
+
 	OnRender();
 }
 

@@ -45,6 +45,7 @@ private:
 	bool m_WasPresenceEnabled = false;
 	ESubsystemRuntimeState m_RuntimeState = ESubsystemRuntimeState::DISABLED;
 	int64_t m_LastHeartbeatTick = 0;
+	int64_t m_LastHttpHeartbeatTick = 0;
 	int64_t m_LastPresenceStartAttempt = 0;
 	int64_t m_LastBrowserRefreshTick = 0;
 	int64_t m_LastTokenRefreshTick = 0;
