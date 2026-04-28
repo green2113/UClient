@@ -767,13 +767,6 @@ void CClientIndicator::UpdatePresence()
 		return;
 	}
 
-	if(g_Config.m_BcClientIndicatorSendInfo && EffectiveSharedToken()[0] == '\0')
-	{
-		SetPresenceBlockReason("presence update skipped: effective shared token is empty");
-		m_WasPresenceEnabled = PresenceEnabled;
-		return;
-	}
-
 	EnsurePresenceSocket();
 	if(g_Config.m_BcClientIndicatorSendInfo && (!m_Socket || !m_HasServerAddr))
 	{
