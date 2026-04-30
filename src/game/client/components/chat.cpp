@@ -1468,6 +1468,8 @@ constexpr STranslateLanguageOption gs_aTranslateSourceOptions[] = {
 	{"zh", "Chinese"},
 	{"pt", "Brazilian"},
 	{"tr", "Turkish"},
+	{"ja", "Japanese"},
+	{"ko", "Korean"},
 };
 
 constexpr STranslateLanguageOption gs_aTranslateTargetOptions[] = {
@@ -1479,6 +1481,8 @@ constexpr STranslateLanguageOption gs_aTranslateTargetOptions[] = {
 	{"zh", "Chinese"},
 	{"pt", "Brazilian"},
 	{"tr", "Turkish"},
+	{"ja", "Japanese"},
+	{"ko", "Korean"},
 };
 
 template<size_t N>
@@ -1551,9 +1555,9 @@ CUi::EPopupMenuFunctionResult CChat::PopupTranslateSettings(void *pContext, CUIR
 	};
 
 	static const char *s_apSourceLabels[] = {
-		"Auto", "Russian", "English", "German", "French", "Spanish", "Chinese", "Brazilian", "Turkish"};
+		"Auto", "Russian", "English", "German", "French", "Spanish", "Chinese", "Brazilian", "Turkish", "Japanese", "Korean"};
 	static const char *s_apTargetLabels[] = {
-		"Russian", "English", "German", "French", "Spanish", "Chinese", "Brazilian", "Turkish"};
+		"Russian", "English", "German", "French", "Spanish", "Chinese", "Brazilian", "Turkish", "Japanese", "Korean"};
 
 	const int IncomingSourceIndex = TranslateLanguageIndex(g_Config.m_BcTranslateIncomingSource, gs_aTranslateSourceOptions);
 	const int NewIncomingSourceIndex = RenderLanguageField(Localize("Incoming from"), IncomingSourceIndex, s_apSourceLabels, std::size(s_apSourceLabels), s_IncomingSourceDropDown);
@@ -1651,7 +1655,7 @@ void CChat::OpenGiphyPopup(const CUIRect &ButtonRect)
 	m_GiphySearchInput.Activate(EInputPriority::CHAT);
 	Ui()->SetActiveItem(&m_GiphySearchInput);
 
-	Ui()->DoPopupMenu(&m_GiphyPopupId, PopupX, PopupY, PopupWidth, 360.0f, this, PopupGiphyBrowser, {}, CUi::EButtonSoundType::SILENT);
+	Ui()->DoPopupMenu(&m_GiphyPopupId, PopupX, PopupY, PopupWidth, 360.0f, this, PopupGiphyBrowser, {}, CUi::EButtonSoundType::DEFAULT);
 }
 
 void CChat::RenderGiphyButton(const CUIRect &ButtonRect)

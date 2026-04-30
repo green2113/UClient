@@ -16,6 +16,14 @@ on:
       run_id:
         description: 'Run ID of the build workflow to download artifacts from'
         required: true
+      r2_bucket:
+        description: 'Cloudflare R2 bucket name'
+        required: false
+        default: 'download'
+      r2_prefix:
+        description: 'Cloudflare R2 object prefix for Windows files'
+        required: false
+        default: 'download'
 
 permissions:
   contents: write
@@ -28,35 +36,22 @@ jobs:
     env:
       BUILD_PREFIX: ddnet
       CLIENT_NAME: UClient
-      TARGET_REPOSITORY: ${{ github.repository }} 
+      TARGET_REPOSITORY: ${{ github.repository }}
+      R2_BUCKET: ${{ github.event.inputs.r2_bucket }}
+      R2_PREFIX: ${{ github.event.inputs.r2_prefix }}
+      CF_R2_ACCOUNT_ID: ${{ secrets.CF_R2_ACCOUNT_ID }}
+      CF_R2_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+      CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Download Ubuntu artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.BUILD_PREFIX }}-ubuntu-22.04
-          path: ./artifacts/ubuntu
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ env.TARGET_REPOSITORY }}
-          run-id: ${{ github.event.inputs.run_id }}
+        uses: actions/checkout@v4
 
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.BUILD_PREFIX }}-windows-latest
           path: ./artifacts/windows
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ env.TARGET_REPOSITORY }}
-          run-id: ${{ github.event.inputs.run_id }}
-
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.BUILD_PREFIX }}-macOS-latest
-          path: ./artifacts/macOS
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ env.TARGET_REPOSITORY }}
           run-id: ${{ github.event.inputs.run_id }}
@@ -73,51 +68,24 @@ jobs:
           draft: false
           prerelease: false
 
-      - name: Rename and Move Artifacts
+      - name: Prepare Windows artifact
         run: |
-          declare -a multi_ext=("tar.gz" "tar.bz2" "tar.xz" "tar.Z")
+          file=$(find ./artifacts/windows -type f | head -n 1)
+          if [ -z "$file" ]; then
+            echo "No windows artifact found"
+            exit 1
+          fi
+          mv "$file" "./artifacts/${CLIENT_NAME}-windows.zip"
 
-          for dir in ./artifacts/*/ ; do
-            os=$(basename "$dir")
-            # Find the single file in the OS directory
-            file=$(find "$dir" -type f | head -n 1)
-
-            if [ -z "$file" ]; then
-              echo "No artifact found in directory $dir. Skipping."
-              continue
-            fi
-            filename=$(basename "$file")
-            extension=""
-            for ext in "${multi_ext[@]}"; do
-              if [[ "$filename" == *.$ext ]]; then
-                extension="$ext"
-                break
-              fi
-            done
-            if [ -z "$extension" ]; then
-              extension="${filename##*.}"
-            fi
-            new_name="${CLIENT_NAME}-${os}.${extension}"
-            echo "Renaming $file to $new_name"
-            mv "$file" "./artifacts/$new_name"
-            echo "Moved $new_name to ./artifacts/"
-          done
+      - name: Extract Windows package for R2 sync
+        run: |
+          mkdir -p ./artifacts/windows_extracted
+          unzip -o "./artifacts/${CLIENT_NAME}-windows.zip" -d ./artifacts/windows_extracted
 
       - name: List artifacts directory
         run: |
           echo "Listing ./artifacts directory:"
           ls -R ./artifacts
-
-      - name: Upload Ubuntu
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/${{ env.CLIENT_NAME }}-ubuntu.tar.xz
-          asset_name: ${{ env.CLIENT_NAME }}-ubuntu.tar.xz
-          asset_content_type: application/tar.xz
-          
 
       - name: Upload Windows
         uses: actions/upload-release-asset@v1
@@ -129,13 +97,34 @@ jobs:
           asset_name: ${{ env.CLIENT_NAME }}-windows.zip
           asset_content_type: application/zip
 
-      - name: Upload macOS
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/${{ env.CLIENT_NAME }}-macOS.dmg
-          asset_name: ${{ env.CLIENT_NAME }}-macOS.dmg
-          asset_content_type: application/dmg
+      - name: Install rclone
+        if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
+        run: curl https://rclone.org/install.sh | sudo bash
+
+      - name: Sync Windows files to Cloudflare R2 (changed files only)
+        if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
+        run: |
+          rclone sync ./artifacts/windows_extracted \
+            :s3:${R2_BUCKET}/${R2_PREFIX} \
+            --s3-provider Cloudflare \
+            --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
+            --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
+            --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY} \
+            --checksum \
+            --fast-list \
+            --create-empty-src-dirs
+
+      - name: Upload zip to Cloudflare R2 (download endpoint)
+        if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
+        run: |
+          rclone copyto "./artifacts/${CLIENT_NAME}-windows.zip" \
+            ":s3:${R2_BUCKET}/uclient/win64/${CLIENT_NAME}-windows.zip" \
+            --s3-provider Cloudflare \
+            --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
+            --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
+            --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
+
+      - name: Skip R2 sync (missing secrets)
+        if: env.CF_R2_ACCOUNT_ID == '' || env.CF_R2_ACCESS_KEY_ID == '' || env.CF_R2_SECRET_ACCESS_KEY == ''
+        run: echo "CF_R2_* secrets are not configured. Skipping R2 sync."
 
