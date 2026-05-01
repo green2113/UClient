@@ -35,6 +35,8 @@ static const SModuleLayout gs_aModuleLayouts[MODULE_COUNT] = {
 	{250.0f, 200.0f, 65, 0, true, true, 0x66000000U},
 	{490.0f, 5.0f, 100, 0, true, false, 0x66000000U},
 	{0.0f, 156.0f, 100, 0, true, true, 0x66000000U},
+	{10.0f, 242.0f, 100, 0, true, false, 0x66000000U},
+	{86.0f, 242.0f, 100, 0, true, false, 0x66000000U},
 };
 
 static SModuleLayout gs_aRuntimeModuleLayouts[MODULE_COUNT];
@@ -85,6 +87,8 @@ static const char *gs_apModuleNames[MODULE_COUNT] = {
 	"Lock Cam",
 	"Killfeed",
 	"Finish Prediction",
+	"Keystrokes Keyboard",
+	"Keystrokes Mouse",
 };
 
 SModuleLayout ConfigLayout(EModule Module)

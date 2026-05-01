@@ -64,4 +64,9 @@ extern CLocalizationDatabase g_Localization;
 
 [[gnu::format_arg(1)]] extern const char *TCLocalize(const char *pStr, const char *pContext = "");
 
+// Backward compatibility alias used in BestClient UI code.
+#ifndef BCLocalize
+#define BCLocalize Localize
+#endif
+
 #endif

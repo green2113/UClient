@@ -3656,16 +3656,6 @@ void CHud::RenderFinishPredictionBar(const CUIRect &Rect, const SFinishPredictio
 	const int Corners = HudLayout::BackgroundCorners(IGraphics::CORNER_ALL, Rect.x, Rect.y, Rect.w, Rect.h, m_Width, m_Height);
 	if(Layout.m_BackgroundEnabled)
 	{
-		IGraphics::SBlurRectRenderInfo BlurInfo;
-		BlurInfo.m_X = Rect.x;
-		BlurInfo.m_Y = Rect.y;
-		BlurInfo.m_Width = Rect.w;
-		BlurInfo.m_Height = Rect.h;
-		BlurInfo.m_Rounding = 4.0f * Scale;
-		BlurInfo.m_BlurRadius = 7.0f * Scale;
-		BlurInfo.m_BlurStrength = 1.0f;
-		BlurInfo.m_TintColor = ColorRGBA(BackgroundColor.r, BackgroundColor.g, BackgroundColor.b, 0.28f);
-		Graphics()->DrawBlurRect(BlurInfo);
 		Graphics()->DrawRect(Rect.x, Rect.y, Rect.w, Rect.h, BackgroundColor, Corners, 4.0f * Scale);
 	}
 
