@@ -940,7 +940,11 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 			}
 			const float ScoreTextX = ScoreOffset + ScoreLength - ScoreTextWidth;
 
-			if(g_Config.m_BcClientIndicatorInScoreboard && pInfo->m_ClientId >= 0 && GameClient()->m_ClientIndicator.IsPlayerBestClient(pInfo->m_ClientId))
+			const bool ShowBestClientIcon = g_Config.m_BcClientIndicatorInScoreboard &&
+				pInfo->m_ClientId >= 0 &&
+				GameClient()->m_ClientIndicator.IsPlayerBestClient(pInfo->m_ClientId) &&
+				(!pInfo->m_Local || g_Config.m_BcClientIndicatorSendInfo != 0);
+			if(ShowBestClientIcon)
 			{
 				const float IconSize = FontSize * (0.8f + 0.3f * g_Config.m_BcClientIndicatorInSoreboardSize / 100.0f);
 				const float IconSpacing = 4.0f;
