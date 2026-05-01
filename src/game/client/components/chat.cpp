@@ -1642,6 +1642,11 @@ void CChat::OpenGiphyPopup(const CUIRect &ButtonRect)
 
 	float PopupX = maximum(Margin, ButtonRect.x + ButtonRect.w - PopupWidth);
 	float PopupY = maximum(Margin, ButtonRect.y - 10.0f);
+	if(!m_GiphyPopupHasStoredPos && g_Config.m_BcGiphyPopupX >= 0 && g_Config.m_BcGiphyPopupY >= 0)
+	{
+		m_GiphyPopupPos = vec2((float)g_Config.m_BcGiphyPopupX, (float)g_Config.m_BcGiphyPopupY);
+		m_GiphyPopupHasStoredPos = true;
+	}
 	if(m_GiphyPopupHasStoredPos)
 	{
 		PopupX = m_GiphyPopupPos.x;
@@ -1652,6 +1657,8 @@ void CChat::OpenGiphyPopup(const CUIRect &ButtonRect)
 	PopupY = std::clamp(PopupY, Margin, maximum(Margin, ScreenH - PopupHeight - Margin));
 	m_GiphyPopupPos = vec2(PopupX, PopupY);
 	m_GiphyPopupHasStoredPos = true;
+	g_Config.m_BcGiphyPopupX = round_to_int(PopupX);
+	g_Config.m_BcGiphyPopupY = round_to_int(PopupY);
 	m_GiphySearchInput.Activate(EInputPriority::CHAT);
 	Ui()->SetActiveItem(&m_GiphySearchInput);
 
@@ -1724,6 +1731,8 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 				{
 					pChat->m_GiphyPopupPos = NewPos;
 					pChat->m_GiphyPopupHasStoredPos = true;
+					g_Config.m_BcGiphyPopupX = round_to_int(NewPos.x);
+					g_Config.m_BcGiphyPopupY = round_to_int(NewPos.y);
 					pChat->Ui()->SetPopupMenuPosition(&pChat->m_GiphyPopupId, NewPos.x, NewPos.y);
 				}
 			}
@@ -1930,6 +1939,7 @@ void CChat::BeginGiphySearch(bool LoadMore)
 		m_GiphyRequestedPage = 0;
 		m_GiphyHasMoreResults = false;
 		m_GiphyScrollOffset = vec2(0.0f, 0.0f);
+		m_GiphyScrollRegion.Reset();
 		m_GiphyVisibleResultIds.clear();
 	}
 

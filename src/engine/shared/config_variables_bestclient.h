@@ -28,6 +28,8 @@ MACRO_CONFIG_STR(BcChatMediaAllowedDomains, bc_chat_media_allowed_domains, 512, 
 MACRO_CONFIG_INT(BcChatMediaPreviewMaxWidth, bc_chat_media_preview_max_width, 220, 120, 400, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum width of chat media previews")
 MACRO_CONFIG_INT(BcChatMediaViewer, bc_chat_media_viewer, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable fullscreen media viewer for chat previews")
 MACRO_CONFIG_INT(BcChatMediaViewerMaxZoom, bc_chat_media_viewer_max_zoom, 800, 100, 2000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum zoom of the chat media viewer in percent")
+MACRO_CONFIG_INT(BcGiphyPopupX, bc_giphy_popup_x, -1, -1, 10000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Last X position of the GIF popup window")
+MACRO_CONFIG_INT(BcGiphyPopupY, bc_giphy_popup_y, -1, -1, 10000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Last Y position of the GIF popup window")
 
 MACRO_CONFIG_INT(BcCrystalLaser, bc_crystal_laser, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Render rifle and shotgun lasers with crystal shards and icy glow")
 MACRO_CONFIG_INT(BcPrevMouseMaxDistance45Degrees, bc_prev_mouse_max_distance_45_degrees, 400, 0, 5000, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_INSENSITIVE, "Previous maximum cursor distance for 45 degrees")
