@@ -1186,6 +1186,12 @@ void CChat::Reset()
 		m_pGiphyRequest->Abort();
 		m_pGiphyRequest.reset();
 	}
+	if(m_LinkPreflight.m_pRequest)
+	{
+		m_LinkPreflight.m_pRequest->Abort();
+		m_LinkPreflight.m_pRequest.reset();
+	}
+	m_LinkPreflight = {};
 	m_GiphyBrowser.ClearResults();
 	ClearGiphyPreviewCache();
 	ClearPendingUploadImage();
@@ -3152,6 +3158,17 @@ void CChat::UpdateLinkPolicy()
 
 namespace
 {
+	bool ContainsCaseInsensitive(std::string_view Haystack, std::string_view Needle)
+	{
+		if(Needle.empty())
+			return true;
+
+		auto It = std::search(Haystack.begin(), Haystack.end(), Needle.begin(), Needle.end(), [](char A, char B) {
+			return std::tolower((unsigned char)A) == std::tolower((unsigned char)B);
+		});
+		return It != Haystack.end();
+	}
+
 	bool IsDirectDownloadPath(std::string_view Url)
 	{
 		// Extract the path component from URL
@@ -3168,8 +3185,11 @@ namespace
 		if(AuthorityEnd == std::string_view::npos)
 			return false;
 
-		std::string_view Path = Remainder.substr(AuthorityEnd);
+		std::string_view PathAndQuery = Remainder.substr(AuthorityEnd);
 		std::string_view Host = Remainder.substr(0, AuthorityEnd);
+		const size_t QueryPos = PathAndQuery.find('?');
+		const std::string_view Path = QueryPos == std::string_view::npos ? PathAndQuery : PathAndQuery.substr(0, QueryPos);
+		const std::string_view Query = QueryPos == std::string_view::npos ? std::string_view{} : PathAndQuery.substr(QueryPos + 1);
 
 		// Check for direct download patterns
 		const char *apDangerousPatterns[] = {
@@ -3178,6 +3198,9 @@ namespace
 			"/raw/",               // Raw content
 			"/files/download/",    // File hosting
 			"/download/",          // Generic download
+			"/latest/download/",   // GitHub latest release assets
+			"/dl/",                // Short download route used by many hosts
+			"/get/",               // Generic file fetch route
 		};
 
 		for(const char *pPattern : apDangerousPatterns)
@@ -3185,6 +3208,40 @@ namespace
 			if(Path.find(pPattern) != std::string_view::npos)
 				return true;
 		}
+
+		std::string PathString(Path);
+
+		// File extensions that often trigger immediate browser download.
+		const char *apDangerousExtensions[] = {
+			".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz",
+			".exe", ".msi", ".apk", ".dmg", ".pkg", ".appimage", ".deb", ".rpm",
+			".iso", ".bin", ".dll", ".so", ".dylib",
+		};
+		for(const char *pExt : apDangerousExtensions)
+		{
+			if(str_endswith_nocase(PathString.c_str(), pExt) != nullptr)
+				return true;
+		}
+
+		// Query flags often used to force download behavior.
+		const char *apDangerousQueryFlags[] = {
+			"download=1",
+			"download=true",
+			"dl=1",
+			"attachment=1",
+			"attachment=true",
+			"response-content-disposition=attachment",
+			"export=download",
+		};
+		for(const char *pFlag : apDangerousQueryFlags)
+		{
+			if(Query.find(pFlag) != std::string_view::npos)
+				return true;
+		}
+
+		// UClient download endpoint redirects to direct file download.
+		if(Host == "ddnet.under1111.com" && Path.rfind("/uclient/", 0) == 0)
+			return true;
 
 		// Check for known download domains
 		const char *apDownloadDomains[] = {
@@ -3227,11 +3284,63 @@ CChat::ELinkSafety CChat::ClassifyLink(const std::string &Link) const
 	return Https ? ELinkSafety::WARNING : ELinkSafety::INVALID;
 }
 
-void CChat::HandleLinkActivation(const std::string &Link, bool AlwaysConfirm)
+bool CChat::IsLikelyPreflightDownload(const CHttpRequest &Request) const
 {
-	const ELinkSafety Safety = ClassifyLink(Link);
-	const bool IsDownloadLink = IsDirectDownloadPath(Link);
+	const std::string ContentDisposition = Request.ResultHeader("content-disposition");
+	if(ContainsCaseInsensitive(ContentDisposition, "attachment"))
+		return true;
 
+	const std::string ContentType = Request.ResultHeader("content-type");
+	const char *apDangerousTypes[] = {
+		"application/octet-stream",
+		"application/zip",
+		"application/x-zip-compressed",
+		"application/x-7z-compressed",
+		"application/x-rar-compressed",
+		"application/gzip",
+		"application/x-tar",
+		"application/x-msdownload",
+		"application/x-msdos-program",
+		"application/vnd.microsoft.portable-executable",
+		"application/vnd.android.package-archive",
+		"application/x-apple-diskimage",
+		"application/x-debian-package",
+		"application/x-rpm",
+		"binary/octet-stream",
+	};
+	for(const char *pType : apDangerousTypes)
+	{
+		if(ContainsCaseInsensitive(ContentType, pType))
+			return true;
+	}
+
+	const std::string Location = Request.ResultHeader("location");
+	if(!Location.empty() && IsDirectDownloadPath(Location))
+		return true;
+
+	return false;
+}
+
+void CChat::StartLinkPreflight(const std::string &Link, bool AlwaysConfirm)
+{
+	if(m_LinkPreflight.m_pRequest)
+		m_LinkPreflight.m_pRequest->Abort();
+
+	m_LinkPreflight = {};
+	m_LinkPreflight.m_Link = Link;
+	m_LinkPreflight.m_AlwaysConfirm = AlwaysConfirm;
+	m_LinkPreflight.m_RequestType = ELinkPreflightRequestType::HEAD;
+
+	std::shared_ptr<CHttpRequest> pRequest = HttpHead(Link.c_str());
+	pRequest->FailOnErrorStatus(false);
+	pRequest->LogProgress(HTTPLOG::FAILURE);
+	pRequest->Timeout(CTimeout{2500, 5000, 500, 5});
+	m_LinkPreflight.m_pRequest = pRequest;
+	Http()->Run(pRequest);
+}
+
+void CChat::ShowLinkPrompt(const std::string &Link, bool AlwaysConfirm, ELinkSafety Safety, bool IsDownloadLink)
+{
 	if(AlwaysConfirm)
 	{
 		if(Safety == ELinkSafety::SAFE)
@@ -3294,6 +3403,62 @@ void CChat::HandleLinkActivation(const std::string &Link, bool AlwaysConfirm)
 	default:
 		break;
 	}
+}
+
+void CChat::UpdateLinkPreflight()
+{
+	if(!m_LinkPreflight.m_pRequest)
+		return;
+	if(!m_LinkPreflight.m_pRequest->Done())
+		return;
+
+	std::shared_ptr<CHttpRequest> pRequest = m_LinkPreflight.m_pRequest;
+	m_LinkPreflight.m_pRequest.reset();
+
+	const bool WantsGetFallback =
+		m_LinkPreflight.m_RequestType == ELinkPreflightRequestType::HEAD &&
+		pRequest->State() == EHttpState::DONE &&
+		(pRequest->StatusCode() == 405 || pRequest->StatusCode() == 501);
+
+	if(WantsGetFallback)
+	{
+		m_LinkPreflight.m_RequestType = ELinkPreflightRequestType::GET;
+		std::shared_ptr<CHttpRequest> pFallback = HttpGet(m_LinkPreflight.m_Link.c_str());
+		pFallback->FailOnErrorStatus(false);
+		pFallback->Header("Range: bytes=0-1023");
+		pFallback->MaxResponseSize(4096);
+		pFallback->LogProgress(HTTPLOG::FAILURE);
+		pFallback->Timeout(CTimeout{2500, 5000, 500, 5});
+		m_LinkPreflight.m_pRequest = pFallback;
+		Http()->Run(pFallback);
+		return;
+	}
+
+	const std::string Link = m_LinkPreflight.m_Link;
+	const bool AlwaysConfirm = m_LinkPreflight.m_AlwaysConfirm;
+	m_LinkPreflight = {};
+
+	ELinkSafety Safety = ClassifyLink(Link);
+	const bool PreflightDownload = pRequest->State() == EHttpState::DONE && IsLikelyPreflightDownload(*pRequest);
+	const bool IsDownloadLink = IsDirectDownloadPath(Link) || PreflightDownload;
+	if(PreflightDownload && Safety == ELinkSafety::WARNING)
+		Safety = ELinkSafety::DANGER;
+
+	ShowLinkPrompt(Link, AlwaysConfirm, Safety, IsDownloadLink);
+}
+
+void CChat::HandleLinkActivation(const std::string &Link, bool AlwaysConfirm)
+{
+	const ELinkSafety Safety = ClassifyLink(Link);
+	const bool IsDownloadLink = IsDirectDownloadPath(Link);
+
+	if(Safety == ELinkSafety::WARNING && !IsDownloadLink)
+	{
+		StartLinkPreflight(Link, AlwaysConfirm);
+		return;
+	}
+
+	ShowLinkPrompt(Link, AlwaysConfirm, Safety, IsDownloadLink);
 }
 
 std::string CChat::BuildPlayerSearchUrl(const char *pPlayerName) const
@@ -7484,6 +7649,7 @@ void CChat::OnRender()
 	UpdateGiphySearch();
 	UpdateGiphyPreviewCache();
 	UpdatePendingUpload();
+	UpdateLinkPreflight();
 	UpdateLinkPolicy();
 	
 	// Render image editor if active

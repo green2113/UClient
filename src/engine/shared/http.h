@@ -17,6 +17,8 @@
 #include <deque>
 #include <mutex>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 
 typedef struct _json_value json_value;
@@ -135,6 +137,7 @@ class CHttpRequest : public IHttpRequest
 	bool m_HeadersEnded = false;
 	std::optional<int64_t> m_ResultDate = std::nullopt;
 	std::optional<int64_t> m_ResultLastModified = std::nullopt;
+	std::unordered_map<std::string, std::string> m_ResultHeaders;
 
 	bool ShouldSkipRequest();
 	// Abort the request with an error if `BeforeInit()` returns false.
@@ -249,6 +252,7 @@ public:
 	void Result(unsigned char **ppResult, size_t *pResultLength) const;
 	json_value *ResultJson() const;
 	const SHA256_DIGEST &ResultSha256() const;
+	std::string ResultHeader(std::string_view HeaderName) const;
 
 	int StatusCode() const;
 	std::optional<int64_t> ResultAgeSeconds() const;

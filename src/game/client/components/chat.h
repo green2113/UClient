@@ -345,10 +345,30 @@ class CChat : public CComponent
 		std::unordered_set<std::string> m_vDangerDomains;
 	};
 
+	enum class ELinkPreflightRequestType
+	{
+		NONE,
+		HEAD,
+		GET,
+	};
+
+	struct CLinkPreflight
+	{
+		std::shared_ptr<class CHttpRequest> m_pRequest;
+		std::string m_Link;
+		bool m_AlwaysConfirm = false;
+		ELinkPreflightRequestType m_RequestType = ELinkPreflightRequestType::NONE;
+	};
+
 	CLinkPolicyCache m_LinkPolicyCache;
+	CLinkPreflight m_LinkPreflight;
 
 	void UpdateLinkPolicy();
+	void UpdateLinkPreflight();
+	void StartLinkPreflight(const std::string &Link, bool AlwaysConfirm);
+	bool IsLikelyPreflightDownload(const CHttpRequest &Request) const;
 	void HandleLinkActivation(const std::string &Link, bool AlwaysConfirm);
+	void ShowLinkPrompt(const std::string &Link, bool AlwaysConfirm, ELinkSafety Safety, bool IsDownloadLink);
 	std::string BuildPlayerSearchUrl(const char *pPlayerName) const;
 	ELinkSafety ClassifyLink(const std::string &Link) const;
 

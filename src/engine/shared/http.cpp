@@ -11,6 +11,7 @@
 
 #include <game/version.h>
 
+#include <cctype>
 #include <limits>
 
 #if !defined(CONF_FAMILY_WINDOWS)
@@ -277,6 +278,7 @@ size_t CHttpRequest::OnHeader(char *pHeader, size_t HeaderSize)
 		m_HeadersEnded = false;
 		m_ResultDate = {};
 		m_ResultLastModified = {};
+		m_ResultHeaders.clear();
 	}
 
 	static const char DATE[] = "Date: ";
@@ -302,6 +304,29 @@ size_t CHttpRequest::OnHeader(char *pHeader, size_t HeaderSize)
 		{
 			m_ResultLastModified = Value;
 		}
+	}
+
+	const size_t LineLength = HeaderSize - 1;
+	const char *pColon = (const char *)memchr(pHeader, ':', LineLength);
+	if(pColon != nullptr)
+	{
+		const size_t NameLength = pColon - pHeader;
+		size_t ValueStart = NameLength + 1;
+		while(ValueStart < LineLength && (pHeader[ValueStart] == ' ' || pHeader[ValueStart] == '\t'))
+			ValueStart++;
+		size_t ValueEnd = LineLength;
+		while(ValueEnd > ValueStart && (pHeader[ValueEnd - 1] == '\r' || pHeader[ValueEnd - 1] == ' ' || pHeader[ValueEnd - 1] == '\t'))
+			ValueEnd--;
+
+		std::string Name(pHeader, NameLength);
+		for(char &Char : Name)
+			Char = (char)std::tolower((unsigned char)Char);
+
+		std::string Value;
+		if(ValueEnd > ValueStart)
+			Value.assign(pHeader + ValueStart, ValueEnd - ValueStart);
+
+		m_ResultHeaders[Name] = std::move(Value);
 	}
 
 	return HeaderSize;
@@ -560,6 +585,20 @@ const SHA256_DIGEST &CHttpRequest::ResultSha256() const
 	dbg_assert(State() == EHttpState::DONE, "Request not done");
 	dbg_assert(m_ActualSha256.has_value(), "Result SHA256 missing");
 	return m_ActualSha256.value();
+}
+
+std::string CHttpRequest::ResultHeader(std::string_view HeaderName) const
+{
+	dbg_assert(State() == EHttpState::DONE, "Request not done");
+
+	std::string HeaderKey(HeaderName);
+	for(char &Char : HeaderKey)
+		Char = (char)std::tolower((unsigned char)Char);
+
+	const auto It = m_ResultHeaders.find(HeaderKey);
+	if(It == m_ResultHeaders.end())
+		return {};
+	return It->second;
 }
 
 int CHttpRequest::StatusCode() const
