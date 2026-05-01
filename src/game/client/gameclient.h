@@ -96,6 +96,7 @@
 #include "components/tclient/tclient.h"
 #include "components/tclient/trails.h"
 #include "components/bestclient/translate.h"
+#include "components/uclient/uclient.h"
 #include "components/tclient/warlist.h"
 #include "components/tooltips.h"
 #include "components/touch_controls.h"
@@ -264,6 +265,7 @@ public:
 	CCustomCommunities m_CustomCommunities;
 	CMovingTiles m_MovingTilesBackground = CMovingTiles{ false };
 	CMovingTiles m_MovingTilesForeground = CMovingTiles{ true };
+	CUClient m_UClient;
 
 private:
 	std::vector<class CComponent *> m_vpAll;

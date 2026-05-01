@@ -80,6 +80,13 @@ constexpr int BcFastInputGammaEffectiveToUiAmount(int EffectiveAmount)
 	return EffectiveAmount;
 }
 
+constexpr int BcFastInputNormalizedMode(int Mode)
+{
+	if(Mode == 1 || Mode == 2)
+		return 3;
+	return Mode;
+}
+
 /**
  * The default values of all config variables in @link CConfig @endlink.
  */

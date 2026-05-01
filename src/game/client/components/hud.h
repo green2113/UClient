@@ -145,6 +145,10 @@ class CHud : public CComponent
 	CUIRect GetLocalTimeRect(bool ForcePreview) const;
 	void RenderFinishPrediction(bool ForcePreview = false);
 	CUIRect GetFinishPredictionRect(bool ForcePreview) const;
+	void RenderKeystrokesKeyboard(bool ForcePreview = false);
+	CUIRect GetKeystrokesKeyboardRect(bool ForcePreview) const;
+	void RenderKeystrokesMouse(bool ForcePreview = false);
+	CUIRect GetKeystrokesMouseRect(bool ForcePreview) const;
 	void RenderFrozenHud(bool ForcePreview = false);
 	CUIRect GetFrozenHudRect(bool ForcePreview) const;
 
@@ -170,6 +174,10 @@ public:
 	void RenderLocalTimePreview();
 	CUIRect GetFinishPredictionHudEditorRect() const;
 	void RenderFinishPredictionPreview();
+	CUIRect GetKeystrokesKeyboardHudEditorRect() const;
+	void RenderKeystrokesKeyboardPreview();
+	CUIRect GetKeystrokesMouseHudEditorRect() const;
+	void RenderKeystrokesMousePreview();
 	CUIRect GetFrozenHudEditorRect() const;
 	void RenderFrozenHudPreview();
 
@@ -200,6 +208,18 @@ private:
 	int64_t GetFinishPredictionPersonalBestTimeMs() const;
 	int64_t GetFinishPredictionAverageTimeMs() const;
 	bool GetFinishPredictionState(SFinishPredictionState &State, bool ForcePreview) const;
+	CUIRect GetFinishPredictionAnchorRect() const;
+	CUIRect GetFinishPredictionClassicRect(bool ForcePreview) const;
+	CUIRect GetFinishPredictionBarRect(bool ForcePreview) const;
+	void RenderFinishPredictionClassic(const CUIRect &Rect, const SFinishPredictionState &State);
+	void RenderFinishPredictionBar(const CUIRect &Rect, const SFinishPredictionState &State, bool ForcePreview);
+	void ResetFinishPredictionState(bool ClearFinishedRace = true) const;
+	void RenderKeystrokesKeyboardInternal(bool ForcePreview, bool IgnoreModuleEnabled);
+	CUIRect GetKeystrokesKeyboardRectInternal(bool ForcePreview, bool IgnoreModuleEnabled) const;
+	void RenderKeystrokesMouseInternal(bool ForcePreview, bool IgnoreModuleEnabled);
+	CUIRect GetKeystrokesMouseRectInternal(bool ForcePreview, bool IgnoreModuleEnabled) const;
+	int GetKeystrokesTrackedClientId() const;
+	const CNetObj_PlayerInput *GetKeystrokesTrackedInput() const;
 	float m_TimeCpDiff;
 	float m_aPlayerRecord[NUM_DUMMIES];
 	float m_FinishTimeDiff;
@@ -219,6 +239,11 @@ private:
 	mutable float m_FinishPredictionLastProgress;
 	mutable int64_t m_FinishPredictionSmoothedFinishTimeMs;
 	mutable int m_FinishPredictionLastPredictTick;
+	mutable int m_FinishPredictionFinishedRaceTick;
+	IGraphics::CTextureHandle m_KeystrokesKeyboardTexture;
+	IGraphics::CTextureHandle m_KeystrokesMouseTexture;
+	int64_t m_KeystrokesWheelUpEndTime = 0;
+	int64_t m_KeystrokesWheelDownEndTime = 0;
 
 	inline int GetDigitsIndex(int Value, int Max);
 

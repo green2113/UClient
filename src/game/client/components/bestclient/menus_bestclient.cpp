@@ -19,6 +19,7 @@
 #include <game/client/components/media_decoder.h>
 #include <game/client/components/menu_background.h>
 #include <game/client/components/menus.h>
+#include <game/client/components/hud_layout.h>
 #include <game/client/components/sounds.h>
 #include <game/client/gameclient.h>
 #include <game/client/skin.h>
@@ -36,11 +37,6 @@
 #include <vector>
 
 using namespace std::chrono_literals;
-
-static const char *BCLocalize(const char *pStr, const char *pContext = "")
-{
-	return TCLocalize(pStr, pContext);
-}
 
 static void SetBestClientTabFlag(int32_t &Flags, int Tab, bool Hidden)
 {
@@ -81,6 +77,7 @@ static const SBestClientComponentEntry gs_aBestClientComponentEntries[] = {
 	{CBestClient::COMPONENT_VISUALS_AFTERIMAGE, "Afterimage", COMPONENTS_GROUP_VISUALS},
 	{CBestClient::COMPONENT_VISUALS_CRYSTAL_LASER, "Crystal Laser", COMPONENTS_GROUP_VISUALS},
 	{CBestClient::COMPONENT_VISUALS_MUSIC_PLAYER, "Music Player", COMPONENTS_GROUP_VISUALS},
+	{CBestClient::COMPONENT_VISUALS_KEYSTROKES, "Keystrokes", COMPONENTS_GROUP_VISUALS},
 	{CBestClient::COMPONENT_VISUALS_MEDIA_BACKGROUND, "Media Background", COMPONENTS_GROUP_VISUALS},
 	{CBestClient::COMPONENT_VISUALS_ANIMATIONS, "Animations", COMPONENTS_GROUP_VISUALS},
 	{CBestClient::COMPONENT_VISUALS_ASPECT_RATIO, "Aspect Ratio", COMPONENTS_GROUP_VISUALS},
@@ -1147,6 +1144,88 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 		}
 
+		// Keystrokes (right column block)
+		if(!GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_VISUALS_KEYSTROKES))
+		{
+			const float ContentHeight = MarginSmall * 4.0f + LineSize * 6.0f;
+			CUIRect Content, Label, Button;
+			BeginBlock(Column, ContentHeight, Content);
+
+			Content.HSplitTop(LineSize, &Label, &Content);
+			Ui()->DoLabel(&Label, BCLocalize("Keystrokes"), HeadlineFontSize, TEXTALIGN_ML);
+			Content.HSplitTop(MarginSmall, nullptr, &Content);
+
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcKeystrokesKeyboard, BCLocalize("Show keyboard HUD"), &g_Config.m_BcKeystrokesKeyboard, &Content, LineSize);
+			if(g_Config.m_BcKeystrokesKeyboard && !HudLayout::IsEnabled(HudLayout::MODULE_KEYSTROKES_KEYBOARD))
+				HudLayout::SetEnabled(HudLayout::MODULE_KEYSTROKES_KEYBOARD, true);
+			Content.HSplitTop(LineSize, &Button, &Content);
+			{
+				static CButtonContainer s_KeyboardPresetMinimal;
+				static CButtonContainer s_KeyboardPresetFull;
+				static CButtonContainer s_KeyboardPresetMicro;
+				CUIRect MinimalButton, Rest, FullButton, MicroButton;
+				const float Spacing = 2.0f;
+				const float ButtonWidth = (Button.w - Spacing * 2.0f) / 3.0f;
+				Button.VSplitLeft(ButtonWidth, &MinimalButton, &Rest);
+				Rest.VSplitLeft(Spacing, nullptr, &Rest);
+				Rest.VSplitLeft(ButtonWidth, &FullButton, &Rest);
+				Rest.VSplitLeft(Spacing, nullptr, &Rest);
+				MicroButton = Rest;
+				MinimalButton.HMargin(2.0f, &MinimalButton);
+				FullButton.HMargin(2.0f, &FullButton);
+				MicroButton.HMargin(2.0f, &MicroButton);
+				if(DoButton_Menu(&s_KeyboardPresetMinimal, BCLocalize("Minimal"), g_Config.m_BcKeystrokesKeyboardPreset == 0, &MinimalButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_L))
+					g_Config.m_BcKeystrokesKeyboardPreset = 0;
+				if(DoButton_Menu(&s_KeyboardPresetFull, BCLocalize("Full"), g_Config.m_BcKeystrokesKeyboardPreset == 1, &FullButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_NONE))
+					g_Config.m_BcKeystrokesKeyboardPreset = 1;
+				if(DoButton_Menu(&s_KeyboardPresetMicro, BCLocalize("Micro"), g_Config.m_BcKeystrokesKeyboardPreset == 2, &MicroButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_R))
+					g_Config.m_BcKeystrokesKeyboardPreset = 2;
+			}
+
+			Content.HSplitTop(MarginSmall, nullptr, &Content);
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcKeystrokesMouse, BCLocalize("Show mouse HUD"), &g_Config.m_BcKeystrokesMouse, &Content, LineSize);
+			if(g_Config.m_BcKeystrokesMouse && !HudLayout::IsEnabled(HudLayout::MODULE_KEYSTROKES_MOUSE))
+				HudLayout::SetEnabled(HudLayout::MODULE_KEYSTROKES_MOUSE, true);
+			Content.HSplitTop(LineSize, &Button, &Content);
+			{
+				static CButtonContainer s_MousePresetDot;
+				static CButtonContainer s_MousePresetArrow;
+				static CButtonContainer s_MousePresetDotDot;
+				CUIRect DotButton, Rest, ArrowButton, DotDotButton;
+				const float Spacing = 2.0f;
+				const float ButtonWidth = (Button.w - Spacing * 2.0f) / 3.0f;
+				Button.VSplitLeft(ButtonWidth, &DotButton, &Rest);
+				Rest.VSplitLeft(Spacing, nullptr, &Rest);
+				Rest.VSplitLeft(ButtonWidth, &ArrowButton, &Rest);
+				Rest.VSplitLeft(Spacing, nullptr, &Rest);
+				DotDotButton = Rest;
+				DotButton.HMargin(2.0f, &DotButton);
+				ArrowButton.HMargin(2.0f, &ArrowButton);
+				DotDotButton.HMargin(2.0f, &DotDotButton);
+				if(DoButton_Menu(&s_MousePresetDot, BCLocalize("Dot"), g_Config.m_BcKeystrokesMousePreset == 0, &DotButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_L))
+					g_Config.m_BcKeystrokesMousePreset = 0;
+				if(DoButton_Menu(&s_MousePresetArrow, BCLocalize("Arrow"), g_Config.m_BcKeystrokesMousePreset == 1, &ArrowButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_NONE))
+					g_Config.m_BcKeystrokesMousePreset = 1;
+				if(DoButton_Menu(&s_MousePresetDotDot, BCLocalize("Dot Dot"), g_Config.m_BcKeystrokesMousePreset == 2, &DotDotButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_R))
+					g_Config.m_BcKeystrokesMousePreset = 2;
+			}
+
+			Content.HSplitTop(LineSize, &Button, &Content);
+			{
+				static CButtonContainer s_MousePresetDotNoBox;
+				static CButtonContainer s_MousePresetNoMovement;
+				CUIRect Left, Right;
+				Button.VSplitMid(&Left, &Right, 2.0f);
+				Left.HMargin(2.0f, &Left);
+				Right.HMargin(2.0f, &Right);
+				if(DoButton_Menu(&s_MousePresetDotNoBox, BCLocalize("Dot No Box"), g_Config.m_BcKeystrokesMousePreset == 3, &Left, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_L))
+					g_Config.m_BcKeystrokesMousePreset = 3;
+				if(DoButton_Menu(&s_MousePresetNoMovement, BCLocalize("No movement"), g_Config.m_BcKeystrokesMousePreset == 4, &Right, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_R))
+					g_Config.m_BcKeystrokesMousePreset = 4;
+			}
+			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+		}
+
 		// Camera Drift (right column block)
 		if(!GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_VISUALS_CAMERA_DRIFT))
 		{
@@ -1744,7 +1823,7 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			const bool BestInputMode = g_Config.m_BcFastInputMode == 3;
 			const float FastInputExtraTargetHeight = BestInputMode ? (MarginSmall * 8.0f + LineSize * 8.0f) : (MarginSmall * 3.0f + LineSize * 3.0f);
 			const float ContentHeight = LineSize + MarginSmall + LineSize * 3.0f +
-				FastInputExtraTargetHeight * s_FastInputPhase;
+						    FastInputExtraTargetHeight * s_FastInputPhase;
 
 			CUIRect Content, Label, Button, Visible;
 			BeginBlock(Column, ContentHeight, Content);
@@ -1770,83 +1849,54 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
 
 				static CButtonContainer s_FastInputModeFast;
-				static CButtonContainer s_FastInputModeDeltaInput;
-				static CButtonContainer s_FastInputModeGammaInput;
 				static CButtonContainer s_FastInputModeBest;
+				static CButtonContainer s_FastInputModeSaikoPlus;
+				g_Config.m_BcFastInputMode = BcFastInputNormalizedMode(g_Config.m_BcFastInputMode);
 				const int OldMode = g_Config.m_BcFastInputMode;
-				auto ApplyBestInputPreset = [&](int Preset) {
-					g_Config.m_BcFastInputMode = 3;
-					g_Config.m_BcBestInputPreset = Preset;
-					if(Preset == 1)
-					{
-						g_Config.m_BcBestInputOffset = 270;
-						g_Config.m_BcBestInputSmoothing = 55;
-						g_Config.m_BcBestInputLatencyComp = 15;
-					}
-					else if(Preset == 2)
-					{
-						g_Config.m_BcBestInputOffset = 300;
-						g_Config.m_BcBestInputSmoothing = 35;
-						g_Config.m_BcBestInputLatencyComp = 15;
-					}
-				};
 
 				Expand.HSplitTop(LineSize, &Button, &Expand);
 				{
-					CUIRect FastButton, ButtonsRest, DeltaButton, GammaButton, BestButton;
+					CUIRect FastButton, ButtonsRest, BestButton, SaikoPlusButton;
 					const float Spacing = 2.0f;
-					const float ButtonWidth = (Button.w - Spacing * 3.0f) / 4.0f;
+					const float ButtonWidth = (Button.w - Spacing * 2.0f) / 3.0f;
 					Button.VSplitLeft(ButtonWidth, &FastButton, &ButtonsRest);
 					ButtonsRest.VSplitLeft(Spacing, nullptr, &ButtonsRest);
-					ButtonsRest.VSplitLeft(ButtonWidth, &DeltaButton, &ButtonsRest);
+					ButtonsRest.VSplitLeft(ButtonWidth, &BestButton, &ButtonsRest);
 					ButtonsRest.VSplitLeft(Spacing, nullptr, &ButtonsRest);
-					ButtonsRest.VSplitLeft(ButtonWidth, &GammaButton, &ButtonsRest);
-					ButtonsRest.VSplitLeft(Spacing, nullptr, &ButtonsRest);
-					BestButton = ButtonsRest;
+					SaikoPlusButton = ButtonsRest;
 					FastButton.HMargin(2.0f, &FastButton);
-					DeltaButton.HMargin(2.0f, &DeltaButton);
-					GammaButton.HMargin(2.0f, &GammaButton);
 					BestButton.HMargin(2.0f, &BestButton);
+					SaikoPlusButton.HMargin(2.0f, &SaikoPlusButton);
 
 					if(DoButton_Menu(&s_FastInputModeFast, BCLocalize("Fast input"), g_Config.m_BcFastInputMode == 0, &FastButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_L))
 						g_Config.m_BcFastInputMode = 0;
-					if(DoButton_Menu(&s_FastInputModeDeltaInput, BCLocalize("Delta input"), g_Config.m_BcFastInputMode == 1, &DeltaButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_NONE))
-						g_Config.m_BcFastInputMode = 1;
-					if(DoButton_Menu(&s_FastInputModeGammaInput, BCLocalize("Gamma input"), g_Config.m_BcFastInputMode == 2, &GammaButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_NONE))
-						g_Config.m_BcFastInputMode = 2;
-					if(DoButton_Menu(&s_FastInputModeBest, BCLocalize("Best input"), g_Config.m_BcFastInputMode == 3, &BestButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_R))
+					if(DoButton_Menu(&s_FastInputModeBest, BCLocalize("Best input"), g_Config.m_BcFastInputMode == 3, &BestButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_NONE))
 						g_Config.m_BcFastInputMode = 3;
+					if(DoButton_Menu(&s_FastInputModeSaikoPlus, "Saiko+", g_Config.m_BcFastInputMode == 4, &SaikoPlusButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_R))
+						g_Config.m_BcFastInputMode = 4;
 				}
 
 				if(g_Config.m_BcFastInputMode != OldMode)
 				{
-					if(g_Config.m_BcFastInputMode == 1 && g_Config.m_BcFastInputDeltaInput <= 0)
+					if(g_Config.m_BcFastInputMode == 0 && g_Config.m_TcFastInputAmount <= 0)
 					{
-						if(OldMode == 2 && g_Config.m_BcFastInputGammaInput > 0)
-							g_Config.m_BcFastInputDeltaInput = BcFastInputGammaUiToEffectiveAmount(g_Config.m_BcFastInputGammaInput);
-						else if(OldMode == 3 && g_Config.m_BcBestInputOffset > 0)
-							g_Config.m_BcFastInputDeltaInput = std::clamp(g_Config.m_BcBestInputOffset, 0, 500);
-						else if(g_Config.m_TcFastInputAmount > 0)
-							g_Config.m_BcFastInputDeltaInput = std::clamp(g_Config.m_TcFastInputAmount * 5, 0, 500);
+						int SourceAmount = 0;
+						if(OldMode == 3)
+							SourceAmount = g_Config.m_BcBestInputOffset;
+						else if(OldMode == 4)
+							SourceAmount = g_Config.m_BcSaikoPlusAmount;
+						if(SourceAmount > 0)
+							g_Config.m_TcFastInputAmount = std::clamp((SourceAmount + 2) / 5, 0, 40);
 					}
-					else if(g_Config.m_BcFastInputMode == 2 && g_Config.m_BcFastInputGammaInput <= 0)
+					else if(g_Config.m_BcFastInputMode == 4 && g_Config.m_BcSaikoPlusAmount <= 0)
 					{
-						if(OldMode == 1 && g_Config.m_BcFastInputDeltaInput > 0)
-							g_Config.m_BcFastInputGammaInput = BcFastInputGammaEffectiveToUiAmount(g_Config.m_BcFastInputDeltaInput);
-						else if(OldMode == 3 && g_Config.m_BcBestInputOffset > 0)
-							g_Config.m_BcFastInputGammaInput = BcFastInputGammaEffectiveToUiAmount(g_Config.m_BcBestInputOffset);
-						else if(g_Config.m_TcFastInputAmount > 0)
-							g_Config.m_BcFastInputGammaInput = BcFastInputGammaEffectiveToUiAmount(g_Config.m_TcFastInputAmount * 5);
-					}
-					else if(g_Config.m_BcFastInputMode == 0 && g_Config.m_TcFastInputAmount <= 0)
-					{
-						int SourceAmount = g_Config.m_BcFastInputDeltaInput;
-						if(OldMode == 2)
-							SourceAmount = BcFastInputGammaUiToEffectiveAmount(g_Config.m_BcFastInputGammaInput);
+						int SourceAmount = 0;
+						if(OldMode == 0)
+							SourceAmount = g_Config.m_TcFastInputAmount * 5;
 						else if(OldMode == 3)
 							SourceAmount = g_Config.m_BcBestInputOffset;
 						if(SourceAmount > 0)
-							g_Config.m_TcFastInputAmount = std::clamp((SourceAmount + 2) / 5, 0, 40);
+							g_Config.m_BcSaikoPlusAmount = std::clamp(SourceAmount, 0, 500);
 					}
 				}
 
@@ -1857,85 +1907,41 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 				{
 					DoSliderWithScaledValue(&g_Config.m_TcFastInputAmount, &g_Config.m_TcFastInputAmount, &Button, BCLocalize("Amount"), 0, 40, 1, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "ms");
 				}
-				else if(g_Config.m_BcFastInputMode == 1 || g_Config.m_BcFastInputMode == 2)
+				else if(g_Config.m_BcFastInputMode == 4)
 				{
 					const int Min = 0;
-					const bool GammaMode = g_Config.m_BcFastInputMode == 2;
-					if(GammaMode)
-					{
-						const int Max = BC_FAST_INPUT_GAMMA_UI_MAX;
-						int *pAmountValue = &g_Config.m_BcFastInputGammaInput;
-						int Value = std::clamp(*pAmountValue, Min, Max);
+					const int Max = 500;
+					int *pAmountValue = &g_Config.m_BcSaikoPlusAmount;
+					int Value = std::clamp(*pAmountValue, Min, Max);
 
-						const int Increment = std::max(1, (Max - Min) / 35);
-						if(Input()->ModifierIsPressed() && Input()->KeyPress(KEY_MOUSE_WHEEL_UP) && Ui()->MouseInside(&Button))
-							Value = std::clamp(Value + Increment, Min, Max);
-						if(Input()->ModifierIsPressed() && Input()->KeyPress(KEY_MOUSE_WHEEL_DOWN) && Ui()->MouseInside(&Button))
-							Value = std::clamp(Value - Increment, Min, Max);
+					const int Increment = std::max(1, (Max - Min) / 35);
+					if(Input()->ModifierIsPressed() && Input()->KeyPress(KEY_MOUSE_WHEEL_UP) && Ui()->MouseInside(&Button))
+						Value = std::clamp(Value + Increment, Min, Max);
+					if(Input()->ModifierIsPressed() && Input()->KeyPress(KEY_MOUSE_WHEEL_DOWN) && Ui()->MouseInside(&Button))
+						Value = std::clamp(Value - Increment, Min, Max);
 
-						char aBuf[256];
-						str_format(aBuf, sizeof(aBuf), "%s: %.2fM", BCLocalize("Gamma amount"), Value / 100.0f);
+					char aBuf[256];
+					str_format(aBuf, sizeof(aBuf), "%s: %.2f ticks", "Saiko+", Value / 100.0f);
 
-						CUIRect AmountLabel, ScrollBar;
-						Button.VSplitMid(&AmountLabel, &ScrollBar, minimum(10.0f, Button.w * 0.05f));
-						const float LabelFontSize = AmountLabel.h * CUi::ms_FontmodHeight * 0.8f;
-						Ui()->DoLabel(&AmountLabel, aBuf, LabelFontSize, TEXTALIGN_ML);
+					CUIRect AmountLabel, ScrollBar;
+					Button.VSplitMid(&AmountLabel, &ScrollBar, minimum(10.0f, Button.w * 0.05f));
+					const float LabelFontSize = AmountLabel.h * CUi::ms_FontmodHeight * 0.8f;
+					Ui()->DoLabel(&AmountLabel, aBuf, LabelFontSize, TEXTALIGN_ML);
 
-						const float Rel = (Value - Min) / (float)(Max - Min);
-						const float NewRel = Ui()->DoScrollbarH(pAmountValue, &ScrollBar, Rel);
-						Value = (int)(Min + NewRel * (Max - Min) + 0.5f);
-						*pAmountValue = std::clamp(Value, Min, Max);
-					}
-					else
-					{
-						const int Max = 500;
-						int *pAmountValue = &g_Config.m_BcFastInputDeltaInput;
-						int Value = std::clamp(*pAmountValue, Min, Max);
-
-						const int Increment = std::max(1, (Max - Min) / 35);
-						if(Input()->ModifierIsPressed() && Input()->KeyPress(KEY_MOUSE_WHEEL_UP) && Ui()->MouseInside(&Button))
-							Value = std::clamp(Value + Increment, Min, Max);
-						if(Input()->ModifierIsPressed() && Input()->KeyPress(KEY_MOUSE_WHEEL_DOWN) && Ui()->MouseInside(&Button))
-							Value = std::clamp(Value - Increment, Min, Max);
-
-						char aBuf[256];
-						str_format(aBuf, sizeof(aBuf), "%s: %.2fA", BCLocalize("Amount"), Value / 100.0f);
-
-						CUIRect AmountLabel, ScrollBar;
-						Button.VSplitMid(&AmountLabel, &ScrollBar, minimum(10.0f, Button.w * 0.05f));
-						const float LabelFontSize = AmountLabel.h * CUi::ms_FontmodHeight * 0.8f;
-						Ui()->DoLabel(&AmountLabel, aBuf, LabelFontSize, TEXTALIGN_ML);
-
-						const float Rel = (Value - Min) / (float)(Max - Min);
-						const float NewRel = Ui()->DoScrollbarH(pAmountValue, &ScrollBar, Rel);
-						Value = (int)(Min + NewRel * (Max - Min) + 0.5f);
-						*pAmountValue = std::clamp(Value, Min, Max);
-					}
+					const float Rel = (Value - Min) / (float)(Max - Min);
+					const float NewRel = Ui()->DoScrollbarH(pAmountValue, &ScrollBar, Rel);
+					Value = (int)(Min + NewRel * (Max - Min) + 0.5f);
+					*pAmountValue = std::clamp(Value, Min, Max);
 				}
 				else
 				{
 					const CGameClient::SBestInputSettings BestInputSettings = GameClient()->BestInputSettings();
-					CUIRect PresetButtons = Button;
-					CUIRect DeltaBtn, GammaBtn, AutoBtn;
-					const float PresetSpacing = 2.0f;
-					const float PresetWidth = (PresetButtons.w - PresetSpacing * 2.0f) / 3.0f;
-					PresetButtons.VSplitLeft(PresetWidth, &DeltaBtn, &PresetButtons);
-					PresetButtons.VSplitLeft(PresetSpacing, nullptr, &PresetButtons);
-					PresetButtons.VSplitLeft(PresetWidth, &GammaBtn, &PresetButtons);
-					PresetButtons.VSplitLeft(PresetSpacing, nullptr, &PresetButtons);
-					AutoBtn = PresetButtons;
-					DeltaBtn.HMargin(2.0f, &DeltaBtn);
-					GammaBtn.HMargin(2.0f, &GammaBtn);
-					AutoBtn.HMargin(2.0f, &AutoBtn);
+					Button.HMargin(2.0f, &Button);
 
-					static CButtonContainer s_PresetDelta, s_PresetGamma, s_PresetAuto;
-					if(DoButton_Menu(&s_PresetDelta, "Delta+", g_Config.m_BcBestInputPreset == 1, &DeltaBtn, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_L))
-						ApplyBestInputPreset(1);
-					if(DoButton_Menu(&s_PresetGamma, "Gamma+", g_Config.m_BcBestInputPreset == 2, &GammaBtn, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_NONE))
-						ApplyBestInputPreset(2);
+					static CButtonContainer s_PresetAuto;
 					char aAutoPreset[64];
 					str_format(aAutoPreset, sizeof(aAutoPreset), "Auto (%d)", GameClient()->CurrentPing());
-					if(DoButton_Menu(&s_PresetAuto, aAutoPreset, g_Config.m_BcBestInputPreset == 3, &AutoBtn, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_R))
+					if(DoButton_Menu(&s_PresetAuto, aAutoPreset, g_Config.m_BcBestInputPreset == 3, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL))
 						g_Config.m_BcBestInputPreset = 3;
 
 					Expand.HSplitTop(MarginSmall, nullptr, &Expand);
@@ -2023,50 +2029,48 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 					Expand.HSplitTop(MarginSmall, nullptr, &Expand);
 					Expand.HSplitTop(LineSize, &Button, &Expand);
 					{
-					static CButtonContainer s_aInterpolationButtons[3];
-					static const char *s_apInterpolationNames[] = {
-						"Linear",
-						"Cubic",
-						"Smooth",
-					};
-					static const int s_aInterpolationValues[] = {1, 2, 3};
+						static CButtonContainer s_aInterpolationButtons[3];
+						static const char *s_apInterpolationNames[] = {
+							"Linear",
+							"Cubic",
+							"Smooth",
+						};
+						static const int s_aInterpolationValues[] = {1, 2, 3};
 
-					CUIRect ButtonsRect = Button;
-					const float Spacing = 2.0f;
-					const float InterpolationButtonWidth = (ButtonsRect.w - Spacing * 2.0f) / 3.0f;
-					for(int i = 0; i < 3; ++i)
-					{
-						CUIRect InterpolationButton;
-						if(i < 2)
+						CUIRect ButtonsRect = Button;
+						const float Spacing = 2.0f;
+						const float InterpolationButtonWidth = (ButtonsRect.w - Spacing * 2.0f) / 3.0f;
+						for(int i = 0; i < 3; ++i)
 						{
-							ButtonsRect.VSplitLeft(InterpolationButtonWidth, &InterpolationButton, &ButtonsRect);
-							ButtonsRect.VSplitLeft(Spacing, nullptr, &ButtonsRect);
+							CUIRect InterpolationButton;
+							if(i < 2)
+							{
+								ButtonsRect.VSplitLeft(InterpolationButtonWidth, &InterpolationButton, &ButtonsRect);
+								ButtonsRect.VSplitLeft(Spacing, nullptr, &ButtonsRect);
 							}
 							else
 								InterpolationButton = ButtonsRect;
-						InterpolationButton.HMargin(2.0f, &InterpolationButton);
+							InterpolationButton.HMargin(2.0f, &InterpolationButton);
 
-						int Corners = IGraphics::CORNER_NONE;
-						if(i == 0)
-							Corners = IGraphics::CORNER_L;
-						else if(i == 2)
-							Corners = IGraphics::CORNER_R;
+							int Corners = IGraphics::CORNER_NONE;
+							if(i == 0)
+								Corners = IGraphics::CORNER_L;
+							else if(i == 2)
+								Corners = IGraphics::CORNER_R;
 
-						if(DoButton_Menu(&s_aInterpolationButtons[i], BCLocalize(s_apInterpolationNames[i]), g_Config.m_BcBestInputInterpolation == s_aInterpolationValues[i], &InterpolationButton, BUTTONFLAG_LEFT, nullptr, Corners))
-							g_Config.m_BcBestInputInterpolation = s_aInterpolationValues[i];
+							if(DoButton_Menu(&s_aInterpolationButtons[i], BCLocalize(s_apInterpolationNames[i]), g_Config.m_BcBestInputInterpolation == s_aInterpolationValues[i], &InterpolationButton, BUTTONFLAG_LEFT, nullptr, Corners))
+								g_Config.m_BcBestInputInterpolation = s_aInterpolationValues[i];
+						}
 					}
-				}
 				}
 
 				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
 				if(g_Config.m_BcFastInputMode == 0)
 					DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcFastInputOthers, BCLocalize("Fast Input others"), &g_Config.m_TcFastInputOthers, &Expand, LineSize);
-				else if(g_Config.m_BcFastInputMode == 1)
-					DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcDeltaInputOthers, BCLocalize("Delta input others"), &g_Config.m_BcDeltaInputOthers, &Expand, LineSize);
-				else if(g_Config.m_BcFastInputMode == 2)
-					DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcGammaInputOthers, BCLocalize("Gamma input others"), &g_Config.m_BcGammaInputOthers, &Expand, LineSize);
-				else
+				else if(g_Config.m_BcFastInputMode == 3)
 					DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcBestInputOthers, BCLocalize("Best input others"), &g_Config.m_BcBestInputOthers, &Expand, LineSize);
+				else
+					DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcSaikoPlusOthers, "Saiko+ others", &g_Config.m_BcSaikoPlusOthers, &Expand, LineSize);
 			}
 
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClSubTickAiming, BCLocalize("Sub-Tick aiming"), &g_Config.m_ClSubTickAiming, &Content, LineSize);
@@ -2079,8 +2083,8 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			const float SnapTapExtraTargetHeight = MarginSmall + LineSize;
 			const float SnapTapBlockedHintHeight = IsSnapTapBlocked ? (MarginSmall + LineSize) : 0.0f;
 			const float SnapTapContentHeight = LineSize + MarginSmall + LineSize +
-				SnapTapBlockedHintHeight +
-				SnapTapExtraTargetHeight * s_SnapTapPhase;
+							   SnapTapBlockedHintHeight +
+							   SnapTapExtraTargetHeight * s_SnapTapPhase;
 
 			BeginBlock(Column, SnapTapContentHeight, Content);
 			Content.HSplitTop(LineSize, &Label, &Content);
@@ -2267,13 +2271,13 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 
 			const float WheelPreviewHeight = 96.0f;
 			const float ContentHeight = LineSize + MarginSmall +
-				WheelPreviewHeight + MarginSmall +
-				LineSize + MarginSmall +
-				LineSize + MarginSmall +
-				LineSize + MarginSmall +
-				LineSize + MarginSmall +
-				LineSize * 0.8f + MarginSmall +
-				LineSize;
+						    WheelPreviewHeight + MarginSmall +
+						    LineSize + MarginSmall +
+						    LineSize + MarginSmall +
+						    LineSize + MarginSmall +
+						    LineSize + MarginSmall +
+						    LineSize * 0.8f + MarginSmall +
+						    LineSize;
 
 			CUIRect Content, Label, Button;
 			BeginBlock(Column, ContentHeight, Content);
@@ -2479,16 +2483,23 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 		if(!GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_FINISH_PREDICTION))
 		{
 			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+			const float ColorPickerLineSize = 25.0f;
+			const float ColorPickerLabelSize = 13.0f;
+			const float ColorPickerSpacing = 5.0f;
 			static float s_FinishPredictionPhase = 0.0f;
 			static float s_FinishPredictionTimePhase = 0.0f;
 			const bool FinishPredictionExpanded = g_Config.m_BcFinishPrediction != 0;
+			const bool FinishPredictionBarMode = g_Config.m_BcFinishPredictionMode == 1;
 			UpdateRevealPhase(s_FinishPredictionPhase, FinishPredictionExpanded);
-			const bool ShowTimeExpanded = FinishPredictionExpanded && g_Config.m_BcFinishPredictionShowTime != 0;
+			const bool ShowTimeExpanded = FinishPredictionExpanded && !FinishPredictionBarMode && g_Config.m_BcFinishPredictionShowTime != 0;
 			UpdateRevealPhase(s_FinishPredictionTimePhase, ShowTimeExpanded);
-			const float ExpandedTargetHeight = LineSize * 3.0f + (MarginSmall + LineSize * 2.0f) * s_FinishPredictionTimePhase;
+			const float BarColorHeight = FinishPredictionBarMode && g_Config.m_BcFinishPredictionBarCustomColor ? ColorPickerLineSize + ColorPickerSpacing : 0.0f;
+			const float ExpandedTargetHeight = FinishPredictionBarMode ?
+								      LineSize * 3.0f + BarColorHeight :
+								      LineSize * 4.0f + (MarginSmall + LineSize * 2.0f) * s_FinishPredictionTimePhase;
 			const float ExpandedHeight = ExpandedTargetHeight * s_FinishPredictionPhase;
 			const float ContentHeight = LineSize + MarginSmall + LineSize + ExpandedHeight;
-			CUIRect Content, Label, Button, Visible;
+			CUIRect Content, Label, Button, Row, Visible;
 			BeginBlock(Column, ContentHeight, Content);
 
 			Content.HSplitTop(LineSize, &Label, &Content);
@@ -2507,31 +2518,56 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 				} ClipGuard{Ui()};
 
 				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
-				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFinishPredictionShowTime, BCLocalize("Show time"), &g_Config.m_BcFinishPredictionShowTime, &Expand, LineSize);
+				Expand.HSplitTop(LineSize, &Row, &Expand);
+				CUIRect ModeLabel, ModeSelect;
+				Row.VSplitLeft(150.0f, &ModeLabel, &ModeSelect);
+				Ui()->DoLabel(&ModeLabel, BCLocalize("Mode"), 14.0f, TEXTALIGN_ML);
+				static CUi::SDropDownState s_FinishPredictionModeState;
+				static CScrollRegion s_FinishPredictionModeScrollRegion;
+				s_FinishPredictionModeState.m_SelectionPopupContext.m_pScrollRegion = &s_FinishPredictionModeScrollRegion;
+				const char *apFinishPredictionModes[2] = {
+					BCLocalize("Classic"),
+					BCLocalize("Progress bar"),
+				};
+				g_Config.m_BcFinishPredictionMode = Ui()->DoDropDown(&ModeSelect, std::clamp(g_Config.m_BcFinishPredictionMode, 0, 1), apFinishPredictionModes, (int)std::size(apFinishPredictionModes), s_FinishPredictionModeState);
 
-				const float TimeOptionsHeight = (MarginSmall + LineSize * 2.0f) * s_FinishPredictionTimePhase;
-				if(TimeOptionsHeight > 0.0f)
+				if(g_Config.m_BcFinishPredictionMode == 1)
 				{
-					CUIRect TimeVisible;
-					Expand.HSplitTop(TimeOptionsHeight, &TimeVisible, &Expand);
-					Ui()->ClipEnable(&TimeVisible);
-					SScopedClip TimeClipGuard{Ui()};
-					CUIRect TimeExpand = {TimeVisible.x, TimeVisible.y, TimeVisible.w, MarginSmall + LineSize * 2.0f};
-					TimeExpand.HSplitTop(MarginSmall, nullptr, &TimeExpand);
-					TimeExpand.HSplitTop(LineSize, &Button, &TimeExpand);
-					static CButtonContainer s_FinishPredictionRemainingButton;
-					static CButtonContainer s_FinishPredictionFinishTimeButton;
-					CUIRect Left, Right;
-					Button.VSplitMid(&Left, &Right, 2.0f);
-					Left.HMargin(2.0f, &Left);
-					Right.HMargin(2.0f, &Right);
-					if(DoButton_Menu(&s_FinishPredictionRemainingButton, BCLocalize("Time left"), g_Config.m_BcFinishPredictionTimeMode == 0, &Left, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_L))
-						g_Config.m_BcFinishPredictionTimeMode = 0;
-					if(DoButton_Menu(&s_FinishPredictionFinishTimeButton, BCLocalize("Finish time"), g_Config.m_BcFinishPredictionTimeMode == 1, &Right, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_R))
-						g_Config.m_BcFinishPredictionTimeMode = 1;
-					DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFinishPredictionShowMillis, BCLocalize("Show milliseconds"), &g_Config.m_BcFinishPredictionShowMillis, &TimeExpand, LineSize);
+					DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFinishPredictionBarCustomColor, BCLocalize("Custom bar color"), &g_Config.m_BcFinishPredictionBarCustomColor, &Expand, LineSize);
+					if(g_Config.m_BcFinishPredictionBarCustomColor)
+					{
+						static CButtonContainer s_FinishPredictionBarColorButton;
+						DoLine_ColorPicker(&s_FinishPredictionBarColorButton, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerSpacing, &Expand, BCLocalize("Bar color"), &g_Config.m_BcFinishPredictionBarColor, color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::BcFinishPredictionBarColor, true)), false, nullptr, true);
+					}
 				}
-				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFinishPredictionShowPercentage, BCLocalize("Show percentage"), &g_Config.m_BcFinishPredictionShowPercentage, &Expand, LineSize);
+				else
+				{
+					DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFinishPredictionShowTime, BCLocalize("Show time"), &g_Config.m_BcFinishPredictionShowTime, &Expand, LineSize);
+
+					const float TimeOptionsHeight = (MarginSmall + LineSize * 2.0f) * s_FinishPredictionTimePhase;
+					if(TimeOptionsHeight > 0.0f)
+					{
+						CUIRect TimeVisible;
+						Expand.HSplitTop(TimeOptionsHeight, &TimeVisible, &Expand);
+						Ui()->ClipEnable(&TimeVisible);
+						SScopedClip TimeClipGuard{Ui()};
+						CUIRect TimeExpand = {TimeVisible.x, TimeVisible.y, TimeVisible.w, MarginSmall + LineSize * 2.0f};
+						TimeExpand.HSplitTop(MarginSmall, nullptr, &TimeExpand);
+						TimeExpand.HSplitTop(LineSize, &Button, &TimeExpand);
+						static CButtonContainer s_FinishPredictionRemainingButton;
+						static CButtonContainer s_FinishPredictionFinishTimeButton;
+						CUIRect Left, Right;
+						Button.VSplitMid(&Left, &Right, 2.0f);
+						Left.HMargin(2.0f, &Left);
+						Right.HMargin(2.0f, &Right);
+						if(DoButton_Menu(&s_FinishPredictionRemainingButton, BCLocalize("Time left"), g_Config.m_BcFinishPredictionTimeMode == 0, &Left, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_L))
+							g_Config.m_BcFinishPredictionTimeMode = 0;
+						if(DoButton_Menu(&s_FinishPredictionFinishTimeButton, BCLocalize("Finish time"), g_Config.m_BcFinishPredictionTimeMode == 1, &Right, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_R))
+							g_Config.m_BcFinishPredictionTimeMode = 1;
+						DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFinishPredictionShowMillis, BCLocalize("Show milliseconds"), &g_Config.m_BcFinishPredictionShowMillis, &TimeExpand, LineSize);
+					}
+					DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFinishPredictionShowPercentage, BCLocalize("Show percentage"), &g_Config.m_BcFinishPredictionShowPercentage, &Expand, LineSize);
+				}
 				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFinishPredictionShowAlways, BCLocalize("Show always"), &g_Config.m_BcFinishPredictionShowAlways, &Expand, LineSize);
 			}
 		}
@@ -2716,20 +2752,8 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcEmoticonShadow, BCLocalize("Shadow of Emotions"), &g_Config.m_BcEmoticonShadow, &Content, LineSize);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcChatSaveDraft, BCLocalize("Save unsent messages"), &g_Config.m_BcChatSaveDraft, &Content, LineSize);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcChatAltCommandLayout, BCLocalize("Commands in other layout"), &g_Config.m_BcChatAltCommandLayout, &Content, LineSize);
-			Content.HSplitTop(LineSize, &Row, &Content);
-			CUIRect SearchEngineLabel, SearchEngineDropDown;
-			Row.VSplitMid(&SearchEngineLabel, &SearchEngineDropDown, 8.0f);
-			Ui()->DoLabel(&SearchEngineLabel, BCLocalize("Chat player search engine"), 13.0f, TEXTALIGN_ML);
-			static CUi::SDropDownState s_ChatPlayerSearchEngineState;
-			static CScrollRegion s_ChatPlayerSearchEngineScrollRegion;
-			s_ChatPlayerSearchEngineState.m_SelectionPopupContext.m_pScrollRegion = &s_ChatPlayerSearchEngineScrollRegion;
-			const char *apChatPlayerSearchEngines[] = {
-				BCLocalize("DDNet"),
-				BCLocalize("DDStats"),
-			};
-			g_Config.m_UcChatPlayerSearchEngine = std::clamp(g_Config.m_UcChatPlayerSearchEngine, 0, 1);
-			g_Config.m_UcChatPlayerSearchEngine = Ui()->DoDropDown(&SearchEngineDropDown, g_Config.m_UcChatPlayerSearchEngine, apChatPlayerSearchEngines, (int)std::size(apChatPlayerSearchEngines), s_ChatPlayerSearchEngineState);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcCinematicCamera, BCLocalize("Cinematic camera"), &g_Config.m_BcCinematicCamera, &Content, LineSize);
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcMastersrv, BCLocalize("Use BestClient MasterServer"), &g_Config.m_BcMastersrv, &Content, LineSize);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcShowhudDummyCoordIndicator, BCLocalize("Show player below indicator"), &g_Config.m_BcShowhudDummyCoordIndicator, &Content, LineSize);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcShowRealHitbox, BCLocalize("Show real hitbox"), &g_Config.m_BcShowRealHitbox, &Content, LineSize);
 			Content.HSplitTop(LineSize, &Row, &Content);
@@ -2876,7 +2900,7 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			const bool ShowScoreboardSettings = g_Config.m_BcClientIndicatorInScoreboard != 0;
 			const float NamePlateSettingsHeight = ShowNamePlateSettings ? 2.0f * LineSize : 0.0f;
 			const float ScoreboardSettingsHeight = ShowScoreboardSettings ? LineSize : 0.0f;
-			const float ContentHeight = LineSize + MarginSmall + 3.0f * LineSize + NamePlateSettingsHeight + ScoreboardSettingsHeight;
+			const float ContentHeight = LineSize + MarginSmall + 2.0f * LineSize + NamePlateSettingsHeight + ScoreboardSettingsHeight;
 
 			CUIRect Content, Label, Row;
 			BeginBlock(Column, ContentHeight, Content);
@@ -2884,8 +2908,6 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			Content.HSplitTop(LineSize, &Label, &Content);
 			Ui()->DoLabel(&Label, BCLocalize("Client Indicator"), HeadlineFontSize, TEXTALIGN_ML);
 			Content.HSplitTop(MarginSmall, nullptr, &Content);
-
-			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcClientIndicatorSendInfo, BCLocalize("Send usage info to indicator server"), &g_Config.m_BcClientIndicatorSendInfo, &Content, LineSize);
 
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcClientIndicatorInNamePlate, BCLocalize("Show indicator in name plates"), &g_Config.m_BcClientIndicatorInNamePlate, &Content, LineSize);
 
@@ -2921,7 +2943,6 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 	{
 		RenderSettingsBestClientInfo(MainView);
 	}
-
 }
 
 void CMenus::ComponentsEditorSyncFromConfig()
@@ -3342,7 +3363,7 @@ void CMenus::RenderSettingsBestClientInfo(CUIRect MainView)
 		Ui()->DoLabel(&Label, "RoflikBEST", DevNameFontSize, TEXTALIGN_ML);
 		if(Ui()->DoButton_FontIcon(&s_LinkButton1, FontIcon::ARROW_UP_RIGHT_FROM_SQUARE, 0, &Button, IGraphics::CORNER_ALL))
 			Client()->ViewLink("https://github.com/roflikbest");
-		RenderDevSkin(TeeRect.Center(), TeeSize, "mushkitt", "mushkitt", false, 0, 0, 0, false, true);
+		RenderDevSkin(TeeRect.Center(), TeeSize, "10Nanami_glow", "nanami", true, 0, 0, 0, false, true, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f), ColorRGBA(0.94f, 0.74f, 0.92f, 1.0f));
 	}
 	{
 		RightView.HSplitTop(CardSize, &DevCardRect, &RightView);

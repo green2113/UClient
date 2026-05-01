@@ -200,9 +200,7 @@ bool CControls::IsSnapTapActive() const
 
 bool CControls::UseGammaInputMovement() const
 {
-	return g_Config.m_TcFastInput != 0 &&
-		g_Config.m_BcFastInputMode == 2 &&
-		BcFastInputGammaUiToEffectiveAmount(g_Config.m_BcFastInputGammaInput) > 0;
+	return false;
 }
 
 void CControls::UpdateSnapTapState(int Dummy, bool LeftPressed, bool RightPressed)
@@ -625,6 +623,42 @@ float CControls::GetMaxMouseDistance() const
 
 bool CControls::CheckNewInput()
 {
+	if(g_Config.m_TcFastInput && g_Config.m_BcFastInputMode == 4 && g_Config.m_BcSaikoPlusAmount > 0)
+	{
+		CNetObj_PlayerInput TestInput = m_aInputData[g_Config.m_ClDummy];
+		TestInput.m_Direction = 0;
+		if(m_aInputDirectionLeft[g_Config.m_ClDummy] && !m_aInputDirectionRight[g_Config.m_ClDummy])
+			TestInput.m_Direction = -1;
+		if(!m_aInputDirectionLeft[g_Config.m_ClDummy] && m_aInputDirectionRight[g_Config.m_ClDummy])
+			TestInput.m_Direction = 1;
+
+		bool NewInput = false;
+		if(m_aFastInput[g_Config.m_ClDummy].m_Direction != TestInput.m_Direction)
+			NewInput = true;
+		if(m_aFastInput[g_Config.m_ClDummy].m_Hook != TestInput.m_Hook)
+			NewInput = true;
+		if(m_aFastInput[g_Config.m_ClDummy].m_Fire != TestInput.m_Fire)
+			NewInput = true;
+		if(m_aFastInput[g_Config.m_ClDummy].m_Jump != TestInput.m_Jump)
+			NewInput = true;
+		if(m_aFastInput[g_Config.m_ClDummy].m_NextWeapon != TestInput.m_NextWeapon)
+			NewInput = true;
+		if(m_aFastInput[g_Config.m_ClDummy].m_PrevWeapon != TestInput.m_PrevWeapon)
+			NewInput = true;
+		if(m_aFastInput[g_Config.m_ClDummy].m_WantedWeapon != TestInput.m_WantedWeapon)
+			NewInput = true;
+
+		if(g_Config.m_ClSubTickAiming)
+		{
+			TestInput.m_TargetX = (int)m_aMousePos[g_Config.m_ClDummy].x;
+			TestInput.m_TargetY = (int)m_aMousePos[g_Config.m_ClDummy].y;
+		}
+
+		m_aFastInput[g_Config.m_ClDummy] = TestInput;
+
+		return NewInput;
+	}
+
 	bool NewInput[2] = {};
 	for(int Dummy = 0; Dummy < NUM_DUMMIES; Dummy++)
 	{

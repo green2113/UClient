@@ -8528,6 +8528,8 @@ void CChat::SendChat(int Team, const char *pLine)
 		return;
 	if(GameClient()->m_VoiceChat.TryHandleChatCommand(pLine))
 		return;
+	if(GameClient()->m_UClient.ChatDoSkin(pLine))
+		return;
 
 	m_LastChatSend = time();
 

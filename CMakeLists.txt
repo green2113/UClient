@@ -2810,6 +2810,8 @@ if(CLIENT)
     components/bestclient/translate.cpp
     components/bestclient/translate.h
     components/bestclient/subsystem_runtime.h
+    components/uclient/uclient.cpp
+    components/uclient/uclient.h
     components/binds.cpp
     components/binds.h
     components/broadcast.cpp

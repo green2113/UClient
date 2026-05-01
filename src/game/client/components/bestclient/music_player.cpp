@@ -378,7 +378,7 @@ static SGameTimerDisplay BuildGameTimerDisplay(const CNetObj_GameInfo *pGameInfo
 	if(!ForcePreview && (pGameInfo->m_GameStateFlags & GAMESTATEFLAG_SUDDENDEATH))
 	{
 		Result.m_Valid = true;
-		Result.m_Text = Localize("Sudden Death");
+		Result.m_Text = BCLocalize("Sudden Death");
 		return Result;
 	}
 
@@ -1698,7 +1698,6 @@ static SMusicPlayerMetrics ComputeMusicPlayerMetrics(const HudLayout::SModuleLay
 	SMusicPlayerMetrics Metrics;
 	Metrics.m_Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
 	Metrics.m_WidthScale = Width / maximum(HudLayout::CANVAS_WIDTH, 0.001f);
-	Metrics.m_ExpandedW = 104.0f * Metrics.m_Scale * Metrics.m_WidthScale;
 	Metrics.m_ExpandedH = 25.0f * Metrics.m_Scale;
 	Metrics.m_CompactH = 15.5f * Metrics.m_Scale;
 	const float CompactArtSize = minimum(Metrics.m_CompactH - 3.0f * Metrics.m_Scale, 11.6f * Metrics.m_Scale);
@@ -1706,6 +1705,12 @@ static SMusicPlayerMetrics ComputeMusicPlayerMetrics(const HudLayout::SModuleLay
 	const float CompactOuterPad = 2.5f * Metrics.m_Scale * Metrics.m_WidthScale;
 	const float CompactInnerGap = 1.15f * Metrics.m_Scale * Metrics.m_WidthScale;
 	Metrics.m_CompactW = CompactOuterPad * 2.0f + CompactArtSize + CompactVisualW + CompactTextSlotWidth + CompactInnerGap * 2.0f;
+	const float ExpandedBaseW = 104.0f * Metrics.m_Scale * Metrics.m_WidthScale;
+	const float ExpandedArtSize = minimum(Metrics.m_ExpandedH - 3.0f * Metrics.m_Scale, 11.8f * Metrics.m_Scale + 1.8f * Metrics.m_Scale);
+	const float ExpandedTextLeftInset = 1.7f * Metrics.m_Scale + ExpandedArtSize + (0.1f + 1.15f) * Metrics.m_Scale * Metrics.m_WidthScale;
+	const float ExpandedVisualW = 9.8f * Metrics.m_Scale * Metrics.m_WidthScale + 1.6f * Metrics.m_Scale * Metrics.m_WidthScale;
+	const float ExpandedTextRightInset = (1.95f + 1.15f) * Metrics.m_Scale * Metrics.m_WidthScale + ExpandedVisualW;
+	Metrics.m_ExpandedW = maximum(ExpandedBaseW, CompactTextSlotWidth + 2.0f * maximum(ExpandedTextLeftInset, ExpandedTextRightInset));
 	Metrics.m_CompactRect = MakeMusicPlayerRect(Layout.m_X, Layout.m_Y, Metrics.m_ExpandedW, Width, Height, Metrics.m_CompactW, Metrics.m_CompactH);
 	Metrics.m_ExpandedRect = MakeMusicPlayerRect(Layout.m_X, Layout.m_Y, Metrics.m_ExpandedW, Width, Height, Metrics.m_ExpandedW, Metrics.m_ExpandedH);
 	Metrics.m_ViewRect = MakeMusicPlayerRect(Layout.m_X, Layout.m_Y, Metrics.m_ExpandedW, Width, Height, mix(Metrics.m_CompactW, Metrics.m_ExpandedW, SizeT), mix(Metrics.m_CompactH, Metrics.m_ExpandedH, SizeT));
@@ -2983,10 +2988,10 @@ void CMusicPlayer::RenderMusicPlayer(bool ForcePreview)
 	const bool TitleHoverAllowed = AllowInteraction || ForcePreview;
 	const bool PlayerHovered = TitleHoverAllowed &&
 		(IsPointInsideRect(View, MousePos, 1.5f * Scale) || IsPointInsideRect(UiViewRect, UiMousePos, 1.5f * Scale * UiFontScale));
-	const std::string TrackTitle = Snapshot.m_Title.empty() ? Localize("No media") : Snapshot.m_Title;
+	const std::string TrackTitle = Snapshot.m_Title.empty() ? BCLocalize("No media") : Snapshot.m_Title;
 	const bool ShowGameTimer = GameTimer.m_Valid && !PlayerHovered;
 	const std::string Title = ShowGameTimer ? GameTimer.m_Text : TrackTitle;
-	const std::string Artist = Snapshot.m_Artist.empty() ? Localize("Unknown artist") : Snapshot.m_Artist;
+	const std::string Artist = Snapshot.m_Artist.empty() ? BCLocalize("Unknown artist") : Snapshot.m_Artist;
 	const float TitleFont = (ShowGameTimer ? 6.6f : 5.25f) * Scale;
 	const float ArtistFont = 3.45f * Scale;
 	const bool ShowArtist = TextT > 0.38f && ExpandT > 0.42f;
