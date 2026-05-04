@@ -56,6 +56,24 @@ jobs:
           repository: ${{ env.TARGET_REPOSITORY }}
           run-id: ${{ github.event.inputs.run_id }}
 
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.BUILD_PREFIX }}-macOS-latest
+          path: ./artifacts/macos
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ env.TARGET_REPOSITORY }}
+          run-id: ${{ github.event.inputs.run_id }}
+
+      - name: Download Ubuntu artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.BUILD_PREFIX }}-ubuntu-latest-fancy
+          path: ./artifacts/ubuntu
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ env.TARGET_REPOSITORY }}
+          run-id: ${{ github.event.inputs.run_id }}
+
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
@@ -77,6 +95,24 @@ jobs:
           fi
           mv "$file" "./artifacts/${CLIENT_NAME}-windows.zip"
 
+      - name: Prepare macOS artifact
+        run: |
+          file=$(find ./artifacts/macos -type f -name "*.dmg" | head -n 1)
+          if [ -z "$file" ]; then
+            echo "No macOS artifact found"
+            exit 1
+          fi
+          mv "$file" "./artifacts/${CLIENT_NAME}-macos.dmg"
+
+      - name: Prepare Ubuntu artifact
+        run: |
+          file=$(find ./artifacts/ubuntu -type f -name "*.tar.xz" | head -n 1)
+          if [ -z "$file" ]; then
+            echo "No Ubuntu artifact found"
+            exit 1
+          fi
+          mv "$file" "./artifacts/${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz"
+
       - name: Extract Windows package for R2 sync
         run: |
           mkdir -p ./artifacts/windows_extracted
@@ -96,6 +132,26 @@ jobs:
           asset_path: ./artifacts/${{ env.CLIENT_NAME }}-windows.zip
           asset_name: ${{ env.CLIENT_NAME }}-windows.zip
           asset_content_type: application/zip
+
+      - name: Upload macOS
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/${{ env.CLIENT_NAME }}-macos.dmg
+          asset_name: ${{ env.CLIENT_NAME }}-macos.dmg
+          asset_content_type: application/octet-stream
+
+      - name: Upload Ubuntu
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/${{ env.CLIENT_NAME }}-ubuntu-linux_x86_64.tar.xz
+          asset_name: ${{ env.CLIENT_NAME }}-ubuntu-linux_x86_64.tar.xz
+          asset_content_type: application/x-xz
 
       - name: Install rclone
         if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
@@ -123,6 +179,24 @@ jobs:
             --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
             --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
             --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
+
+      - name: Verify zip exists in Cloudflare R2
+        if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
+        run: |
+          set -e
+          rclone lsf ":s3:${R2_BUCKET}/uclient/win64" \
+            --s3-provider Cloudflare \
+            --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
+            --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
+            --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY} > /tmp/r2_win64_list.txt
+
+          echo "R2 win64 objects:"
+          cat /tmp/r2_win64_list.txt
+
+          grep -Fx "${CLIENT_NAME}-windows.zip" /tmp/r2_win64_list.txt >/dev/null || {
+            echo "Expected file not found in R2: uclient/win64/${CLIENT_NAME}-windows.zip"
+            exit 1
+          }
 
       - name: Skip R2 sync (missing secrets)
         if: env.CF_R2_ACCOUNT_ID == '' || env.CF_R2_ACCESS_KEY_ID == '' || env.CF_R2_SECRET_ACCESS_KEY == ''
