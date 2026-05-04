@@ -25,11 +25,31 @@
 #include <game/client/ui_listbox.h>
 #include <game/localization.h>
 
+#include <engine/storage.h>
+
 static constexpr ColorRGBA HIGHLIGHTED_TEXT_COLOR = ColorRGBA(0.4f, 0.4f, 1.0f, 1.0f);
+
+static IGraphics::CTextureHandle s_UcIconTextureBrowser;
 
 static void RenderBestClientIcon(IGraphics *pGraphics, const CUIRect &Rect, ColorRGBA Color = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f))
 {
 	pGraphics->TextureSet(g_pData->m_aImages[IMAGE_BCICON].m_Id);
+	pGraphics->QuadsBegin();
+	pGraphics->SetColor(Color);
+	pGraphics->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
+	const IGraphics::CQuadItem Quad(Rect.x, Rect.y, Rect.w, Rect.h);
+	pGraphics->QuadsDrawTL(&Quad, 1);
+	pGraphics->QuadsEnd();
+	pGraphics->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+}
+
+static void RenderUClientIcon(IGraphics *pGraphics, const CUIRect &Rect, ColorRGBA Color = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f))
+{
+	if(!s_UcIconTextureBrowser.IsValid())
+		s_UcIconTextureBrowser = pGraphics->LoadTexture("uclient/logo/uclient.png", IStorage::TYPE_ALL);
+	if(!s_UcIconTextureBrowser.IsValid())
+		return;
+	pGraphics->TextureSet(s_UcIconTextureBrowser);
 	pGraphics->QuadsBegin();
 	pGraphics->SetColor(Color);
 	pGraphics->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
@@ -1555,7 +1575,9 @@ void CMenus::RenderServerbrowserInfoScoreboard(CUIRect View, const CServerInfo *
 			CUIRect NameText = Name;
 			const float BestClientIconSize = FontSize - 1.0f;
 			const float BestClientIconSpacing = 2.0f;
-			if(CurrentClient.m_BestClient)
+			const bool ShowUcIcon = CurrentClient.m_UcClient;
+			const bool ShowBcIcon = !ShowUcIcon && CurrentClient.m_BestClient;
+			if(ShowUcIcon || ShowBcIcon)
 				NameText.VSplitRight(BestClientIconSize + BestClientIconSpacing, &NameText, nullptr);
 
 			CTextCursor NameCursor;
@@ -1576,14 +1598,17 @@ void CMenus::RenderServerbrowserInfoScoreboard(CUIRect View, const CServerInfo *
 			if(!Printed)
 				TextRender()->TextEx(&NameCursor, pName, -1);
 
-			if(CurrentClient.m_BestClient)
+			if(ShowUcIcon || ShowBcIcon)
 			{
 				CUIRect BestClientIcon;
 				BestClientIcon.w = BestClientIconSize;
 				BestClientIcon.h = BestClientIconSize;
 				BestClientIcon.x = minimum(NameCursor.m_X + BestClientIconSpacing, Name.x + Name.w - BestClientIcon.w);
 				BestClientIcon.y = Name.y + (Name.h - BestClientIcon.h) / 2.0f;
-				RenderBestClientIcon(Graphics(), BestClientIcon);
+				if(ShowUcIcon)
+					RenderUClientIcon(Graphics(), BestClientIcon);
+				else
+					RenderBestClientIcon(Graphics(), BestClientIcon);
 			}
 
 				// clan
@@ -1669,7 +1694,7 @@ void CMenus::RenderServerbrowserBestClient(CUIRect View)
 	vBestClientIndexes.reserve(pSelectedServer->m_NumReceivedClients);
 	for(int i = 0; i < pSelectedServer->m_NumReceivedClients; ++i)
 	{
-		if(pSelectedServer->m_aClients[i].m_BestClient)
+		if(pSelectedServer->m_aClients[i].m_BestClient || pSelectedServer->m_aClients[i].m_UcClient)
 			vBestClientIndexes.push_back(i);
 	}
 
@@ -1734,7 +1759,10 @@ void CMenus::RenderServerbrowserBestClient(CUIRect View)
 		BestClientIcon.h = BestClientIconSize;
 		BestClientIcon.x = minimum(NameCursor.m_X + BestClientIconSpacing, Name.x + Name.w - BestClientIcon.w);
 		BestClientIcon.y = Name.y + (Name.h - BestClientIcon.h) / 2.0f;
-		RenderBestClientIcon(Graphics(), BestClientIcon);
+		if(Client.m_UcClient)
+			RenderUClientIcon(Graphics(), BestClientIcon);
+		else
+			RenderBestClientIcon(Graphics(), BestClientIcon);
 		Ui()->DoLabel(&Clan, Client.m_aClan, FontSize - 2.0f, TEXTALIGN_ML);
 	}
 

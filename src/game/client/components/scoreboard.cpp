@@ -954,14 +954,14 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 			}
 			const float ScoreTextX = ScoreOffset + ScoreLength - ScoreTextWidth;
 
-			const bool ShowBestClientIcon = g_Config.m_BcClientIndicatorInScoreboard &&
-				pInfo->m_ClientId >= 0 &&
-				GameClient()->m_ClientIndicator.IsPlayerBestClient(pInfo->m_ClientId) &&
-				!pInfo->m_Local;
 			const bool ShowUClientIcon = g_Config.m_BcClientIndicatorInScoreboard &&
 				pInfo->m_ClientId >= 0 &&
-				GameClient()->m_ClientIndicator.IsPlayerUClient(pInfo->m_ClientId) &&
-				!ShowBestClientIcon;
+				GameClient()->m_ClientIndicator.IsPlayerUClient(pInfo->m_ClientId);
+			const bool ShowBestClientIcon = g_Config.m_BcClientIndicatorInScoreboard &&
+				pInfo->m_ClientId >= 0 &&
+				!ShowUClientIcon &&
+				!pInfo->m_Local &&
+				GameClient()->m_ClientIndicator.IsPlayerBestClient(pInfo->m_ClientId);
 			if(ShowBestClientIcon || ShowUClientIcon)
 			{
 				const float IconSize = FontSize * (0.8f + 0.3f * g_Config.m_BcClientIndicatorInSoreboardSize / 100.0f);

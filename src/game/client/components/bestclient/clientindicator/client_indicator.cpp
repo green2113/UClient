@@ -1061,6 +1061,10 @@ void CClientIndicator::FinishUcPresenceRefresh()
 	CollectPresenceNamesForCurrentServer(*pJson, CurrentGameServerAddress(), vNames);
 	m_UcPresenceNames = std::move(vNames);
 
+	CBrowserCache UcBrowserCache;
+	if(UcBrowserCache.Load(*pJson))
+		ServerBrowser()->SetUcClientPlayers(UcBrowserCache.Players());
+
 	json_value_free(pJson);
 }
 

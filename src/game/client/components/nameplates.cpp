@@ -1012,8 +1012,8 @@ void CNamePlates::RenderNamePlateGame(vec2 Position, const CNetObj_PlayerInfo *p
 	Data.m_HookStrongWeakId = 0;
 	Data.m_ShowBClientIndicator = g_Config.m_BcClientIndicator && g_Config.m_BcClientIndicatorInNamePlate &&
 		(!pPlayerInfo->m_Local || g_Config.m_BcClientIndicatorInNamePlateAboveSelf);
-	Data.m_IsUserBClientIndicator = Data.m_ShowBClientIndicator && GameClient()->m_ClientIndicator.IsPlayerBClient(pPlayerInfo->m_ClientId);
-	Data.m_IsUserUClientIndicator = Data.m_ShowBClientIndicator && !Data.m_IsUserBClientIndicator && GameClient()->m_ClientIndicator.IsPlayerUClient(pPlayerInfo->m_ClientId);
+	Data.m_IsUserUClientIndicator = Data.m_ShowBClientIndicator && GameClient()->m_ClientIndicator.IsPlayerUClient(pPlayerInfo->m_ClientId);
+	Data.m_IsUserBClientIndicator = Data.m_ShowBClientIndicator && !Data.m_IsUserUClientIndicator && GameClient()->m_ClientIndicator.IsPlayerBClient(pPlayerInfo->m_ClientId);
 
 	const bool Following = (GameClient()->m_Snap.m_SpecInfo.m_Active && !GameClient()->m_MultiViewActivated && GameClient()->m_Snap.m_SpecInfo.m_SpectatorId != SPEC_FREEVIEW);
 	if(GameClient()->m_Snap.m_LocalClientId != -1 || Following)
@@ -1092,10 +1092,10 @@ void CNamePlates::RenderNamePlatePreview(vec2 Position, int Dummy)
 	Data.m_ShowBClientIndicator = g_Config.m_BcClientIndicator && g_Config.m_BcClientIndicatorInNamePlate &&
 		(Dummy != 0 || g_Config.m_BcClientIndicatorInNamePlateAboveSelf);
 	Data.m_FontSizeBClientIndicator = FontSizeBClientIndicator;
-	Data.m_IsUserBClientIndicator = Data.m_ShowBClientIndicator &&
-		(HasPreviewClient ? GameClient()->m_ClientIndicator.IsPlayerBClient(PreviewDisplayClientId) : true);
-	Data.m_IsUserUClientIndicator = Data.m_ShowBClientIndicator && !Data.m_IsUserBClientIndicator &&
+	Data.m_IsUserUClientIndicator = Data.m_ShowBClientIndicator &&
 		(HasPreviewClient ? GameClient()->m_ClientIndicator.IsPlayerUClient(PreviewDisplayClientId) : false);
+	Data.m_IsUserBClientIndicator = Data.m_ShowBClientIndicator && !Data.m_IsUserUClientIndicator &&
+		(HasPreviewClient ? GameClient()->m_ClientIndicator.IsPlayerBClient(PreviewDisplayClientId) : true);
 
 	Data.m_FontSizeHookStrongWeak = FontSizeHookStrongWeak;
 	Data.m_HookStrongWeakId = Data.m_ClientId;

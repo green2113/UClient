@@ -84,6 +84,7 @@ public:
 		bool m_aUseCustomSkinColor7[protocol7::NUM_SKINPARTS];
 		int m_aCustomSkinColor7[protocol7::NUM_SKINPARTS];
 		bool m_BestClient;
+		bool m_UcClient;
 	};
 
 	int m_ServerIndex;
@@ -394,6 +395,7 @@ public:
 	virtual int GetCurrentType() = 0;
 	virtual const char *GetTutorialServer() = 0;
 	virtual void SetBestClientPlayers(const std::vector<CBestClientPlayerEntry> &vPlayers) = 0;
+	virtual void SetUcClientPlayers(const std::vector<CBestClientPlayerEntry> &vPlayers) = 0;
 };
 
 #endif
