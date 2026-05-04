@@ -47,29 +47,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download Windows artifact
+      - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.BUILD_PREFIX }}-windows-latest
-          path: ./artifacts/windows
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ env.TARGET_REPOSITORY }}
-          run-id: ${{ github.event.inputs.run_id }}
-
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.BUILD_PREFIX }}-macOS-latest
-          path: ./artifacts/macos
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ env.TARGET_REPOSITORY }}
-          run-id: ${{ github.event.inputs.run_id }}
-
-      - name: Download Ubuntu artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.BUILD_PREFIX }}-ubuntu-latest-fancy
-          path: ./artifacts/ubuntu
+          pattern: ${{ env.BUILD_PREFIX }}-*
+          merge-multiple: true
+          path: ./artifacts/raw
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ env.TARGET_REPOSITORY }}
           run-id: ${{ github.event.inputs.run_id }}
@@ -88,7 +71,7 @@ jobs:
 
       - name: Prepare Windows artifact
         run: |
-          file=$(find ./artifacts/windows -type f | head -n 1)
+          file=$(find ./artifacts/raw -type f -name "*.zip" | head -n 1)
           if [ -z "$file" ]; then
             echo "No windows artifact found"
             exit 1
@@ -97,7 +80,7 @@ jobs:
 
       - name: Prepare macOS artifact
         run: |
-          file=$(find ./artifacts/macos -type f -name "*.dmg" | head -n 1)
+          file=$(find ./artifacts/raw -type f -name "*.dmg" | head -n 1)
           if [ -z "$file" ]; then
             echo "No macOS artifact found"
             exit 1
@@ -106,7 +89,7 @@ jobs:
 
       - name: Prepare Ubuntu artifact
         run: |
-          file=$(find ./artifacts/ubuntu -type f -name "*.tar.xz" | head -n 1)
+          file=$(find ./artifacts/raw -type f -name "*.tar.xz" | head -n 1)
           if [ -z "$file" ]; then
             echo "No Ubuntu artifact found"
             exit 1
