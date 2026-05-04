@@ -408,6 +408,7 @@ protected:
 	bool m_PopupDangerousConfirmButton = false;
 	bool m_PopupDeactivateAfterButton = false;
 	char m_aPopupCheckboxLabel[64] = {};
+	bool m_PopupConfirmCompact = false;
 	bool m_PopupConfirmHasCheckbox = false;
 	bool m_PopupConfirmCheckboxValue = false;
 	struct
@@ -434,6 +435,9 @@ public:
 	void PopupConfirmOpenLink(const char *pTitle, const char *pMessage, const char *pConfirmButtonLabel, const char *pCancelButtonLabel, const char *pUrl, bool Dangerous);
 	void PopupOpenStoredLink();
 	void PopupCancelStoredLink();
+	void PopupConfirmDeleteSoundboardItem();
+	void PopupCancelDeleteSoundboardItem();
+	void OpenSoundboardDeletePopup();
 
 private:
 
@@ -1111,6 +1115,8 @@ public:
 	std::chrono::nanoseconds m_PopupWarningLastTime;
 	std::chrono::nanoseconds m_PopupWarningDuration;
 
+	bool m_BcUpdatePopupChecked = false;
+
 	int m_DemoPlayerState;
 
 	enum
@@ -1131,6 +1137,7 @@ public:
 		POPUP_RESTART,
 		POPUP_WARNING,
 		POPUP_SAVE_SKIN,
+		POPUP_BC_UPDATE,
 	};
 
 	enum
@@ -1145,6 +1152,7 @@ public:
 	void ForceRefreshLanPage();
 	void SetShowStart(bool ShowStart);
 	void ShowQuitPopup();
+	void ShowBcUpdatePopup();
 	void QuitWithMenuSfx();
 	void JoinTutorial();
 

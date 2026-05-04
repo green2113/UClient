@@ -43,6 +43,19 @@ void RenderBestClientIcon(IGraphics *pGraphics, const CUIRect &Rect)
 	pGraphics->QuadsEnd();
 }
 
+void RenderTextureIcon(IGraphics *pGraphics, const IGraphics::CTextureHandle &Texture, const CUIRect &Rect)
+{
+	if(!Texture.IsValid())
+		return;
+	pGraphics->TextureSet(Texture);
+	pGraphics->QuadsBegin();
+	pGraphics->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+	pGraphics->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
+	const IGraphics::CQuadItem Quad(Rect.x, Rect.y, Rect.w, Rect.h);
+	pGraphics->QuadsDrawTL(&Quad, 1);
+	pGraphics->QuadsEnd();
+}
+
 float ScoreTextWidthForRenderTime(ITextRender *pTextRender, float FontSize, int Seconds, bool NotFinished, int Millis, bool TrueMilliseconds)
 {
 	if(NotFinished)
@@ -335,6 +348,7 @@ void CScoreboard::OnConsoleInit()
 void CScoreboard::OnInit()
 {
 	m_DeadTeeTexture = Graphics()->LoadTexture("deadtee.png", IStorage::TYPE_ALL);
+	m_UcIconTexture = Graphics()->LoadTexture("uclient/logo/uclient.png", IStorage::TYPE_ALL);
 }
 
 void CScoreboard::OnReset()
@@ -943,8 +957,12 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 			const bool ShowBestClientIcon = g_Config.m_BcClientIndicatorInScoreboard &&
 				pInfo->m_ClientId >= 0 &&
 				GameClient()->m_ClientIndicator.IsPlayerBestClient(pInfo->m_ClientId) &&
-				(!pInfo->m_Local || g_Config.m_BcClientIndicatorSendInfo != 0);
-			if(ShowBestClientIcon)
+				!pInfo->m_Local;
+			const bool ShowUClientIcon = g_Config.m_BcClientIndicatorInScoreboard &&
+				pInfo->m_ClientId >= 0 &&
+				GameClient()->m_ClientIndicator.IsPlayerUClient(pInfo->m_ClientId) &&
+				!ShowBestClientIcon;
+			if(ShowBestClientIcon || ShowUClientIcon)
 			{
 				const float IconSize = FontSize * (0.8f + 0.3f * g_Config.m_BcClientIndicatorInSoreboardSize / 100.0f);
 				const float IconSpacing = 4.0f;
@@ -953,7 +971,10 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 					Row.y + (Row.h - IconSize) / 2.0f,
 					IconSize,
 					IconSize};
-				RenderBestClientIcon(Graphics(), IconRect);
+				if(ShowBestClientIcon)
+					RenderBestClientIcon(Graphics(), IconRect);
+				else
+					RenderTextureIcon(Graphics(), m_UcIconTexture, IconRect);
 			}
 
 			if(Race7)

@@ -4,6 +4,7 @@
 
 #include <engine/font_icons.h>
 #include <engine/graphics.h>
+#include <engine/storage.h>
 #include <engine/shared/config.h>
 #include <engine/shared/protocol7.h>
 #include <engine/textrender.h>
@@ -54,6 +55,7 @@ public:
 	bool m_ShowBClientIndicator;
 	float m_FontSizeBClientIndicator;
 	bool m_IsUserBClientIndicator;
+	bool m_IsUserUClientIndicator;
 };
 
 // Part Types
@@ -691,6 +693,10 @@ public:
 
 class CNamePlatePartBClientIndicator : public CNamePlatePartIcon
 {
+private:
+	IGraphics::CTextureHandle m_BcTexture;
+	IGraphics::CTextureHandle m_UcTexture;
+
 protected:
 	void Update(CGameClient &This, const CNamePlateData &Data) override
 	{
@@ -702,7 +708,10 @@ protected:
 		}
 		m_ShiftOnInvis = !g_Config.m_BcClientIndicatorInNamePlateDynamic;
 		m_Size = vec2(Data.m_FontSizeBClientIndicator + DEFAULT_PADDING, Data.m_FontSizeBClientIndicator + DEFAULT_PADDING);
-		m_Visible = Data.m_IsUserBClientIndicator;
+		m_Visible = Data.m_IsUserBClientIndicator || Data.m_IsUserUClientIndicator;
+		if(Data.m_IsUserUClientIndicator)
+			m_Size *= 0.75f;
+		m_Texture = Data.m_IsUserBClientIndicator ? m_BcTexture : m_UcTexture;
 		m_Color = ColorRGBA(1.0f, 1.0f, 1.0f, Data.m_Color.a);
 	}
 
@@ -717,7 +726,9 @@ public:
 	CNamePlatePartBClientIndicator(CGameClient &This) :
 		CNamePlatePartIcon(This)
 	{
-		m_Texture = g_pData->m_aImages[IMAGE_BCICON].m_Id;
+		m_BcTexture = g_pData->m_aImages[IMAGE_BCICON].m_Id;
+		m_UcTexture = This.Graphics()->LoadTexture("uclient/logo/uclient.png", IStorage::TYPE_ALL);
+		m_Texture = m_BcTexture;
 		m_Padding = vec2(0.0f, 0.0f);
 	}
 };
@@ -1002,6 +1013,7 @@ void CNamePlates::RenderNamePlateGame(vec2 Position, const CNetObj_PlayerInfo *p
 	Data.m_ShowBClientIndicator = g_Config.m_BcClientIndicator && g_Config.m_BcClientIndicatorInNamePlate &&
 		(!pPlayerInfo->m_Local || g_Config.m_BcClientIndicatorInNamePlateAboveSelf);
 	Data.m_IsUserBClientIndicator = Data.m_ShowBClientIndicator && GameClient()->m_ClientIndicator.IsPlayerBClient(pPlayerInfo->m_ClientId);
+	Data.m_IsUserUClientIndicator = Data.m_ShowBClientIndicator && !Data.m_IsUserBClientIndicator && GameClient()->m_ClientIndicator.IsPlayerUClient(pPlayerInfo->m_ClientId);
 
 	const bool Following = (GameClient()->m_Snap.m_SpecInfo.m_Active && !GameClient()->m_MultiViewActivated && GameClient()->m_Snap.m_SpecInfo.m_SpectatorId != SPEC_FREEVIEW);
 	if(GameClient()->m_Snap.m_LocalClientId != -1 || Following)
@@ -1082,6 +1094,8 @@ void CNamePlates::RenderNamePlatePreview(vec2 Position, int Dummy)
 	Data.m_FontSizeBClientIndicator = FontSizeBClientIndicator;
 	Data.m_IsUserBClientIndicator = Data.m_ShowBClientIndicator &&
 		(HasPreviewClient ? GameClient()->m_ClientIndicator.IsPlayerBClient(PreviewDisplayClientId) : true);
+	Data.m_IsUserUClientIndicator = Data.m_ShowBClientIndicator && !Data.m_IsUserBClientIndicator &&
+		(HasPreviewClient ? GameClient()->m_ClientIndicator.IsPlayerUClient(PreviewDisplayClientId) : false);
 
 	Data.m_FontSizeHookStrongWeak = FontSizeHookStrongWeak;
 	Data.m_HookStrongWeakId = Data.m_ClientId;

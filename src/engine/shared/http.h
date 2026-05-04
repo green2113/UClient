@@ -66,6 +66,7 @@ class CHttpRequest : public IHttpRequest
 		HEAD,
 		POST,
 		POST_JSON,
+		DELETE_REQ,
 	};
 
 	static constexpr const char *GetRequestType(REQUEST Type)
@@ -79,6 +80,8 @@ class CHttpRequest : public IHttpRequest
 		case REQUEST::POST:
 		case REQUEST::POST_JSON:
 			return "POST";
+		case REQUEST::DELETE_REQ:
+			return "DELETE";
 		}
 
 		dbg_assert_failed("unreachable");
@@ -189,6 +192,7 @@ public:
 	void ValidateBeforeOverwrite(bool ValidateBeforeOverwrite) { m_ValidateBeforeOverwrite = ValidateBeforeOverwrite; }
 	void ExpectSha256(const SHA256_DIGEST &Sha256) { m_ExpectedSha256 = Sha256; }
 	void Head() { m_Type = REQUEST::HEAD; }
+	void DeleteReq() { m_Type = REQUEST::DELETE_REQ; }
 	void Post(const unsigned char *pData, size_t DataLength)
 	{
 		m_Type = REQUEST::POST;
@@ -292,6 +296,14 @@ inline std::unique_ptr<CHttpRequest> HttpPost(const char *pUrl, const unsigned c
 	auto pResult = std::make_unique<CHttpRequest>(pUrl);
 	pResult->Post(pData, DataLength);
 	pResult->Timeout(CTimeout{4000, 15000, 500, 5});
+	return pResult;
+}
+
+inline std::unique_ptr<CHttpRequest> HttpDeleteReq(const char *pUrl)
+{
+	auto pResult = std::make_unique<CHttpRequest>(pUrl);
+	pResult->DeleteReq();
+	pResult->Timeout(CTimeout{10000, 0, 500, 5});
 	return pResult;
 }
 

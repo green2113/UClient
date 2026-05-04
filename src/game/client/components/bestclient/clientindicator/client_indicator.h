@@ -30,6 +30,7 @@ public:
 	void OnShutdown() override;
 
 	bool IsPlayerBestClient(int ClientId) const;
+	bool IsPlayerUClient(int ClientId) const;
 	bool IsPlayerBClient(int ClientId) { return IsPlayerBestClient(ClientId); }
 
 	void RefreshBrowserCache(bool Force);
@@ -48,6 +49,7 @@ private:
 	int64_t m_LastHttpHeartbeatTick = 0;
 	int64_t m_LastPresenceStartAttempt = 0;
 	int64_t m_LastBrowserRefreshTick = 0;
+	int64_t m_LastUcPresenceRefreshTick = 0;
 	int64_t m_LastTokenRefreshTick = 0;
 	int64_t m_LastPresencePollTick = 0;
 	int64_t m_LastRegistrationSyncTick = 0;
@@ -62,7 +64,9 @@ private:
 
 	std::shared_ptr<CHttpRequest> m_pBrowserTask = nullptr;
 	std::shared_ptr<CHttpRequest> m_pTokenTask = nullptr;
+	std::shared_ptr<CHttpRequest> m_pUcPresenceTask = nullptr;
 	CBrowserCache m_BrowserCache;
+	std::unordered_set<std::string> m_UcPresenceNames;
 	char m_aWebSharedToken[256] = "";
 	std::string m_LastPresenceBlockReason;
 
@@ -82,6 +86,9 @@ private:
 
 	void FinishBrowserCacheRefresh();
 	void ResetBrowserTask();
+	void RefreshUcPresenceCache(bool Force);
+	void FinishUcPresenceRefresh();
+	void ResetUcPresenceTask();
 	void FinishTokenRefresh();
 	void ResetTokenTask();
 	void ResetPresenceState();

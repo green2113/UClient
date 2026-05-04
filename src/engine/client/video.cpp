@@ -77,6 +77,8 @@ static LEVEL AvLevelToLogLevel(int Level)
 			{
 				aLog[Length - 1] = '\0';
 			}
+			if(str_find(aLog, "Could not update timestamps for skipped samples.") != nullptr || str_find(aLog, "Could not update timestamps for discarded samples.") != nullptr)
+				return;
 			log_log(LogLevel, "videorecorder/libav", "%s", aLog);
 		}
 	}

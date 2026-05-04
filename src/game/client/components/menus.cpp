@@ -44,6 +44,10 @@
 
 using namespace std::chrono_literals;
 
+// Update announcement key — change this string whenever you want to show the update popup.
+// Users who have already seen this key will not see the popup again.
+static const char *const UC_UPDATE_KEY = "2.3.0-soundboard";
+
 ColorRGBA CMenus::ms_GuiColor;
 ColorRGBA CMenus::ms_ColorTabbarInactiveOutgame;
 ColorRGBA CMenus::ms_ColorTabbarActiveOutgame;
@@ -1379,6 +1383,7 @@ void CMenus::PopupConfirm(const char *pTitle, const char *pMessage, const char *
 {
 	// reset active item
 	Ui()->SetActiveItem(nullptr);
+	m_PopupConfirmCompact = false;
 	m_PopupConfirmHasCheckbox = false;
 	m_PopupConfirmCheckboxValue = false;
 	m_aPopupCheckboxLabel[0] = '\0';
@@ -1446,6 +1451,22 @@ void CMenus::PopupCancelStoredLink()
 	if(m_PopupDeactivateAfterButton)
 		SetActive(false);
 	m_PopupDeactivateAfterButton = false;
+}
+
+void CMenus::PopupConfirmDeleteSoundboardItem()
+{
+	GameClient()->m_VoiceChat.ConfirmSoundboardDelete();
+}
+
+void CMenus::PopupCancelDeleteSoundboardItem()
+{
+	GameClient()->m_VoiceChat.CancelSoundboardDelete();
+}
+
+void CMenus::OpenSoundboardDeletePopup()
+{
+	PopupConfirm(Localize("Delete sound"), Localize("This sound will be permanently deleted.\nAre you sure you want to delete it?"), Localize("Delete"), Localize("Cancel"), &CMenus::PopupConfirmDeleteSoundboardItem, 0, &CMenus::PopupCancelDeleteSoundboardItem, 0);
+	m_PopupConfirmCompact = true;
 }
 
 void CMenus::PopupWarning(const char *pTopic, const char *pBody, const char *pButton, std::chrono::nanoseconds Duration)
@@ -1519,6 +1540,14 @@ void CMenus::Render()
 			m_Popup = POPUP_JOIN_TUTORIAL;
 		}
 		m_JoinTutorial.m_Queued = false;
+	}
+
+	// BestClient update announcement popup (shown once per update key)
+	if(!m_BcUpdatePopupChecked)
+	{
+		m_BcUpdatePopupChecked = true;
+		if(m_Popup == POPUP_NONE && str_comp(g_Config.m_BcLastSeenUpdateKey, UC_UPDATE_KEY) != 0)
+			m_Popup = POPUP_BC_UPDATE;
 	}
 
 	const bool BrowserPageActive = m_MenuPage >= PAGE_INTERNET && m_MenuPage <= PAGE_FAVORITE_COMMUNITY_5;
@@ -1850,12 +1879,26 @@ void CMenus::RenderPopupFullscreen(CUIRect Screen)
 		pTitle = Localize("Save skin");
 		pExtraText = Localize("Are you sure you want to save your skin? If a skin with this name already exists, it will be replaced.");
 	}
+	else if(m_Popup == POPUP_BC_UPDATE)
+	{
+		pTitle = "2.3.0 Update Notes";
+	}
 
 	CUIRect Box, Part;
 	Box = Screen;
 	if(m_Popup != POPUP_FIRST_LAUNCH)
 	{
-		Box.Margin(150.0f, &Box);
+		if(m_Popup == POPUP_BC_UPDATE)
+			Box.Margin(80.0f, &Box);
+		else if(m_Popup == POPUP_CONFIRM && m_PopupConfirmCompact)
+		{
+			const float PopupWidth = minimum(620.0f, Screen.w - 80.0f);
+			const float PopupHeight = minimum(220.0f, Screen.h - 80.0f);
+			Box.VMargin((Screen.w - PopupWidth) / 2.0f, &Box);
+			Box.HMargin((Screen.h - PopupHeight) / 2.0f, &Box);
+		}
+		else
+			Box.Margin(150.0f, &Box);
 	}
 
 	// Background
@@ -2633,6 +2676,44 @@ void CMenus::RenderPopupFullscreen(CUIRect Screen)
 		TextBox.VSplitLeft(20.0f, nullptr, &TextBox);
 		Ui()->DoLabel(&Label, Localize("Name"), 18.0f, TEXTALIGN_ML);
 		Ui()->DoClearableEditBox(&m_SkinNameInput, &TextBox, 12.0f);
+	}
+	else if(m_Popup == POPUP_BC_UPDATE)
+	{
+		// Update notes list
+		static const char *const s_apUpdateNotes[] = {
+			"\xf0\x9f\x94\x8a  Soundboard feature added (keybind: Settings > BestClient > Others > Soundboard panel)",
+			"\xf0\x9f\x8e\xad  Use !skin [player name] in chat to copy that player's skin and color",
+			"\xf0\x9f\x93\x8d  GIF window position is now remembered after restarting the game",
+			"\xf0\x9f\x8f\x86  BestClient logo no longer appears on scoreboard when not sending data to BestClient server",
+			"\xf0\x9f\x86\x95  UClient logo added",
+			"\xf0\x9f\x86\x95  BestClient 1.6.1 update",
+			"...and everything else.",
+		};
+
+		CUIRect ContentBox, ButtonBar;
+		Box.HSplitBottom(20.0f, &Box, nullptr);
+		Box.HSplitBottom(24.0f, &Box, &ButtonBar);
+		Box.HSplitBottom(16.0f, &Box, nullptr);
+		ButtonBar.VMargin(120.0f, &ButtonBar);
+
+		static CButtonContainer s_ButtonOk;
+		if(DoButton_Menu(&s_ButtonOk, "OK", 0, &ButtonBar) || Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE) || Ui()->ConsumeHotkey(CUi::HOTKEY_ENTER))
+		{
+			str_copy(g_Config.m_BcLastSeenUpdateKey, UC_UPDATE_KEY, sizeof(g_Config.m_BcLastSeenUpdateKey));
+			m_Popup = POPUP_NONE;
+		}
+
+		Box.VMargin(20.0f, &ContentBox);
+		const float NoteLineH = 22.0f;
+		const float NoteSpacing = 6.0f;
+		for(const char *pNote : s_apUpdateNotes)
+		{
+			CUIRect NoteLine;
+			ContentBox.HSplitTop(NoteLineH, &NoteLine, &ContentBox);
+			ContentBox.HSplitTop(NoteSpacing, nullptr, &ContentBox);
+			NoteLine.VMargin(4.0f, &NoteLine);
+			Ui()->DoLabel(&NoteLine, pNote, 14.0f, TEXTALIGN_ML, {.m_MaxWidth = NoteLine.w});
+		}
 	}
 	else
 	{
@@ -3504,6 +3585,11 @@ void CMenus::SetShowStart(bool ShowStart)
 void CMenus::ShowQuitPopup()
 {
 	m_Popup = POPUP_QUIT;
+}
+
+void CMenus::ShowBcUpdatePopup()
+{
+	m_Popup = POPUP_BC_UPDATE;
 }
 
 void CMenus::QuitWithMenuSfx()

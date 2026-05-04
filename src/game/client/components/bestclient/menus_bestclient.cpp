@@ -2734,7 +2734,7 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			const float ColorPickerLineSpacing = 5.0f;
 			const bool ShowRealHitboxEnabled = g_Config.m_BcShowRealHitbox != 0;
 			const float ColorPickerHeight = ShowRealHitboxEnabled ? (ColorPickerLineSize + ColorPickerLineSpacing) : 0.0f;
-			const float ContentHeight = LineSize + MarginSmall + 11.0f * LineSize + ColorPickerHeight;
+			const float ContentHeight = LineSize + MarginSmall + 13.0f * LineSize + ColorPickerHeight;
 			CUIRect Content, Label, Row;
 			BeginBlock(Column, ContentHeight, Content);
 
@@ -2752,6 +2752,19 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcEmoticonShadow, BCLocalize("Shadow of Emotions"), &g_Config.m_BcEmoticonShadow, &Content, LineSize);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcChatSaveDraft, BCLocalize("Save unsent messages"), &g_Config.m_BcChatSaveDraft, &Content, LineSize);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcChatAltCommandLayout, BCLocalize("Commands in other layout"), &g_Config.m_BcChatAltCommandLayout, &Content, LineSize);
+			Content.HSplitTop(LineSize, &Row, &Content);
+			CUIRect SearchEngineLabel, SearchEngineDropDown;
+			Row.VSplitMid(&SearchEngineLabel, &SearchEngineDropDown, 8.0f);
+			Ui()->DoLabel(&SearchEngineLabel, BCLocalize("Chat player search engine"), 13.0f, TEXTALIGN_ML);
+			static CUi::SDropDownState s_ChatPlayerSearchEngineState;
+			static CScrollRegion s_ChatPlayerSearchEngineScrollRegion;
+			s_ChatPlayerSearchEngineState.m_SelectionPopupContext.m_pScrollRegion = &s_ChatPlayerSearchEngineScrollRegion;
+			const char *apChatPlayerSearchEngines[] = {
+				BCLocalize("DDNet"),
+				BCLocalize("DDStats"),
+			};
+			g_Config.m_UcChatPlayerSearchEngine = std::clamp(g_Config.m_UcChatPlayerSearchEngine, 0, 1);
+			g_Config.m_UcChatPlayerSearchEngine = Ui()->DoDropDown(&SearchEngineDropDown, g_Config.m_UcChatPlayerSearchEngine, apChatPlayerSearchEngines, (int)std::size(apChatPlayerSearchEngines), s_ChatPlayerSearchEngineState);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcCinematicCamera, BCLocalize("Cinematic camera"), &g_Config.m_BcCinematicCamera, &Content, LineSize);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcMastersrv, BCLocalize("Use BestClient MasterServer"), &g_Config.m_BcMastersrv, &Content, LineSize);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcShowhudDummyCoordIndicator, BCLocalize("Show player below indicator"), &g_Config.m_BcShowhudDummyCoordIndicator, &Content, LineSize);
@@ -2877,6 +2890,8 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 		{
 			static CButtonContainer s_VoicePanelBindReader;
 			static CButtonContainer s_VoicePanelBindClear;
+			static CButtonContainer s_SoundboardPanelBindReader;
+			static CButtonContainer s_SoundboardPanelBindClear;
 			static CButtonContainer s_PushToTalkBindReader;
 			static CButtonContainer s_PushToTalkBindClear;
 			static CButtonContainer s_MicMuteBindReader;
@@ -2884,10 +2899,11 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			static CButtonContainer s_HeadphonesMuteBindReader;
 			static CButtonContainer s_HeadphonesMuteBindClear;
 
-			const float ContentHeight = 4.0f * (LineSize + MarginExtraSmall);
+			const float ContentHeight = 5.0f * (LineSize + MarginExtraSmall);
 			CUIRect BindsView;
 			BeginBlock(Column, ContentHeight, BindsView);
 			DoLine_KeyReader(BindsView, s_VoicePanelBindReader, s_VoicePanelBindClear, BCLocalize("Voice panel"), "toggle_voice_panel");
+			DoLine_KeyReader(BindsView, s_SoundboardPanelBindReader, s_SoundboardPanelBindClear, BCLocalize("Soundboard panel"), "toggle_voice_soundboard_panel");
 			DoLine_KeyReader(BindsView, s_PushToTalkBindReader, s_PushToTalkBindClear, BCLocalize("Push-to-talk"), "+voicechat");
 			DoLine_KeyReader(BindsView, s_MicMuteBindReader, s_MicMuteBindClear, BCLocalize("Mute microphone"), "toggle_voice_mic_mute");
 			DoLine_KeyReader(BindsView, s_HeadphonesMuteBindReader, s_HeadphonesMuteBindClear, BCLocalize("Mute headphones"), "toggle_voice_headphones_mute");
@@ -2900,7 +2916,7 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			const bool ShowScoreboardSettings = g_Config.m_BcClientIndicatorInScoreboard != 0;
 			const float NamePlateSettingsHeight = ShowNamePlateSettings ? 2.0f * LineSize : 0.0f;
 			const float ScoreboardSettingsHeight = ShowScoreboardSettings ? LineSize : 0.0f;
-			const float ContentHeight = LineSize + MarginSmall + 2.0f * LineSize + NamePlateSettingsHeight + ScoreboardSettingsHeight;
+			const float ContentHeight = LineSize + MarginSmall + 3.0f * LineSize + NamePlateSettingsHeight + ScoreboardSettingsHeight;
 
 			CUIRect Content, Label, Row;
 			BeginBlock(Column, ContentHeight, Content);
@@ -2909,6 +2925,7 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			Ui()->DoLabel(&Label, BCLocalize("Client Indicator"), HeadlineFontSize, TEXTALIGN_ML);
 			Content.HSplitTop(MarginSmall, nullptr, &Content);
 
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcClientIndicatorSendInfo, BCLocalize("Send usage info to indicator server"), &g_Config.m_BcClientIndicatorSendInfo, &Content, LineSize);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcClientIndicatorInNamePlate, BCLocalize("Show indicator in name plates"), &g_Config.m_BcClientIndicatorInNamePlate, &Content, LineSize);
 
 			if(g_Config.m_BcClientIndicatorInNamePlate)

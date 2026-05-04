@@ -84,6 +84,131 @@ void DumpUdpPacketBytes(const char *pDirection, const NETADDR &Addr, const void 
 		log_info(LOG_SCOPE, "%s udp dump offset=%d size=%d hex=%s", pDirection, Offset, ChunkSize, aHex);
 	}
 }
+
+const char *GetJsonStringField(const json_value &Json, const char *pField)
+{
+	const json_value &Field = Json[pField];
+	return Field.type == json_string ? Field.u.string.ptr : nullptr;
+}
+
+bool NormalizeServerAddress(const char *pAddress, char *pBuffer, int BufferSize)
+{
+	if(!pAddress || pAddress[0] == '\0')
+		return false;
+
+	NETADDR Addr;
+	if(net_addr_from_url(&Addr, pAddress, nullptr, 0) == 0 || net_addr_from_str(&Addr, pAddress) == 0)
+	{
+		net_addr_str(&Addr, pBuffer, BufferSize, true);
+		return true;
+	}
+
+	str_copy(pBuffer, pAddress, BufferSize);
+	return true;
+}
+
+void CollectPresenceNamesFromPlayersValue(const json_value &Players, std::unordered_set<std::string> &Names)
+{
+	if(Players.type == json_array)
+	{
+		for(unsigned int Index = 0; Index < Players.u.array.length; ++Index)
+		{
+			const json_value &Player = *Players.u.array.values[Index];
+			if(Player.type == json_string)
+			{
+				Names.insert(Player.u.string.ptr);
+			}
+			else if(Player.type == json_object)
+			{
+				const char *pName = GetJsonStringField(Player, "name");
+				if(!pName)
+					pName = GetJsonStringField(Player, "player_name");
+				if(pName && pName[0] != '\0')
+					Names.insert(pName);
+			}
+		}
+	}
+	else if(Players.type == json_object)
+	{
+		const char *pName = GetJsonStringField(Players, "name");
+		if(!pName)
+			pName = GetJsonStringField(Players, "player_name");
+		if(pName && pName[0] != '\0')
+			Names.insert(pName);
+	}
+}
+
+void CollectPresenceNamesForCurrentServer(const json_value &Json, const char *pCurrentServerAddress, std::unordered_set<std::string> &Names)
+{
+	if(!pCurrentServerAddress || pCurrentServerAddress[0] == '\0')
+		return;
+
+	char aCurrentServer[NETADDR_MAXSTRSIZE];
+	if(!NormalizeServerAddress(pCurrentServerAddress, aCurrentServer, sizeof(aCurrentServer)))
+		return;
+
+	auto MatchAndCollect = [&](const char *pServerAddress, const json_value &ServerValue) {
+		if(!pServerAddress || pServerAddress[0] == '\0')
+			return;
+
+		char aNormalized[NETADDR_MAXSTRSIZE];
+		if(!NormalizeServerAddress(pServerAddress, aNormalized, sizeof(aNormalized)))
+			return;
+
+		if(str_comp(aNormalized, aCurrentServer) != 0)
+			return;
+
+		if(ServerValue.type == json_object)
+		{
+			const json_value &Players = ServerValue["players"];
+			if(Players.type != json_none)
+				CollectPresenceNamesFromPlayersValue(Players, Names);
+			else
+				CollectPresenceNamesFromPlayersValue(ServerValue, Names);
+		}
+		else
+		{
+			CollectPresenceNamesFromPlayersValue(ServerValue, Names);
+		}
+	};
+
+	if(Json.type == json_array)
+	{
+		for(unsigned int i = 0; i < Json.u.array.length; ++i)
+		{
+			const json_value &Entry = *Json.u.array.values[i];
+			if(Entry.type != json_object)
+				continue;
+
+			const char *pServerAddress = GetJsonStringField(Entry, "server_address");
+			if(!pServerAddress)
+				pServerAddress = GetJsonStringField(Entry, "address");
+			if(!pServerAddress)
+				pServerAddress = GetJsonStringField(Entry, "server");
+			if(pServerAddress)
+			{
+				const json_value &Players = Entry["players"];
+				if(Players.type != json_none)
+					MatchAndCollect(pServerAddress, Players);
+				continue;
+			}
+
+			for(unsigned int FieldIndex = 0; FieldIndex < Entry.u.object.length; ++FieldIndex)
+			{
+				const auto &Field = Entry.u.object.values[FieldIndex];
+				MatchAndCollect(Field.name, *Field.value);
+			}
+		}
+	}
+	else if(Json.type == json_object)
+	{
+		for(unsigned int i = 0; i < Json.u.object.length; ++i)
+		{
+			const auto &Field = Json.u.object.values[i];
+			MatchAndCollect(Field.name, *Field.value);
+		}
+	}
+}
 }
 
 CClientIndicator::CClientIndicator()
@@ -103,6 +228,7 @@ void CClientIndicator::OnReset()
 {
 	ResetPresenceState();
 	ResetTokenState();
+	ResetUcPresenceTask();
 }
 
 void CClientIndicator::OnStateChange(int NewState, int OldState)
@@ -112,6 +238,8 @@ void CClientIndicator::OnStateChange(int NewState, int OldState)
 	{
 		StopPresence(true);
 		ResetTokenState();
+		ResetUcPresenceTask();
+		m_UcPresenceNames.clear();
 	}
 	else if(NewState == IClient::STATE_ONLINE)
 	{
@@ -130,6 +258,7 @@ void CClientIndicator::OnShutdown()
 	StopPresence(true);
 	ResetBrowserTask();
 	ResetTokenTask();
+	ResetUcPresenceTask();
 }
 
 bool CClientIndicator::IsPlayerBestClient(int ClientId) const
@@ -167,6 +296,29 @@ bool CClientIndicator::IsPlayerBestClient(int ClientId) const
 	}
 
 	return false;
+}
+
+bool CClientIndicator::IsPlayerUClient(int ClientId) const
+{
+	const CGameClient *pGameClient = GameClient();
+	if(pGameClient && pGameClient->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_OTHERS_CLIENT_INDICATOR))
+		return false;
+
+	if(Client()->State() != IClient::STATE_ONLINE || !g_Config.m_BcClientIndicator)
+		return false;
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return false;
+
+	for(const int LocalId : GameClient()->m_aLocalIds)
+	{
+		if(LocalId >= 0 && ClientId == LocalId)
+			return true;
+	}
+
+	if(!GameClient()->m_aClients[ClientId].m_Active)
+		return false;
+
+	return m_UcPresenceNames.find(GameClient()->m_aClients[ClientId].m_aName) != m_UcPresenceNames.end();
 }
 
 void CClientIndicator::RefreshBrowserCache(bool Force)
@@ -244,8 +396,10 @@ void CClientIndicator::OnUpdate()
 			StopPresence(true);
 			ResetBrowserTask();
 			ResetTokenState();
+			ResetUcPresenceTask();
 		}
 		ClearBrowserSnapshot();
+		m_UcPresenceNames.clear();
 		SetPresenceBlockReason("presence update skipped: indicator disabled");
 		m_WasPresenceEnabled = false;
 		return;
@@ -254,6 +408,7 @@ void CClientIndicator::OnUpdate()
 	const bool PresenceEnabled = IsPresenceEnabled();
 	const int64_t Now = time_get();
 	const int64_t BrowserRefreshInterval = 5 * time_freq();
+	const int64_t UcPresenceRefreshInterval = 5 * time_freq();
 	const int64_t TokenRefreshInterval = 60 * time_freq();
 	if(PresenceEnabled && !m_WasPresenceEnabled)
 	{
@@ -268,6 +423,8 @@ void CClientIndicator::OnUpdate()
 			RefreshBrowserCache(false);
 		if(g_Config.m_BcClientIndicatorSendInfo && !m_pTokenTask && (m_LastTokenRefreshTick == 0 || Now - m_LastTokenRefreshTick >= TokenRefreshInterval))
 			RefreshToken(false);
+		if(g_Config.m_UcPresenceApiBaseUrl[0] != '\0' && !m_pUcPresenceTask && (m_LastUcPresenceRefreshTick == 0 || Now - m_LastUcPresenceRefreshTick >= UcPresenceRefreshInterval))
+			RefreshUcPresenceCache(false);
 		if(!g_Config.m_BcClientIndicatorSendInfo && m_Socket)
 			ClosePresenceSocket();
 	}
@@ -284,6 +441,9 @@ void CClientIndicator::OnUpdate()
 		SetPresenceBlockReason("presence update skipped: client offline");
 		m_WasPresenceEnabled = false;
 	}
+
+	if(g_Config.m_UcPresenceApiBaseUrl[0] != '\0' && !m_pUcPresenceTask && (m_LastUcPresenceRefreshTick == 0 || Now - m_LastUcPresenceRefreshTick >= UcPresenceRefreshInterval))
+		RefreshUcPresenceCache(false);
 
 	if(m_pBrowserTask && m_pBrowserTask->State() == EHttpState::DONE)
 	{
@@ -317,6 +477,16 @@ void CClientIndicator::OnUpdate()
 	{
 		DebugLog("token request aborted");
 		ResetTokenTask();
+	}
+
+	if(m_pUcPresenceTask && m_pUcPresenceTask->State() == EHttpState::DONE)
+	{
+		FinishUcPresenceRefresh();
+		ResetUcPresenceTask();
+	}
+	else if(m_pUcPresenceTask && (m_pUcPresenceTask->State() == EHttpState::ERROR || m_pUcPresenceTask->State() == EHttpState::ABORTED))
+	{
+		ResetUcPresenceTask();
 	}
 
 	if(PresenceEnabled)
@@ -851,6 +1021,58 @@ void CClientIndicator::ResetBrowserTask()
 	}
 }
 
+void CClientIndicator::RefreshUcPresenceCache(bool Force)
+{
+	if(g_Config.m_UcPresenceApiBaseUrl[0] == '\0')
+		return;
+
+	if(m_pUcPresenceTask && !m_pUcPresenceTask->Done())
+	{
+		if(!Force)
+			return;
+		ResetUcPresenceTask();
+	}
+
+	std::string Base = g_Config.m_UcPresenceApiBaseUrl;
+	while(!Base.empty() && Base.back() == '/')
+		Base.pop_back();
+	if(Base.empty())
+		return;
+
+	m_pUcPresenceTask = HttpGet(Base.c_str());
+	m_pUcPresenceTask->Timeout(CTimeout{10000, 0, 500, 5});
+	m_pUcPresenceTask->IpResolve(IPRESOLVE::V4);
+	m_pUcPresenceTask->VerifyPeer(false);
+	m_pUcPresenceTask->LogProgress(HTTPLOG::FAILURE);
+	m_LastUcPresenceRefreshTick = time_get();
+	Http()->Run(m_pUcPresenceTask);
+}
+
+void CClientIndicator::FinishUcPresenceRefresh()
+{
+	if(!m_pUcPresenceTask)
+		return;
+
+	json_value *pJson = m_pUcPresenceTask->ResultJson();
+	if(!pJson)
+		return;
+
+	std::unordered_set<std::string> vNames;
+	CollectPresenceNamesForCurrentServer(*pJson, CurrentGameServerAddress(), vNames);
+	m_UcPresenceNames = std::move(vNames);
+
+	json_value_free(pJson);
+}
+
+void CClientIndicator::ResetUcPresenceTask()
+{
+	if(m_pUcPresenceTask)
+	{
+		m_pUcPresenceTask->Abort();
+		m_pUcPresenceTask = nullptr;
+	}
+}
+
 void CClientIndicator::FinishTokenRefresh()
 {
 	if(!m_pTokenTask)
@@ -916,6 +1138,7 @@ void CClientIndicator::ResetPresenceState()
 	m_PresenceCache.Clear();
 	m_aLastGameServerAddr[0] = '\0';
 	m_LastPresenceBlockReason.clear();
+	m_UcPresenceNames.clear();
 }
 
 void CClientIndicator::ResetTokenState()
@@ -939,7 +1162,7 @@ void CClientIndicator::ReapplyBrowserSnapshot()
 
 bool CClientIndicator::HasPendingNetworkTask() const
 {
-	return (m_pBrowserTask && !m_pBrowserTask->Done()) || (m_pTokenTask && !m_pTokenTask->Done());
+	return (m_pBrowserTask && !m_pBrowserTask->Done()) || (m_pTokenTask && !m_pTokenTask->Done()) || (m_pUcPresenceTask && !m_pUcPresenceTask->Done());
 }
 
 bool CClientIndicator::IsBrowserSnapshotEnabled() const

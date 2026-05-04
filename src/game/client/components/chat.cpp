@@ -6349,6 +6349,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			if(PlaceholderToken == 0)
 			{
 				apSuggestions[NumSuggestions++] = "!voice";
+				apSuggestions[NumSuggestions++] = "!skin";
 			}
 			else
 			{
@@ -6365,6 +6366,53 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 					{
 						apSuggestions[NumSuggestions++] = "on";
 						apSuggestions[NumSuggestions++] = "off";
+					}
+					else
+					{
+						return false;
+					}
+				}
+				else if(str_comp_nocase(aToken0, "!skin") == 0)
+				{
+					if(PlaceholderToken == 1)
+					{
+						// Complete player names from the current server
+						const char *pNameBuf = PlaceholderToken < NumTokens ? pInput + aTokenStarts[1] : "";
+						const char *pCompletion2 = nullptr;
+						int BestScore = INT_MAX;
+						for(int Cid = 0; Cid < MAX_CLIENTS; Cid++)
+						{
+							const CGameClient::CClientData &ClientData = GameClient()->m_aClients[Cid];
+							if(!ClientData.m_Active)
+								continue;
+							if(Cid == GameClient()->m_Snap.m_LocalClientId)
+								continue;
+							const char *pFound = str_utf8_find_nocase(ClientData.m_aName, pNameBuf);
+							if(pFound != nullptr)
+							{
+								const int Score = (int)(pFound - ClientData.m_aName);
+								if(Score < BestScore)
+								{
+									BestScore = Score;
+									pCompletion2 = ClientData.m_aName;
+								}
+							}
+						}
+						if(!pCompletion2)
+							return false;
+
+						// Build completion directly (name may contain spaces)
+						char aBuf2[MAX_LINE_LENGTH];
+						str_truncate(aBuf2, sizeof(aBuf2), pInput, aTokenStarts[1]);
+						str_append(aBuf2, pCompletion2);
+						const char *pAfter2 = pInput + (PlaceholderToken < NumTokens ? aTokenEnds[1] : str_length(pInput));
+						str_append(aBuf2, pAfter2);
+						m_PlaceholderOffset = aTokenStarts[1];
+						m_PlaceholderLength = str_length(pCompletion2);
+						m_Input.Set(aBuf2);
+						m_Input.SetCursorOffset(m_PlaceholderOffset + m_PlaceholderLength);
+						m_CompletionUsed = true;
+						return true;
 					}
 					else
 					{

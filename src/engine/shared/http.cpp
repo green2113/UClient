@@ -255,6 +255,9 @@ bool CHttpRequest::ConfigureHandle(void *pHandle)
 		curl_easy_setopt(pH, CURLOPT_POSTFIELDS, m_pBody);
 		curl_easy_setopt(pH, CURLOPT_POSTFIELDSIZE, m_BodyLength);
 		break;
+	case REQUEST::DELETE_REQ:
+		curl_easy_setopt(pH, CURLOPT_CUSTOMREQUEST, "DELETE");
+		break;
 	}
 
 	curl_easy_setopt(pH, CURLOPT_HTTPHEADER, m_pHeaders);
