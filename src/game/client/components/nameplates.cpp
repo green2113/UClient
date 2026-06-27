@@ -800,6 +800,8 @@ protected:
 		m_Size = vec2(Data.m_FontSizeBClientIndicator + DEFAULT_PADDING, Data.m_FontSizeBClientIndicator + DEFAULT_PADDING);
 		m_Visible = Data.m_IsUserBClientIndicator || Data.m_IsUserUClientIndicator;
 		if(Data.m_IsUserUClientIndicator)
+			m_Size *= 0.75f;
+		if(Data.m_IsUserUClientIndicator)
 			m_Texture = m_UcTexture;
 		else
 			m_Texture = g_pData->m_aImages[Data.m_IsUserDeveloperIndicator ? IMAGE_BCDEVICON : IMAGE_BCICON].m_Id;
