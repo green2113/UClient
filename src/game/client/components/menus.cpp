@@ -764,9 +764,24 @@ void CMenus::RenderLoading(const char *pCaption, const char *pContent, int Incre
 {
 	// TODO: not supported right now due to separate render thread
 
-	const int CurLoadRenderCount = m_LoadingState.m_Current;
+	// m_Total==0 means we're outside the initial loading screen, skip entirely.
+	if(m_LoadingState.m_Total == 0)
+		return;
+
 	m_LoadingState.m_Current += IncreaseCounter;
-	dbg_assert(m_LoadingState.m_Current <= m_LoadingState.m_Total, "Invalid progress for RenderLoading");
+	if(m_LoadingState.m_Current > m_LoadingState.m_Total)
+	{
+		log_error("menus", "RenderLoading overflow: current=%d total=%d increase=%d", m_LoadingState.m_Current, m_LoadingState.m_Total, IncreaseCounter);
+		m_LoadingState.m_Current = m_LoadingState.m_Total;
+		return;
+	}
+
+	// Rendering during initial component loading is not safe (separate render thread / uninitialized state).
+	// Only render after a server connection triggers the loading screen.
+	if(Client()->State() != IClient::STATE_CONNECTING && Client()->State() != IClient::STATE_LOADING)
+		return;
+
+	const int CurLoadRenderCount = m_LoadingState.m_Current;
 
 	// make sure that we don't render for each little thing we load
 	// because that will slow down loading if we have vsync
@@ -781,7 +796,7 @@ void CMenus::RenderLoading(const char *pCaption, const char *pContent, int Incre
 
 	m_LoadingState.m_LastRender = Now;
 
-	const bool IsServerJoinLoading = Client()->State() == IClient::STATE_CONNECTING || Client()->State() == IClient::STATE_LOADING;
+	const bool IsServerJoinLoading = true;
 	CUIRect FullScreen = *Ui()->Screen();
 	if(IsServerJoinLoading)
 	{
@@ -884,8 +899,14 @@ void CMenus::RenderLoading(const char *pCaption, const char *pContent, int Incre
 	}
 
 	Graphics()->SetColor(1.0, 1.0, 1.0, 1.0);
-
 	Client()->UpdateAndSwap();
+}
+
+void CMenus::SetupLoadingTotal(int NumComponents)
+{
+	m_LoadingState.m_Total = g_pData->m_NumImages + NumComponents;
+	if(!g_Config.m_ClThreadsoundloading)
+		m_LoadingState.m_Total += g_pData->m_NumSounds;
 }
 
 void CMenus::FinishLoading()
@@ -1009,13 +1030,11 @@ void CMenus::OnInit()
 	m_MainMenuLogoTexture = Graphics()->LoadTexture("bestclient/gui_logo.png", IStorage::TYPE_ALL);
 	if(!m_MainMenuLogoTexture.IsValid() || m_MainMenuLogoTexture.IsNullTexture())
 		m_MainMenuLogoTexture = Graphics()->LoadTexture("BestClient/gui_logo.png", IStorage::TYPE_ALL);
+	m_UcLogoTexture = Graphics()->LoadTexture("uclient/logo/uclient.png", IStorage::TYPE_ALL);
 
-	// setup load amount
 	m_LoadingState.m_Current = 0;
-	m_LoadingState.m_Total = g_pData->m_NumImages + GameClient()->ComponentCount();
-	if(!g_Config.m_ClThreadsoundloading)
-		m_LoadingState.m_Total += g_pData->m_NumSounds;
-
+	// m_Total is set by gameclient.cpp via SetupLoadingTotal() after this returns,
+	// using the pre-computed NumComponents from the init loop.
 	m_IsInit = true;
 
 	// load menu images
@@ -1396,6 +1415,68 @@ void CMenus::PopupConfirm(const char *pTitle, const char *pMessage, const char *
 	m_aPopupButtons[BUTTON_CANCEL].m_NextPopup = CancelNextPopup;
 	m_aPopupButtons[BUTTON_CANCEL].m_pfnCallback = pfnCancelButtonCallback;
 	m_Popup = POPUP_CONFIRM;
+	m_PopupConfirmHasCheckbox = false;
+}
+
+void CMenus::PopupConfirmWithCheckbox(const char *pTitle, const char *pMessage, const char *pConfirmButtonLabel, const char *pCancelButtonLabel,
+	const char *pCheckboxLabel, bool CheckboxValue, FPopupButtonCallback pfnConfirmButtonCallback, int ConfirmNextPopup,
+	FPopupButtonCallback pfnCancelButtonCallback, int CancelNextPopup)
+{
+	PopupConfirm(pTitle, pMessage, pConfirmButtonLabel, pCancelButtonLabel, pfnConfirmButtonCallback, ConfirmNextPopup, pfnCancelButtonCallback, CancelNextPopup);
+	m_PopupConfirmHasCheckbox = true;
+	m_PopupConfirmCheckboxValue = CheckboxValue;
+	str_copy(m_aPopupCheckboxLabel, pCheckboxLabel, sizeof(m_aPopupCheckboxLabel));
+}
+
+void CMenus::PopupConfirmOpenLink(const char *pTitle, const char *pMessage, const char *pConfirmButtonLabel, const char *pCancelButtonLabel, const char *pUrl, bool Dangerous)
+{
+	const bool WasActive = IsActive();
+	PopupConfirm(pTitle, pMessage, pConfirmButtonLabel, pCancelButtonLabel, &CMenus::PopupOpenStoredLink, POPUP_NONE, &CMenus::PopupCancelStoredLink);
+	str_copy(m_aPopupLinkUrl, pUrl);
+	m_PopupDangerousConfirmButton = Dangerous;
+	if(Dangerous)
+		str_copy(m_aPopupDangerousHoverLabel, Localize("Do you really want to open it?"));
+	else
+		m_aPopupDangerousHoverLabel[0] = '\0';
+	m_PopupDeactivateAfterButton = !WasActive;
+	SetActive(true);
+}
+
+void CMenus::PopupOpenStoredLink()
+{
+	if(m_aPopupLinkUrl[0] == '\0')
+		return;
+	if(!Client()->ViewLink(m_aPopupLinkUrl))
+		log_error("client", "Failed to open link '%s'", m_aPopupLinkUrl);
+
+	if(m_PopupDeactivateAfterButton)
+		SetActive(false);
+	m_PopupDeactivateAfterButton = false;
+}
+
+void CMenus::PopupCancelStoredLink()
+{
+	if(m_PopupDeactivateAfterButton)
+		SetActive(false);
+	m_PopupDeactivateAfterButton = false;
+}
+
+void CMenus::OpenSoundboardDeletePopup()
+{
+	PopupConfirm(Localize("Delete sound"), Localize("Are you sure you want to delete this sound?"),
+		Localize("Delete"), Localize("Cancel"),
+		&CMenus::PopupConfirmSoundboardDelete, POPUP_NONE, &CMenus::PopupCancelSoundboardDelete);
+	SetActive(true);
+}
+
+void CMenus::PopupConfirmSoundboardDelete()
+{
+	GameClient()->m_VoiceChat.ConfirmSoundboardDelete();
+}
+
+void CMenus::PopupCancelSoundboardDelete()
+{
+	GameClient()->m_VoiceChat.CancelSoundboardDelete();
 }
 
 void CMenus::PopupWarning(const char *pTopic, const char *pBody, const char *pButton, std::chrono::nanoseconds Duration)
@@ -1830,6 +1911,16 @@ void CMenus::RenderPopupFullscreen(CUIRect Screen)
 
 	if(m_Popup == POPUP_MESSAGE || m_Popup == POPUP_CONFIRM)
 	{
+		if(m_Popup == POPUP_CONFIRM && m_PopupConfirmHasCheckbox)
+		{
+			CUIRect CheckboxRow;
+			Box.HSplitBottom(24.0f, &Box, &CheckboxRow);
+			CheckboxRow.VMargin(100.0f, &CheckboxRow);
+			static CButtonContainer s_PopupCheckbox;
+			if(DoButton_CheckBox(&s_PopupCheckbox, m_aPopupCheckboxLabel, m_PopupConfirmCheckboxValue, &CheckboxRow))
+				m_PopupConfirmCheckboxValue = !m_PopupConfirmCheckboxValue;
+		}
+
 		CUIRect ButtonBar;
 		Box.HSplitBottom(20.0f, &Box, nullptr);
 		Box.HSplitBottom(24.0f, &Box, &ButtonBar);

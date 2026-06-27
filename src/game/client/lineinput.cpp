@@ -203,6 +203,12 @@ bool CLineInput::ProcessInput(const IInput::CEvent &Event)
 	const size_t SelectionLength = GetSelectionLength();
 	bool KeyHandled = false;
 
+	if((Event.m_Flags & IInput::FLAG_TEXT) && m_pfnClipboardImagePasteCallback && Input()->ModifierIsPressed())
+	{
+		if(m_pfnClipboardImagePasteCallback())
+			return true;
+	}
+
 	if(Event.m_Flags & IInput::FLAG_TEXT)
 	{
 		SetRange(Event.m_aText, m_SelectionStart, m_SelectionEnd);
@@ -338,6 +344,12 @@ bool CLineInput::ProcessInput(const IInput::CEvent &Event)
 		}
 		else if(ModPressed && !AltPressed && Event.m_Key == KEY_V)
 		{
+			if(m_pfnClipboardImagePasteCallback && m_pfnClipboardImagePasteCallback())
+			{
+				KeyHandled = true;
+			}
+			else
+			{
 			std::string ClipboardText = Input()->GetClipboardText();
 			if(!ClipboardText.empty())
 			{
@@ -383,6 +395,7 @@ bool CLineInput::ProcessInput(const IInput::CEvent &Event)
 				}
 			}
 			KeyHandled = true;
+			}
 		}
 		else if(ModPressed && !AltPressed && (Event.m_Key == KEY_C || Event.m_Key == KEY_X) && SelectionLength)
 		{

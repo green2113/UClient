@@ -702,6 +702,7 @@ void CGameClient::OnConsoleInit()
 						  &m_ImportantAlert,
 						  &m_AdminPanel,
 						  &m_BestClient,
+						  &m_UClient,
 						  &m_Menus,
 						  &m_Controls,
 						  &m_TouchControls,
@@ -919,12 +920,18 @@ void CGameClient::OnInit()
 	int SkippedComps = 1;
 	int CompCounter = 1;
 	const int NumComponents = ComponentCount();
+	bool bLoadingTotalSet = false;
 	for(int i = NumComponents - 1; i >= 0; --i)
 	{
 		m_vpAll[i]->OnInit();
 		// try to render a frame after each component, also flushes GPU uploads
 		if(m_Menus.IsInit())
 		{
+			if(!bLoadingTotalSet)
+			{
+				m_Menus.SetupLoadingTotal(NumComponents);
+				bLoadingTotalSet = true;
+			}
 			str_format(aLoadingMessage, std::size(aLoadingMessage), "%s [%d/%d]", CompCounter == NumComponents ? pLoadingMessageComponentsSpecial : pLoadingMessageComponents, CompCounter, NumComponents);
 			m_Menus.RenderLoading(pLoadingDDNetCaption, aLoadingMessage, SkippedComps);
 			SkippedComps = 1;

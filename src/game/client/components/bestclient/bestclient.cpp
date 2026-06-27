@@ -31,7 +31,7 @@
 #include <string>
 #include <vector>
 
-static constexpr const char *BestClient_INFO_URL = "https://api.github.com/repos/BestProjectTeam/BestClient/releases?per_page=10";
+static constexpr const char *BestClient_INFO_URL = "https://ddnet.under1111.com/api/uclient/update/latest";
 static constexpr const char *BestClient_STREAMER_WORDS_FILE = "nwords.txt";
 static const char *const gs_apDefaultStreamerWords[] = {
 	"пидор",
@@ -298,7 +298,9 @@ static bool ReleaseHasBestClientAssetForCurrentPlatform(const json_value *pJson)
 
 static void BuildBestClientInfoUrl(char *pBuf, int BufSize)
 {
-	str_format(pBuf, BufSize, "%s&t=%lld", BestClient_INFO_URL, (long long)time_timestamp());
+	const char *pBase = g_Config.m_UcUpdateLatestUrl[0] != '\0' ? g_Config.m_UcUpdateLatestUrl : BestClient_INFO_URL;
+	const char *pSeparator = str_find(pBase, "?") ? "&" : "?";
+	str_format(pBuf, BufSize, "%s%st=%lld", pBase, pSeparator, (long long)time_timestamp());
 }
 
 bool CBestClient::IsStreamerModeEnabled() const
@@ -541,6 +543,11 @@ static const char *FindBestClientReleaseVersion(const json_value *pJson)
 
 	if(pJson->type == json_object)
 	{
+		// uclient API format: {"version": "...", "platforms": {...}}
+		const char *pVersion = json_string_get(json_object_get(pJson, "version"));
+		if(pVersion && json_object_get(pJson, "platforms"))
+			return pVersion;
+		// GitHub release object format
 		return ReleaseHasBestClientAssetForCurrentPlatform(pJson) ? GetBestClientReleaseVersionString(pJson) : nullptr;
 	}
 
@@ -1659,9 +1666,8 @@ void CBestClient::FetchBestClientInfo()
 	char aUrl[512];
 	BuildBestClientInfoUrl(aUrl, sizeof(aUrl));
 	m_pBestClientInfoTask = HttpGet(aUrl);
-	m_pBestClientInfoTask->HeaderString("Accept", "application/vnd.github+json");
+	m_pBestClientInfoTask->HeaderString("Accept", "application/json");
 	m_pBestClientInfoTask->HeaderString("User-Agent", CLIENT_NAME);
-	m_pBestClientInfoTask->HeaderString("X-GitHub-Api-Version", "2022-11-28");
 	m_pBestClientInfoTask->HeaderString("Cache-Control", "no-cache");
 	m_pBestClientInfoTask->HeaderString("Pragma", "no-cache");
 	m_pBestClientInfoTask->Timeout(CTimeout{10000, 0, 500, 10});

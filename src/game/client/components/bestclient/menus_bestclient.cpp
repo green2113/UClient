@@ -2963,6 +2963,8 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 		{
 			static CButtonContainer s_VoicePanelBindReader;
 			static CButtonContainer s_VoicePanelBindClear;
+			static CButtonContainer s_SoundboardPanelBindReader;
+			static CButtonContainer s_SoundboardPanelBindClear;
 			static CButtonContainer s_PushToTalkBindReader;
 			static CButtonContainer s_PushToTalkBindClear;
 			static CButtonContainer s_MicMuteBindReader;
@@ -2970,10 +2972,11 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			static CButtonContainer s_HeadphonesMuteBindReader;
 			static CButtonContainer s_HeadphonesMuteBindClear;
 
-			const float ContentHeight = 4.0f * (LineSize + MarginExtraSmall);
+			const float ContentHeight = 5.0f * (LineSize + MarginExtraSmall);
 			CUIRect BindsView;
 			BeginBlock(Column, ContentHeight, BindsView);
 			DoLine_KeyReader(BindsView, s_VoicePanelBindReader, s_VoicePanelBindClear, BCLocalize("Voice panel"), "toggle_voice_panel");
+			DoLine_KeyReader(BindsView, s_SoundboardPanelBindReader, s_SoundboardPanelBindClear, BCLocalize("Soundboard panel"), "toggle_voice_soundboard_panel");
 			DoLine_KeyReader(BindsView, s_PushToTalkBindReader, s_PushToTalkBindClear, BCLocalize("Push-to-talk"), "+voicechat");
 			DoLine_KeyReader(BindsView, s_MicMuteBindReader, s_MicMuteBindClear, BCLocalize("Mute microphone"), "toggle_voice_mic_mute");
 			DoLine_KeyReader(BindsView, s_HeadphonesMuteBindReader, s_HeadphonesMuteBindClear, BCLocalize("Mute headphones"), "toggle_voice_headphones_mute");
@@ -2986,7 +2989,7 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			const bool ShowScoreboardSettings = g_Config.m_BcClientIndicatorInScoreboard != 0;
 			const float NamePlateSettingsHeight = ShowNamePlateSettings ? 2.0f * LineSize : 0.0f;
 			const float ScoreboardSettingsHeight = ShowScoreboardSettings ? LineSize : 0.0f;
-			const float ContentHeight = LineSize + MarginSmall + 2.0f * LineSize + NamePlateSettingsHeight + ScoreboardSettingsHeight;
+			const float ContentHeight = LineSize + MarginSmall + 3.0f * LineSize + NamePlateSettingsHeight + ScoreboardSettingsHeight;
 
 			CUIRect Content, Label, Row;
 			BeginBlock(Column, ContentHeight, Content);
@@ -2994,6 +2997,8 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			Content.HSplitTop(LineSize, &Label, &Content);
 			Ui()->DoLabel(&Label, BCLocalize("Client Indicator"), HeadlineFontSize, TEXTALIGN_ML);
 			Content.HSplitTop(MarginSmall, nullptr, &Content);
+
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcClientIndicatorSendInfo, BCLocalize("Send usage info to indicator server"), &g_Config.m_BcClientIndicatorSendInfo, &Content, LineSize);
 
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcClientIndicatorInNamePlate, BCLocalize("Show indicator in name plates"), &g_Config.m_BcClientIndicatorInNamePlate, &Content, LineSize);
 

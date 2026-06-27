@@ -83,6 +83,10 @@ public:
 	// Handles chat commands starting with "!voice". Returns true if consumed locally (not sent to server).
 	bool TryHandleChatCommand(const char *pLine);
 
+	void RequestSoundboardDeleteConfirm(int Index);
+	void ConfirmSoundboardDelete();
+	void CancelSoundboardDelete();
+
 private:
 	template<size_t Capacity>
 	class CFixedSampleRingBuffer
@@ -281,6 +285,9 @@ private:
 	int m_LastInputDevice = -2;
 	int m_LastOutputDevice = -2;
 	bool m_PanelActive = false;
+	bool m_SoundboardPanelActive = false;
+	bool m_SoundboardPanelRestoreAfterDeleteConfirm = false;
+	bool m_DeactivateMenusAfterDeleteConfirm = false;
 	bool m_MouseUnlocked = false;
 	std::optional<vec2> m_LastMousePos;
 	int m_ActiveSection = 0;
@@ -348,10 +355,72 @@ private:
 	CButtonContainer m_PttBindClearButton;
 	CButtonContainer m_PanelBindReaderButton;
 	CButtonContainer m_PanelBindClearButton;
+	CButtonContainer m_SoundboardPanelBindReaderButton;
+	CButtonContainer m_SoundboardPanelBindClearButton;
 	CButtonContainer m_MicMuteBindReaderButton;
 	CButtonContainer m_MicMuteBindClearButton;
 	CButtonContainer m_HeadphonesMuteBindReaderButton;
 	CButtonContainer m_HeadphonesMuteBindClearButton;
+	CButtonContainer m_SoundboardClosePanelButton;
+	std::vector<CButtonContainer> m_vSoundboardItemButtons;
+	std::vector<CButtonContainer> m_vSoundboardItemDeleteButtons;
+	int m_SoundboardDeleteConfirmIndex = -1;
+	std::shared_ptr<CHttpRequest> m_pSoundboardDeleteTask;
+	int m_SoundboardDeleteTaskIndex = -1;
+	CButtonContainer m_SoundboardDeleteConfirmBtn;
+	CButtonContainer m_SoundboardDeleteCancelBtn;
+
+	// ---- Soundboard data ----
+	struct SSoundboardItem
+	{
+		std::string m_Id;
+		std::string m_Title;
+		std::string m_Url;
+		std::string m_OwnerId;
+		std::string m_OwnerName;
+		std::string m_Scope;
+		int m_DurationMs = 0;
+	};
+	struct SSoundboardCachedAudio
+	{
+		std::vector<int16_t> m_vPcm; // 48 kHz mono int16
+		bool m_Loaded = false;
+		bool m_Loading = false;
+		bool m_Error = false;
+		int m_PendingPlayToVoice = 0;
+		int m_PendingPlayLocal = 0;
+		std::shared_ptr<CHttpRequest> m_pTask;
+	};
+	struct SSoundboardPlayInstance
+	{
+		std::vector<int16_t> m_vPcm;
+		size_t m_LocalPlayQueued = 0;
+		size_t m_VoiceInjectPos = 0;
+		bool m_SendToVoice = false;
+		int m_ItemIndex = -1;
+		int64_t m_StartTick = 0;
+	};
+	std::vector<SSoundboardItem> m_vSoundboardItems;
+	std::unordered_map<std::string, bool> m_SoundboardGroupExpanded;
+	std::unordered_map<std::string, CButtonContainer> m_SoundboardGroupButtons;
+	std::shared_ptr<CHttpRequest> m_pSoundboardListTask;
+	int m_SoundboardLoadState = 0; // 0=idle 1=loading 2=loaded 3=error
+	std::unordered_map<int, SSoundboardCachedAudio> m_SoundboardAudioCache;
+	std::vector<SSoundboardPlayInstance> m_vSoundboardPlayInstances;
+	enum class ESoundboardUploadState { IDLE = 0, UPLOADING, DONE, ERROR };
+	struct SSoundboardUploadState
+	{
+		ESoundboardUploadState m_State = ESoundboardUploadState::IDLE;
+		std::shared_ptr<CHttpRequest> m_pTask;
+		char m_aError[128] = {};
+		char m_aTitleBuf[128] = {};
+		char m_aPathBuf[512] = {};
+	};
+	SSoundboardUploadState m_SoundboardUpload;
+	CButtonContainer m_SoundboardUploadButton;
+	CButtonContainer m_SoundboardBrowseFileButton;
+	CButtonContainer m_SoundboardUploadRefreshButton;
+	// -------------------------
 
 	void StartVoice();
 	void StopVoice();
@@ -392,6 +461,9 @@ private:
 	bool IsUseTeam0Mode() const;
 	bool IsEnableYourGroupMode() const;
 	bool IsVoiceTeamAudible(int Team) const;
+	bool IsUcTeamOverrideMode() const;
+	int UcTargetVoiceTeam() const;
+	bool IsUcIncludeOwnTeamMode() const;
 	vec2 LocalPosition() const;
 	std::string CurrentRoomKey() const;
 	int LocalGameClientId() const;
@@ -407,8 +479,10 @@ private:
 	float RadiusFilterDistanceUnits() const;
 	bool IsPositionWithinRadiusFilter(vec2 Position) const;
 	void SetPanelActive(bool Active);
+	void SetSoundboardPanelActive(bool Active);
 	void SetUiMousePos(vec2 Pos);
 	void RenderPanel(const CUIRect &Screen, bool ShowCloseButton);
+	void RenderSoundboardPanel(const CUIRect &Screen);
 	void RenderServersSection(CUIRect View);
 	void RenderMembersSection(CUIRect View);
 	void RenderSettingsSection(CUIRect View);
@@ -416,6 +490,19 @@ private:
 	void FetchServerList();
 	void FinishServerList();
 	void ResetServerListTask();
+	void FetchSoundboardList();
+	void FinishSoundboardList();
+	void StartSoundboardItemDownload(int Index);
+	void StartSoundboardItemDelete(int Index);
+	void TickSoundboardDelete();
+	void TickSoundboard();
+	void PlaySoundboardItem(int Index, bool SendToVoice);
+	void StopSoundboard();
+	void ProcessSoundboardVoiceInject();
+	bool IsSoundboardItemPlaying(int ItemIndex) const;
+	void StartSoundboardUpload();
+	void TickSoundboardUpload();
+	static bool TryDecodeWav(const uint8_t *pData, int DataSize, int NativeSampleRate, int NativeChannels, std::vector<int16_t> &vPcmOut);
 	void StartServerListPings();
 	void CloseServerListPingSocket();
 	void LoadMutedNamesFromFile();
@@ -438,6 +525,7 @@ private:
 	static void ConKeyVoiceTalk(IConsole::IResult *pResult, void *pUserData);
 	static void ConToggleVoiceMicMute(IConsole::IResult *pResult, void *pUserData);
 	static void ConToggleVoiceHeadphonesMute(IConsole::IResult *pResult, void *pUserData);
+	static void ConToggleVoiceSoundboardPanel(IConsole::IResult *pResult, void *pUserData);
 };
 
 #endif

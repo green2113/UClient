@@ -5,7 +5,11 @@
 
 #include <base/io.h>
 #include <base/log.h>
+#include <base/os.h>
 #include <base/time.h>
+
+#include <engine/external/json-parser/json.h>
+#include <engine/shared/json.h>
 
 #include <engine/engine.h>
 #include <engine/editor.h>
@@ -24,6 +28,7 @@
 #include <game/client/animstate.h>
 #include <game/client/components/censor.h>
 #include <game/client/components/scoreboard.h>
+#include <game/client/components/uclient/chat_nearby_tab.h>
 #include <game/client/components/skins.h>
 #include <game/client/components/sounds.h>
 #include <game/client/components/tclient/colored_parts.h>
@@ -427,6 +432,10 @@ CChat::CLine::CLine()
 	m_TranslateLanguageRectValid = false;
 	m_MediaPreviewRectValid = false;
 	m_MediaRetryRectValid = false;
+	m_vLinkBounds.clear();
+	m_vLinks.clear();
+	m_vLinkFontSizes.clear();
+	m_vLinkAlwaysConfirm.clear();
 }
 
 void CChat::CLine::Reset(CChat &This)
@@ -472,6 +481,14 @@ CChat::CChat()
 	m_PrevChatSelectionActive = false;
 	m_TranslateButtonPressed = false;
 	m_TranslateButtonRectValid = false;
+	m_GiphyButtonPressed = false;
+	m_GiphyButtonRectValid = false;
+	m_GiphySearching = false;
+	m_GiphyLoadingMore = false;
+	m_GiphyHasMoreResults = false;
+	m_GiphyNextPageToLoad = 0;
+	m_GiphyRequestedPage = 0;
+	m_GiphyScrollOffset = vec2(0.0f, 0.0f);
 	m_HideMediaByBind = false;
 	m_MediaViewerOpen = false;
 	m_MediaViewerLineIndex = -1;
@@ -486,6 +503,7 @@ CChat::CChat()
 	m_vTypingGlyphAnims.clear();
 
 	m_Input.SetClipboardLineCallback([this](const char *pStr) { SendChatQueued(pStr); });
+	m_Input.SetClipboardImagePasteCallback([this]() { return m_UcChatPaste.TryPasteFromClipboard(this); });
 	m_Input.SetCalculateOffsetCallback([this]() { return m_IsInputCensored; });
 	m_Input.SetDisplayTextCallback([this](char *pStr, size_t NumChars) {
 		m_IsInputCensored = false;
@@ -645,6 +663,10 @@ void CChat::Reset()
 	m_TranslateButtonPressed = false;
 	m_TranslateButtonRectValid = false;
 	m_HideMediaByBind = false;
+	if(m_LinkPreflight.m_pRequest)
+		m_LinkPreflight.m_pRequest->Abort();
+	m_LinkPreflight = {};
+	m_LinkPolicyCache.m_pRequest.reset();
 	m_MediaViewerOpen = false;
 	m_MediaViewerLineIndex = -1;
 	m_MediaViewerZoom = 1.0f;
@@ -653,6 +675,7 @@ void CChat::Reset()
 	m_MediaViewerDragStartMouse = vec2(0.0f, 0.0f);
 	m_MediaViewerPanStart = vec2(0.0f, 0.0f);
 	m_MediaViewerLastClickTime = 0;
+	m_UcChatPaste.Reset(this);
 	DisableMode();
 	m_vServerCommands.clear();
 
@@ -2056,6 +2079,511 @@ static void ExtractMediaUrlsFromHtmlDocument(const unsigned char *pData, size_t 
 		vOutUrls.push_back(Entry.second);
 	}
 }
+// ---- URL click / link safety helpers ----
+
+struct SUrlMatch
+{
+	int m_Start;
+	int m_Length;
+	std::string m_TargetUrl;
+};
+
+struct SMarkdownLinkMatch
+{
+	int m_Start;
+	int m_ConsumedLength;
+	std::string m_DisplayText;
+	std::string m_TargetUrl;
+};
+
+static ColorRGBA ChatLinkColor()
+{
+	return color_cast<ColorRGBA, ColorHSLA>(ColorHSLA(g_Config.m_ClMessageLinkColor));
+}
+
+static STextBoundingBox TightenLinkHoverBounds(STextBoundingBox Bounds, float FontSize)
+{
+	const float TargetHeight = maximum(1.0f, FontSize * 0.9f);
+	if(Bounds.m_H > TargetHeight)
+	{
+		const float Trim = (Bounds.m_H - TargetHeight) / 2.0f;
+		Bounds.m_Y += Trim;
+		Bounds.m_H = TargetHeight;
+	}
+	return Bounds;
+}
+
+static bool IsUrlBoundaryCharacter(char c)
+{
+	return c == '\0' || std::isspace(static_cast<unsigned char>(c)) || c == '(' || c == '[' || c == '{' || c == '<' || c == '"' || c == '\'';
+}
+
+static bool IsTrailingUrlPunctuation(char c)
+{
+	return c == '.' || c == ',' || c == '!' || c == '?' || c == ';' || c == ':' || c == ')' || c == ']' || c == '}' || c == '"' || c == '\'';
+}
+
+static bool IsAsciiAlphaNumOrHyphen(char c)
+{
+	return std::isalnum(static_cast<unsigned char>(c)) || c == '-';
+}
+
+static bool IsValidHostLabel(std::string_view Label)
+{
+	if(Label.empty() || Label.size() > 63)
+		return false;
+	if(Label.front() == '-' || Label.back() == '-')
+		return false;
+	return std::all_of(Label.begin(), Label.end(), IsAsciiAlphaNumOrHyphen);
+}
+
+static bool IsValidUrlHost(std::string_view Host)
+{
+	if(Host.empty() || Host.find('.') == std::string_view::npos)
+		return false;
+
+	size_t LabelStart = 0;
+	size_t LabelCount = 0;
+	while(LabelStart < Host.size())
+	{
+		const size_t Dot = Host.find('.', LabelStart);
+		const size_t LabelEnd = Dot == std::string_view::npos ? Host.size() : Dot;
+		const std::string_view Label = Host.substr(LabelStart, LabelEnd - LabelStart);
+		if(!IsValidHostLabel(Label))
+			return false;
+		++LabelCount;
+		if(Dot == std::string_view::npos)
+		{
+			if(Label.size() < 2 || Label.size() > 24)
+				return false;
+			if(!std::all_of(Label.begin(), Label.end(), [](char c) { return std::isalpha(static_cast<unsigned char>(c)); }))
+				return false;
+			break;
+		}
+		LabelStart = Dot + 1;
+	}
+	return LabelCount >= 2;
+}
+
+static bool LinkDomainMatchesPolicy(std::string_view Host, const std::unordered_set<std::string> &vDomains)
+{
+	for(const auto &Domain : vDomains)
+	{
+		if(Host == Domain)
+			return true;
+		if(Host.size() > Domain.size() && Host.ends_with(Domain) && Host[Host.size() - Domain.size() - 1] == '.')
+			return true;
+	}
+	return false;
+}
+
+static std::string NormalizeLinkDomain(std::string_view Domain)
+{
+	std::string Result;
+	Result.reserve(Domain.size());
+	for(char c : Domain)
+		Result.push_back((char)std::tolower((unsigned char)c));
+	if(str_startswith(Result.c_str(), "www."))
+		Result.erase(0, 4);
+	if(const size_t Colon = Result.rfind(':'); Colon != std::string::npos)
+	{
+		const std::string_view Port(Result.c_str() + Colon + 1, Result.size() - Colon - 1);
+		if(!Port.empty() && std::all_of(Port.begin(), Port.end(), [](char c) { return std::isdigit((unsigned char)c); }))
+			Result.erase(Colon);
+	}
+	return Result;
+}
+
+static bool ExtractNormalizedHostFromClickableUrl(std::string_view Url, std::string &NormalizedHost, bool &Https, bool &Http)
+{
+	Https = false;
+	Http = false;
+	std::string_view Remainder;
+	if(Url.rfind("https://", 0) == 0)
+	{
+		Https = true;
+		Remainder = Url.substr(8);
+	}
+	else if(Url.rfind("http://", 0) == 0)
+	{
+		Http = true;
+		Remainder = Url.substr(7);
+	}
+	else
+		return false;
+
+	const size_t AuthorityEnd = Remainder.find_first_of("/?#");
+	std::string_view Authority = AuthorityEnd == std::string_view::npos ? Remainder : Remainder.substr(0, AuthorityEnd);
+	if(Authority.empty() || Authority.find('@') != std::string_view::npos)
+		return false;
+
+	std::string Host = NormalizeLinkDomain(Authority);
+	if(!IsValidUrlHost(Host))
+		return false;
+
+	NormalizedHost = std::move(Host);
+	return true;
+}
+
+static bool ExtractNormalizedHostFromBareClickableLink(std::string_view Link, std::string &NormalizedHost)
+{
+	const size_t AuthorityEnd = Link.find_first_of("/?#");
+	std::string_view Authority = AuthorityEnd == std::string_view::npos ? Link : Link.substr(0, AuthorityEnd);
+	if(Authority.empty() || Authority.find('@') != std::string_view::npos)
+		return false;
+
+	std::string Host = NormalizeLinkDomain(Authority);
+	if(!IsValidUrlHost(Host))
+		return false;
+
+	NormalizedHost = std::move(Host);
+	return true;
+}
+
+static bool NormalizeClickableLink(std::string_view Link, const std::unordered_set<std::string> &vSafeDomains, std::string &NormalizedUrl, std::string &NormalizedHost, bool &Https, bool &Http)
+{
+	if(ExtractNormalizedHostFromClickableUrl(Link, NormalizedHost, Https, Http))
+	{
+		NormalizedUrl.assign(Link.begin(), Link.end());
+		return true;
+	}
+
+	Https = false;
+	Http = false;
+	if(!ExtractNormalizedHostFromBareClickableLink(Link, NormalizedHost))
+		return false;
+	if(!LinkDomainMatchesPolicy(NormalizedHost, vSafeDomains))
+		return false;
+
+	NormalizedUrl = "https://";
+	NormalizedUrl.append(Link.begin(), Link.end());
+	return true;
+}
+
+static std::string NormalizeLinkPolicyEntry(std::string_view Entry)
+{
+	while(!Entry.empty() && std::isspace((unsigned char)Entry.front()))
+		Entry.remove_prefix(1);
+	while(!Entry.empty() && std::isspace((unsigned char)Entry.back()))
+		Entry.remove_suffix(1);
+
+	std::string Host;
+	bool Https = false;
+	bool Http = false;
+	if(ExtractNormalizedHostFromClickableUrl(Entry, Host, Https, Http))
+		return Host;
+	return NormalizeLinkDomain(Entry);
+}
+
+static void ParseLinkPolicyArray(const json_value *pValue, std::unordered_set<std::string> &vDomains)
+{
+	if(!pValue || pValue->type != json_array)
+		return;
+
+	const int Length = json_array_length(pValue);
+	for(int i = 0; i < Length; ++i)
+	{
+		const json_value *pEntry = json_array_get(pValue, i);
+		if(!pEntry || pEntry->type != json_string)
+			continue;
+
+		const std::string Domain = NormalizeLinkPolicyEntry(pEntry->u.string.ptr);
+		if(IsValidUrlHost(Domain))
+			vDomains.insert(Domain);
+	}
+}
+
+static bool TryParseClickableUrlAt(const char *pText, int Index, const std::unordered_set<std::string> &vSafeDomains, SUrlMatch &Match)
+{
+	const int SchemeLength = str_startswith(pText + Index, "https://") ? 8 : (str_startswith(pText + Index, "http://") ? 7 : 0);
+	if(Index > 0 && !IsUrlBoundaryCharacter(pText[Index - 1]))
+		return false;
+
+	int End = Index + maximum(SchemeLength, 0);
+	while(pText[End] != '\0' && !std::isspace(static_cast<unsigned char>(pText[End])))
+		++End;
+	while(End > Index + maximum(SchemeLength, 0) && IsTrailingUrlPunctuation(pText[End - 1]))
+		--End;
+	if(End <= Index + maximum(SchemeLength, 0))
+		return false;
+
+	std::string TargetUrl;
+	std::string Host;
+	bool Https = false;
+	bool Http = false;
+	const std::string_view Candidate(pText + Index, End - Index);
+	if(!NormalizeClickableLink(Candidate, vSafeDomains, TargetUrl, Host, Https, Http))
+		return false;
+
+	Match.m_Start = Index;
+	Match.m_Length = End - Index;
+	Match.m_TargetUrl = std::move(TargetUrl);
+	return true;
+}
+
+static std::vector<SUrlMatch> FindClickableUrlMatches(const char *pText, const std::unordered_set<std::string> &vSafeDomains)
+{
+	std::vector<SUrlMatch> vMatches;
+	for(int i = 0; pText[i] != '\0'; ++i)
+	{
+		SUrlMatch Match;
+		if(TryParseClickableUrlAt(pText, i, vSafeDomains, Match))
+		{
+			vMatches.push_back(Match);
+			i += Match.m_Length - 1;
+		}
+	}
+	return vMatches;
+}
+
+static bool TryParseClickableMarkdownLinkAt(const char *pText, int Index, const std::unordered_set<std::string> &vSafeDomains, SMarkdownLinkMatch &Match)
+{
+	if(pText[Index] != '[')
+		return false;
+
+	int LabelEnd = Index + 1;
+	while(pText[LabelEnd] != '\0' && pText[LabelEnd] != ']')
+		++LabelEnd;
+	if(pText[LabelEnd] != ']' || LabelEnd == Index + 1)
+		return false;
+	if(pText[LabelEnd + 1] != '(')
+		return false;
+
+	int UrlStart = LabelEnd + 2;
+	int UrlEnd = UrlStart;
+	while(pText[UrlEnd] != '\0' && pText[UrlEnd] != ')')
+		++UrlEnd;
+	if(pText[UrlEnd] != ')' || UrlEnd == UrlStart)
+		return false;
+
+	std::string TargetUrl;
+	std::string NormalizedHost;
+	bool Https = false;
+	bool Http = false;
+	if(!NormalizeClickableLink(std::string_view(pText + UrlStart, UrlEnd - UrlStart), vSafeDomains, TargetUrl, NormalizedHost, Https, Http))
+		return false;
+
+	Match.m_Start = Index;
+	Match.m_ConsumedLength = UrlEnd - Index + 1;
+	Match.m_DisplayText.assign(pText + Index + 1, LabelEnd - Index - 1);
+	Match.m_TargetUrl = std::move(TargetUrl);
+	return true;
+}
+
+static int MaxFittingUrlChars(ITextRender *pTextRender, const CTextCursor &Cursor, const char *pText, int RemainingLength, float AvailableWidth)
+{
+	if(RemainingLength <= 0)
+		return 0;
+	if(AvailableWidth <= 0.0f)
+		return 1;
+
+	int Low = 1;
+	int High = RemainingLength;
+	int Best = 1;
+	while(Low <= High)
+	{
+		const int Mid = (Low + High) / 2;
+		const float Width = pTextRender->TextWidth(Cursor.m_FontSize, pText, Mid, -1.0f, Cursor.m_Flags);
+		if(Width <= AvailableWidth)
+		{
+			Best = Mid;
+			Low = Mid + 1;
+		}
+		else
+			High = Mid - 1;
+	}
+	return Best;
+}
+
+static void MeasureLinkBounds(ITextRender *pTextRender, const CTextCursor &Cursor, const char *pDisplayText, int DisplayLength, const std::string &TargetUrl, bool AlwaysConfirm, std::vector<STextBoundingBox> &vBounds, std::vector<std::string> &vLinks, std::vector<float> &vFontSizes, std::vector<bool> &vAlwaysConfirm)
+{
+	CTextCursor LinkCursor = Cursor;
+	LinkCursor.m_LongestLineWidth = 0.0f;
+	LinkCursor.m_LineCount = 1;
+	LinkCursor.m_GlyphCount = 0;
+	LinkCursor.m_CharCount = 0;
+	LinkCursor.m_MaxCharacterHeight = 0.0f;
+	LinkCursor.m_vColorSplits.clear();
+	pTextRender->TextEx(&LinkCursor, pDisplayText, DisplayLength);
+
+	if(LinkCursor.m_LineCount <= 1 || Cursor.m_LineWidth <= 0.0f)
+	{
+		STextBoundingBox Bounds = LinkCursor.BoundingBox();
+		Bounds.m_X = Cursor.m_X;
+		Bounds.m_Y = Cursor.m_Y;
+		Bounds.m_W = maximum(0.0f, LinkCursor.m_X - Cursor.m_X);
+		Bounds.m_H = LinkCursor.m_FontSize;
+		vBounds.push_back(Bounds);
+		vLinks.push_back(TargetUrl);
+		vFontSizes.push_back(LinkCursor.m_FontSize);
+		vAlwaysConfirm.push_back(AlwaysConfirm);
+		return;
+	}
+
+	const float LineHeight = maximum(1.0f, LinkCursor.m_AlignedFontSize + LinkCursor.m_AlignedLineSpacing);
+	int RemainingStart = 0;
+	int RemainingLength = DisplayLength;
+	float SegmentX = Cursor.m_X;
+	float SegmentY = Cursor.m_Y;
+	float AvailableWidth = Cursor.m_LineWidth - (Cursor.m_X - Cursor.m_StartX);
+
+	while(RemainingLength > 0)
+	{
+		const int SegmentLength = MaxFittingUrlChars(pTextRender, LinkCursor, pDisplayText + RemainingStart, RemainingLength, AvailableWidth);
+		const float SegmentWidth = pTextRender->TextWidth(LinkCursor.m_FontSize, pDisplayText + RemainingStart, SegmentLength, -1.0f, LinkCursor.m_Flags);
+		vBounds.push_back({SegmentX, SegmentY, SegmentWidth, LinkCursor.m_FontSize});
+		vLinks.push_back(TargetUrl);
+		vFontSizes.push_back(LinkCursor.m_FontSize);
+		vAlwaysConfirm.push_back(AlwaysConfirm);
+
+		RemainingStart += SegmentLength;
+		RemainingLength -= SegmentLength;
+		SegmentX = Cursor.m_StartX;
+		SegmentY += LineHeight;
+		AvailableWidth = Cursor.m_LineWidth;
+	}
+}
+
+static void AppendTextWithUrlColors(ITextRender *pTextRender, STextContainerIndex &TextContainerIndex, CTextCursor &Cursor, const char *pText, const std::unordered_set<std::string> &vSafeDomains, std::vector<STextBoundingBox> *pLinkBounds, std::vector<std::string> *pLinks, std::vector<float> *pFontSizes, std::vector<bool> *pAlwaysConfirm)
+{
+	int SegmentStart = 0;
+	for(int i = 0; pText[i] != '\0';)
+	{
+		SMarkdownLinkMatch MarkdownMatch;
+		SUrlMatch UrlMatch;
+		const bool HasMarkdownLink = TryParseClickableMarkdownLinkAt(pText, i, vSafeDomains, MarkdownMatch);
+		const bool HasRawUrl = TryParseClickableUrlAt(pText, i, vSafeDomains, UrlMatch);
+		if(!HasMarkdownLink && !HasRawUrl)
+		{
+			++i;
+			continue;
+		}
+
+		if(i > SegmentStart)
+			pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, pText + SegmentStart, i - SegmentStart);
+
+		std::string DisplayText;
+		std::string TargetUrl;
+		if(HasMarkdownLink)
+		{
+			DisplayText = MarkdownMatch.m_DisplayText;
+			TargetUrl = MarkdownMatch.m_TargetUrl;
+			i += MarkdownMatch.m_ConsumedLength;
+		}
+		else
+		{
+			DisplayText.assign(pText + i, UrlMatch.m_Length);
+			TargetUrl = UrlMatch.m_TargetUrl;
+			i += UrlMatch.m_Length;
+		}
+
+		if(!DisplayText.empty())
+		{
+			if(pLinkBounds != nullptr && pLinks != nullptr && pFontSizes != nullptr && pAlwaysConfirm != nullptr)
+				MeasureLinkBounds(pTextRender, Cursor, DisplayText.c_str(), (int)DisplayText.size(), TargetUrl, HasMarkdownLink, *pLinkBounds, *pLinks, *pFontSizes, *pAlwaysConfirm);
+
+			const auto SavedColorSplits = Cursor.m_vColorSplits;
+			Cursor.m_vColorSplits.emplace_back(Cursor.m_CharCount, (int)DisplayText.size(), ChatLinkColor());
+			pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, DisplayText.c_str(), (int)DisplayText.size());
+			Cursor.m_vColorSplits = SavedColorSplits;
+		}
+
+		SegmentStart = i;
+	}
+
+	if(pText[SegmentStart] != '\0')
+		pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, pText + SegmentStart);
+}
+
+static bool ContainsCaseInsensitive(std::string_view Haystack, std::string_view Needle)
+{
+	if(Needle.empty())
+		return true;
+
+	auto It = std::search(Haystack.begin(), Haystack.end(), Needle.begin(), Needle.end(), [](char A, char B) {
+		return std::tolower((unsigned char)A) == std::tolower((unsigned char)B);
+	});
+	return It != Haystack.end();
+}
+
+static bool IsDirectDownloadPath(std::string_view Url)
+{
+	std::string_view Remainder;
+	if(Url.rfind("https://", 0) == 0)
+		Remainder = Url.substr(8);
+	else if(Url.rfind("http://", 0) == 0)
+		Remainder = Url.substr(7);
+	else
+		return false;
+
+	const size_t AuthorityEnd = Remainder.find_first_of("/?#");
+	if(AuthorityEnd == std::string_view::npos)
+		return false;
+
+	std::string_view PathAndQuery = Remainder.substr(AuthorityEnd);
+	std::string_view Host = Remainder.substr(0, AuthorityEnd);
+	const size_t QueryPos = PathAndQuery.find('?');
+	const std::string_view Path = QueryPos == std::string_view::npos ? PathAndQuery : PathAndQuery.substr(0, QueryPos);
+	const std::string_view Query = QueryPos == std::string_view::npos ? std::string_view{} : PathAndQuery.substr(QueryPos + 1);
+
+	const char *apDangerousPatterns[] = {
+		"/releases/download/",
+		"/archive/",
+		"/raw/",
+		"/files/download/",
+		"/download/",
+		"/latest/download/",
+		"/dl/",
+		"/get/",
+	};
+	for(const char *pPattern : apDangerousPatterns)
+	{
+		if(Path.find(pPattern) != std::string_view::npos)
+			return true;
+	}
+
+	std::string PathString(Path);
+	const char *apDangerousExtensions[] = {
+		".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz",
+		".exe", ".msi", ".apk", ".dmg", ".pkg", ".appimage", ".deb", ".rpm",
+		".iso", ".bin", ".dll", ".so", ".dylib",
+	};
+	for(const char *pExt : apDangerousExtensions)
+	{
+		if(str_endswith_nocase(PathString.c_str(), pExt) != nullptr)
+			return true;
+	}
+
+	const char *apDangerousQueryFlags[] = {
+		"download=1", "download=true", "dl=1",
+		"attachment=1", "attachment=true",
+		"response-content-disposition=attachment",
+		"export=download",
+	};
+	for(const char *pFlag : apDangerousQueryFlags)
+	{
+		if(Query.find(pFlag) != std::string_view::npos)
+			return true;
+	}
+
+	if(Host == "ddnet.under1111.com" && Path.rfind("/uclient/", 0) == 0)
+		return true;
+
+	const char *apDownloadDomains[] = {
+		"sourceforge.net", "mediafire.com", "mega.nz",
+		"dropbox.com", "1drv.ms", "gofile.io", "wetransfer.com",
+	};
+	for(const char *pDomain : apDownloadDomains)
+	{
+		if(Host.find(pDomain) != std::string_view::npos)
+			return true;
+	}
+
+	return false;
+}
+
+// ---- end URL click helpers ----
+
 } // namespace
 
 bool CChat::IsDirectMediaUrl(const char *pUrl)
@@ -3016,6 +3544,247 @@ bool CChat::ShouldShowFriendMarker(const CLine &Line) const
 	return Line.m_Friend && g_Config.m_ClMessageFriend && !(m_Mode == MODE_NONE && GameClient()->m_BestClient.HasStreamerFlag(CBestClient::STREAMER_HIDE_FRIEND_WHISPER));
 }
 
+std::string CChat::BuildPlayerSearchUrl(const char *pPlayerName) const
+{
+	if(!pPlayerName || pPlayerName[0] == '\0')
+		return {};
+
+	char aEscapedName[256];
+	EscapeUrl(aEscapedName, sizeof(aEscapedName), pPlayerName);
+	if(aEscapedName[0] == '\0')
+		return {};
+
+	char aUrl[512];
+	if(g_Config.m_UcChatPlayerSearchEngine == 1)
+		str_format(aUrl, sizeof(aUrl), "https://ddstats.tw/player/%s", aEscapedName);
+	else
+		str_format(aUrl, sizeof(aUrl), "https://ddnet.org/players/%s/", aEscapedName);
+	return aUrl;
+}
+
+static constexpr const char *LINK_POLICY_URL = "https://ddnet.under1111.com/uclient/linkpolicy.json";
+
+void CChat::UpdateLinkPolicy()
+{
+	if(m_LinkPolicyCache.m_pRequest == nullptr)
+	{
+		const int64_t Now = time_get();
+		if(m_LinkPolicyCache.m_LastRefreshAttempt != 0 && Now < m_LinkPolicyCache.m_LastRefreshAttempt + time_freq() * 5)
+			return;
+
+		m_LinkPolicyCache.m_LastRefreshAttempt = Now;
+		std::shared_ptr<CHttpRequest> pRequest = HttpGet(LINK_POLICY_URL);
+		pRequest->LogProgress(HTTPLOG::FAILURE);
+		pRequest->Timeout(CTimeout{2000, 4000, 500, 5});
+		m_LinkPolicyCache.m_pRequest = pRequest;
+		Http()->Run(pRequest);
+		return;
+	}
+
+	if(!m_LinkPolicyCache.m_pRequest->Done())
+		return;
+
+	if(m_LinkPolicyCache.m_pRequest->State() == EHttpState::DONE)
+	{
+		unsigned char *pResult = nullptr;
+		size_t ResultLength = 0;
+		m_LinkPolicyCache.m_pRequest->Result(&pResult, &ResultLength);
+
+		std::unordered_set<std::string> vSafeDomains;
+		std::unordered_set<std::string> vDangerDomains;
+
+		bool Parsed = false;
+		json_settings JsonSettings{};
+		char aError[256];
+		json_value *pRoot = json_parse_ex(&JsonSettings, (json_char *)pResult, ResultLength, aError);
+		if(pRoot != nullptr)
+		{
+			if(pRoot->type == json_object)
+			{
+				ParseLinkPolicyArray(json_object_get(pRoot, "safe"), vSafeDomains);
+				ParseLinkPolicyArray(json_object_get(pRoot, "danger"), vDangerDomains);
+				Parsed = true;
+			}
+			json_value_free(pRoot);
+		}
+
+		if(Parsed)
+		{
+			m_LinkPolicyCache.m_vSafeDomains = std::move(vSafeDomains);
+			m_LinkPolicyCache.m_vDangerDomains = std::move(vDangerDomains);
+		}
+	}
+
+	m_LinkPolicyCache.m_pRequest.reset();
+}
+
+CChat::ELinkSafety CChat::ClassifyLink(const std::string &Link) const
+{
+	if(IsDirectDownloadPath(Link))
+		return ELinkSafety::DANGER;
+
+	std::string NormalizedHost;
+	bool Https = false;
+	bool Http = false;
+	if(!ExtractNormalizedHostFromClickableUrl(Link, NormalizedHost, Https, Http))
+		return ELinkSafety::INVALID;
+	if(Http)
+		return ELinkSafety::DANGER;
+	if(LinkDomainMatchesPolicy(NormalizedHost, m_LinkPolicyCache.m_vDangerDomains))
+		return ELinkSafety::DANGER;
+	if(LinkDomainMatchesPolicy(NormalizedHost, m_LinkPolicyCache.m_vSafeDomains))
+		return ELinkSafety::SAFE;
+	return Https ? ELinkSafety::WARNING : ELinkSafety::INVALID;
+}
+
+bool CChat::IsLikelyPreflightDownload(const CHttpRequest &Request) const
+{
+	// We don't have response header access in BestClient's http layer,
+	// so we rely only on redirect URL inspection (from the final URL if available).
+	(void)Request;
+	return false;
+}
+
+void CChat::StartLinkPreflight(const std::string &Link, bool AlwaysConfirm)
+{
+	if(m_LinkPreflight.m_pRequest)
+		m_LinkPreflight.m_pRequest->Abort();
+
+	m_LinkPreflight = {};
+	m_LinkPreflight.m_Link = Link;
+	m_LinkPreflight.m_AlwaysConfirm = AlwaysConfirm;
+	m_LinkPreflight.m_RequestType = ELinkPreflightRequestType::HEAD;
+
+	std::shared_ptr<CHttpRequest> pRequest = HttpHead(Link.c_str());
+	pRequest->FailOnErrorStatus(false);
+	pRequest->LogProgress(HTTPLOG::FAILURE);
+	pRequest->Timeout(CTimeout{2500, 5000, 500, 5});
+	m_LinkPreflight.m_pRequest = pRequest;
+	Http()->Run(pRequest);
+}
+
+void CChat::ShowLinkPrompt(const std::string &Link, bool AlwaysConfirm, ELinkSafety Safety, bool IsDownloadLink)
+{
+	if(AlwaysConfirm)
+	{
+		if(Safety == ELinkSafety::SAFE)
+		{
+			Client()->ViewLink(Link.c_str());
+			return;
+		}
+		if(Safety == ELinkSafety::DANGER)
+		{
+			char aDangerMessage[512];
+			if(IsDownloadLink)
+			{
+				str_format(aDangerMessage, sizeof(aDangerMessage), Localize("The link you are trying to access may trigger an unwanted file download. Please verify before proceeding.\n\n%s"), Link.c_str());
+				GameClient()->m_Menus.PopupConfirmOpenLink(Localize("Download Warning"), aDangerMessage, Localize("Download"), Localize("Cancel"), Link.c_str(), true);
+			}
+			else
+			{
+				str_format(aDangerMessage, sizeof(aDangerMessage), Localize("This website was classified as dangerous because of inappropriate content such as hacks or cheats.\n\n%s"), Link.c_str());
+				GameClient()->m_Menus.PopupConfirmOpenLink(Localize("Unsafe link"), aDangerMessage, Localize("Open anyway"), Localize("Do not open"), Link.c_str(), true);
+			}
+			return;
+		}
+		if(Safety == ELinkSafety::WARNING)
+		{
+			char aWarningMessage[512];
+			str_format(aWarningMessage, sizeof(aWarningMessage), Localize("You are leaving DDNet.\n\n%s is not an official DDNet website."), Link.c_str());
+			GameClient()->m_Menus.PopupConfirmOpenLink(Localize("External link"), aWarningMessage, Localize("Open"), Localize("Cancel"), Link.c_str(), false);
+		}
+		return;
+	}
+
+	switch(Safety)
+	{
+	case ELinkSafety::SAFE:
+		Client()->ViewLink(Link.c_str());
+		break;
+	case ELinkSafety::DANGER:
+	{
+		char aMessage[512];
+		if(IsDownloadLink)
+		{
+			str_format(aMessage, sizeof(aMessage), Localize("The link you are trying to access may trigger an unwanted file download. Please verify before proceeding.\n\n%s"), Link.c_str());
+			GameClient()->m_Menus.PopupConfirmOpenLink(Localize("Download Warning"), aMessage, Localize("Download"), Localize("Cancel"), Link.c_str(), true);
+		}
+		else
+		{
+			str_format(aMessage, sizeof(aMessage), Localize("This website was classified as dangerous because of inappropriate content such as hacks or cheats.\n\n%s"), Link.c_str());
+			GameClient()->m_Menus.PopupConfirmOpenLink(Localize("Unsafe link"), aMessage, Localize("Open anyway"), Localize("Do not open"), Link.c_str(), true);
+		}
+		break;
+	}
+	case ELinkSafety::WARNING:
+	{
+		char aMessage[512];
+		str_format(aMessage, sizeof(aMessage), Localize("This link goes to the following website.\n\n%s"), Link.c_str());
+		GameClient()->m_Menus.PopupConfirmOpenLink(Localize("Leaving DDNet..."), aMessage, Localize("Open"), Localize("Cancel"), Link.c_str(), false);
+		break;
+	}
+	case ELinkSafety::INVALID:
+	default:
+		break;
+	}
+}
+
+void CChat::UpdateLinkPreflight()
+{
+	if(!m_LinkPreflight.m_pRequest)
+		return;
+	if(!m_LinkPreflight.m_pRequest->Done())
+		return;
+
+	std::shared_ptr<CHttpRequest> pRequest = m_LinkPreflight.m_pRequest;
+	m_LinkPreflight.m_pRequest.reset();
+
+	const bool WantsGetFallback =
+		m_LinkPreflight.m_RequestType == ELinkPreflightRequestType::HEAD &&
+		pRequest->State() == EHttpState::DONE &&
+		(pRequest->StatusCode() == 405 || pRequest->StatusCode() == 501);
+
+	if(WantsGetFallback)
+	{
+		m_LinkPreflight.m_RequestType = ELinkPreflightRequestType::GET;
+		std::shared_ptr<CHttpRequest> pFallback = HttpGet(m_LinkPreflight.m_Link.c_str());
+		pFallback->FailOnErrorStatus(false);
+		pFallback->Header("Range: bytes=0-1023");
+		pFallback->MaxResponseSize(4096);
+		pFallback->LogProgress(HTTPLOG::FAILURE);
+		pFallback->Timeout(CTimeout{2500, 5000, 500, 5});
+		m_LinkPreflight.m_pRequest = pFallback;
+		Http()->Run(pFallback);
+		return;
+	}
+
+	const std::string Link = m_LinkPreflight.m_Link;
+	const bool AlwaysConfirm = m_LinkPreflight.m_AlwaysConfirm;
+	m_LinkPreflight = {};
+
+	ELinkSafety Safety = ClassifyLink(Link);
+	const bool PreflightDownload = pRequest->State() == EHttpState::DONE && IsLikelyPreflightDownload(*pRequest);
+	const bool IsDownloadLink = IsDirectDownloadPath(Link) || PreflightDownload;
+	if(PreflightDownload && Safety == ELinkSafety::WARNING)
+		Safety = ELinkSafety::DANGER;
+
+	ShowLinkPrompt(Link, AlwaysConfirm, Safety, IsDownloadLink);
+}
+
+void CChat::HandleLinkActivation(const std::string &Link, bool AlwaysConfirm)
+{
+	const ELinkSafety Safety = ClassifyLink(Link);
+	const bool IsDownloadLink = IsDirectDownloadPath(Link);
+
+	if(Safety == ELinkSafety::WARNING && !IsDownloadLink)
+	{
+		StartLinkPreflight(Link, AlwaysConfirm);
+		return;
+	}
+
+	ShowLinkPrompt(Link, AlwaysConfirm, Safety, IsDownloadLink);
+}
+
 std::string CChat::BuildPlainTextLine(const CLine &Line) const
 {
 	if(ShouldHideLineFromStreamer(Line))
@@ -3364,8 +4133,37 @@ void CChat::ClampMediaViewerPan(const CLine &Line, float ScreenWidth, float Scre
 
 bool CChat::OnInput(const IInput::CEvent &Event)
 {
+	// uclient: chat paste image
+	if(m_UcChatPaste.OnInput(this, Event))
+		return true;
+
 	const bool ChatInputActive = m_Mode != MODE_NONE;
 	const bool ChatInteractionActive = ChatInputActive || m_Show;
+
+	if(ChatInputActive && Input()->ModifierIsPressed())
+	{
+		const bool PasteKey = (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_V;
+		const bool PasteText = (Event.m_Flags & IInput::FLAG_TEXT) != 0;
+		if(PasteKey || PasteText)
+		{
+			if(m_UcChatPaste.TryPasteFromClipboard(this))
+				return true;
+		}
+	}
+
+	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && !m_HoveredLink.empty())
+	{
+		HandleLinkActivation(m_HoveredLink, m_HoveredLinkAlwaysConfirm);
+		return true;
+	}
+
+	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && !m_HoveredPlayerName.empty())
+	{
+		const std::string Url = BuildPlayerSearchUrl(m_HoveredPlayerName.c_str());
+		if(!Url.empty())
+			os_open_link(Url.c_str());
+		return true;
+	}
 
 	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && g_Config.m_BcChatMediaPreview &&
 		(Client()->State() == IClient::STATE_ONLINE || Client()->State() == IClient::STATE_DEMOPLAYBACK))
@@ -3409,6 +4207,46 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 
 	if(ChatInputActive && Ui()->IsPopupOpen(&m_TranslateSettingsPopupId) && Ui()->OnInput(Event))
 		return true;
+
+	if(ChatInputActive && Ui()->IsPopupOpen(&m_GiphyPopupId) && Ui()->OnInput(Event))
+		return true;
+
+	if(ChatInputActive && Event.m_Key == KEY_MOUSE_1 && m_GiphyButtonRectValid)
+	{
+		const vec2 MousePos = ChatMousePos();
+		const bool InsideGiphyButton =
+			MousePos.x >= m_GiphyButtonRect.m_X && MousePos.x <= m_GiphyButtonRect.m_X + m_GiphyButtonRect.m_W &&
+			MousePos.y >= m_GiphyButtonRect.m_Y && MousePos.y <= m_GiphyButtonRect.m_Y + m_GiphyButtonRect.m_H;
+
+		if(Event.m_Flags & IInput::FLAG_PRESS)
+		{
+			m_GiphyButtonPressed = InsideGiphyButton;
+			if(InsideGiphyButton)
+			{
+				m_MouseIsPress = false;
+				m_HasSelection = false;
+				return true;
+			}
+		}
+		else if(Event.m_Flags & IInput::FLAG_RELEASE)
+		{
+			const bool ActivateButton = m_GiphyButtonPressed && InsideGiphyButton;
+			m_GiphyButtonPressed = false;
+			if(ActivateButton)
+			{
+				CUIRect ButtonRect = {m_GiphyButtonRect.m_X, m_GiphyButtonRect.m_Y, m_GiphyButtonRect.m_W, m_GiphyButtonRect.m_H};
+				if(Ui()->IsPopupOpen(&m_GiphyPopupId))
+				{
+					Ui()->ClosePopupMenu(&m_GiphyPopupId);
+					m_GiphySearchInput.Deactivate();
+					Ui()->SetActiveItem(nullptr);
+				}
+				else
+					OpenGiphyPopup(ButtonRect);
+				return true;
+			}
+		}
+	}
 
 	if(ChatInputActive && Event.m_Key == KEY_MOUSE_1 && m_TranslateButtonRectValid)
 	{
@@ -3649,6 +4487,14 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	}
 	else if(Event.m_Flags & IInput::FLAG_PRESS && (Event.m_Key == KEY_RETURN || Event.m_Key == KEY_KP_ENTER))
 	{
+		// uclient: chat paste image
+		if(m_UcChatPaste.TrySendOnEnter(this, m_Input.GetString()))
+		{
+			m_HasSelection = false;
+			m_WantsSelectionCopy = false;
+			return true;
+		}
+
 		if(m_ServerCommandsNeedSorting)
 		{
 			std::sort(m_vServerCommands.begin(), m_vServerCommands.end());
@@ -3673,6 +4519,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	if(Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_TAB)
 	{
 		const bool ShiftPressed = Input()->ShiftIsPressed();
+		const bool CtrlPressed = Input()->KeyIsPressed(KEY_LCTRL) || Input()->KeyIsPressed(KEY_RCTRL);
 
 		// fill the completion buffer
 		if(!m_CompletionUsed)
@@ -3690,21 +4537,37 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 
 		if(!m_CompletionUsed && m_aCompletionBuffer[0] != '/' && m_aCompletionBuffer[0] != '!')
 		{
-			// Create the completion list of player names through which the player can iterate
-			const char *PlayerName, *FoundInput;
 			m_PlayerCompletionListLength = 0;
-			for(auto &PlayerInfo : GameClient()->m_Snap.m_apInfoByName)
+			if(CtrlPressed)
 			{
-				if(PlayerInfo)
+				// uclient: Ctrl+Tab cycles nearby player names (see chat_nearby_tab.cpp).
+				CUClientChatNearbyTab::SEntry aNearby[MAX_CLIENTS];
+				int NearbyLength = 0;
+				CUClientChatNearbyTab::BuildCompletionList(GameClient(), aNearby, NearbyLength, MAX_CLIENTS);
+				for(int i = 0; i < NearbyLength; ++i)
 				{
-					PlayerName = GameClient()->m_aClients[PlayerInfo->m_ClientId].m_aName;
-					FoundInput = str_utf8_find_nocase(PlayerName, m_aCompletionBuffer);
-					if(FoundInput != nullptr)
+					m_aPlayerCompletionList[i].m_ClientId = aNearby[i].m_ClientId;
+					m_aPlayerCompletionList[i].m_Score = aNearby[i].m_Score;
+				}
+				m_PlayerCompletionListLength = NearbyLength;
+			}
+			else
+			{
+				// Create the completion list of player names through which the player can iterate
+				const char *PlayerName, *FoundInput;
+				for(auto &PlayerInfo : GameClient()->m_Snap.m_apInfoByName)
+				{
+					if(PlayerInfo)
 					{
-						m_aPlayerCompletionList[m_PlayerCompletionListLength].m_ClientId = PlayerInfo->m_ClientId;
-						// The score for suggesting a player name is determined by the distance of the search input to the beginning of the player name
-						m_aPlayerCompletionList[m_PlayerCompletionListLength].m_Score = (int)(FoundInput - PlayerName);
-						m_PlayerCompletionListLength++;
+						PlayerName = GameClient()->m_aClients[PlayerInfo->m_ClientId].m_aName;
+						FoundInput = str_utf8_find_nocase(PlayerName, m_aCompletionBuffer);
+						if(FoundInput != nullptr)
+						{
+							m_aPlayerCompletionList[m_PlayerCompletionListLength].m_ClientId = PlayerInfo->m_ClientId;
+							// The score for suggesting a player name is determined by the distance of the search input to the beginning of the player name
+							m_aPlayerCompletionList[m_PlayerCompletionListLength].m_Score = (int)(FoundInput - PlayerName);
+							m_PlayerCompletionListLength++;
+						}
 					}
 				}
 			}
@@ -4137,6 +5000,7 @@ void CChat::DisableMode()
 	{
 		CloseMediaViewer();
 		Ui()->ClosePopupMenus();
+		m_UcChatPaste.Reset(this);
 		m_Mode = MODE_NONE;
 		m_BacklogCurLine = 0;
 		m_ScrollbarDragging = false;
@@ -4152,6 +5016,8 @@ void CChat::DisableMode()
 		const vec2 WindowSize(maximum(1.0f, (float)Graphics()->WindowWidth()), maximum(1.0f, (float)Graphics()->WindowHeight()));
 		m_LastMousePos = Ui()->UpdatedMousePos() * vec2(Ui()->Screen()->w, Ui()->Screen()->h) / WindowSize;
 		m_Input.Deactivate();
+		m_GiphySearchInput.Deactivate();
+		m_GiphyButtonPressed = false;
 
 		}
 	}
@@ -4655,6 +5521,10 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 
 		TextRender()->DeleteTextContainer(Line.m_TextContainerIndex);
 		Graphics()->DeleteQuadContainer(Line.m_QuadContainerIndex);
+		Line.m_vLinkBounds.clear();
+		Line.m_vLinks.clear();
+		Line.m_vLinkFontSizes.clear();
+		Line.m_vLinkAlwaysConfirm.clear();
 
 		char aClientId[16] = "";
 		if(g_Config.m_ClShowIds && Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
@@ -5016,7 +5886,9 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			Line.m_TranslateRectValid = false;
 			Line.m_TranslateLanguageRectValid = false;
 			ColoredParts.AddSplitsToCursor(LineCursor);
-			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &LineCursor, pText);
+			AppendTextWithUrlColors(TextRender(), Line.m_TextContainerIndex, LineCursor, pText,
+				m_LinkPolicyCache.m_vSafeDomains,
+				&Line.m_vLinkBounds, &Line.m_vLinks, &Line.m_vLinkFontSizes, &Line.m_vLinkAlwaysConfirm);
 			LineCursor.m_vColorSplits.clear();
 		}
 
@@ -5068,6 +5940,14 @@ void CChat::OnRender()
 	}
 
 	UpdateMediaDownloads();
+	UpdateGiphySearch();
+	UpdateGiphyPreviewCache();
+	m_UcChatPaste.OnUpdate(this);
+	// uclient: chat paste image
+	if(m_UcChatPaste.OnRenderEditor(this))
+		return;
+	UpdateLinkPolicy();
+	UpdateLinkPreflight();
 	if(m_MediaViewerOpen && (!g_Config.m_BcChatMediaPreview || !g_Config.m_BcChatMediaViewer))
 		CloseMediaViewer();
 
@@ -5087,6 +5967,9 @@ void CChat::OnRender()
 	const vec2 MousePos = UiMousePos * UiToChatScale;
 	const bool MouseDown = Input()->KeyIsPressed(KEY_MOUSE_1);
 	int HoveredTranslateLineIndex = -1;
+	m_HoveredPlayerName.clear();
+	m_HoveredLink.clear();
+	m_HoveredLinkAlwaysConfirm = false;
 	for(int LineIndex = 0; LineIndex < MAX_LINES; ++LineIndex)
 	{
 		const CLine &Line = m_aLines[LineIndex];
@@ -5111,10 +5994,12 @@ void CChat::OnRender()
 		Line.m_MediaRetryRectValid = false;
 	}
 	m_TranslateButtonRectValid = false;
+	m_GiphyButtonRectValid = false;
 	// BestClient
 	float y = Layout.m_Y;
 	// float y = 300.0f - 20.0f * FontSize() / 6.0f;
 	float ScaledFontSize = FontSize() * (8.0f / 6.0f);
+	float PendingPreviewReserve = 0.0f;
 	const bool BcChatOpenAnimEnabled = BcChatMessageAnimEnabled && g_Config.m_BcChatOpenAnimation != 0 && g_Config.m_BcChatOpenAnimationMs > 0;
 	const bool BcChatTypingAnimEnabled = BcChatMessageAnimEnabled && g_Config.m_BcChatTypingAnimation != 0 && g_Config.m_BcChatTypingAnimationMs > 0;
 	float ChatOpenOffsetX = 0.0f;
@@ -5163,6 +6048,15 @@ void CChat::OnRender()
 
 		if(m_Mode != MODE_NONE)
 		{
+			// uclient: chat paste image preview above input
+			const float InputAreaWidth = maximum(190.0f * LayoutScale, ChatWidth());
+			const float PreviewH = m_UcChatPaste.PreviewHeight(this, InputAreaWidth, ScaledFontSize);
+			if(PreviewH > 0.0f)
+			{
+				PendingPreviewReserve = PreviewH + maximum(6.0f, FontSize() * 0.45f);
+				m_UcChatPaste.RenderPreview(this, x + ChatOpenOffsetX, y - PendingPreviewReserve, InputAreaWidth, Height, ScaledFontSize);
+			}
+
 			// render chat input
 			CTextCursor InputCursor;
 			InputCursor.SetPosition(vec2(x + ChatOpenOffsetX, y));
@@ -5294,9 +6188,11 @@ void CChat::OnRender()
 
 		Graphics()->ClipDisable();
 
-		CUIRect TranslateButtonRect = {ClippingRect.x + ClippingRect.w + TranslateButtonGap, ClippingRect.y, TranslateButtonSize, maximum(InputCursor.m_FontSize + 4.0f, 16.0f)};
+		CUIRect GiphyButtonRect = {ClippingRect.x + ClippingRect.w + TranslateButtonGap, ClippingRect.y, TranslateButtonSize, maximum(InputCursor.m_FontSize + 4.0f, 16.0f)};
+		RenderGiphyButton(GiphyButtonRect);
+		CUIRect TranslateButtonRect = {GiphyButtonRect.x + GiphyButtonRect.w + TranslateButtonGap, ClippingRect.y, TranslateButtonSize, maximum(InputCursor.m_FontSize + 4.0f, 16.0f)};
 		RenderTranslateSettingsButton(TranslateButtonRect);
-		if(Ui()->HotItem() == &m_TranslateSettingsButton || m_TranslateButtonPressed)
+		if(Ui()->HotItem() == &m_TranslateSettingsButton || Ui()->HotItem() == &m_GiphyButton || m_TranslateButtonPressed || m_GiphyButtonPressed)
 		{
 			m_MouseIsPress = false;
 			m_HasSelection = false;
@@ -5380,6 +6276,7 @@ void CChat::OnRender()
 	if(g_Config.m_ClFocusMode && g_Config.m_ClFocusModeHideChat)
 		return;
 
+	y -= PendingPreviewReserve;
 	y -= ScaledFontSize;
 	bool IsScoreBoardOpen = GameClient()->m_Scoreboard.IsActive() && (Graphics()->ScreenAspect() > 1.7f); // only assume scoreboard when screen ratio is widescreen(something around 16:9)
 	const bool ShowLargeArea = m_Show || (m_Mode != MODE_NONE && g_Config.m_ClShowChat == 1) || g_Config.m_ClShowChat == 2;
@@ -5610,8 +6507,53 @@ void CChat::OnRender()
 				Line.m_NameRect.m_W = maximum(1.0f, TextRender()->TextWidth(FontSize(), Line.m_aName));
 				Line.m_NameRect.m_H = FontSize();
 				Line.m_NameRectValid = true;
+
+				if((m_Mode != MODE_NONE || m_Show) && Line.m_aName[0] != '\0')
+				{
+					const SRenderRect &Nr = Line.m_NameRect;
+					const bool HoveredName =
+						MousePos.x >= Nr.m_X && MousePos.x <= Nr.m_X + Nr.m_W &&
+						MousePos.y >= Nr.m_Y && MousePos.y <= Nr.m_Y + Nr.m_H;
+					if(HoveredName)
+					{
+						m_HoveredPlayerName = Line.m_aName;
+						const float UnderlineY = Nr.m_Y + Nr.m_H + 0.35f;
+						Graphics()->TextureClear();
+						Graphics()->SetColor(ColorRGBA(0.5f, 0.75f, 1.0f, Blend));
+						Graphics()->LinesBegin();
+						const IGraphics::CLineItem Underline(Nr.m_X, UnderlineY, Nr.m_X + Nr.m_W, UnderlineY);
+						Graphics()->LinesDraw(&Underline, 1);
+						Graphics()->LinesEnd();
+					}
+				}
 			}
 			TextRender()->RenderTextContainer(Line.m_TextContainerIndex, TextColor, TextOutlineColor, ChatOpenOffsetX + BcLineXOffset, TextOffsetY);
+
+			if((m_Mode != MODE_NONE || m_Show) && !Line.m_vLinks.empty())
+			{
+				const float OffX = ChatOpenOffsetX + BcLineXOffset;
+				const float OffY = TextOffsetY;
+				for(size_t Li = 0; Li < Line.m_vLinkBounds.size(); ++Li)
+				{
+					const STextBoundingBox Bounds = TightenLinkHoverBounds(
+						{Line.m_vLinkBounds[Li].m_X + OffX, Line.m_vLinkBounds[Li].m_Y + OffY,
+						Line.m_vLinkBounds[Li].m_W, Line.m_vLinkBounds[Li].m_H},
+						Li < Line.m_vLinkFontSizes.size() ? Line.m_vLinkFontSizes[Li] : FontSize());
+					if(MousePos.x >= Bounds.m_X && MousePos.x <= Bounds.m_X + Bounds.m_W &&
+						MousePos.y >= Bounds.m_Y && MousePos.y <= Bounds.m_Y + Bounds.m_H)
+					{
+						m_HoveredLink = Line.m_vLinks[Li];
+						m_HoveredLinkAlwaysConfirm = Li < Line.m_vLinkAlwaysConfirm.size() && Line.m_vLinkAlwaysConfirm[Li];
+						const float UnderlineY = Bounds.m_Y + Bounds.m_H + 0.35f;
+						Graphics()->TextureClear();
+						Graphics()->SetColor(ChatLinkColor().WithMultipliedAlpha(Blend));
+						Graphics()->LinesBegin();
+						const IGraphics::CLineItem Underline(Bounds.m_X, UnderlineY, Bounds.m_X + Bounds.m_W, UnderlineY);
+						Graphics()->LinesDraw(&Underline, 1);
+						Graphics()->LinesEnd();
+					}
+				}
+			}
 
 			if(Line.m_TranslateRectValid || Line.m_TranslateLanguageRectValid)
 			{
@@ -6064,3 +7006,543 @@ bool CChat::LineHighlighted(int ClientId, const char *pLine)
 
 	return Highlighted;
 }
+
+
+// ============================================================
+// Giphy GIF search
+// ============================================================
+
+static ColorRGBA GiphySkeletonColor(size_t Seed)
+{
+	static const ColorRGBA s_aPalette[] = {
+		ColorRGBA(0.43f, 0.51f, 0.84f, 0.88f),
+		ColorRGBA(0.55f, 0.60f, 0.90f, 0.88f),
+		ColorRGBA(0.49f, 0.72f, 0.78f, 0.88f),
+		ColorRGBA(0.62f, 0.69f, 0.83f, 0.88f),
+		ColorRGBA(0.58f, 0.54f, 0.86f, 0.88f),
+		ColorRGBA(0.50f, 0.64f, 0.88f, 0.88f),
+	};
+	return s_aPalette[Seed % std::size(s_aPalette)];
+}
+
+void CChat::OpenGiphyPopup(const CUIRect &ButtonRect)
+{
+	if(Input()->HasComposition() || Input()->GetCandidateCount())
+	{
+		Input()->StopTextInput();
+		Input()->StartTextInput();
+	}
+	m_Input.Deactivate();
+
+	const float PopupWidth = 400.0f;
+	const float PopupHeight = 360.0f;
+	const float ScreenW = Ui()->Screen()->w;
+	const float ScreenH = Ui()->Screen()->h;
+	const float Margin = 10.0f;
+
+	float PopupX = maximum(Margin, ButtonRect.x + ButtonRect.w - PopupWidth);
+	float PopupY = maximum(Margin, ButtonRect.y - 10.0f);
+	if(!m_GiphyPopupHasStoredPos && g_Config.m_BcGiphyPopupX >= 0 && g_Config.m_BcGiphyPopupY >= 0)
+	{
+		m_GiphyPopupPos = vec2((float)g_Config.m_BcGiphyPopupX, (float)g_Config.m_BcGiphyPopupY);
+		m_GiphyPopupHasStoredPos = true;
+	}
+	if(m_GiphyPopupHasStoredPos)
+	{
+		PopupX = m_GiphyPopupPos.x;
+		PopupY = m_GiphyPopupPos.y;
+	}
+
+	PopupX = std::clamp(PopupX, Margin, maximum(Margin, ScreenW - PopupWidth - Margin));
+	PopupY = std::clamp(PopupY, Margin, maximum(Margin, ScreenH - PopupHeight - Margin));
+	m_GiphyPopupPos = vec2(PopupX, PopupY);
+	m_GiphyPopupHasStoredPos = true;
+	g_Config.m_BcGiphyPopupX = round_to_int(PopupX);
+	g_Config.m_BcGiphyPopupY = round_to_int(PopupY);
+	m_GiphySearchInput.Activate(EInputPriority::CHAT);
+	Ui()->SetActiveItem(&m_GiphySearchInput);
+
+	Ui()->DoPopupMenu(&m_GiphyPopupId, PopupX, PopupY, PopupWidth, 360.0f, this, PopupGiphyBrowser, {}, CUi::EButtonSoundType::DEFAULT);
+}
+
+void CChat::RenderGiphyButton(const CUIRect &ButtonRect)
+{
+	m_GiphyButtonRect = {ButtonRect.x, ButtonRect.y, ButtonRect.w, ButtonRect.h};
+	m_GiphyButtonRectValid = true;
+
+	const vec2 MousePos = ChatMousePos();
+	const bool Hovered = MousePos.x >= ButtonRect.x && MousePos.x <= ButtonRect.x + ButtonRect.w &&
+		MousePos.y >= ButtonRect.y && MousePos.y <= ButtonRect.y + ButtonRect.h;
+	const bool IsOpen = Ui()->IsPopupOpen(&m_GiphyPopupId);
+	const ColorRGBA ButtonColor = IsOpen ? ColorRGBA(0.61f, 0.24f, 0.31f, 0.92f) :
+		(Hovered ? ColorRGBA(0.28f, 0.28f, 0.28f, 0.90f) : ColorRGBA(0.16f, 0.16f, 0.16f, 0.82f));
+	const float ButtonRounding = maximum(3.0f, ButtonRect.h * 0.28f);
+
+	ButtonRect.Draw(ButtonColor, IGraphics::CORNER_ALL, ButtonRounding);
+	Ui()->DoLabel(&ButtonRect, "GIF", ButtonRect.h * 0.54f, TEXTALIGN_MC);
+
+	if(Hovered)
+		Ui()->SetHotItem(&m_GiphyButton);
+	GameClient()->m_Tooltips.DoToolTip(&m_GiphyButton, &ButtonRect, Localize("Search Giphy GIFs"));
+}
+
+CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect View, bool Active)
+{
+	CChat *pChat = static_cast<CChat *>(pContext);
+	const float Spacing = 5.0f;
+	const float RowHeight = 22.0f;
+	const float CellSpacing = 6.0f;
+	const int Columns = 2;
+
+	if(Active)
+	{
+		const float PopupWidth = 400.0f;
+		const float PopupHeight = 360.0f;
+		const float Margin = 10.0f;
+		const float PopupPadding = 5.0f; // popup border + margin in CUi
+		const vec2 MousePos(pChat->Ui()->MouseX(), pChat->Ui()->MouseY());
+		const vec2 PopupTopLeft(View.x - PopupPadding, View.y - PopupPadding);
+		CUIRect DragRect = View;
+		DragRect.HSplitTop(16.0f, &DragRect, nullptr);
+
+		const bool HeaderHovered = MousePos.x >= DragRect.x && MousePos.x <= DragRect.x + DragRect.w &&
+			MousePos.y >= DragRect.y && MousePos.y <= DragRect.y + DragRect.h;
+
+		if(!pChat->m_GiphyPopupDragging && pChat->Ui()->MouseButtonClicked(0) && HeaderHovered)
+		{
+			pChat->m_GiphyPopupDragging = true;
+			pChat->m_GiphyPopupDragOffset = MousePos - PopupTopLeft;
+		}
+
+		if(pChat->m_GiphyPopupDragging)
+		{
+			if(!pChat->Ui()->MouseButton(0))
+			{
+				pChat->m_GiphyPopupDragging = false;
+			}
+			else
+			{
+				const float ScreenW = pChat->Ui()->Screen()->w;
+				const float ScreenH = pChat->Ui()->Screen()->h;
+				const float NewX = std::clamp(MousePos.x - pChat->m_GiphyPopupDragOffset.x, Margin, maximum(Margin, ScreenW - PopupWidth - Margin));
+				const float NewY = std::clamp(MousePos.y - pChat->m_GiphyPopupDragOffset.y, Margin, maximum(Margin, ScreenH - PopupHeight - Margin));
+				const vec2 NewPos(NewX, NewY);
+				if(distance(NewPos, pChat->m_GiphyPopupPos) > 0.01f)
+				{
+					pChat->m_GiphyPopupPos = NewPos;
+					pChat->m_GiphyPopupHasStoredPos = true;
+					g_Config.m_BcGiphyPopupX = round_to_int(NewPos.x);
+					g_Config.m_BcGiphyPopupY = round_to_int(NewPos.y);
+					// Reopen popup at new position
+					pChat->Ui()->ClosePopupMenu(&pChat->m_GiphyPopupId);
+					pChat->Ui()->DoPopupMenu(&pChat->m_GiphyPopupId, NewPos.x, NewPos.y, 400.0f, 360.0f, pChat, PopupGiphyBrowser, {}, CUi::EButtonSoundType::DEFAULT);
+				}
+			}
+		}
+	}
+
+	CUIRect Row;
+	View.HSplitTop(16.0f, &Row, &View);
+	pChat->Ui()->DoLabel(&Row, Localize("Giphy"), 12.0f, TEXTALIGN_ML);
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(RowHeight, &Row, &View);
+	CUIRect SearchEdit, SearchButton;
+	Row.VSplitRight(86.0f, &SearchEdit, &SearchButton);
+	SearchEdit.VSplitRight(Spacing, &SearchEdit, nullptr);
+	pChat->m_GiphySearchInput.SetEmptyText(Localize("Search GIFs"));
+	pChat->Ui()->DoClearableEditBox(&pChat->m_GiphySearchInput, &SearchEdit, 12.0f);
+	const bool SearchPressed = pChat->GameClient()->m_Menus.DoButton_Menu(&pChat->m_GiphySearchButton, Localize("Search"), 0, &SearchButton) ||
+		(Active && pChat->Ui()->ConsumeHotkey(CUi::HOTKEY_ENTER));
+	if(SearchPressed)
+	{
+		pChat->m_GiphyBrowser.SetQuery(pChat->m_GiphySearchInput.GetString());
+		pChat->BeginGiphySearch(false);
+	}
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(16.0f, &Row, &View);
+	if(pChat->m_GiphySearching)
+		pChat->Ui()->DoLabel(&Row, pChat->m_GiphyLoadingMore ? "Loading more..." : Localize("Searching..."), 10.0f, TEXTALIGN_ML);
+	else if(!pChat->m_GiphyStatusText.empty())
+		pChat->Ui()->DoLabel(&Row, pChat->m_GiphyStatusText.c_str(), 10.0f, TEXTALIGN_ML);
+	else
+	{
+		char aStatus[128];
+		str_format(aStatus, sizeof(aStatus), "%d %s", pChat->m_GiphyBrowser.GetTotalCount(), Localize("results"));
+		pChat->Ui()->DoLabel(&Row, aStatus, 10.0f, TEXTALIGN_ML);
+	}
+
+	if(g_Config.m_UcChatGiphyApiKey[0] == '\0')
+	{
+		const char *pGuideText = "Go to developers.giphy.com/dashboard/, sign in, get an API key, and put it into uc_chat_giphy_api_key.";
+		const char *pDashboardUrl = "https://developers.giphy.com/dashboard/";
+
+		CUIRect CenterBlock;
+		const float BlockHeight = 72.0f;
+		View.HSplitTop(maximum(0.0f, (View.h - BlockHeight) / 2.0f), nullptr, &View);
+		View.HSplitTop(BlockHeight, &CenterBlock, nullptr);
+
+		CUIRect GuideLabel, LinkLabel;
+		CenterBlock.HSplitTop(42.0f, &GuideLabel, &CenterBlock);
+		CenterBlock.HSplitTop(6.0f, nullptr, &CenterBlock);
+		CenterBlock.HSplitTop(18.0f, &LinkLabel, nullptr);
+
+		pChat->Ui()->DoLabel(&GuideLabel, pGuideText, 11.0f, TEXTALIGN_MC, {.m_MaxWidth = GuideLabel.w});
+
+		static CButtonContainer s_GiphyDashboardLinkButton;
+		const bool LinkHovered = pChat->Ui()->HotItem() == &s_GiphyDashboardLinkButton;
+		if(pChat->Ui()->DoButtonLogic(&s_GiphyDashboardLinkButton, 0, &LinkLabel, BUTTONFLAG_LEFT, CUi::EButtonSoundType::BUTTON))
+			pChat->Client()->ViewLink(pDashboardUrl);
+
+		pChat->TextRender()->TextColor(LinkHovered ? 0.60f : 0.45f, LinkHovered ? 0.80f : 0.70f, 1.0f, 1.0f);
+		pChat->Ui()->DoLabel(&LinkLabel, pDashboardUrl, 11.0f, TEXTALIGN_MC);
+		pChat->TextRender()->TextColor(pChat->TextRender()->DefaultTextColor());
+
+		return CUi::POPUP_KEEP_OPEN;
+	}
+
+	View.HSplitTop(Spacing, nullptr, &View);
+
+	const auto &vResults = pChat->m_GiphyBrowser.GetResults();
+	const int PlaceholderCount = pChat->m_GiphySearching ? 6 : 0;
+	const size_t TotalSlots = vResults.size() + (size_t)PlaceholderCount;
+	pChat->m_GiphyVisibleResultIds.clear();
+	if(pChat->m_vGiphyResultButtons.size() < TotalSlots)
+		pChat->m_vGiphyResultButtons.resize(TotalSlots);
+
+	CScrollRegionParams ScrollParams;
+	ScrollParams.m_ScrollbarWidth = 8.0f;
+	ScrollParams.m_ScrollbarMargin = 0.0f;
+	ScrollParams.m_ScrollbarNoMarginRight = true;
+	ScrollParams.m_SliderMinHeight = 18.0f;
+	ScrollParams.m_ScrollUnit = 18.0f;
+	ScrollParams.m_ClipBgColor = ColorRGBA(0.0f, 0.0f, 0.0f, 0.0f);
+	ScrollParams.m_ScrollbarBgColor = ColorRGBA(0.0f, 0.0f, 0.0f, 0.0f);
+	ScrollParams.m_RailBgColor = ColorRGBA(1.0f, 1.0f, 1.0f, 0.08f);
+	pChat->m_GiphyScrollRegion.Begin(&View, &pChat->m_GiphyScrollOffset, &ScrollParams);
+
+	CUIRect Content = View;
+	Content.y += pChat->m_GiphyScrollOffset.y;
+
+	const float CellWidth = (View.w - CellSpacing * (Columns - 1)) / Columns;
+	float aColumnHeights[Columns] = {0.0f, 0.0f};
+
+	for(size_t Index = 0; Index < TotalSlots; ++Index)
+	{
+		const bool IsPlaceholder = Index >= vResults.size();
+		const SGifResult *pResult = IsPlaceholder ? nullptr : &vResults[Index];
+
+		const int Column = aColumnHeights[0] <= aColumnHeights[1] ? 0 : 1;
+		float CardHeight = CellWidth * 0.85f;
+		if(pResult && pResult->m_Width > 0 && pResult->m_Height > 0)
+		{
+			const float Aspect = std::clamp((float)pResult->m_Height / (float)pResult->m_Width, 0.55f, 1.65f);
+			CardHeight = CellWidth * Aspect;
+		}
+		CardHeight = std::clamp(CardHeight, 72.0f, 210.0f);
+
+		CUIRect Card = {Content.x + Column * (CellWidth + CellSpacing), Content.y + aColumnHeights[Column], CellWidth, CardHeight};
+		aColumnHeights[Column] += CardHeight + CellSpacing;
+
+		const bool Visible = pChat->m_GiphyScrollRegion.AddRect(Card);
+		if(!Visible)
+			continue;
+
+		CUIRect Inner;
+		Card.Margin(2.0f, &Inner);
+
+		if(IsPlaceholder)
+		{
+			Inner.Draw(GiphySkeletonColor(Index), IGraphics::CORNER_ALL, 4.0f);
+			continue;
+		}
+
+		const bool Clicked = pChat->GameClient()->m_Menus.DoButton_Menu(&pChat->m_vGiphyResultButtons[Index], "", 0, &Card);
+		pChat->m_GiphyVisibleResultIds.insert(pResult->m_Id);
+
+		IGraphics::CTextureHandle Texture;
+		int Width = 0;
+		int Height = 0;
+		if(pChat->GetGiphyPreviewTexture(*pResult, Texture, Width, Height))
+		{
+			DrawRoundedMediaPreview(pChat->Graphics(), Texture, Inner.x, Inner.y, Inner.w, Inner.h, 4.0f, 1.0f);
+		}
+		else
+		{
+			auto It = pChat->m_GiphyPreviewCache.find(pResult->m_Id);
+			if(It != pChat->m_GiphyPreviewCache.end() && It->second.m_State == EMediaState::FAILED)
+			{
+				Inner.Draw(ColorRGBA(0.10f, 0.10f, 0.10f, 0.70f), IGraphics::CORNER_ALL, 4.0f);
+				pChat->Ui()->DoLabel(&Inner, Localize("Failed"), 10.0f, TEXTALIGN_MC);
+			}
+			else
+			{
+				size_t Seed = Index;
+				for(char C : pResult->m_Id)
+					Seed = Seed * 131u + (unsigned char)C;
+				Inner.Draw(GiphySkeletonColor(Seed), IGraphics::CORNER_ALL, 4.0f);
+			}
+		}
+
+		if(Clicked)
+		{
+			char aLine[MAX_LINE_LENGTH];
+			const char *pInputText = pChat->m_Input.GetString();
+			if(pInputText[0] != '\0')
+				str_format(aLine, sizeof(aLine), "%s %s", pInputText, pResult->m_Url.c_str());
+			else
+				str_copy(aLine, pResult->m_Url.c_str(), sizeof(aLine));
+
+			const int Team = pChat->m_Mode == MODE_TEAM ? 1 : 0;
+			pChat->AddHistoryEntry(Team, aLine);
+			if(!pChat->GameClient()->m_Translate.TryTranslateOutgoingChat(Team, aLine))
+				pChat->SendChatPayloadQueued(Team, aLine);
+			pChat->DisableMode();
+			pChat->GameClient()->OnRelease();
+			pChat->m_SavedInputPending = false;
+			pChat->m_aSavedInputText[0] = '\0';
+			pChat->m_pHistoryEntry = nullptr;
+			pChat->m_Input.Clear();
+			pChat->m_HasSelection = false;
+			pChat->m_WantsSelectionCopy = false;
+			
+			// Properly close scroll region before closing popup
+			pChat->m_GiphyScrollRegion.End();
+			return CUi::POPUP_CLOSE_CURRENT;
+		}
+	}
+
+	pChat->m_GiphyScrollRegion.End();
+
+	const float ContentHeight = maximum(aColumnHeights[0], aColumnHeights[1]);
+	const float ContentBottom = Content.y + ContentHeight;
+	const float NearBottomThreshold = 140.0f;
+	if(!pChat->m_GiphySearching && pChat->m_GiphyHasMoreResults && !vResults.empty() && ContentBottom < View.y + View.h + NearBottomThreshold)
+		pChat->BeginGiphySearch(true);
+
+	if(!pChat->m_GiphySearching && pChat->m_GiphyStatusText == "No search results")
+		pChat->Ui()->DoLabel(&View, "No search results", 12.0f, TEXTALIGN_MC);
+
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+void CChat::BeginGiphySearch(bool LoadMore)
+{
+	if(m_pGiphyRequest)
+	{
+		m_pGiphyRequest->Abort();
+		m_pGiphyRequest.reset();
+	}
+
+	if(!LoadMore)
+	{
+		m_GiphyNextPageToLoad = 0;
+		m_GiphyRequestedPage = 0;
+		m_GiphyHasMoreResults = false;
+		m_GiphyScrollOffset = vec2(0.0f, 0.0f);
+		m_GiphyScrollRegion.Reset();
+		m_GiphyVisibleResultIds.clear();
+	}
+
+	if(m_GiphySearchInput.GetString()[0] == '\0')
+	{
+		m_GiphyBrowser.ClearResults();
+		m_GiphyStatusText = Localize("Search for a GIF");
+		ClearGiphyPreviewCache();
+		m_GiphySearching = false;
+		return;
+	}
+
+	if(g_Config.m_UcChatGiphyApiKey[0] == '\0')
+	{
+		m_GiphyBrowser.ClearResults();
+		m_GiphyStatusText = "Set uc_chat_giphy_api_key in console";
+		ClearGiphyPreviewCache();
+		m_GiphySearching = false;
+		return;
+	}
+
+	const int PageToLoad = LoadMore ? m_GiphyNextPageToLoad : 0;
+	m_GiphyRequestedPage = maximum(0, PageToLoad);
+	m_GiphyLoadingMore = LoadMore;
+	m_GiphySearching = true;
+	m_GiphyStatusText = m_GiphyLoadingMore ? "Loading more..." : Localize("Searching...");
+	const std::string Url = m_GiphyBrowser.BuildSearchUrl(m_GiphyRequestedPage * CGiphyBrowser::RESULTS_PER_PAGE);
+	std::shared_ptr<CHttpRequest> pGet = HttpGet(Url.c_str());
+	pGet->Timeout(CTimeout{4000, 0, 4096, 5});
+	pGet->MaxResponseSize(2 * 1024 * 1024);
+	pGet->FailOnErrorStatus(false);
+	pGet->LogProgress(HTTPLOG::FAILURE);
+	m_pGiphyRequest = pGet;
+	Http()->Run(pGet);
+}
+
+void CChat::UpdateGiphySearch()
+{
+	if(!m_pGiphyRequest || !m_pGiphyRequest->Done())
+		return;
+
+	std::shared_ptr<CHttpRequest> pRequest = m_pGiphyRequest;
+	m_pGiphyRequest.reset();
+	m_GiphySearching = false;
+
+	if(pRequest->State() == EHttpState::DONE && pRequest->StatusCode() >= 200 && pRequest->StatusCode() < 400 && pRequest->ResultJson() != nullptr)
+	{
+		m_GiphyBrowser.ParseGiphyResponse(pRequest->ResultJson(), m_GiphyLoadingMore);
+		if(!m_GiphyLoadingMore)
+			ClearGiphyPreviewCache();
+
+		const int LoadedCount = (int)m_GiphyBrowser.GetResults().size();
+		const int TotalCount = m_GiphyBrowser.GetTotalCount();
+		m_GiphyHasMoreResults = LoadedCount < TotalCount;
+		m_GiphyNextPageToLoad = m_GiphyRequestedPage + 1;
+		m_GiphyStatusText = m_GiphyBrowser.GetResults().empty() ? "No search results" : std::string();
+	}
+	else
+	{
+		char aBuf[128];
+		str_format(aBuf, sizeof(aBuf), "%s (%d)", Localize("Giphy request failed"), pRequest->StatusCode());
+		m_GiphyStatusText = aBuf;
+		m_GiphyHasMoreResults = false;
+		m_GiphyBrowser.ClearResults();
+		ClearGiphyPreviewCache();
+	}
+
+	m_GiphyLoadingMore = false;
+}
+
+void CChat::ClearGiphyPreviewCache()
+{
+	for(auto &[Key, Entry] : m_GiphyPreviewCache)
+	{
+		if(Entry.m_pRequest)
+			Entry.m_pRequest->Abort();
+		if(Entry.m_pDecodeJob)
+			Entry.m_pDecodeJob->Abort();
+		MediaDecoder::UnloadFrames(Graphics(), Entry.m_vFrames);
+	}
+	m_GiphyPreviewCache.clear();
+}
+
+void CChat::UpdateGiphyPreviewCache()
+{
+	if(!Ui()->IsPopupOpen(&m_GiphyPopupId))
+		return;
+
+	const auto &vResults = m_GiphyBrowser.GetResults();
+	const auto &vVisibleIds = m_GiphyVisibleResultIds;
+	for(auto It = m_GiphyPreviewCache.begin(); It != m_GiphyPreviewCache.end();)
+	{
+		const bool StillVisible = vVisibleIds.find(It->first) != vVisibleIds.end();
+		if(StillVisible)
+		{
+			++It;
+			continue;
+		}
+
+		if(It->second.m_pRequest)
+			It->second.m_pRequest->Abort();
+		if(It->second.m_pDecodeJob)
+			It->second.m_pDecodeJob->Abort();
+		MediaDecoder::UnloadFrames(Graphics(), It->second.m_vFrames);
+		It = m_GiphyPreviewCache.erase(It);
+	}
+
+	int ActiveDownloads = 0;
+	for(const auto &Result : vResults)
+	{
+		if(vVisibleIds.find(Result.m_Id) == vVisibleIds.end())
+			continue;
+
+		auto &Entry = m_GiphyPreviewCache[Result.m_Id];
+		Entry.m_LastUsedTick = time_get();
+		if(Entry.m_State == EMediaState::LOADING && Entry.m_pRequest && !Entry.m_pRequest->Done())
+			ActiveDownloads++;
+	}
+
+	for(const auto &Result : vResults)
+	{
+		if(vVisibleIds.find(Result.m_Id) == vVisibleIds.end())
+			continue;
+
+		auto &Entry = m_GiphyPreviewCache[Result.m_Id];
+		if(Entry.m_State != EMediaState::NONE || ActiveDownloads >= 2)
+			continue;
+
+		const char *pUrl = !Result.m_PreviewUrl.empty() ? Result.m_PreviewUrl.c_str() : Result.m_Url.c_str();
+		if(pUrl == nullptr || pUrl[0] == '\0')
+		{
+			Entry.m_State = EMediaState::FAILED;
+			continue;
+		}
+
+		std::shared_ptr<CHttpRequest> pGet = HttpGet(pUrl);
+		pGet->Timeout(CTimeout{4000, 0, 4096, 5});
+		pGet->MaxResponseSize(16 * 1024 * 1024);
+		pGet->FailOnErrorStatus(false);
+		pGet->LogProgress(HTTPLOG::FAILURE);
+		Entry.m_pRequest = pGet;
+		Entry.m_State = EMediaState::LOADING;
+		Http()->Run(pGet);
+		ActiveDownloads++;
+	}
+
+	for(const auto &Result : vResults)
+	{
+		if(vVisibleIds.find(Result.m_Id) == vVisibleIds.end())
+			continue;
+
+		auto It = m_GiphyPreviewCache.find(Result.m_Id);
+		if(It == m_GiphyPreviewCache.end())
+			continue;
+		auto &Entry = It->second;
+
+		if(Entry.m_State == EMediaState::LOADING && Entry.m_pRequest && Entry.m_pRequest->Done())
+		{
+			if(Entry.m_pRequest->State() == EHttpState::DONE && Entry.m_pRequest->StatusCode() >= 200 && Entry.m_pRequest->StatusCode() < 400)
+			{
+				unsigned char *pData = nullptr;
+				size_t DataSize = 0;
+				Entry.m_pRequest->Result(&pData, &DataSize);
+				EMediaKind Kind = MediaKindFromUrl(!Result.m_PreviewUrl.empty() ? Result.m_PreviewUrl.c_str() : Result.m_Url.c_str());
+				if(Kind == EMediaKind::UNKNOWN)
+					Kind = EMediaKind::PHOTO;
+				Entry.m_pDecodeJob = std::make_shared<CMediaDecodeJob>(Graphics(), Kind, pData, DataSize, Result.m_Id.c_str());
+				Engine()->AddJob(Entry.m_pDecodeJob);
+				Entry.m_State = EMediaState::DECODING;
+			}
+			else
+				Entry.m_State = EMediaState::FAILED;
+			Entry.m_pRequest.reset();
+		}
+
+		if(Entry.m_State == EMediaState::DECODING && Entry.m_pDecodeJob && Entry.m_pDecodeJob->Done())
+		{
+			if(Entry.m_pDecodeJob->State() == IJob::STATE_DONE && Entry.m_pDecodeJob->Success() && !Entry.m_pDecodeJob->DecodedFrames().Empty())
+			{
+				SMediaDecodedFrames &DecodedFrames = Entry.m_pDecodeJob->DecodedFrames();
+				Entry.m_Animated = DecodedFrames.m_Animated;
+				Entry.m_AnimationStart = DecodedFrames.m_AnimationStart;
+				Entry.m_Width = DecodedFrames.m_Width;
+				Entry.m_Height = DecodedFrames.m_Height;
+				Entry.m_State = MediaDecoder::UploadFrames(Graphics(), DecodedFrames, Entry.m_vFrames, Result.m_Id.c_str()) ? EMediaState::READY : EMediaState::FAILED;
+			}
+			else
+				Entry.m_State = EMediaState::FAILED;
+			Entry.m_pDecodeJob.reset();
+		}
+	}
+}
+
+bool CChat::GetGiphyPreviewTexture(const SGifResult &Result, IGraphics::CTextureHandle &Texture, int &Width, int &Height) const
+{
+	auto It = m_GiphyPreviewCache.find(Result.m_Id);
+	if(It == m_GiphyPreviewCache.end() || It->second.m_State != EMediaState::READY)
+		return false;
+
+	Width = It->second.m_Width;
+	Height = It->second.m_Height;
+	return MediaDecoder::GetCurrentFrameTexture(It->second.m_vFrames, It->second.m_Animated, It->second.m_AnimationStart, Texture);
+}
+

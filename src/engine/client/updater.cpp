@@ -5,6 +5,7 @@
 
 #include <engine/client.h>
 #include <engine/external/json-parser/json.h>
+#include <engine/shared/config.h>
 #include <engine/shared/http.h>
 #include <engine/shared/json.h>
 #include <engine/storage.h>
@@ -18,13 +19,26 @@
 #include <string>
 #include <vector>
 
-static constexpr const char *GITHUB_RELEASES_URL = "https://api.github.com/repos/BestProjectTeam/BestClient/releases?per_page=10";
-static constexpr const char *GITHUB_LATEST_RELEASE_URL = "https://github.com/BestProjectTeam/BestClient/releases/latest";
-static constexpr const char *UPDATE_ARCHIVE_PATH = "update/bestclient-release.zip";
+static constexpr const char *DEFAULT_UPDATE_LATEST_URL = "https://ddnet.under1111.com/api/uclient/update/latest";
+static constexpr const char *UPDATE_ARCHIVE_PATH = "update/uclient-release.zip";
+static constexpr const char *UPDATE_SCRIPT_PATH = "update/apply_uclient_update.ps1";
 
-static void BuildGitHubReleasesUrl(char *pBuf, int BufSize)
+static const char *CurrentPlatformKey()
 {
-	str_format(pBuf, BufSize, "%s&t=%lld", GITHUB_RELEASES_URL, (long long)time_timestamp());
+#if defined(CONF_FAMILY_WINDOWS)
+	return "windows";
+#elif defined(CONF_PLATFORM_MACOS)
+	return "macos";
+#else
+	return "linux";
+#endif
+}
+
+static void BuildUpdateLatestUrl(char *pBuf, int BufSize)
+{
+	const char *pBase = g_Config.m_UcUpdateLatestUrl[0] != '\0' ? g_Config.m_UcUpdateLatestUrl : DEFAULT_UPDATE_LATEST_URL;
+	const char *pSeparator = str_find(pBase, "?") ? "&" : "?";
+	str_format(pBuf, BufSize, "%s%st=%lld", pBase, pSeparator, (long long)time_timestamp());
 }
 
 static std::string ToLowerAscii(const char *pStr)
@@ -36,6 +50,29 @@ static std::string ToLowerAscii(const char *pStr)
 	for(const unsigned char *p = reinterpret_cast<const unsigned char *>(pStr); *p != '\0'; ++p)
 		Lower.push_back(static_cast<char>(std::tolower(*p)));
 	return Lower;
+}
+
+static const char *JsonStringField(const json_value *pJson, const char *pField)
+{
+	if(!pJson || pJson->type != json_object)
+		return nullptr;
+	return json_string_get(json_object_get(pJson, pField));
+}
+
+static void FilenameFromUrl(const char *pUrl, char *pBuf, int BufSize)
+{
+	if(BufSize <= 0)
+		return;
+	if(!pUrl || pUrl[0] == '\0')
+	{
+		pBuf[0] = '\0';
+		return;
+	}
+	const char *pStart = pUrl;
+	for(const char *p = pUrl; *p != '\0'; ++p)
+		if(*p == '/' || *p == '\\')
+			pStart = p + 1;
+	str_copy(pBuf, pStart, BufSize);
 }
 
 static const char *GetReleaseVersionString(const json_value *pJson)
@@ -222,6 +259,49 @@ static bool ParseReleaseObject(const json_value *pJson, char *pVersion, int Vers
 	return true;
 }
 
+static bool ParseLatestPlatformObject(const json_value *pJson, char *pVersion, int VersionSize, char *pArchiveName, int ArchiveNameSize, char *pArchiveUrl, int ArchiveUrlSize)
+{
+	if(!pJson || pJson->type != json_object)
+		return false;
+
+	const char *pVersionValue = JsonStringField(pJson, "version");
+	if(!pVersionValue)
+		pVersionValue = JsonStringField(pJson, "tag_name");
+	if(!pVersionValue)
+		pVersionValue = JsonStringField(pJson, "name");
+	if(!pVersionValue)
+		return false;
+
+	const json_value *pPlatforms = json_object_get(pJson, "platforms");
+	if(!pPlatforms || pPlatforms->type != json_object)
+		return false;
+
+	const json_value *pPlatform = json_object_get(pPlatforms, CurrentPlatformKey());
+	if(!pPlatform || pPlatform->type != json_object)
+		return false;
+
+	const char *pUrl = JsonStringField(pPlatform, "url");
+	if(!pUrl)
+		pUrl = JsonStringField(pPlatform, "download_url");
+	if(!pUrl)
+		pUrl = JsonStringField(pPlatform, "browser_download_url");
+	if(!pUrl)
+		return false;
+
+	const char *pName = JsonStringField(pPlatform, "name");
+	char aDerivedName[128];
+	if(!pName)
+	{
+		FilenameFromUrl(pUrl, aDerivedName, sizeof(aDerivedName));
+		pName = aDerivedName;
+	}
+
+	str_copy(pVersion, pVersionValue, VersionSize);
+	str_copy(pArchiveName, pName, ArchiveNameSize);
+	str_copy(pArchiveUrl, pUrl, ArchiveUrlSize);
+	return true;
+}
+
 static bool ParseLatestRelease(json_value *pJson, char *pVersion, int VersionSize, char *pArchiveName, int ArchiveNameSize, char *pArchiveUrl, int ArchiveUrlSize)
 {
 	if(!pJson)
@@ -347,12 +427,11 @@ void CUpdater::StartReleaseFetch()
 	SetCurrentState(IUpdater::GETTING_MANIFEST);
 
 	char aUrl[2304];
-	BuildGitHubReleasesUrl(aUrl, sizeof(aUrl));
+	BuildUpdateLatestUrl(aUrl, sizeof(aUrl));
 	m_TaskKind = ETaskKind::FETCH_RELEASE;
 	m_pCurrentTask = HttpGet(aUrl);
-	m_pCurrentTask->HeaderString("Accept", "application/vnd.github+json");
+	m_pCurrentTask->HeaderString("Accept", "application/json");
 	m_pCurrentTask->HeaderString("User-Agent", CLIENT_NAME);
-	m_pCurrentTask->HeaderString("X-GitHub-Api-Version", "2022-11-28");
 	m_pCurrentTask->HeaderString("Cache-Control", "no-cache");
 	m_pCurrentTask->HeaderString("Pragma", "no-cache");
 	m_pCurrentTask->Timeout(CTimeout{10000, 0, 500, 10});
@@ -370,16 +449,14 @@ bool CUpdater::ParseReleaseTask()
 		return false;
 	}
 
-	const bool Parsed = ParseLatestRelease(pJson, m_aLatestVersion, sizeof(m_aLatestVersion), m_aArchiveName, sizeof(m_aArchiveName), m_aArchiveUrl, sizeof(m_aArchiveUrl));
+	const bool Parsed = ParseLatestPlatformObject(pJson, m_aLatestVersion, sizeof(m_aLatestVersion), m_aArchiveName, sizeof(m_aArchiveName), m_aArchiveUrl, sizeof(m_aArchiveUrl)) ||
+		ParseLatestRelease(pJson, m_aLatestVersion, sizeof(m_aLatestVersion), m_aArchiveName, sizeof(m_aArchiveName), m_aArchiveUrl, sizeof(m_aArchiveUrl));
 	json_value_free(pJson);
 
 	if(!Parsed)
 	{
-		m_aLatestVersion[0] = '\0';
-		m_aArchiveName[0] = '\0';
-		m_aArchiveUrl[0] = '\0';
-		SetStatus("No compatible release found");
-		SetCurrentState(IUpdater::CLEAN);
+		SetStatus("Release archive not found");
+		SetCurrentState(IUpdater::FAIL);
 		return false;
 	}
 
@@ -412,11 +489,72 @@ void CUpdater::StartArchiveDownload()
 	m_pHttp->Run(m_pCurrentTask);
 }
 
+bool CUpdater::WriteApplyScript(char *pScriptPath, int ScriptPathSize, char *pInstallDir, int InstallDirSize, char *pExePath, int ExePathSize)
+{
+	m_pStorage->GetBinaryPath(UPDATE_SCRIPT_PATH, pScriptPath, ScriptPathSize);
+	m_pStorage->GetBinaryPathAbsolute(PLAT_CLIENT_EXEC, pExePath, ExePathSize);
+	str_copy(pInstallDir, pExePath, InstallDirSize);
+	StripFilename(pInstallDir);
+
+	if(fs_makedir_rec_for(pScriptPath) < 0)
+		return false;
+
+	static constexpr const char *pScript =
+		"param(\n"
+		"    [int]$PidToWait,\n"
+		"    [string]$ArchivePath,\n"
+		"    [string]$InstallDir,\n"
+		"    [string]$ExePath\n"
+		")\n"
+		"$ErrorActionPreference = 'Stop'\n"
+		"try {\n"
+		"    $updateDir = Join-Path $InstallDir 'update'\n"
+		"    New-Item -ItemType Directory -Path $updateDir -Force | Out-Null\n"
+		"    $logPath = Join-Path $updateDir 'apply_update.log'\n"
+		"    Add-Content -LiteralPath $logPath -Value ('[' + (Get-Date).ToString('s') + '] updater started')\n"
+		"    while(Get-Process -Id $PidToWait -ErrorAction SilentlyContinue) {\n"
+		"        Start-Sleep -Milliseconds 200\n"
+		"    }\n"
+		"    Add-Content -LiteralPath $logPath -Value ('[' + (Get-Date).ToString('s') + '] client process stopped')\n"
+		"    $extractDir = Join-Path $InstallDir 'update\\extract'\n"
+		"    if(Test-Path -LiteralPath $extractDir) {\n"
+		"        Remove-Item -LiteralPath $extractDir -Recurse -Force\n"
+		"    }\n"
+		"    New-Item -ItemType Directory -Path $extractDir -Force | Out-Null\n"
+		"    Expand-Archive -LiteralPath $ArchivePath -DestinationPath $extractDir -Force\n"
+		"    Add-Content -LiteralPath $logPath -Value ('[' + (Get-Date).ToString('s') + '] archive extracted')\n"
+		"    $copyRoot = $extractDir\n"
+		"    $items = @(Get-ChildItem -LiteralPath $extractDir -Force)\n"
+		"    if($items.Count -eq 1 -and $items[0].PSIsContainer) {\n"
+		"        $copyRoot = $items[0].FullName\n"
+		"    }\n"
+		"    foreach($item in Get-ChildItem -LiteralPath $copyRoot -Force) {\n"
+		"        Copy-Item -Path $item.FullName -Destination $InstallDir -Recurse -Force\n"
+		"    }\n"
+		"    Add-Content -LiteralPath $logPath -Value ('[' + (Get-Date).ToString('s') + '] files copied')\n"
+		"    Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction SilentlyContinue\n"
+		"    Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue\n"
+		"    Start-Process -FilePath $ExePath -WorkingDirectory $InstallDir\n"
+		"    Add-Content -LiteralPath $logPath -Value ('[' + (Get-Date).ToString('s') + '] client relaunched')\n"
+		"} catch {\n"
+		"    $logPath = Join-Path $InstallDir 'update\\apply_update_error.txt'\n"
+		"    $_ | Out-String | Set-Content -LiteralPath $logPath -Encoding UTF8\n"
+		"}\n";
+
+	IOHANDLE File = io_open(pScriptPath, IOFLAG_WRITE);
+	if(!File)
+		return false;
+
+	io_write(File, pScript, str_length(pScript));
+	io_close(File);
+	return true;
+}
+
 bool CUpdater::LaunchApplyScriptAndQuit()
 {
 #if defined(CONF_FAMILY_WINDOWS)
 	char aArchivePath[IO_MAX_PATH_LENGTH];
-	char aUpdaterPath[IO_MAX_PATH_LENGTH];
+	char aScriptPath[IO_MAX_PATH_LENGTH];
 	char aInstallDir[IO_MAX_PATH_LENGTH];
 	char aExePath[IO_MAX_PATH_LENGTH];
 	char aPid[32];
@@ -428,15 +566,31 @@ bool CUpdater::LaunchApplyScriptAndQuit()
 		return false;
 	}
 
-	m_pStorage->GetBinaryPathAbsolute("bestclient-updater.exe", aUpdaterPath, sizeof(aUpdaterPath));
-	m_pStorage->GetBinaryPathAbsolute(PLAT_CLIENT_EXEC, aExePath, sizeof(aExePath));
-	str_copy(aInstallDir, aExePath, sizeof(aInstallDir));
-	StripFilename(aInstallDir);
+	if(!WriteApplyScript(aScriptPath, sizeof(aScriptPath), aInstallDir, sizeof(aInstallDir), aExePath, sizeof(aExePath)))
+	{
+		SetStatus("Failed to prepare updater script");
+		return false;
+	}
 
 	str_format(aPid, sizeof(aPid), "%d", process_id());
-	const char *apArguments[] = {aPid, aArchivePath, aInstallDir, aExePath};
+	const char *apArguments[] = {
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		aScriptPath,
+		"-PidToWait",
+		aPid,
+		"-ArchivePath",
+		aArchivePath,
+		"-InstallDir",
+		aInstallDir,
+		"-ExePath",
+		aExePath,
+	};
 
-	if(process_execute(aUpdaterPath, EShellExecuteWindowState::FOREGROUND, apArguments, std::size(apArguments)) == INVALID_PROCESS)
+	if(process_execute("powershell.exe", EShellExecuteWindowState::BACKGROUND, apArguments, std::size(apArguments)) == INVALID_PROCESS)
 	{
 		SetStatus("Failed to launch updater");
 		return false;
@@ -455,12 +609,6 @@ void CUpdater::InitiateUpdate()
 	const EUpdaterState State = GetCurrentState();
 	if(State == IUpdater::GETTING_MANIFEST || State == IUpdater::DOWNLOADING)
 		return;
-
-#if !defined(CONF_FAMILY_WINDOWS)
-	if(m_pClient)
-		m_pClient->ViewLink(GITHUB_LATEST_RELEASE_URL);
-	return;
-#endif
 
 	StartReleaseFetch();
 }

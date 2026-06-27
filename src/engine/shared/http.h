@@ -64,6 +64,7 @@ class CHttpRequest : public IHttpRequest
 		HEAD,
 		POST,
 		POST_JSON,
+		DEL,
 	};
 
 	static constexpr const char *GetRequestType(REQUEST Type)
@@ -74,6 +75,8 @@ class CHttpRequest : public IHttpRequest
 			return "GET";
 		case REQUEST::HEAD:
 			return "HEAD";
+		case REQUEST::DEL:
+			return "DELETE";
 		case REQUEST::POST:
 		case REQUEST::POST_JSON:
 			return "POST";
@@ -188,6 +191,7 @@ public:
 	void ValidateBeforeOverwrite(bool ValidateBeforeOverwrite) { m_ValidateBeforeOverwrite = ValidateBeforeOverwrite; }
 	void ExpectSha256(const SHA256_DIGEST &Sha256) { m_ExpectedSha256 = Sha256; }
 	void Head() { m_Type = REQUEST::HEAD; }
+	void Delete() { m_Type = REQUEST::DEL; }
 	void Post(const unsigned char *pData, size_t DataLength)
 	{
 		m_Type = REQUEST::POST;
@@ -297,6 +301,14 @@ inline std::unique_ptr<CHttpRequest> HttpPostJson(const char *pUrl, const char *
 {
 	auto pResult = std::make_unique<CHttpRequest>(pUrl);
 	pResult->PostJson(pJson);
+	pResult->Timeout(CTimeout{4000, 15000, 500, 5});
+	return pResult;
+}
+
+inline std::unique_ptr<CHttpRequest> HttpDeleteReq(const char *pUrl)
+{
+	auto pResult = std::make_unique<CHttpRequest>(pUrl);
+	pResult->Delete();
 	pResult->Timeout(CTimeout{4000, 15000, 500, 5});
 	return pResult;
 }

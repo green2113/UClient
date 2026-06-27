@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.12...3.27.4)
 
+# MSVC outputs localized dependency prefixes; cmcldeps expects English.
+if(WIN32)
+  set(ENV{VSLANG} 1033)
+  # Avoid cmcldeps.exe (breaks when CMake is under "Program Files" or MSVC is localized).
+  set(CMAKE_NINJA_CMCLDEPS_RC OFF CACHE INTERNAL "")
+endif()
+
 set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE INTERNAL "Minimum macOS deployment version")
 if(CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS 10.15)
   message(WARNING "Building for macOS < 10.15 is not supported")
@@ -208,6 +215,8 @@ endif()
 if(NOT(CMAKE_BUILD_TYPE MATCHES "^(Release|Debug|RelWithDebInfo|MinSizeRel)$"))
   message(WARNING "Unknown CMAKE_BUILD_TYPE, should be one of Release, Debug, RelWithDebInfo or MinSizeRel")
 endif()
+
+option(UCLIENT_DEV_BUILD "Enable UClient developer features (uc_voice_id, uc_voice_team visible in console)" OFF)
 
 set(DBG $<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>)
 
@@ -2750,6 +2759,8 @@ if(CLIENT)
     graphics_threaded.cpp
     graphics_threaded.h
     graphics_threaded_sprites.cpp
+    clipboard_image.cpp
+    clipboard_image.h
     input.cpp
     input.h
     keynames.cpp
@@ -2834,8 +2845,16 @@ if(CLIENT)
     components/bestclient/visualizer/types.h
     components/bestclient/voice/protocol.h
     components/bestclient/voice/server.cpp
+    components/bestclient/voice/soundboard_file_dialog.cpp
     components/bestclient/voice/voice.cpp
     components/bestclient/voice/voice.h
+    components/uclient/chat_nearby_tab.cpp
+    components/uclient/chat_nearby_tab.h
+    components/uclient/chat_paste_image.cpp
+    components/uclient/chat_paste_image.h
+    components/uclient/menus_uclient.cpp
+    components/uclient/uclient.cpp
+    components/uclient/uclient.h
     components/binds.cpp
     components/binds.h
     components/broadcast.cpp
@@ -2846,6 +2865,8 @@ if(CLIENT)
     components/censor.h
     components/chat.cpp
     components/chat.h
+    components/giphy_browser.cpp
+    components/giphy_browser.h
     components/community_icons.cpp
     components/community_icons.h
     components/console.cpp
@@ -4378,6 +4399,9 @@ foreach(target ${TARGETS_OWN})
   target_include_directories(${target} PRIVATE src)
   target_include_directories(${target} PRIVATE src/rust-bridge)
   target_compile_definitions(${target} PRIVATE $<$<CONFIG:Debug>:CONF_DEBUG>)
+  if(UCLIENT_DEV_BUILD)
+    target_compile_definitions(${target} PRIVATE CONF_UCLIENT_DEV_BUILD)
+  endif()
   target_include_directories(${target} SYSTEM PRIVATE ${CURL_INCLUDE_DIRS} ${SQLite3_INCLUDE_DIRS} ${ZLIB_INCLUDE_DIRS})
   target_compile_definitions(${target} PRIVATE GLEW_STATIC)
   target_compile_definitions(${target} PRIVATE _FILE_OFFSET_BITS=64) # Ensure off_t is 64 bit for ftello and fseeko functions

@@ -1722,16 +1722,26 @@ void CServerBrowser::UpdateServerRank(CServerInfo *pInfo) const
 	pInfo->m_HasRank = pCommunity == nullptr ? CServerInfo::RANK_UNAVAILABLE : pCommunity->HasRank(pInfo->m_aMap);
 }
 
+void CServerBrowser::SetUcClientPlayers(const std::unordered_map<std::string, std::unordered_set<std::string>> &UcPlayersByServer)
+{
+	m_UcClientPlayersByServer = UcPlayersByServer;
+	for(CServerEntry *pEntry : m_vpServerlist)
+		UpdateServerBestClients(&pEntry->m_Info);
+	RequestResort();
+}
+
 void CServerBrowser::UpdateServerBestClients(CServerInfo *pInfo) const
 {
 	pInfo->m_NumBestClientPlayers = 0;
 	pInfo->m_HasBestClientPlayers = false;
 	pInfo->m_NumBestClientDeveloperPlayers = 0;
 	pInfo->m_HasBestClientDeveloperPlayers = false;
+	pInfo->m_HasUcClientPlayers = false;
 	for(auto &Client : pInfo->m_aClients)
 	{
 		Client.m_BestClient = false;
 		Client.m_BestClientDeveloper = false;
+		Client.m_UcClient = false;
 	}
 
 	const int NumClients = minimum(pInfo->m_NumReceivedClients, (int)MAX_CLIENTS);
@@ -1770,6 +1780,25 @@ void CServerBrowser::UpdateServerBestClients(CServerInfo *pInfo) const
 
 	pInfo->m_HasBestClientPlayers = pInfo->m_NumBestClientPlayers > 0;
 	pInfo->m_HasBestClientDeveloperPlayers = pInfo->m_NumBestClientDeveloperPlayers > 0;
+
+	// UC client flag
+	for(int AddressIndex = 0; AddressIndex < pInfo->m_NumAddresses; ++AddressIndex)
+	{
+		char aAddress[NETADDR_MAXSTRSIZE];
+		net_addr_str(&pInfo->m_aAddresses[AddressIndex], aAddress, sizeof(aAddress), true);
+		const auto It = m_UcClientPlayersByServer.find(aAddress);
+		if(It == m_UcClientPlayersByServer.end())
+			continue;
+		for(int ClientIndex = 0; ClientIndex < NumClients; ++ClientIndex)
+		{
+			CServerInfo::CClient &Client = pInfo->m_aClients[ClientIndex];
+			if(It->second.count(Client.m_aName))
+			{
+				Client.m_UcClient = true;
+				pInfo->m_HasUcClientPlayers = true;
+			}
+		}
+	}
 }
 
 void CServerBrowser::ValidateServerlistType()

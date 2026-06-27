@@ -11,6 +11,7 @@
 #include <engine/serverbrowser.h>
 #include <engine/shared/config.h>
 #include <engine/shared/json.h>
+#include <engine/shared/jsonwriter.h>
 #include <engine/shared/network.h>
 
 #include <game/client/gameclient.h>
@@ -26,6 +27,76 @@ namespace
 	constexpr const char *NEW_BC_BROWSER_URL = "https://150.241.70.188:8779/users.json";
 	constexpr const char *NEW_BC_TOKEN_URL = "https://150.241.70.188:8779/token.json";
 	constexpr int PACKET_DUMP_BYTES_PER_LINE = 64;
+
+	bool NormalizePresenceServerAddress(const char *pAddress, char *pBuffer, int BufferSize)
+	{
+		if(!pAddress || pAddress[0] == '\0')
+			return false;
+
+		while(*pAddress != '\0' && str_isspace(*pAddress))
+			++pAddress;
+
+		char aToken[MAX_SERVER_ADDRESSES * NETADDR_MAXSTRSIZE];
+		int Length = 0;
+		while(pAddress[Length] != '\0' && pAddress[Length] != ',')
+			++Length;
+		while(Length > 0 && str_isspace(pAddress[Length - 1]))
+			--Length;
+		str_truncate(aToken, sizeof(aToken), pAddress, Length);
+		if(aToken[0] == '\0')
+			return false;
+
+		NETADDR Addr;
+		if(net_addr_from_url(&Addr, aToken, nullptr, 0) == 0 || net_addr_from_str(&Addr, aToken) == 0)
+		{
+			net_addr_str(&Addr, pBuffer, BufferSize, true);
+			return true;
+		}
+
+		str_copy(pBuffer, aToken, BufferSize);
+		return true;
+	}
+
+	void ParseUcPresenceList(json_value *pJson, std::unordered_map<std::string, std::unordered_set<std::string>> &Out)
+	{
+		Out.clear();
+		if(!pJson || pJson->type != json_array)
+			return;
+
+		for(unsigned int EntryIndex = 0; EntryIndex < pJson->u.array.length; ++EntryIndex)
+		{
+			const json_value *pEntry = pJson->u.array.values[EntryIndex];
+			if(!pEntry || pEntry->type != json_object)
+				continue;
+
+			for(unsigned int ObjectIndex = 0; ObjectIndex < pEntry->u.object.length; ++ObjectIndex)
+			{
+				const char *pServerKey = pEntry->u.object.values[ObjectIndex].name;
+				const json_value *pServerValue = pEntry->u.object.values[ObjectIndex].value;
+				if(!pServerKey || !pServerValue || pServerValue->type != json_object)
+					continue;
+
+				const json_value *pPlayers = json_object_get(pServerValue, "players");
+				if(!pPlayers || pPlayers->type != json_array)
+					continue;
+
+				char aNormalizedServer[NETADDR_MAXSTRSIZE];
+				if(!NormalizePresenceServerAddress(pServerKey, aNormalizedServer, sizeof(aNormalizedServer)))
+					continue;
+
+				auto &Names = Out[aNormalizedServer];
+				for(unsigned int PlayerIndex = 0; PlayerIndex < pPlayers->u.array.length; ++PlayerIndex)
+				{
+					const json_value *pPlayer = pPlayers->u.array.values[PlayerIndex];
+					if(!pPlayer || pPlayer->type != json_object)
+						continue;
+					const json_value *pName = json_object_get(pPlayer, "name");
+					if(pName && pName->type == json_string && pName->u.string.ptr[0] != '\0')
+						Names.insert(pName->u.string.ptr);
+				}
+			}
+		}
+	}
 
 	void TrimConfigString(char *pValue, int Size)
 	{
@@ -142,6 +213,9 @@ void CClientIndicator::OnReset()
 {
 	ResetPresenceState();
 	ResetTokenState();
+	ResetUcPresenceTask();
+	m_UcPresenceByServer.clear();
+	m_LastUcPresenceRefreshTick = 0;
 }
 
 void CClientIndicator::OnStateChange(int NewState, int OldState)
@@ -160,6 +234,7 @@ void CClientIndicator::OnStateChange(int NewState, int OldState)
 			RefreshBrowserCache(false);
 			RefreshToken(false);
 		}
+		RefreshUcPresenceList(false);
 	}
 }
 
@@ -436,6 +511,25 @@ void CClientIndicator::OnUpdate()
 		ResetBrowserTask();
 	}
 
+	// UClient presence refresh (60s interval)
+	const int64_t UcPresenceRefreshInterval = 60 * time_freq();
+	if(Client()->State() != IClient::STATE_OFFLINE &&
+		g_Config.m_UcPresenceApiBaseUrl[0] != '\0' &&
+		!m_pUcPresenceTask &&
+		(m_LastUcPresenceRefreshTick == 0 || Now - m_LastUcPresenceRefreshTick >= UcPresenceRefreshInterval))
+	{
+		RefreshUcPresenceList(false);
+	}
+	if(m_pUcPresenceTask && m_pUcPresenceTask->State() == EHttpState::DONE)
+	{
+		FinishUcPresenceRefresh();
+		ResetUcPresenceTask();
+	}
+	else if(m_pUcPresenceTask && (m_pUcPresenceTask->State() == EHttpState::ERROR || m_pUcPresenceTask->State() == EHttpState::ABORTED))
+	{
+		ResetUcPresenceTask();
+	}
+
 	if(m_pTokenTask && m_pTokenTask->State() == EHttpState::DONE)
 	{
 		DebugLogF("token request done http_status=%d", m_pTokenTask->StatusCode());
@@ -549,6 +643,8 @@ void CClientIndicator::StopPresence(bool SendLeavePackets)
 	if(HadPresenceState && SendLeavePackets)
 	{
 		DebugLog("stopping presence and sending leave packets");
+		for(const int ClientId : m_RegisteredClientIds)
+			SendPresenceHttpEvent(ClientId, "/leave");
 		SendLeaveForAll();
 	}
 	else if(HadPresenceState)
@@ -661,6 +757,114 @@ void CClientIndicator::SendPresencePacket(int ClientId, int PacketType)
 	net_addr_str(&m_ServerAddr, aServerAddr, sizeof(aServerAddr), true);
 	DebugLogF("sent %s packet client_id=%d player='%s' game_server=%s indicator_server=%s bytes=%d result=%d",
 		PacketTypeName(PacketType), ClientId, PlayerNameForClient(ClientId), CurrentGameServerAddress(), aServerAddr, (int)vPacket.size(), Sent);
+}
+
+void CClientIndicator::PresenceHttpPlayerId(char *pBuffer, int BufferSize) const
+{
+	if(!pBuffer || BufferSize <= 0)
+		return;
+	pBuffer[0] = '\0';
+	if(g_Config.m_UcInstallUuid[0] != '\0')
+	{
+		str_copy(pBuffer, g_Config.m_UcInstallUuid, BufferSize);
+		return;
+	}
+	FormatUuid(m_ClientInstanceId, pBuffer, BufferSize);
+}
+
+void CClientIndicator::SendPresenceHttpEvent(int ClientId, const char *pEventPath)
+{
+	if(g_Config.m_UcPresenceApiBaseUrl[0] == '\0' || !pEventPath || pEventPath[0] == '\0')
+		return;
+	const char *pPlayerName = PlayerNameForClient(ClientId);
+	if(!pPlayerName || pPlayerName[0] == '\0')
+		return;
+	const char *pServerAddress = CurrentGameServerAddress();
+	if(!pServerAddress || pServerAddress[0] == '\0')
+		return;
+
+	char aPlayerId[128];
+	PresenceHttpPlayerId(aPlayerId, sizeof(aPlayerId));
+	if(aPlayerId[0] == '\0')
+		return;
+
+	char aClientId[16];
+	str_format(aClientId, sizeof(aClientId), "%d", ClientId);
+
+	char aUrl[512];
+	str_format(aUrl, sizeof(aUrl), "%s%s", g_Config.m_UcPresenceApiBaseUrl, pEventPath);
+
+	CJsonStringWriter Writer;
+	Writer.BeginObject();
+	Writer.WriteAttribute("playerId");
+	Writer.WriteStrValue(aPlayerId);
+	Writer.WriteAttribute("sessionId");
+	Writer.WriteStrValue("default");
+	Writer.WriteAttribute("name");
+	Writer.WriteStrValue(pPlayerName);
+	Writer.WriteAttribute("clientId");
+	Writer.WriteStrValue(aClientId);
+	Writer.WriteAttribute("server");
+	Writer.WriteStrValue(pServerAddress);
+	Writer.EndObject();
+	std::string Json = Writer.GetOutputString();
+
+	auto pPost = HttpPostJson(aUrl, Json.c_str());
+	pPost->Timeout(CTimeout{5000, 0, 500, 5});
+	pPost->IpResolve(IPRESOLVE::V4);
+	pPost->LogProgress(HTTPLOG::FAILURE);
+	pPost->FailOnErrorStatus(false);
+	Http()->Run(std::move(pPost));
+
+	DebugLogF("sent http %s event player='%s' player_id='%s' server=%s", pEventPath, pPlayerName, aPlayerId, pServerAddress);
+}
+
+void CClientIndicator::SendPresenceHttpSwitchEvent(int ClientId, const char *pFromServerAddress, const char *pToServerAddress)
+{
+	if(g_Config.m_UcPresenceApiBaseUrl[0] == '\0')
+		return;
+	const char *pPlayerName = PlayerNameForClient(ClientId);
+	if(!pPlayerName || pPlayerName[0] == '\0')
+		return;
+	if(!pToServerAddress || pToServerAddress[0] == '\0')
+		return;
+
+	char aPlayerId[128];
+	PresenceHttpPlayerId(aPlayerId, sizeof(aPlayerId));
+	if(aPlayerId[0] == '\0')
+		return;
+
+	char aClientId[16];
+	str_format(aClientId, sizeof(aClientId), "%d", ClientId);
+
+	char aUrl[512];
+	str_format(aUrl, sizeof(aUrl), "%s/switch", g_Config.m_UcPresenceApiBaseUrl);
+
+	CJsonStringWriter Writer;
+	Writer.BeginObject();
+	Writer.WriteAttribute("playerId");
+	Writer.WriteStrValue(aPlayerId);
+	Writer.WriteAttribute("sessionId");
+	Writer.WriteStrValue("default");
+	Writer.WriteAttribute("name");
+	Writer.WriteStrValue(pPlayerName);
+	Writer.WriteAttribute("clientId");
+	Writer.WriteStrValue(aClientId);
+	Writer.WriteAttribute("server");
+	Writer.WriteStrValue(pFromServerAddress ? pFromServerAddress : "");
+	Writer.WriteAttribute("toServer");
+	Writer.WriteStrValue(pToServerAddress);
+	Writer.EndObject();
+	std::string Json = Writer.GetOutputString();
+
+	auto pPost = HttpPostJson(aUrl, Json.c_str());
+	pPost->Timeout(CTimeout{5000, 0, 500, 5});
+	pPost->IpResolve(IPRESOLVE::V4);
+	pPost->LogProgress(HTTPLOG::FAILURE);
+	pPost->FailOnErrorStatus(false);
+	Http()->Run(std::move(pPost));
+
+	DebugLogF("sent http /switch event player='%s' player_id='%s' from=%s to=%s", pPlayerName, aPlayerId, pFromServerAddress ? pFromServerAddress : "", pToServerAddress);
 }
 
 void CClientIndicator::SendDevAuthPacket(int ClientId)
@@ -900,6 +1104,7 @@ void CClientIndicator::SyncLocalRegistrations(bool Force)
 		if(m_RegisteredClientIds.find(ClientId) == m_RegisteredClientIds.end())
 		{
 			SendPresencePacket(ClientId, BestClientIndicator::PACKET_JOIN);
+			SendPresenceHttpEvent(ClientId, "/join");
 			SendVersionPacket(ClientId);
 			SendDevAuthPacket(ClientId);
 			m_RegisteredClientIds.insert(ClientId);
@@ -914,6 +1119,7 @@ void CClientIndicator::SyncLocalRegistrations(bool Force)
 		if(!DesiredClientIds.Contains(*It))
 		{
 			SendPresencePacket(*It, BestClientIndicator::PACKET_LEAVE);
+			SendPresenceHttpEvent(*It, "/leave");
 			m_PresenceCache.SetPresent(*It, false);
 			m_DeveloperClientIds.erase(*It);
 			DebugLogF("unregistered local client_id=%d", *It);
@@ -996,6 +1202,15 @@ void CClientIndicator::UpdatePresence()
 		DebugLogF("heartbeat tick sent for %llu local clients", (unsigned long long)m_RegisteredClientIds.size());
 	}
 
+	const int64_t HttpHeartbeatInterval = (int64_t)g_Config.m_UcPresenceHttpHeartbeatSeconds * time_freq();
+	if(g_Config.m_UcPresenceApiBaseUrl[0] != '\0' && !m_RegisteredClientIds.empty() &&
+		(m_LastHttpHeartbeatTick == 0 || Now - m_LastHttpHeartbeatTick >= HttpHeartbeatInterval))
+	{
+		for(const int ClientId : m_RegisteredClientIds)
+			SendPresenceHttpEvent(ClientId, "/heartbeat");
+		m_LastHttpHeartbeatTick = Now;
+	}
+
 	m_WasPresenceEnabled = PresenceEnabled;
 }
 
@@ -1022,6 +1237,82 @@ void CClientIndicator::ResetBrowserTask()
 		m_pBrowserTask->Abort();
 		m_pBrowserTask = nullptr;
 	}
+}
+
+void CClientIndicator::RefreshUcPresenceList(bool Force)
+{
+	RefreshUcPresenceCache(Force);
+}
+
+void CClientIndicator::RefreshUcPresenceCache(bool Force)
+{
+	if(g_Config.m_UcPresenceApiBaseUrl[0] == '\0')
+		return;
+
+	const int64_t Now = time_get();
+	const int64_t RefreshInterval = 60 * time_freq();
+	if(!Force && m_LastUcPresenceRefreshTick != 0 && Now - m_LastUcPresenceRefreshTick < RefreshInterval)
+		return;
+
+	if(m_pUcPresenceTask && !m_pUcPresenceTask->Done())
+	{
+		if(!Force)
+			return;
+		ResetUcPresenceTask();
+	}
+
+	m_pUcPresenceTask = HttpGet(g_Config.m_UcPresenceApiBaseUrl);
+	m_pUcPresenceTask->Timeout(CTimeout{10000, 0, 500, 5});
+	m_pUcPresenceTask->IpResolve(IPRESOLVE::V4);
+	m_pUcPresenceTask->LogProgress(HTTPLOG::FAILURE);
+	m_LastUcPresenceRefreshTick = Now;
+	Http()->Run(m_pUcPresenceTask);
+}
+
+void CClientIndicator::FinishUcPresenceRefresh()
+{
+	if(!m_pUcPresenceTask)
+		return;
+	json_value *pJson = m_pUcPresenceTask->ResultJson();
+	if(pJson)
+	{
+		ParseUcPresenceList(pJson, m_UcPresenceByServer);
+		json_value_free(pJson);
+		DebugLogF("uc presence list loaded for %llu servers", (unsigned long long)m_UcPresenceByServer.size());
+	}
+	ApplyBrowserSnapshot();
+}
+
+void CClientIndicator::ResetUcPresenceTask()
+{
+	if(m_pUcPresenceTask)
+	{
+		m_pUcPresenceTask->Abort();
+		m_pUcPresenceTask = nullptr;
+	}
+}
+
+bool CClientIndicator::IsPlayerUClient(int ClientId) const
+{
+	if(Client()->State() != IClient::STATE_ONLINE)
+		return false;
+	const char *pPlayerName = PlayerNameForClient(ClientId);
+	if(pPlayerName[0] == '\0')
+		return false;
+
+	char aCurrentServerAddress[NETADDR_MAXSTRSIZE];
+	net_addr_str(&Client()->ServerAddress(), aCurrentServerAddress, sizeof(aCurrentServerAddress), true);
+	if(aCurrentServerAddress[0] == '\0')
+		return false;
+
+	char aNormalizedServer[NETADDR_MAXSTRSIZE];
+	if(!NormalizePresenceServerAddress(aCurrentServerAddress, aNormalizedServer, sizeof(aNormalizedServer)))
+		return false;
+
+	const auto ItServer = m_UcPresenceByServer.find(aNormalizedServer);
+	if(ItServer == m_UcPresenceByServer.end())
+		return false;
+	return ItServer->second.find(pPlayerName) != ItServer->second.end();
 }
 
 void CClientIndicator::FinishTokenRefresh()
@@ -1077,6 +1368,7 @@ void CClientIndicator::ResetTokenTask()
 void CClientIndicator::ApplyBrowserSnapshot()
 {
 	ServerBrowser()->SetBestClientPlayers(m_BrowserCache.Players());
+	ServerBrowser()->SetUcClientPlayers(m_UcPresenceByServer);
 }
 
 void CClientIndicator::SchedulePresenceBrowserRefresh()
@@ -1090,6 +1382,7 @@ void CClientIndicator::SchedulePresenceBrowserRefresh()
 void CClientIndicator::ResetPresenceState()
 {
 	m_LastHeartbeatTick = 0;
+	m_LastHttpHeartbeatTick = 0;
 	m_LastPresenceStartAttempt = 0;
 	m_NextPresenceBrowserRefreshTick = 0;
 	m_WasPresenceEnabled = false;
@@ -1137,6 +1430,7 @@ bool CClientIndicator::IsPresenceEnabled() const
 {
 	const CGameClient *pGameClient = GameClient();
 	return g_Config.m_BcClientIndicator != 0 &&
+	       g_Config.m_BcClientIndicatorSendInfo != 0 &&
 	       Client()->State() == IClient::STATE_ONLINE &&
 	       (!pGameClient || !pGameClient->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_OTHERS_CLIENT_INDICATOR));
 }

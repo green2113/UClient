@@ -178,7 +178,20 @@ public:
 	virtual void ClearTouchDeltas() = 0;
 
 	// clipboard
+	struct SClipboardImage
+	{
+		int m_Width = 0;
+		int m_Height = 0;
+		std::vector<uint8_t> m_vRgba;
+
+		bool IsValid() const
+		{
+			return m_Width > 0 && m_Height > 0 && !m_vRgba.empty();
+		}
+	};
+
 	virtual std::string GetClipboardText() = 0;
+	virtual bool GetClipboardImage(SClipboardImage &Image) = 0;
 	virtual void SetClipboardText(const char *pText) = 0;
 
 	// text editing

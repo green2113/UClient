@@ -27,6 +27,172 @@
 #include <windows.h>
 // windows.h must be included before imm.h, but clang-format requires includes to be sorted alphabetically, hence this comment.
 #include <imm.h>
+#include "clipboard_image.h"
+
+namespace
+{
+struct SClipboardBitmapInfoHeader
+{
+	DWORD m_Size;
+	LONG m_Width;
+	LONG m_Height;
+	WORD m_Planes;
+	WORD m_BitCount;
+	DWORD m_Compression;
+	DWORD m_SizeImage;
+	LONG m_XPelsPerMeter;
+	LONG m_YPelsPerMeter;
+	DWORD m_ClrUsed;
+	DWORD m_ClrImportant;
+};
+
+struct SClipboardBitmapV4Header
+{
+	SClipboardBitmapInfoHeader m_Base;
+	DWORD m_RedMask;
+	DWORD m_GreenMask;
+	DWORD m_BlueMask;
+	DWORD m_AlphaMask;
+	DWORD m_CSType;
+	LONG m_Endpoints[9];
+	DWORD m_GammaRed;
+	DWORD m_GammaGreen;
+	DWORD m_GammaBlue;
+};
+
+constexpr DWORD CLIPBOARD_DIB_COMPRESSION_RGB = 0;
+constexpr DWORD CLIPBOARD_DIB_COMPRESSION_BITFIELDS = 3;
+
+uint8_t ExtractClipboardMaskedChannel(uint32_t Pixel, uint32_t Mask)
+{
+	if(Mask == 0)
+		return 0;
+
+	int Shift = 0;
+	while(((Mask >> Shift) & 1u) == 0)
+		++Shift;
+
+	uint32_t Range = Mask >> Shift;
+	int Bits = 0;
+	while((Range & 1u) != 0)
+	{
+		++Bits;
+		Range >>= 1;
+	}
+
+	if(Bits <= 0)
+		return 0;
+
+	const uint32_t Value = (Pixel & Mask) >> Shift;
+	if(Bits >= 8)
+		return (uint8_t)(Value >> (Bits - 8));
+
+	const uint32_t MaxValue = (1u << Bits) - 1u;
+	return MaxValue == 0 ? 0 : (uint8_t)((Value * 255u) / MaxValue);
+}
+
+bool DecodeClipboardDibImage(const void *pData, size_t DataSize, IInput::SClipboardImage &Image)
+{
+	Image = {};
+	if(pData == nullptr || DataSize < sizeof(SClipboardBitmapInfoHeader))
+		return false;
+
+	const auto *pHeader = static_cast<const SClipboardBitmapInfoHeader *>(pData);
+	if(pHeader->m_Size < sizeof(SClipboardBitmapInfoHeader) || DataSize < pHeader->m_Size || pHeader->m_Planes != 1)
+		return false;
+	if(pHeader->m_BitCount != 24 && pHeader->m_BitCount != 32)
+		return false;
+	if(pHeader->m_Width <= 0 || pHeader->m_Height == 0)
+		return false;
+	if(pHeader->m_Compression != CLIPBOARD_DIB_COMPRESSION_RGB && pHeader->m_Compression != CLIPBOARD_DIB_COMPRESSION_BITFIELDS)
+		return false;
+	if(pHeader->m_BitCount == 24 && pHeader->m_Compression != CLIPBOARD_DIB_COMPRESSION_RGB)
+		return false;
+	if(pHeader->m_ClrUsed != 0 && pHeader->m_BitCount <= 8)
+		return false;
+
+	const int Width = pHeader->m_Width;
+	const int Height = pHeader->m_Height < 0 ? -pHeader->m_Height : pHeader->m_Height;
+	const bool TopDown = pHeader->m_Height < 0;
+	const size_t HeaderSize = pHeader->m_Size;
+	const size_t RowStride = ((size_t)Width * pHeader->m_BitCount + 31u) / 32u * 4u;
+
+	uint32_t RedMask = 0x00ff0000u;
+	uint32_t GreenMask = 0x0000ff00u;
+	uint32_t BlueMask = 0x000000ffu;
+	uint32_t AlphaMask = 0u;
+	size_t PixelOffset = HeaderSize;
+
+	if(pHeader->m_Compression == CLIPBOARD_DIB_COMPRESSION_BITFIELDS)
+	{
+		if(HeaderSize >= sizeof(SClipboardBitmapV4Header))
+		{
+			const auto *pHeaderV4 = static_cast<const SClipboardBitmapV4Header *>(pData);
+			RedMask = pHeaderV4->m_RedMask;
+			GreenMask = pHeaderV4->m_GreenMask;
+			BlueMask = pHeaderV4->m_BlueMask;
+			AlphaMask = pHeaderV4->m_AlphaMask;
+		}
+		else
+		{
+			if(DataSize < HeaderSize + sizeof(uint32_t) * 3)
+				return false;
+			const auto *pMasks = reinterpret_cast<const uint32_t *>(static_cast<const uint8_t *>(pData) + HeaderSize);
+			RedMask = pMasks[0];
+			GreenMask = pMasks[1];
+			BlueMask = pMasks[2];
+			PixelOffset += sizeof(uint32_t) * 3;
+		}
+	}
+
+	if(PixelOffset + RowStride * (size_t)Height > DataSize)
+		return false;
+
+	const uint8_t *pPixels = static_cast<const uint8_t *>(pData) + PixelOffset;
+	Image.m_Width = Width;
+	Image.m_Height = Height;
+	Image.m_vRgba.resize((size_t)Width * Height * 4);
+
+	for(int y = 0; y < Height; ++y)
+	{
+		const int SourceY = TopDown ? y : (Height - 1 - y);
+		const uint8_t *pRow = pPixels + RowStride * (size_t)SourceY;
+		uint8_t *pDst = Image.m_vRgba.data() + (size_t)y * Width * 4;
+		for(int x = 0; x < Width; ++x)
+		{
+			if(pHeader->m_BitCount == 24)
+			{
+				const uint8_t *pSrc = pRow + x * 3;
+				pDst[x * 4 + 0] = pSrc[2];
+				pDst[x * 4 + 1] = pSrc[1];
+				pDst[x * 4 + 2] = pSrc[0];
+				pDst[x * 4 + 3] = 255;
+			}
+			else
+			{
+				const uint8_t *pSrc = pRow + x * 4;
+				const uint32_t Pixel = (uint32_t)pSrc[0] | ((uint32_t)pSrc[1] << 8) | ((uint32_t)pSrc[2] << 16) | ((uint32_t)pSrc[3] << 24);
+				if(pHeader->m_Compression == CLIPBOARD_DIB_COMPRESSION_RGB)
+				{
+					pDst[x * 4 + 0] = pSrc[2];
+					pDst[x * 4 + 1] = pSrc[1];
+					pDst[x * 4 + 2] = pSrc[0];
+					pDst[x * 4 + 3] = 255;
+				}
+				else
+				{
+					pDst[x * 4 + 0] = ExtractClipboardMaskedChannel(Pixel, RedMask);
+					pDst[x * 4 + 1] = ExtractClipboardMaskedChannel(Pixel, GreenMask);
+					pDst[x * 4 + 2] = ExtractClipboardMaskedChannel(Pixel, BlueMask);
+					pDst[x * 4 + 3] = AlphaMask != 0 ? ExtractClipboardMaskedChannel(Pixel, AlphaMask) : 255;
+				}
+			}
+		}
+	}
+
+	return Image.IsValid();
+}
+}
 #endif
 
 // for platform specific features that aren't available or are broken in SDL
@@ -330,6 +496,35 @@ std::string CInput::GetClipboardText()
 	std::string ClipboardText = pClipboardText;
 	SDL_free(pClipboardText);
 	return ClipboardText;
+}
+
+bool CInput::GetClipboardImage(SClipboardImage &Image)
+{
+	Image = {};
+
+#if defined(CONF_FAMILY_WINDOWS)
+	if(!OpenClipboard(nullptr))
+		return false;
+
+	HANDLE hClipboard = GetClipboardData(CF_DIBV5);
+	if(hClipboard == nullptr)
+		hClipboard = GetClipboardData(CF_DIB);
+	if(hClipboard == nullptr)
+	{
+		CloseClipboard();
+		return false;
+	}
+
+	void *pClipboardData = GlobalLock(hClipboard);
+	const SIZE_T ClipboardSize = GlobalSize(hClipboard);
+	const bool Success = pClipboardData != nullptr && ClipboardSize > 0 && DecodeClipboardDibImage(pClipboardData, (size_t)ClipboardSize, Image);
+	if(pClipboardData != nullptr)
+		GlobalUnlock(hClipboard);
+	CloseClipboard();
+	return Success;
+#else
+	return false;
+#endif
 }
 
 void CInput::SetClipboardText(const char *pText)
@@ -764,6 +959,14 @@ int CInput::Update()
 		case SDL_TEXTINPUT:
 			m_CompositionString = "";
 			m_CompositionCursor = 0;
+#if defined(CONF_FAMILY_WINDOWS)
+			// With SDL text input active, Ctrl+V often arrives as TEXTINPUT only (no KEY_V).
+			if((SDL_GetModState() & KMOD_CTRL) != 0 && !KeyPress(KEY_V))
+			{
+				AddKeyEvent(KEY_V, IInput::FLAG_PRESS);
+				break;
+			}
+#endif
 			AddTextEvent(Event.text.text);
 			break;
 

@@ -58,6 +58,19 @@ namespace
 		pGraphics->QuadsEnd();
 	}
 
+	void RenderUcClientIcon(IGraphics *pGraphics, const IGraphics::CTextureHandle &Texture, const CUIRect &Rect)
+	{
+		if(!Texture.IsValid())
+			return;
+		pGraphics->TextureSet(Texture);
+		pGraphics->QuadsBegin();
+		pGraphics->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+		pGraphics->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
+		const IGraphics::CQuadItem Quad(Rect.x, Rect.y, Rect.w, Rect.h);
+		pGraphics->QuadsDrawTL(&Quad, 1);
+		pGraphics->QuadsEnd();
+	}
+
 	float ScoreTextWidthForRenderTime(ITextRender *pTextRender, float FontSize, int Seconds, bool NotFinished, int Millis, bool TrueMilliseconds)
 	{
 		if(NotFinished)
@@ -491,6 +504,7 @@ void CScoreboard::OnConsoleInit()
 void CScoreboard::OnInit()
 {
 	m_DeadTeeTexture = Graphics()->LoadTexture("deadtee.png", IStorage::TYPE_ALL);
+	m_UcLogoTexture = Graphics()->LoadTexture("uclient/logo/uclient.png", IStorage::TYPE_ALL);
 }
 
 void CScoreboard::OnReset()
@@ -1121,7 +1135,12 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 					Row.y + (Row.h - IconSize) / 2.0f,
 					IconSize,
 					IconSize};
-				RenderBestClientIcon(Graphics(), IconRect, GameClient()->m_ClientIndicator.IsPlayerDeveloper(pInfo->m_ClientId));
+				const bool IsLocalClient = (GameClient()->m_aLocalIds[0] == pInfo->m_ClientId ||
+					(Client()->DummyConnected() && GameClient()->m_aLocalIds[1] == pInfo->m_ClientId));
+				if(IsLocalClient || GameClient()->m_ClientIndicator.IsPlayerUClient(pInfo->m_ClientId))
+					RenderUcClientIcon(Graphics(), m_UcLogoTexture, IconRect);
+				else
+					RenderBestClientIcon(Graphics(), IconRect, GameClient()->m_ClientIndicator.IsPlayerDeveloper(pInfo->m_ClientId));
 			}
 
 			if(Race7)

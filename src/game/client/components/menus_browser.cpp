@@ -42,6 +42,20 @@ static void RenderBestClientIcon(IGraphics *pGraphics, const CUIRect &Rect, Colo
 	pGraphics->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
+static void RenderUcClientIcon(IGraphics *pGraphics, const IGraphics::CTextureHandle &Texture, const CUIRect &Rect, ColorRGBA Color = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f))
+{
+	if(!Texture.IsValid())
+		return;
+	pGraphics->TextureSet(Texture);
+	pGraphics->QuadsBegin();
+	pGraphics->SetColor(Color);
+	pGraphics->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
+	const IGraphics::CQuadItem Quad(Rect.x, Rect.y, Rect.w, Rect.h);
+	pGraphics->QuadsDrawTL(&Quad, 1);
+	pGraphics->QuadsEnd();
+	pGraphics->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+}
+
 static CUIRect CenterSquareIcon(const CUIRect &Rect, float Margin)
 {
 	CUIRect Icon = Rect;
@@ -1614,7 +1628,7 @@ void CMenus::RenderServerbrowserInfoScoreboard(CUIRect View, const CServerInfo *
 			CUIRect NameText = Name;
 			const float BestClientIconSize = FontSize - 1.0f;
 			const float BestClientIconSpacing = 2.0f;
-			if(CurrentClient.m_BestClient)
+			if(CurrentClient.m_UcClient || CurrentClient.m_BestClient)
 				NameText.VSplitRight(BestClientIconSize + BestClientIconSpacing, &NameText, nullptr);
 
 			CTextCursor NameCursor;
@@ -1635,14 +1649,17 @@ void CMenus::RenderServerbrowserInfoScoreboard(CUIRect View, const CServerInfo *
 			if(!Printed)
 				TextRender()->TextEx(&NameCursor, pName, -1);
 
-			if(CurrentClient.m_BestClient)
+			if(CurrentClient.m_UcClient || CurrentClient.m_BestClient)
 			{
 				CUIRect BestClientIcon;
 				BestClientIcon.w = BestClientIconSize;
 				BestClientIcon.h = BestClientIconSize;
 				BestClientIcon.x = minimum(NameCursor.m_X + BestClientIconSpacing, Name.x + Name.w - BestClientIcon.w);
 				BestClientIcon.y = Name.y + (Name.h - BestClientIcon.h) / 2.0f;
-				RenderBestClientIcon(Graphics(), BestClientIcon, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f), CurrentClient.m_BestClientDeveloper);
+				if(CurrentClient.m_UcClient)
+					RenderUcClientIcon(Graphics(), m_UcLogoTexture, BestClientIcon);
+				else
+					RenderBestClientIcon(Graphics(), BestClientIcon, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f), CurrentClient.m_BestClientDeveloper);
 			}
 
 				// clan
@@ -1816,7 +1833,7 @@ void CMenus::RenderServerbrowserBestClient(CUIRect View)
 	Ui()->DoLabel(&Button, aLabel, FontSize, TEXTALIGN_ML);
 
 	View.HSplitTop(4.0f, nullptr, &View);
-	if(!pSelectedServer->m_HasBestClientPlayers)
+	if(!pSelectedServer->m_HasBestClientPlayers && !pSelectedServer->m_HasUcClientPlayers)
 	{
 		Ui()->DoLabel(&View, Localize("No BestClient users on the selected server"), FontSize, TEXTALIGN_MC);
 		return;
@@ -1826,7 +1843,7 @@ void CMenus::RenderServerbrowserBestClient(CUIRect View)
 	vBestClientIndexes.reserve(pSelectedServer->m_NumReceivedClients);
 	for(int i = 0; i < pSelectedServer->m_NumReceivedClients; ++i)
 	{
-		if(pSelectedServer->m_aClients[i].m_BestClient)
+		if(pSelectedServer->m_aClients[i].m_BestClient || pSelectedServer->m_aClients[i].m_UcClient)
 			vBestClientIndexes.push_back(i);
 	}
 
@@ -1891,7 +1908,10 @@ void CMenus::RenderServerbrowserBestClient(CUIRect View)
 		BestClientIcon.h = BestClientIconSize;
 		BestClientIcon.x = minimum(NameCursor.m_X + BestClientIconSpacing, Name.x + Name.w - BestClientIcon.w);
 		BestClientIcon.y = Name.y + (Name.h - BestClientIcon.h) / 2.0f;
-		RenderBestClientIcon(Graphics(), BestClientIcon, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f), Client.m_BestClientDeveloper);
+		if(Client.m_UcClient)
+			RenderUcClientIcon(Graphics(), m_UcLogoTexture, BestClientIcon);
+		else
+			RenderBestClientIcon(Graphics(), BestClientIcon, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f), Client.m_BestClientDeveloper);
 		Ui()->DoLabel(&Clan, Client.m_aClan, FontSize - 2.0f, TEXTALIGN_ML);
 	}
 
@@ -1900,6 +1920,9 @@ void CMenus::RenderServerbrowserBestClient(CUIRect View)
 
 void CMenus::RenderServerbrowserFriends(CUIRect View)
 {
+	GameClient()->m_ClientIndicator.RefreshUcPresenceList(false);
+	GameClient()->m_ClientIndicator.ReapplyBrowserSnapshot();
+
 	const float FontSize = 10.0f;
 	static bool s_aListExtended[NUM_FRIEND_TYPES] = {true, true, false};
 	const float SpacingH = 2.0f;
@@ -2071,8 +2094,69 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 				}
 				Rect.HSplitTop(11.0f, &NameLabel, &ClanLabel);
 
+				const bool FriendUsesUClient = [&]() {
+					if(Friend.ServerInfo() == nullptr)
+						return false;
+					for(int ClientIndex = 0; ClientIndex < Friend.ServerInfo()->m_NumClients; ++ClientIndex)
+					{
+						const auto &Client = Friend.ServerInfo()->m_aClients[ClientIndex];
+						if(!Client.m_UcClient)
+							continue;
+						if(Friend.Name()[0] != '\0')
+						{
+							if(str_comp(Client.m_aName, Friend.Name()) == 0 && str_comp(Client.m_aClan, Friend.Clan()) == 0)
+								return true;
+						}
+						else if(str_comp(Client.m_aClan, Friend.Clan()) == 0)
+							return true;
+					}
+					return false;
+				}();
+				const bool FriendUsesBestClient = [&]() {
+					if(FriendUsesUClient || Friend.ServerInfo() == nullptr)
+						return false;
+					for(int ClientIndex = 0; ClientIndex < Friend.ServerInfo()->m_NumClients; ++ClientIndex)
+					{
+						const auto &Client = Friend.ServerInfo()->m_aClients[ClientIndex];
+						if(!Client.m_BestClient)
+							continue;
+						if(Friend.Name()[0] != '\0')
+						{
+							if(str_comp(Client.m_aName, Friend.Name()) == 0 && str_comp(Client.m_aClan, Friend.Clan()) == 0)
+								return true;
+						}
+						else if(str_comp(Client.m_aClan, Friend.Clan()) == 0)
+							return true;
+					}
+					return false;
+				}();
+
 				// name
-				Ui()->DoLabel(&NameLabel, Friend.Name(), FontSize - 1.0f, TEXTALIGN_ML);
+				CUIRect NameText = NameLabel;
+				const float BestClientIconSize = FontSize - 1.0f;
+				const float BestClientIconSpacing = 2.0f;
+				if(FriendUsesUClient || FriendUsesBestClient)
+					NameText.VSplitRight(BestClientIconSize + BestClientIconSpacing, &NameText, nullptr);
+
+				CTextCursor NameCursor;
+				NameCursor.SetPosition(vec2(NameText.x, NameText.y + (NameText.h - (FontSize - 1.0f)) / 2.0f));
+				NameCursor.m_FontSize = FontSize - 1.0f;
+				NameCursor.m_Flags |= TEXTFLAG_STOP_AT_END;
+				NameCursor.m_LineWidth = NameText.w;
+				TextRender()->TextEx(&NameCursor, Friend.Name(), -1);
+
+				if(FriendUsesUClient || FriendUsesBestClient)
+				{
+					CUIRect BestClientIcon;
+					BestClientIcon.w = BestClientIconSize;
+					BestClientIcon.h = BestClientIconSize;
+					BestClientIcon.x = minimum(NameCursor.m_X + BestClientIconSpacing, NameLabel.x + NameLabel.w - BestClientIcon.w);
+					BestClientIcon.y = NameLabel.y + (NameLabel.h - BestClientIcon.h) / 2.0f;
+					if(FriendUsesUClient)
+						RenderUcClientIcon(Graphics(), m_UcLogoTexture, BestClientIcon);
+					else
+						RenderBestClientIcon(Graphics(), BestClientIcon);
+				}
 
 				// clan
 				Ui()->DoLabel(&ClanLabel, Friend.Clan(), FontSize - 2.0f, TEXTALIGN_ML);
@@ -2401,7 +2485,7 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 
 void CMenus::FriendlistOnUpdate()
 {
-	// TODO: friends are currently updated every frame; optimize and only update friends when necessary
+	GameClient()->m_ClientIndicator.ReapplyBrowserSnapshot();
 }
 
 void CMenus::PopupConfirmRemoveFriend()

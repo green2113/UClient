@@ -14,6 +14,8 @@
 #include <generated/protocol7.h>
 
 #include <optional>
+#include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -85,6 +87,7 @@ public:
 		int m_aCustomSkinColor7[protocol7::NUM_SKINPARTS];
 		bool m_BestClient;
 		bool m_BestClientDeveloper;
+		bool m_UcClient;
 	};
 
 	int m_ServerIndex;
@@ -129,6 +132,7 @@ public:
 	bool m_HasBestClientPlayers;
 	int m_NumBestClientDeveloperPlayers;
 	bool m_HasBestClientDeveloperPlayers;
+	bool m_HasUcClientPlayers;
 
 	static int EstimateLatency(int Loc1, int Loc2);
 	static bool ParseLocation(int *pResult, const char *pString);
@@ -398,6 +402,7 @@ public:
 	virtual int GetCurrentType() = 0;
 	virtual const char *GetTutorialServer() = 0;
 	virtual void SetBestClientPlayers(const std::vector<CBestClientPlayerEntry> &vPlayers) = 0;
+	virtual void SetUcClientPlayers(const std::unordered_map<std::string, std::unordered_set<std::string>> &UcPlayersByServer) = 0;
 };
 
 #endif

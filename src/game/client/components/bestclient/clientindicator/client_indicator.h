@@ -31,6 +31,7 @@ public:
 	void OnShutdown() override;
 
 	bool IsPlayerBestClient(int ClientId) const;
+	bool IsPlayerUClient(int ClientId) const;
 	bool IsPlayerBClient(int ClientId) { return IsPlayerBestClient(ClientId); }
 	bool IsPlayerDeveloper(int ClientId) const;
 	bool GetPlayerVersionLabel(int ClientId, char *pVersion, int VersionSize) const;
@@ -39,6 +40,7 @@ public:
 
 	void RefreshBrowserCache(bool Force);
 	void RefreshToken(bool Force);
+	void RefreshUcPresenceList(bool Force);
 	void ReapplyBrowserSnapshot();
 
 private:
@@ -51,6 +53,7 @@ private:
 	bool m_WasPresenceEnabled = false;
 	ESubsystemRuntimeState m_RuntimeState = ESubsystemRuntimeState::DISABLED;
 	int64_t m_LastHeartbeatTick = 0;
+	int64_t m_LastHttpHeartbeatTick = 0;
 	int64_t m_LastPresenceStartAttempt = 0;
 	int64_t m_LastBrowserRefreshTick = 0;
 	int64_t m_LastTokenRefreshTick = 0;
@@ -70,6 +73,9 @@ private:
 
 	std::shared_ptr<CHttpRequest> m_pBrowserTask = nullptr;
 	std::shared_ptr<CHttpRequest> m_pTokenTask = nullptr;
+	std::shared_ptr<CHttpRequest> m_pUcPresenceTask = nullptr;
+	int64_t m_LastUcPresenceRefreshTick = 0;
+	std::unordered_map<std::string, std::unordered_set<std::string>> m_UcPresenceByServer;
 	CBrowserCache m_BrowserCache;
 	char m_aWebSharedToken[256] = "";
 	std::string m_LastPresenceBlockReason;
@@ -82,6 +88,9 @@ private:
 	void ProcessIncomingPackets(bool Force = false);
 	void SyncLocalRegistrations(bool Force = false);
 	void SendPresencePacket(int ClientId, int PacketType);
+	void SendPresenceHttpEvent(int ClientId, const char *pEventPath);
+	void SendPresenceHttpSwitchEvent(int ClientId, const char *pFromServerAddress, const char *pToServerAddress);
+	void PresenceHttpPlayerId(char *pBuffer, int BufferSize) const;
 	void SendDevAuthPacket(int ClientId);
 	void SendVersionPacket(int ClientId);
 	void SendLeaveForAll();
@@ -90,6 +99,9 @@ private:
 
 	void FinishBrowserCacheRefresh();
 	void ResetBrowserTask();
+	void RefreshUcPresenceCache(bool Force);
+	void FinishUcPresenceRefresh();
+	void ResetUcPresenceTask();
 	void FinishTokenRefresh();
 	void ResetTokenTask();
 	void ResetPresenceState();

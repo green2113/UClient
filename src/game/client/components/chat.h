@@ -18,11 +18,19 @@
 #include <game/client/lineinput.h>
 #include <game/client/render.h>
 #include <game/client/ui.h>
+#include <game/client/ui_scrollregion.h>
+
+#include <engine/textrender.h>
 
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
+
+#include "giphy_browser.h"
+#include "uclient/chat_paste_image.h"
 
 class CTranslateResponse
 {
@@ -110,6 +118,10 @@ class CChat : public CComponent
 		int m_TimesRepeated;
 
 		std::shared_ptr<CTranslateResponse> m_pTranslateResponse;
+		std::vector<STextBoundingBox> m_vLinkBounds;
+		std::vector<std::string> m_vLinks;
+		std::vector<float> m_vLinkFontSizes;
+		std::vector<bool> m_vLinkAlwaysConfirm;
 
 		EMediaState m_MediaState;
 		EMediaKind m_MediaKind;
@@ -268,6 +280,51 @@ class CChat : public CComponent
 	bool m_TranslateButtonRectValid;
 	SRenderRect m_TranslateButtonRect;
 	int m_HoveredTranslateLineIndex = -1;
+	std::string m_HoveredPlayerName;
+	std::string m_HoveredLink;
+	bool m_HoveredLinkAlwaysConfirm = false;
+
+	enum class ELinkSafety
+	{
+		INVALID,
+		SAFE,
+		WARNING,
+		DANGER,
+	};
+
+	struct CLinkPolicyCache
+	{
+		int64_t m_LastRefreshAttempt = 0;
+		std::shared_ptr<class CHttpRequest> m_pRequest;
+		std::unordered_set<std::string> m_vSafeDomains;
+		std::unordered_set<std::string> m_vDangerDomains;
+	};
+
+	enum class ELinkPreflightRequestType
+	{
+		NONE,
+		HEAD,
+		GET,
+	};
+
+	struct CLinkPreflight
+	{
+		std::shared_ptr<class CHttpRequest> m_pRequest;
+		std::string m_Link;
+		bool m_AlwaysConfirm = false;
+		ELinkPreflightRequestType m_RequestType = ELinkPreflightRequestType::NONE;
+	};
+
+	CLinkPolicyCache m_LinkPolicyCache;
+	CLinkPreflight m_LinkPreflight;
+
+	void UpdateLinkPolicy();
+	void UpdateLinkPreflight();
+	void StartLinkPreflight(const std::string &Link, bool AlwaysConfirm);
+	bool IsLikelyPreflightDownload(const CHttpRequest &Request) const;
+	void HandleLinkActivation(const std::string &Link, bool AlwaysConfirm);
+	void ShowLinkPrompt(const std::string &Link, bool AlwaysConfirm, ELinkSafety Safety, bool IsDownloadLink);
+	ELinkSafety ClassifyLink(const std::string &Link) const;
 
 	bool m_HideMediaByBind;
 	bool m_MediaViewerOpen;
@@ -311,6 +368,7 @@ class CChat : public CComponent
 	std::string MediaPlaceholderText(const CLine &Line) const;
 	std::string BuildVisibleMessageText(const CLine &Line, bool UseMediaLabelWhenEmpty) const;
 	std::string BuildPlainTextLine(const CLine &Line) const;
+	std::string BuildPlayerSearchUrl(const char *pPlayerName) const;
 	bool ShouldHideLineFromStreamer(const CLine &Line) const;
 	bool ShouldShowFriendMarker(const CLine &Line) const;
 	void RenderTextLine(CLine &Line, float y, float fontSize, float lineWidth, float textBegin, float realMsgPaddingTee, float realMsgPaddingY, bool isScoreBoardOpen, float blend, std::string *pSelectionString);
@@ -341,11 +399,66 @@ class CChat : public CComponent
 	void StoreSave(const char *pText);
 	void SetUiMousePos(vec2 Pos);
 
+	// uclient: chat paste image
+	CUClientChatPasteImage m_UcChatPaste;
+
+	// Giphy GIF search
+	CButtonContainer m_GiphyButton;
+	CButtonContainer m_GiphySearchButton;
+	std::vector<CButtonContainer> m_vGiphyResultButtons;
+	CScrollRegion m_GiphyScrollRegion;
+	vec2 m_GiphyScrollOffset;
+	SPopupMenuId m_GiphyPopupId;
+	bool m_GiphyButtonPressed;
+	bool m_GiphyButtonRectValid;
+	SRenderRect m_GiphyButtonRect;
+	bool m_GiphyPopupHasStoredPos = false;
+	vec2 m_GiphyPopupPos = vec2(0.0f, 0.0f);
+	bool m_GiphyPopupDragging = false;
+	vec2 m_GiphyPopupDragOffset = vec2(0.0f, 0.0f);
+
+	CGiphyBrowser m_GiphyBrowser;
+	CLineInputBuffered<128> m_GiphySearchInput;
+
+	bool m_GiphySearching;
+	bool m_GiphyLoadingMore;
+	bool m_GiphyHasMoreResults;
+	int m_GiphyNextPageToLoad;
+	int m_GiphyRequestedPage;
+	std::unordered_set<std::string> m_GiphyVisibleResultIds;
+	std::string m_GiphyStatusText;
+	std::shared_ptr<class CHttpRequest> m_pGiphyRequest;
+
+	struct SGiphyPreviewEntry
+	{
+		EMediaState m_State = EMediaState::NONE;
+		std::shared_ptr<class CHttpRequest> m_pRequest;
+		std::shared_ptr<CMediaDecodeJob> m_pDecodeJob;
+		std::vector<SMediaFrame> m_vFrames;
+		int m_Width = 0;
+		int m_Height = 0;
+		bool m_Animated = false;
+		int64_t m_AnimationStart = 0;
+		int64_t m_LastUsedTick = 0;
+	};
+	std::unordered_map<std::string, SGiphyPreviewEntry> m_GiphyPreviewCache;
+	void UpdateGiphyPreviewCache();
+
+	void OpenGiphyPopup(const CUIRect &ButtonRect);
+	void BeginGiphySearch(bool LoadMore = false);
+	void UpdateGiphySearch();
+	void ClearGiphyPreviewCache();
+	bool GetGiphyPreviewTexture(const struct SGifResult &Result, IGraphics::CTextureHandle &Texture, int &Width, int &Height) const;
+	static CUi::EPopupMenuFunctionResult PopupGiphyBrowser(void *pContext, CUIRect View, bool Active);
+	void RenderGiphyButton(const CUIRect &ButtonRect);
+
 	friend class CBindChat;
 	friend class CTranslate;
 	friend class CBestClient;
 	friend class CChatBubbles;
 	friend class CTClient;
+	friend class CUClientChatPasteImage;
+	friend class CMenus;
 
 public:
 	CChat();

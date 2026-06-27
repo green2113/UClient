@@ -293,13 +293,13 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	CurVersion.HSplitTop(16.0f, &VersionLine3, &CurVersion);
 
 	char aDDNetBuf[64];
-	char aTClientBuf[64];
+	char aUClientBuf[64];
 	char aBestClientBuf[64];
 	str_format(aDDNetBuf, sizeof(aDDNetBuf), "DDNet %s", GAME_RELEASE_VERSION);
-	str_format(aTClientBuf, sizeof(aTClientBuf), "TClient %s", TCLIENT_VERSION);
+	str_format(aUClientBuf, sizeof(aUClientBuf), "UClient %s", UCLIENT_VERSION);
 	str_format(aBestClientBuf, sizeof(aBestClientBuf), "BestClient %s", BESTCLIENT_VERSION);
 	Ui()->DoLabel(&VersionLine1, aDDNetBuf, 14.0f, TEXTALIGN_MR);
-	Ui()->DoLabel(&VersionLine2, aTClientBuf, 14.0f, TEXTALIGN_MR);
+	Ui()->DoLabel(&VersionLine2, aUClientBuf, 14.0f, TEXTALIGN_MR);
 	Ui()->DoLabel(&VersionLine3, aBestClientBuf, 14.0f, TEXTALIGN_MR);
 
 	static CButtonContainer s_ConsoleButton;

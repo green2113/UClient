@@ -386,6 +386,11 @@ protected:
 	char m_aMessageBody[512];
 	char m_aMessageButton[512];
 
+	char m_aPopupLinkUrl[2048] = "";
+	bool m_PopupDangerousConfirmButton = false;
+	char m_aPopupDangerousHoverLabel[256] = "";
+	bool m_PopupDeactivateAfterButton = false;
+
 	CUIElement m_RefreshButton;
 	CUIElement m_ConnectButton;
 
@@ -403,6 +408,9 @@ protected:
 	};
 	char m_aPopupTitle[128];
 	char m_aPopupMessage[IO_MAX_PATH_LENGTH + 256];
+	char m_aPopupCheckboxLabel[64] = {};
+	bool m_PopupConfirmHasCheckbox = false;
+	bool m_PopupConfirmCheckboxValue = false;
 	struct
 	{
 		char m_aLabel[64];
@@ -917,6 +925,7 @@ protected:
 
 	IGraphics::CTextureHandle m_TextureBlob;
 	IGraphics::CTextureHandle m_MainMenuLogoTexture;
+	IGraphics::CTextureHandle m_UcLogoTexture;
 	std::array<std::set<std::string>, NUM_ASSET_FAVORITE_TABS> m_aAssetFavorites;
 
 public:
@@ -926,6 +935,7 @@ public:
 	int Sizeof() const override { return sizeof(*this); }
 
 	void RenderLoading(const char *pCaption, const char *pContent, int IncreaseCounter);
+	void SetupLoadingTotal(int NumComponents);
 	void FinishLoading();
 
 	bool IsInit() const { return m_IsInit; }
@@ -1086,6 +1096,22 @@ public:
 	bool CanDisplayWarning() const;
 
 	void PopupWarning(const char *pTopic, const char *pBody, const char *pButton, std::chrono::nanoseconds Duration);
+
+	void PopupConfirmOpenLink(const char *pTitle, const char *pMessage, const char *pConfirmButtonLabel, const char *pCancelButtonLabel, const char *pUrl, bool Dangerous);
+	void PopupOpenStoredLink();
+	void PopupCancelStoredLink();
+
+	void OpenSoundboardDeletePopup();
+	void PopupConfirmSoundboardDelete();
+	void PopupCancelSoundboardDelete();
+
+	// uclient
+	void PopupConfirmWithCheckbox(const char *pTitle, const char *pMessage,
+		const char *pConfirmButtonLabel, const char *pCancelButtonLabel, const char *pCheckboxLabel, bool CheckboxValue,
+		FPopupButtonCallback pfnConfirmButtonCallback = &CMenus::DefaultButtonCallback, int ConfirmNextPopup = POPUP_NONE,
+		FPopupButtonCallback pfnCancelButtonCallback = &CMenus::DefaultButtonCallback, int CancelNextPopup = POPUP_NONE);
+	void PopupConfirmPasteImageFromChat();
+	void PopupCancelPasteImageFromChat();
 
 	std::chrono::nanoseconds m_PopupWarningLastTime;
 	std::chrono::nanoseconds m_PopupWarningDuration;

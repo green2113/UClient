@@ -147,6 +147,7 @@ public:
 	void ClearTouchDeltas() override;
 
 	std::string GetClipboardText() override;
+	bool GetClipboardImage(SClipboardImage &Image) override;
 	void SetClipboardText(const char *pText) override;
 
 	void StartTextInput() override;

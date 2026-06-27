@@ -16,6 +16,7 @@
 #include <engine/shared/bestclient_indicator_protocol.h>
 #include <engine/shared/config.h>
 #include <engine/shared/http.h>
+#include <engine/external/json-parser/json.h>
 #include <engine/shared/json.h>
 #include <engine/storage.h>
 #include <engine/textrender.h>
@@ -30,6 +31,16 @@
 
 #include <SDL.h>
 #include <opus.h>
+
+#if defined(CONF_VIDEORECORDER) || defined(CONF_FFMPEG)
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libswresample/swresample.h>
+#include <libavutil/opt.h>
+}
+#define VOICE_HAS_FFMPEG 1
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -602,6 +613,80 @@ namespace
 		return HudLayout::BackgroundCorners(DefaultCorners, RectX, RectY, RectW, RectH, CanvasWidth, CanvasHeight);
 	}
 
+	bool VoiceIdDisguiseActive(const CGameClient *pGameClient, int *pDisguiseClientId = nullptr)
+	{
+#if defined(CONF_DEBUG) || defined(CONF_UCLIENT_DEV_BUILD)
+		if(!pGameClient)
+			return false;
+		const int DisguiseId = g_Config.m_UcVoiceId;
+		const int RealId = pGameClient->m_Snap.m_LocalClientId;
+		if(DisguiseId >= 0 && DisguiseId < MAX_CLIENTS && RealId >= 0 && DisguiseId != RealId)
+		{
+			if(pDisguiseClientId)
+				*pDisguiseClientId = DisguiseId;
+			return true;
+		}
+#else
+		(void)pGameClient;
+#endif
+		return false;
+	}
+
+	void RenderTalkingHudName(ITextRender *pTextRender, CGameClient *pGameClient, bool ForcePreview,
+		float MainX, float RowY, float RowHeight, float MicX, float Scale, const char *pName, bool IsLocal)
+	{
+		char aSuffix[128] = {};
+		int DisguiseClientId = -1;
+		if(IsLocal && VoiceIdDisguiseActive(pGameClient, &DisguiseClientId))
+		{
+			const char *pDisguiseName = pGameClient->m_aClients[DisguiseClientId].m_aName;
+			if(pDisguiseName[0] != '\0')
+				str_format(aSuffix, sizeof(aSuffix), " (%s)", pDisguiseName);
+		}
+
+		float NameFontSize = 6.0f * Scale;
+		const float MinNameFontSize = 3.5f * Scale;
+		const float SuffixFontScale = 0.82f;
+		const float MaxNameWidth = maximum(0.0f, MicX - MainX - 1.0f * Scale);
+		while(NameFontSize > MinNameFontSize)
+		{
+			const float MainWidth = pTextRender->TextWidth(NameFontSize, pName, -1, -1.0f);
+			const float SuffixWidth = aSuffix[0] != '\0' ? pTextRender->TextWidth(NameFontSize * SuffixFontScale, aSuffix, -1, -1.0f) : 0.0f;
+			if(MainWidth + SuffixWidth <= MaxNameWidth)
+				break;
+			NameFontSize -= 0.25f * Scale;
+		}
+
+		const float MainWidth = pTextRender->TextWidth(NameFontSize, pName, -1, -1.0f);
+		const float MainBaseline = RowY + (RowHeight - NameFontSize) * 0.5f;
+		pTextRender->TextColor(ApplyVoiceHudAlpha(pGameClient, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f)));
+		CTextCursor NameCursor;
+		NameCursor.m_StartX = MainX;
+		NameCursor.m_X = MainX;
+		NameCursor.m_StartY = MainBaseline;
+		NameCursor.m_Y = MainBaseline;
+		NameCursor.m_FontSize = NameFontSize;
+		NameCursor.m_LineWidth = MaxNameWidth;
+		NameCursor.m_Flags = TEXTFLAG_RENDER | TEXTFLAG_STOP_AT_END | TEXTFLAG_DISALLOW_NEWLINE;
+		pTextRender->TextEx(&NameCursor, pName, -1);
+
+		if(aSuffix[0] != '\0')
+		{
+			const float SuffixFontSize = NameFontSize * SuffixFontScale;
+			const float SuffixBaseline = RowY + (RowHeight - SuffixFontSize) * 0.5f;
+			pTextRender->TextColor(ApplyVoiceHudAlpha(pGameClient, VoiceHudThemeColor(pGameClient, ColorRGBA(0.62f, 0.62f, 0.62f, 0.90f), ForcePreview, 1.0f)));
+			CTextCursor SuffixCursor;
+			SuffixCursor.m_StartX = MainX + MainWidth;
+			SuffixCursor.m_X = MainX + MainWidth;
+			SuffixCursor.m_StartY = SuffixBaseline;
+			SuffixCursor.m_Y = SuffixBaseline;
+			SuffixCursor.m_FontSize = SuffixFontSize;
+			SuffixCursor.m_LineWidth = maximum(0.0f, MaxNameWidth - MainWidth);
+			SuffixCursor.m_Flags = TEXTFLAG_RENDER | TEXTFLAG_STOP_AT_END | TEXTFLAG_DISALLOW_NEWLINE;
+			pTextRender->TextEx(&SuffixCursor, aSuffix, -1);
+		}
+	}
+
 }
 
 void CVoiceChat::OnConsoleInit()
@@ -613,6 +698,7 @@ void CVoiceChat::OnConsoleInit()
 	Console()->Register("+voicechat", "", CFGFLAG_CLIENT, ConKeyVoiceTalk, this, "Push-to-talk");
 	Console()->Register("toggle_voice_mic_mute", "", CFGFLAG_CLIENT, ConToggleVoiceMicMute, this, "Toggle voice microphone mute");
 	Console()->Register("toggle_voice_headphones_mute", "", CFGFLAG_CLIENT, ConToggleVoiceHeadphonesMute, this, "Toggle voice headphones mute");
+	Console()->Register("toggle_voice_soundboard_panel", "", CFGFLAG_CLIENT, ConToggleVoiceSoundboardPanel, this, "Toggle voice soundboard panel");
 }
 
 void CVoiceChat::OnReset()
@@ -1013,6 +1099,8 @@ void CVoiceChat::OnUpdate()
 void CVoiceChat::OnShutdown()
 {
 	SetPanelActive(false);
+	StopSoundboard();
+	SetSoundboardPanelActive(false);
 	StopVoice();
 	ResetServerListTask();
 	CloseServerListPingSocket();
@@ -1020,16 +1108,33 @@ void CVoiceChat::OnShutdown()
 	m_vServerEntries.clear();
 	m_vOnlineServers.clear();
 	m_SelectedServerIndex = -1;
+	if(m_pSoundboardListTask)
+	{
+		m_pSoundboardListTask->Abort();
+		m_pSoundboardListTask = nullptr;
+	}
+	if(m_SoundboardUpload.m_pTask)
+	{
+		m_SoundboardUpload.m_pTask->Abort();
+		m_SoundboardUpload.m_pTask = nullptr;
+	}
+	for(auto &Pair : m_SoundboardAudioCache)
+	{
+		if(Pair.second.m_pTask)
+			Pair.second.m_pTask->Abort();
+	}
+	m_SoundboardAudioCache.clear();
 }
 
 void CVoiceChat::OnRelease()
 {
 	SetPanelActive(false);
+	SetSoundboardPanelActive(false);
 }
 
 bool CVoiceChat::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
 {
-	if(!m_PanelActive || !m_MouseUnlocked)
+	if((!m_PanelActive && !m_SoundboardPanelActive) || !m_MouseUnlocked)
 		return false;
 
 	Ui()->ConvertMouseMove(&x, &y, CursorType);
@@ -1039,12 +1144,15 @@ bool CVoiceChat::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
 
 bool CVoiceChat::OnInput(const IInput::CEvent &Event)
 {
-	if(!m_PanelActive)
+	if(!m_PanelActive && !m_SoundboardPanelActive)
 		return false;
 
 	if(Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_ESCAPE)
 	{
-		SetPanelActive(false);
+		if(m_SoundboardPanelActive)
+			SetSoundboardPanelActive(false);
+		else
+			SetPanelActive(false);
 		Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE);
 		return true;
 	}
@@ -1058,15 +1166,23 @@ void CVoiceChat::OnRender()
 	{
 		if(m_PanelActive)
 			SetPanelActive(false);
+		if(m_SoundboardPanelActive)
+			SetSoundboardPanelActive(false);
 		return;
 	}
 
-	if(!m_PanelActive)
+	TickSoundboard();
+	ProcessSoundboardVoiceInject();
+
+	if(!m_PanelActive && !m_SoundboardPanelActive)
 		return;
 
 	if(Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
 	{
-		SetPanelActive(false);
+		if(m_SoundboardPanelActive)
+			SetSoundboardPanelActive(false);
+		else
+			SetPanelActive(false);
 		return;
 	}
 
@@ -1076,7 +1192,10 @@ void CVoiceChat::OnRender()
 	const CUIRect Screen = *Ui()->Screen();
 	Ui()->MapScreen();
 
-	RenderPanel(Screen, true);
+	if(m_SoundboardPanelActive)
+		RenderSoundboardPanel(Screen);
+	else
+		RenderPanel(Screen, true);
 	Ui()->RenderPopupMenus();
 	RenderTools()->RenderCursor(Ui()->MousePos(), 24.0f);
 
@@ -1474,6 +1593,10 @@ void CVoiceChat::RenderMenuControlBinds(const CUIRect &View)
 
 	Rows.HSplitTop(24.0f, &Row, &Rows);
 	RenderBindRow(Row, BCLocalize("Voice panel"), "toggle_voice_panel", m_PanelBindReaderButton, m_PanelBindClearButton);
+
+	Rows.HSplitTop(4.0f, nullptr, &Rows);
+	Rows.HSplitTop(24.0f, &Row, &Rows);
+	RenderBindRow(Row, BCLocalize("Soundboard panel"), "toggle_voice_soundboard_panel", m_SoundboardPanelBindReaderButton, m_SoundboardPanelBindClearButton);
 
 	Rows.HSplitTop(4.0f, nullptr, &Rows);
 	Rows.HSplitTop(24.0f, &Row, &Rows);
@@ -1946,38 +2069,22 @@ void CVoiceChat::RenderHudTalkingIndicator(float HudWidth, float HudHeight, bool
 				str_format(aName, sizeof(aName), "%s #%u", BCLocalize("Participant"), Entry.m_PeerId);
 			}
 
-			if(aName[0] == '\0')
-				str_copy(aName, BCLocalize("Participant"), sizeof(aName));
+		if(aName[0] == '\0')
+			str_copy(aName, BCLocalize("Participant"), sizeof(aName));
 
-			float NameFontSize = 6.0f * Scale;
-			const float MinNameFontSize = 3.5f * Scale;
-			const float MaxNameWidth = maximum(0.0f, MicX - MainX - 1.0f * Scale);
-			while(NameFontSize > MinNameFontSize && TextRender()->TextWidth(NameFontSize, aName, -1, -1.0f) > MaxNameWidth)
-				NameFontSize -= 0.25f * Scale;
+		RenderTalkingHudName(TextRender(), GameClient(), ForcePreview, MainX, RowY, RowHeight, MicX, Scale, aName, Entry.m_IsLocal);
 
-			const float TextBaseline = RowY + (RowHeight - NameFontSize) * 0.5f;
-			TextRender()->TextColor(ApplyVoiceHudAlpha(GameClient(), ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f)));
-			CTextCursor NameCursor;
-			NameCursor.m_StartX = MainX;
-			NameCursor.m_X = MainX;
-			NameCursor.m_StartY = TextBaseline;
-			NameCursor.m_Y = TextBaseline;
-			NameCursor.m_FontSize = NameFontSize;
-			NameCursor.m_LineWidth = MaxNameWidth;
-			NameCursor.m_Flags = TEXTFLAG_RENDER | TEXTFLAG_STOP_AT_END | TEXTFLAG_DISALLOW_NEWLINE;
-			TextRender()->TextEx(&NameCursor, aName, -1);
-
-			TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
-			const ColorRGBA MicColor = VoiceHudThemeColor(GameClient(), ColorRGBA(0.68f, 1.0f, 0.68f, 0.85f), ForcePreview, 1.0f);
-			TextRender()->TextColor(ApplyVoiceHudAlpha(GameClient(), MicColor));
-			const float MicGlyphWidth = TextRender()->TextWidth(IconSize, FontIcon::MICROPHONE, -1, -1.0f);
-			TextRender()->Text(MicX + (IconWidth - MicGlyphWidth) * 0.5f, RowY + (RowHeight - IconSize) * 0.5f, IconSize, FontIcon::MICROPHONE, -1.0f);
-			TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
-		}
-
-		TextRender()->TextColor(TextRender()->DefaultTextColor());
-		return;
+		TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+		const ColorRGBA MicColor = VoiceHudThemeColor(GameClient(), ColorRGBA(0.68f, 1.0f, 0.68f, 0.85f), ForcePreview, 1.0f);
+		TextRender()->TextColor(ApplyVoiceHudAlpha(GameClient(), MicColor));
+		const float MicGlyphWidth = TextRender()->TextWidth(IconSize, FontIcon::MICROPHONE, -1, -1.0f);
+		TextRender()->Text(MicX + (IconWidth - MicGlyphWidth) * 0.5f, RowY + (RowHeight - IconSize) * 0.5f, IconSize, FontIcon::MICROPHONE, -1.0f);
+		TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 	}
+
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+	return;
+}
 
 	if(vEntries.empty())
 		return;
@@ -2042,23 +2149,7 @@ void CVoiceChat::RenderHudTalkingIndicator(float HudWidth, float HudHeight, bool
 			str_copy(aName, BCLocalize("Participant"), sizeof(aName));
 		}
 
-		float NameFontSize = 6.0f * Scale;
-		const float MinNameFontSize = 3.5f * Scale;
-		const float MaxNameWidth = maximum(0.0f, MicX - MainX - 1.0f * Scale);
-		while(NameFontSize > MinNameFontSize && TextRender()->TextWidth(NameFontSize, aName, -1, -1.0f) > MaxNameWidth)
-			NameFontSize -= 0.25f * Scale;
-
-		const float TextBaseline = RowY + (RowHeight - NameFontSize) * 0.5f;
-		TextRender()->TextColor(ApplyVoiceHudAlpha(GameClient(), ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f)));
-		CTextCursor NameCursor;
-		NameCursor.m_StartX = MainX;
-		NameCursor.m_X = MainX;
-		NameCursor.m_StartY = TextBaseline;
-		NameCursor.m_Y = TextBaseline;
-		NameCursor.m_FontSize = NameFontSize;
-		NameCursor.m_LineWidth = MaxNameWidth;
-		NameCursor.m_Flags = TEXTFLAG_RENDER | TEXTFLAG_STOP_AT_END | TEXTFLAG_DISALLOW_NEWLINE;
-		TextRender()->TextEx(&NameCursor, aName, -1);
+		RenderTalkingHudName(TextRender(), GameClient(), ForcePreview, MainX, RowY, RowHeight, MicX, Scale, aName, Entry.m_IsLocal);
 
 		TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
 		const ColorRGBA MicColor = VoiceHudThemeColor(GameClient(), ColorRGBA(0.68f, 1.0f, 0.68f, ForcePreview ? 0.85f : 0.92f), ForcePreview, 1.0f);
@@ -2109,17 +2200,59 @@ void CVoiceChat::SetPanelActive(bool Active)
 	m_PanelActive = Active;
 	if(m_PanelActive)
 	{
+		if(m_SoundboardPanelActive)
+			SetSoundboardPanelActive(false);
 		m_MouseUnlocked = true;
 		m_LastMousePos = Ui()->MousePos();
 		SetUiMousePos(Ui()->Screen()->Center());
 	}
-	else if(m_MouseUnlocked)
+	else if(m_MouseUnlocked && !m_SoundboardPanelActive)
 	{
 		Ui()->ClosePopupMenus();
 		m_MouseUnlocked = false;
 		if(m_LastMousePos.has_value())
 			SetUiMousePos(m_LastMousePos.value());
 		m_LastMousePos = Ui()->MousePos();
+	}
+}
+
+void CVoiceChat::SetSoundboardPanelActive(bool Active)
+{
+	if(m_SoundboardPanelActive == Active)
+		return;
+
+	m_SoundboardPanelActive = Active;
+	if(m_SoundboardPanelActive)
+	{
+		if(m_PanelActive)
+			SetPanelActive(false);
+		m_MouseUnlocked = true;
+		m_LastMousePos = Ui()->MousePos();
+		SetUiMousePos(Ui()->Screen()->Center());
+		if(m_SoundboardLoadState == 0)
+			FetchSoundboardList();
+	}
+	else if(m_MouseUnlocked && !m_PanelActive)
+	{
+		Ui()->ClosePopupMenus();
+		m_MouseUnlocked = false;
+		if(m_LastMousePos.has_value())
+			SetUiMousePos(m_LastMousePos.value());
+		m_LastMousePos = Ui()->MousePos();
+		if(m_SoundboardDeleteConfirmIndex >= 0)
+		{
+			m_SoundboardDeleteConfirmIndex = -1;
+			if(m_SoundboardPanelRestoreAfterDeleteConfirm)
+			{
+				m_SoundboardPanelRestoreAfterDeleteConfirm = false;
+				SetSoundboardPanelActive(true);
+			}
+			if(m_DeactivateMenusAfterDeleteConfirm)
+			{
+				m_DeactivateMenusAfterDeleteConfirm = false;
+				GameClient()->m_Menus.SetActive(false);
+			}
+		}
 	}
 }
 
@@ -4208,6 +4341,11 @@ bool CVoiceChat::ShouldKeepVoicePipelineActive() const
 
 bool CVoiceChat::ShouldUseSecondaryTeamConnection() const
 {
+	if(IsUcTeamOverrideMode())
+	{
+		const int OwnTeam = LocalOwnVoiceTeam();
+		return IsUcIncludeOwnTeamMode() && OwnTeam > 0 && OwnTeam != UcTargetVoiceTeam();
+	}
 	return IsEnableYourGroupMode() && LocalOwnVoiceTeam() > 0;
 }
 
@@ -4220,6 +4358,8 @@ int CVoiceChat::LocalTeam() const
 
 int CVoiceChat::LocalVoiceTeam() const
 {
+	if(IsUcTeamOverrideMode())
+		return UcTargetVoiceTeam();
 	return IsUseTeam0Mode() ? 0 : LocalOwnVoiceTeam();
 }
 
@@ -4238,10 +4378,37 @@ bool CVoiceChat::IsEnableYourGroupMode() const
 	return IsUseTeam0Mode() && g_Config.m_BcVoiceChatEnableYourGroup != 0;
 }
 
+bool CVoiceChat::IsUcTeamOverrideMode() const
+{
+#if defined(CONF_DEBUG) || defined(CONF_UCLIENT_DEV_BUILD)
+	return g_Config.m_UcVoiceTeam >= 0 && g_Config.m_UcVoiceTeam <= 63;
+#else
+	return false;
+#endif
+}
+
+int CVoiceChat::UcTargetVoiceTeam() const
+{
+	return maximum(g_Config.m_UcVoiceTeam, 0);
+}
+
+bool CVoiceChat::IsUcIncludeOwnTeamMode() const
+{
+	return IsUcTeamOverrideMode() && g_Config.m_UcVoiceTeamIncludeOwn != 0;
+}
+
 bool CVoiceChat::IsVoiceTeamAudible(int Team) const
 {
 	const int NormalizedTeam = maximum(Team, 0);
 	const int OwnTeam = LocalOwnVoiceTeam();
+
+	if(IsUcTeamOverrideMode())
+	{
+		const int TargetTeam = UcTargetVoiceTeam();
+		if(NormalizedTeam == TargetTeam)
+			return true;
+		return IsUcIncludeOwnTeamMode() && OwnTeam > 0 && OwnTeam != TargetTeam && NormalizedTeam == OwnTeam;
+	}
 
 	if(IsUseTeam0Mode())
 	{
@@ -4274,6 +4441,10 @@ int CVoiceChat::LocalGameClientId() const
 {
 	if(Client()->State() != IClient::STATE_ONLINE)
 		return BestClientVoice::INVALID_GAME_CLIENT_ID;
+#if defined(CONF_DEBUG) || defined(CONF_UCLIENT_DEV_BUILD)
+	if(g_Config.m_UcVoiceId >= 0 && g_Config.m_UcVoiceId < MAX_CLIENTS)
+		return g_Config.m_UcVoiceId;
+#endif
 	return GameClient()->m_Snap.m_LocalClientId;
 }
 
@@ -4369,6 +4540,22 @@ bool CVoiceChat::IsClientTalking(int ClientId) const
 	// Local speaking state should not depend on peer mapping.
 	if(IsLocalClient)
 	{
+		// Soundboard playback that is injected into voice should also show local talking.
+		if(m_Registered && !IsInGameOnlyBlocked())
+		{
+			const int64_t NowTick = time_get();
+			for(const auto &Play : m_vSoundboardPlayInstances)
+			{
+				if(!Play.m_SendToVoice)
+					continue;
+				const int64_t Elapsed = NowTick - Play.m_StartTick;
+				const int64_t TimeDoneSamples = Elapsed > 0 ? (Elapsed * BestClientVoice::SAMPLE_RATE / time_freq()) : 0;
+				const bool TimeDone = (size_t)TimeDoneSamples >= Play.m_vPcm.size() + (size_t)BestClientVoice::FRAME_SIZE;
+				if(!TimeDone && Play.m_VoiceInjectPos < Play.m_vPcm.size())
+					return true;
+			}
+		}
+
 		if(g_Config.m_BcVoiceChatMicMuted)
 			return false;
 
@@ -5041,6 +5228,8 @@ void CVoiceChat::RenderSettingsSection(CUIRect View)
 		AddSpacing(4.0f);
 	};
 
+	RenderBindRow(BCLocalize("Voice panel"), "toggle_voice_panel", m_PanelBindReaderButton, m_PanelBindClearButton);
+	RenderBindRow(BCLocalize("Soundboard panel"), "toggle_voice_soundboard_panel", m_SoundboardPanelBindReaderButton, m_SoundboardPanelBindClearButton);
 	RenderBindRow(BCLocalize("PTT"), "+voicechat", m_PttBindReaderButton, m_PttBindClearButton);
 	RenderBindRow(BCLocalize("Mute microphone"), "toggle_voice_mic_mute", m_MicMuteBindReaderButton, m_MicMuteBindClearButton);
 	RenderBindRow(BCLocalize("Mute headphones"), "toggle_voice_headphones_mute", m_HeadphonesMuteBindReaderButton, m_HeadphonesMuteBindClearButton);
@@ -5464,14 +5653,20 @@ void CVoiceChat::ConVoiceStatus(IConsole::IResult *pResult, void *pUserData)
 {
 	(void)pResult;
 	CVoiceChat *pSelf = static_cast<CVoiceChat *>(pUserData);
-	dbg_msg("voice", "enabled=%d connected=%d participants=%d server='%s' ptt=%d radius=%d radius_tiles=%d",
+	char aMsg[512];
+	str_format(aMsg, sizeof(aMsg),
+		"enabled=%d connected=%d participants=%d server='%s' ptt=%d radius=%d radius_tiles=%d uc_id=%d uc_team=%d uc_include_own=%d",
 		g_Config.m_BcVoiceChatEnable ? 1 : 0,
 		pSelf->m_Registered ? 1 : 0,
 		(int)pSelf->m_vVisibleMemberPeerIds.size(),
 		pSelf->EffectiveServerLabel(),
 		pSelf->m_PushToTalkPressed ? 1 : 0,
 		g_Config.m_BcVoiceChatRadiusEnabled ? 1 : 0,
-		std::clamp(g_Config.m_BcVoiceChatRadiusTiles, 1, 500));
+		std::clamp(g_Config.m_BcVoiceChatRadiusTiles, 1, 500),
+		g_Config.m_UcVoiceId,
+		g_Config.m_UcVoiceTeam,
+		g_Config.m_UcVoiceTeamIncludeOwn ? 1 : 0);
+	dbg_msg("voice", "%s", aMsg);
 }
 
 void CVoiceChat::ConToggleVoicePanel(IConsole::IResult *pResult, void *pUserData)
@@ -5499,4 +5694,1160 @@ void CVoiceChat::ConToggleVoiceHeadphonesMute(IConsole::IResult *pResult, void *
 	(void)pResult;
 	(void)pUserData;
 	ToggleVoiceHeadphonesMute();
+}
+
+void CVoiceChat::ConToggleVoiceSoundboardPanel(IConsole::IResult *pResult, void *pUserData)
+{
+	(void)pResult;
+	CVoiceChat *pSelf = static_cast<CVoiceChat *>(pUserData);
+	pSelf->SetSoundboardPanelActive(!pSelf->m_SoundboardPanelActive);
+}
+
+// -----------------------------------------------------------------------
+// Soundboard
+// -----------------------------------------------------------------------
+
+#if defined(_WIN32)
+// Implemented in soundboard_file_dialog.cpp to avoid IStorage conflict.
+bool OpenSoundboardFileDialog(char *pOutPath, int OutPathSize);
+#endif
+
+void CVoiceChat::RenderSoundboardPanel(const CUIRect &Screen)
+{
+	const float PanelW = minimum(Screen.w * 0.62f, 720.0f);
+	const float PanelH = minimum(Screen.h * 0.70f, 620.0f);
+	CUIRect Panel = {Screen.x + (Screen.w - PanelW) / 2.0f, Screen.y + (Screen.h - PanelH) / 2.0f + 15.0f, PanelW, PanelH};
+	const ColorRGBA Bg = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_BcAdminPanelBgColor, true));
+	Panel.Draw(Bg, IGraphics::CORNER_ALL, 8.0f);
+
+	CUIRect Header, Body;
+	Panel.HSplitTop(PANEL_HEADER_HEIGHT, &Header, &Body);
+
+	CUIRect HeaderInner = Header;
+	HeaderInner.Margin(8.0f, &HeaderInner);
+	CUIRect HeaderLabel, HeaderClose;
+	HeaderInner.VSplitRight(PANEL_HEADER_HEIGHT - 4.0f, &HeaderLabel, &HeaderClose);
+	Ui()->DoLabel(&HeaderLabel, Localize("Voice soundboard"), 13.0f, TEXTALIGN_ML);
+	TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+	const bool Close = GameClient()->m_Menus.DoButton_Menu(&m_SoundboardClosePanelButton, FontIcon::XMARK, 0, &HeaderClose);
+	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+	if(Close)
+		SetSoundboardPanelActive(false);
+
+	Body.Margin(8.0f, &Body);
+	CUIRect ListArea, UploadArea;
+	const float UploadAreaHeight = minimum(158.0f, maximum(132.0f, Body.h * 0.30f));
+	Body.HSplitBottom(UploadAreaHeight, &ListArea, &UploadArea);
+
+	CUIRect ListRefreshRow;
+	ListArea.HSplitBottom(22.0f, &ListArea, &ListRefreshRow);
+
+	CUIRect StatusRow;
+	ListArea.HSplitTop(18.0f, &StatusRow, &ListArea);
+	if(m_SoundboardLoadState == 1)
+		Ui()->DoLabel(&StatusRow, Localize("Loading soundboard…"), 10.0f, TEXTALIGN_ML);
+	else if(m_SoundboardLoadState == 3)
+		Ui()->DoLabel(&StatusRow, Localize("Failed to load soundboard list."), 10.0f, TEXTALIGN_ML);
+	else if(m_SoundboardLoadState == 0)
+	{
+		Ui()->DoLabel(&StatusRow, Localize("Opening soundboard…"), 10.0f, TEXTALIGN_ML);
+		FetchSoundboardList();
+	}
+
+	ListArea.HSplitTop(6.0f, nullptr, &ListArea);
+
+	const int Count = (int)m_vSoundboardItems.size();
+	if((int)m_vSoundboardItemButtons.size() < Count)
+		m_vSoundboardItemButtons.resize((size_t)Count);
+	if((int)m_vSoundboardItemDeleteButtons.size() < Count)
+		m_vSoundboardItemDeleteButtons.resize((size_t)Count);
+
+	constexpr int Columns = 3;
+	const float TileGap = 6.0f;
+	const float TileHeight = 38.0f;
+
+	static CScrollRegion s_SoundboardListScrollRegion;
+	static vec2 s_SoundboardListScrollOffset(0.0f, 0.0f);
+	CScrollRegionParams ScrollParams;
+	ScrollParams.m_ScrollUnit = TileHeight + 8.0f;
+	ScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
+	s_SoundboardListScrollRegion.Begin(&ListArea, &s_SoundboardListScrollOffset, &ScrollParams);
+	CUIRect ScrollBody = ListArea;
+	ScrollBody.y += s_SoundboardListScrollOffset.y;
+	const float TileWidth = (ScrollBody.w - TileGap * (Columns - 1)) / Columns;
+
+	struct SSoundboardRenderGroup
+	{
+		std::string m_Key;
+		std::string m_Title;
+		bool m_Default = false;
+		std::vector<int> m_vItemIndexes;
+	};
+
+	std::vector<SSoundboardRenderGroup> vGroups;
+	std::unordered_map<std::string, int> GroupToIndex;
+	auto GetOrAddGroup = [&](const std::string &Key, const std::string &Title, bool IsDefault) {
+		auto It = GroupToIndex.find(Key);
+		if(It != GroupToIndex.end())
+			return It->second;
+		SSoundboardRenderGroup Group;
+		Group.m_Key = Key;
+		Group.m_Title = Title;
+		Group.m_Default = IsDefault;
+		const int GroupIndex = (int)vGroups.size();
+		vGroups.push_back(std::move(Group));
+		GroupToIndex[Key] = GroupIndex;
+		return GroupIndex;
+	};
+
+	std::string LocalPlayerName;
+	const int LocalClientId = LocalGameClientId();
+	if(LocalClientId >= 0 && LocalClientId < MAX_CLIENTS && GameClient()->m_aClients[LocalClientId].m_Active)
+		LocalPlayerName = GameClient()->m_aClients[LocalClientId].m_aName;
+
+	for(int ItemIndex = 0; ItemIndex < Count; ++ItemIndex)
+	{
+		const SSoundboardItem &Item = m_vSoundboardItems[(size_t)ItemIndex];
+		const bool IsDefault = str_comp_nocase(Item.m_Scope.c_str(), "default") == 0;
+		std::string GroupKey, GroupTitle;
+		if(IsDefault)
+		{
+			GroupKey = "soundboard:default";
+			GroupTitle = "UClient Sound";
+		}
+		else
+		{
+			GroupTitle = Item.m_OwnerName;
+			if(GroupTitle.empty())
+				GroupTitle = !LocalPlayerName.empty() ? LocalPlayerName : Localize("Personal");
+			GroupKey = std::string("soundboard:player:") + GroupTitle;
+		}
+		const int GroupIndex = GetOrAddGroup(GroupKey, GroupTitle, IsDefault);
+		vGroups[(size_t)GroupIndex].m_vItemIndexes.push_back(ItemIndex);
+	}
+
+	auto RenderGroupItems = [&](const std::vector<int> &vIndexes) {
+		for(int RowStart = 0; RowStart < (int)vIndexes.size(); RowStart += Columns)
+		{
+			CUIRect Row;
+			ScrollBody.HSplitTop(TileHeight, &Row, &ScrollBody);
+			ScrollBody.HSplitTop(4.0f, nullptr, &ScrollBody);
+			if(!s_SoundboardListScrollRegion.AddRect(Row))
+				continue;
+			for(int Column = 0; Column < Columns; ++Column)
+			{
+				const int GroupOffset = RowStart + Column;
+				if(GroupOffset >= (int)vIndexes.size())
+					break;
+				const int Index = vIndexes[(size_t)GroupOffset];
+				CUIRect Tile;
+				Tile.x = Row.x + Column * (TileWidth + TileGap);
+				Tile.y = Row.y;
+				Tile.w = TileWidth;
+				Tile.h = Row.h;
+
+				const SSoundboardItem &Item = m_vSoundboardItems[(size_t)Index];
+				const auto It = m_SoundboardAudioCache.find(Index);
+				const bool IsLoading = It != m_SoundboardAudioCache.end() && It->second.m_Loading;
+				const bool IsLoaded = It != m_SoundboardAudioCache.end() && It->second.m_Loaded;
+				const bool IsPlaying = IsSoundboardItemPlaying(Index);
+				const bool IsPersonal = str_comp_nocase(Item.m_Scope.c_str(), "default") != 0;
+
+				CUIRect DelBtn;
+				DelBtn.x = Tile.x + Tile.w - 3.0f - 14.0f;
+				DelBtn.y = Tile.y + 3.0f;
+				DelBtn.w = 14.0f;
+				DelBtn.h = 14.0f;
+
+				CButtonContainer &Button = m_vSoundboardItemButtons[(size_t)Index];
+				const int TileClicked = Ui()->DoButtonLogic(&Button, 0, &Tile, BUTTONFLAG_LEFT, CUi::EButtonSoundType::BUTTON);
+				const bool IsHot = Ui()->HotItem() == &Button;
+
+				int DelClicked = 0;
+				bool DelHot = false;
+				if(IsPersonal)
+				{
+					CButtonContainer &DelButton = m_vSoundboardItemDeleteButtons[(size_t)Index];
+					DelClicked = Ui()->DoButtonLogic(&DelButton, 0, &DelBtn, BUTTONFLAG_LEFT, CUi::EButtonSoundType::BUTTON);
+					DelHot = Ui()->HotItem() == &DelButton;
+				}
+
+				const int Clicked = DelHot || DelClicked ? 0 : TileClicked;
+				if(Clicked)
+				{
+					if(!IsLoaded)
+					{
+						StopSoundboard();
+						for(auto &CachePair : m_SoundboardAudioCache)
+						{
+							CachePair.second.m_PendingPlayToVoice = 0;
+							CachePair.second.m_PendingPlayLocal = 0;
+						}
+						auto &Cache = m_SoundboardAudioCache[Index];
+						Cache.m_PendingPlayToVoice = 1;
+						Cache.m_PendingPlayLocal = 0;
+						if(!Cache.m_Loading)
+							StartSoundboardItemDownload(Index);
+					}
+					else
+					{
+						PlaySoundboardItem(Index, true);
+					}
+				}
+
+				const ColorRGBA BorderColor = IsPlaying ? ColorRGBA(0.23f, 0.93f, 0.62f, 0.95f) :
+					(IsHot ? ColorRGBA(0.42f, 0.50f, 0.64f, 0.85f) : ColorRGBA(0.28f, 0.33f, 0.43f, 0.58f));
+				Tile.Draw(BorderColor, IGraphics::CORNER_ALL, 6.0f);
+				CUIRect Inner = Tile;
+				Inner.Margin(1.5f, &Inner);
+				Inner.Draw(ColorRGBA(0.10f, 0.12f, 0.16f, IsHot ? 0.95f : 0.90f), IGraphics::CORNER_ALL, 5.0f);
+				CUIRect TitleRow = Inner;
+				TitleRow.Margin(6.0f, &TitleRow);
+				Ui()->DoLabel(&TitleRow, Item.m_Title.c_str(), 11.0f, TEXTALIGN_MC, {.m_MaxWidth = TitleRow.w});
+				if(IsLoading)
+				{
+					CUIRect LoadingRow = Inner;
+					LoadingRow.Margin(6.0f, &LoadingRow);
+					LoadingRow.HSplitTop(16.0f, nullptr, &LoadingRow);
+					Ui()->DoLabel(&LoadingRow, Localize("Loading..."), 8.0f, TEXTALIGN_MC, {.m_MaxWidth = LoadingRow.w});
+				}
+				if(IsPersonal)
+				{
+					CButtonContainer &DelButton = m_vSoundboardItemDeleteButtons[(size_t)Index];
+					(void)DelButton;
+					TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+					TextRender()->TextColor(DelHot ? ColorRGBA(1.0f, 0.25f, 0.25f, 1.0f) : ColorRGBA(0.70f, 0.70f, 0.70f, 0.75f));
+					Ui()->DoLabel(&DelBtn, FontIcon::XMARK, 8.0f, TEXTALIGN_MC);
+					TextRender()->TextColor(TextRender()->DefaultTextColor());
+					TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+					if(DelClicked)
+						RequestSoundboardDeleteConfirm(Index);
+				}
+			}
+		}
+	};
+
+	const auto RenderGroup = [&](const SSoundboardRenderGroup &Group) {
+		CUIRect GroupRow;
+		ScrollBody.HSplitTop(30.0f, &GroupRow, &ScrollBody);
+		const bool GroupVisible = s_SoundboardListScrollRegion.AddRect(GroupRow);
+		CButtonContainer &GroupButton = m_SoundboardGroupButtons[Group.m_Key];
+		auto GroupExpandedIt = m_SoundboardGroupExpanded.find(Group.m_Key);
+		if(GroupExpandedIt == m_SoundboardGroupExpanded.end())
+			GroupExpandedIt = m_SoundboardGroupExpanded.emplace(Group.m_Key, true).first;
+		bool &Expanded = GroupExpandedIt->second;
+
+		if(GroupVisible)
+		{
+			const int Clicked = Ui()->DoButtonLogic(&GroupButton, 0, &GroupRow, BUTTONFLAG_LEFT, CUi::EButtonSoundType::BUTTON);
+			const bool IsHot = Ui()->HotItem() == &GroupButton;
+			if(Clicked) Expanded = !Expanded;
+
+			const ColorRGBA FrameColor = Expanded ? ColorRGBA(0.30f, 0.62f, 0.94f, IsHot ? 0.80f : 0.58f) :
+				(IsHot ? ColorRGBA(0.36f, 0.40f, 0.49f, 0.72f) : ColorRGBA(0.24f, 0.28f, 0.35f, 0.56f));
+			GroupRow.Draw(FrameColor, IGraphics::CORNER_ALL, 6.0f);
+			CUIRect Inner;
+			GroupRow.Margin(1.5f, &Inner);
+			Inner.Draw(Expanded ? ColorRGBA(0.10f, 0.14f, 0.20f, 0.94f) : ColorRGBA(0.09f, 0.11f, 0.15f, IsHot ? 0.93f : 0.90f), IGraphics::CORNER_ALL, 5.0f);
+
+			CUIRect ArrowWrap, RightBadge, TitleRect;
+			Inner.VSplitLeft(24.0f, &ArrowWrap, &TitleRect);
+			TitleRect.VSplitRight(42.0f, &TitleRect, &RightBadge);
+
+			CUIRect ArrowIcon = ArrowWrap;
+			ArrowIcon.Margin(2.0f, &ArrowIcon);
+			ArrowIcon.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, Expanded ? 0.14f : 0.08f), IGraphics::CORNER_ALL, 3.0f);
+			TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+			Ui()->DoLabel(&ArrowIcon, Expanded ? FontIcon::CHEVRON_DOWN : FontIcon::CHEVRON_RIGHT, 8.5f, TEXTALIGN_MC);
+			TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+
+			TitleRect.VSplitLeft(4.0f, nullptr, &TitleRect);
+			Ui()->DoLabel(&TitleRect, Group.m_Title.c_str(), 11.5f, TEXTALIGN_ML, {.m_MaxWidth = TitleRect.w});
+
+			char aCount[16];
+			str_format(aCount, sizeof(aCount), "%d", (int)Group.m_vItemIndexes.size());
+			CUIRect BadgeInner = RightBadge;
+			BadgeInner.Margin(4.0f, &BadgeInner);
+			BadgeInner.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, Expanded ? 0.16f : 0.10f), IGraphics::CORNER_ALL, 4.0f);
+			Ui()->DoLabel(&BadgeInner, aCount, 10.0f, TEXTALIGN_MC);
+		}
+
+		ScrollBody.HSplitTop(4.0f, nullptr, &ScrollBody);
+		if(Expanded)
+		{
+			RenderGroupItems(Group.m_vItemIndexes);
+			ScrollBody.HSplitTop(4.0f, nullptr, &ScrollBody);
+		}
+	};
+
+	const SSoundboardRenderGroup *pDefaultGroup = nullptr;
+	for(const auto &Group : vGroups)
+	{
+		if(Group.m_Default) { pDefaultGroup = &Group; continue; }
+		RenderGroup(Group);
+	}
+	if(pDefaultGroup)
+		RenderGroup(*pDefaultGroup);
+
+	if(Count == 0 && m_SoundboardLoadState == 2)
+	{
+		CUIRect Empty;
+		ScrollBody.HSplitTop(30.0f, &Empty, &ScrollBody);
+		if(s_SoundboardListScrollRegion.AddRect(Empty))
+			Ui()->DoLabel(&Empty, Localize("No soundboard items found."), 11.0f, TEXTALIGN_MC);
+	}
+	s_SoundboardListScrollRegion.End();
+
+	if(Ui()->MouseInside(&ListArea))
+	{
+		if(Input()->KeyPress(KEY_MOUSE_WHEEL_UP))
+			s_SoundboardListScrollRegion.ScrollRelative(CScrollRegion::SCROLLRELATIVE_UP);
+		else if(Input()->KeyPress(KEY_MOUSE_WHEEL_DOWN))
+			s_SoundboardListScrollRegion.ScrollRelative(CScrollRegion::SCROLLRELATIVE_DOWN);
+	}
+
+	{
+		CUIRect RefreshBtn;
+		ListRefreshRow.HSplitTop(2.0f, nullptr, &ListRefreshRow);
+		ListRefreshRow.VSplitRight(60.0f, nullptr, &RefreshBtn);
+		if(GameClient()->m_Menus.DoButton_Menu(&m_SoundboardUploadRefreshButton, Localize("Refresh"), 0, &RefreshBtn))
+		{
+			m_SoundboardLoadState = 0;
+			m_vSoundboardItems.clear();
+			m_SoundboardAudioCache.clear();
+			if(m_pSoundboardListTask)
+			{
+				m_pSoundboardListTask->Abort();
+				m_pSoundboardListTask = nullptr;
+			}
+		}
+	}
+
+	const bool ShowUploadStateText = m_SoundboardUpload.m_State == ESoundboardUploadState::ERROR || m_SoundboardUpload.m_State == ESoundboardUploadState::DONE;
+	const float UploadContentHeight = ShowUploadStateText ? 128.0f : 110.0f;
+	CUIRect UploadBody;
+	UploadArea.HSplitBottom(minimum(UploadContentHeight, UploadArea.h), nullptr, &UploadBody);
+
+	CUIRect UploadSep;
+	UploadBody.HSplitTop(1.0f, &UploadSep, &UploadBody);
+	UploadSep.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.07f), IGraphics::CORNER_ALL, 0.0f);
+	UploadBody.HSplitTop(8.0f, nullptr, &UploadBody);
+
+	CUIRect UploadHeader;
+	UploadBody.HSplitTop(16.0f, &UploadHeader, &UploadBody);
+	Ui()->DoLabel(&UploadHeader, Localize("Upload personal sound"), 11.0f, TEXTALIGN_ML);
+	UploadBody.HSplitTop(4.0f, nullptr, &UploadBody);
+
+	CUIRect TitleRow;
+	UploadBody.HSplitTop(22.0f, &TitleRow, &UploadBody);
+	CUIRect TitleLabel, TitleInput;
+	TitleRow.VSplitLeft(60.0f, &TitleLabel, &TitleInput);
+	Ui()->DoLabel(&TitleLabel, Localize("Title:"), 11.0f, TEXTALIGN_ML);
+	static CLineInput s_TitleInput;
+	s_TitleInput.SetBuffer(m_SoundboardUpload.m_aTitleBuf, sizeof(m_SoundboardUpload.m_aTitleBuf));
+	Ui()->DoEditBox(&s_TitleInput, &TitleInput, 11.0f);
+	UploadBody.HSplitTop(4.0f, nullptr, &UploadBody);
+
+	CUIRect PathRow;
+	UploadBody.HSplitTop(22.0f, &PathRow, &UploadBody);
+	CUIRect PathLabel, PathMain;
+	PathRow.VSplitLeft(60.0f, &PathLabel, &PathMain);
+	CUIRect PathInput, PathBrowseButton;
+	PathMain.VSplitRight(88.0f, &PathInput, &PathBrowseButton);
+	PathInput.VSplitRight(6.0f, &PathInput, nullptr);
+	Ui()->DoLabel(&PathLabel, Localize("File:"), 11.0f, TEXTALIGN_ML);
+	static CLineInput s_PathInput;
+	s_PathInput.SetBuffer(m_SoundboardUpload.m_aPathBuf, sizeof(m_SoundboardUpload.m_aPathBuf));
+	Ui()->DoEditBox(&s_PathInput, &PathInput, 11.0f);
+
+	if(GameClient()->m_Menus.DoButton_Menu(&m_SoundboardBrowseFileButton, Localize("Browse"), 0, &PathBrowseButton))
+	{
+#if defined(_WIN32)
+		if(OpenSoundboardFileDialog(m_SoundboardUpload.m_aPathBuf, (int)sizeof(m_SoundboardUpload.m_aPathBuf)))
+		{
+			char aFileNameNoExt[sizeof(m_SoundboardUpload.m_aTitleBuf)] = {};
+			fs_split_file_extension(fs_filename(m_SoundboardUpload.m_aPathBuf), aFileNameNoExt, sizeof(aFileNameNoExt));
+			if(aFileNameNoExt[0] != '\0')
+				str_copy(m_SoundboardUpload.m_aTitleBuf, aFileNameNoExt, sizeof(m_SoundboardUpload.m_aTitleBuf));
+		}
+#else
+		str_copy(m_SoundboardUpload.m_aError, Localize("File picker is not available on this platform."), sizeof(m_SoundboardUpload.m_aError));
+		m_SoundboardUpload.m_State = ESoundboardUploadState::ERROR;
+#endif
+	}
+	UploadBody.HSplitTop(6.0f, nullptr, &UploadBody);
+
+	CUIRect BtnRow;
+	UploadBody.HSplitTop(24.0f, &BtnRow, &UploadBody);
+	CUIRect UploadBtn, StatusArea;
+	BtnRow.VSplitLeft(90.0f, &UploadBtn, &StatusArea);
+	StatusArea.VSplitLeft(6.0f, nullptr, &StatusArea);
+	const bool Uploading = m_SoundboardUpload.m_State == ESoundboardUploadState::UPLOADING;
+	const char *pUploadLabel = Uploading ? Localize("Uploading…") : Localize("Upload");
+	if(!Uploading && GameClient()->m_Menus.DoButton_Menu(&m_SoundboardUploadButton, pUploadLabel, 0, &UploadBtn))
+		StartSoundboardUpload();
+
+	if(m_SoundboardUpload.m_State == ESoundboardUploadState::ERROR && m_SoundboardUpload.m_aError[0])
+	{
+		CUIRect ErrRow;
+		UploadBody.HSplitTop(16.0f, &ErrRow, &UploadBody);
+		Ui()->DoLabel(&ErrRow, m_SoundboardUpload.m_aError, 10.0f, TEXTALIGN_ML, {.m_MaxWidth = ErrRow.w});
+	}
+	else if(m_SoundboardUpload.m_State == ESoundboardUploadState::DONE)
+	{
+		CUIRect OkRow;
+		UploadBody.HSplitTop(16.0f, &OkRow, &UploadBody);
+		Ui()->DoLabel(&OkRow, Localize("Upload successful! Press Refresh to update the list."), 10.0f, TEXTALIGN_ML, {.m_MaxWidth = OkRow.w});
+	}
+}
+
+void CVoiceChat::FetchSoundboardList()
+{
+	if(m_pSoundboardListTask && !m_pSoundboardListTask->Done())
+		return;
+	if(m_SoundboardLoadState == 2)
+		return;
+
+	const char *pInstallId = g_Config.m_UcInstallUuid[0] ? g_Config.m_UcInstallUuid : "anonymous";
+	char aUrl[512];
+	str_copy(aUrl, g_Config.m_UcSoundboardApiBaseUrl, sizeof(aUrl));
+	char aInstallParam[96];
+	str_format(aInstallParam, sizeof(aInstallParam), "?install_id=%s", pInstallId);
+	str_append(aUrl, aInstallParam, sizeof(aUrl));
+
+	m_pSoundboardListTask = HttpGet(aUrl);
+	m_pSoundboardListTask->LogProgress(HTTPLOG::FAILURE);
+	m_pSoundboardListTask->Timeout(CTimeout{10000, 0, 500, 5});
+	char aInstallHeader[128];
+	str_format(aInstallHeader, sizeof(aInstallHeader), "x-uclient-install-id: %s", pInstallId);
+	m_pSoundboardListTask->Header(aInstallHeader);
+	Http()->Run(m_pSoundboardListTask);
+	m_SoundboardLoadState = 1;
+}
+
+void CVoiceChat::FinishSoundboardList()
+{
+	if(!m_pSoundboardListTask)
+		return;
+
+	if(m_pSoundboardListTask->State() == EHttpState::DONE)
+	{
+		json_value *pJson = m_pSoundboardListTask->ResultJson();
+		if(pJson)
+		{
+			m_vSoundboardItems.clear();
+			m_SoundboardAudioCache.clear();
+
+			auto ParseArray = [&](const json_value *pArr) {
+				if(!pArr || pArr->type != json_array)
+					return;
+				for(unsigned i = 0; i < pArr->u.array.length; ++i)
+				{
+					const json_value *pObj = pArr->u.array.values[i];
+					if(!pObj || pObj->type != json_object)
+						continue;
+					const json_value *pId = json_object_get(pObj, "id");
+					const json_value *pTitle = json_object_get(pObj, "title");
+					const json_value *pUrl = json_object_get(pObj, "url");
+					const json_value *pOwnerId = json_object_get(pObj, "ownerId");
+					const json_value *pOwnerName = json_object_get(pObj, "ownerName");
+					const json_value *pPlayerName = json_object_get(pObj, "playerName");
+					const json_value *pScope = json_object_get(pObj, "scope");
+					const json_value *pDurationMs = json_object_get(pObj, "durationMs");
+					if(!pId || pId->type != json_string || !pTitle || pTitle->type != json_string || !pUrl || pUrl->type != json_string)
+						continue;
+					SSoundboardItem Item;
+					Item.m_Id = pId->u.string.ptr;
+					Item.m_Title = pTitle->u.string.ptr;
+					Item.m_Url = pUrl->u.string.ptr;
+					Item.m_OwnerId = (pOwnerId && pOwnerId->type == json_string) ? pOwnerId->u.string.ptr : "";
+					if(pOwnerName && pOwnerName->type == json_string)
+						Item.m_OwnerName = pOwnerName->u.string.ptr;
+					else if(pPlayerName && pPlayerName->type == json_string)
+						Item.m_OwnerName = pPlayerName->u.string.ptr;
+					Item.m_Scope = (pScope && pScope->type == json_string) ? pScope->u.string.ptr : "default";
+					Item.m_DurationMs = (pDurationMs && pDurationMs->type == json_integer) ? (int)pDurationMs->u.integer : 0;
+					m_vSoundboardItems.push_back(std::move(Item));
+				}
+			};
+
+			if(pJson->type == json_object)
+			{
+				ParseArray(json_object_get(pJson, "defaults"));
+				ParseArray(json_object_get(pJson, "personal"));
+			}
+			else if(pJson->type == json_array)
+			{
+				ParseArray(pJson);
+			}
+			json_value_free(pJson);
+			m_SoundboardLoadState = 2;
+		}
+		else
+		{
+			m_SoundboardLoadState = 3;
+		}
+	}
+	else
+	{
+		m_SoundboardLoadState = 3;
+	}
+
+	m_pSoundboardListTask->Abort();
+	m_pSoundboardListTask = nullptr;
+}
+
+void CVoiceChat::StartSoundboardItemDownload(int Index)
+{
+	if(Index < 0 || Index >= (int)m_vSoundboardItems.size())
+		return;
+	auto &Cache = m_SoundboardAudioCache[Index];
+	if(Cache.m_Loaded || Cache.m_Loading)
+		return;
+
+	const std::string &Url = m_vSoundboardItems[(size_t)Index].m_Url;
+	Cache.m_Loading = true;
+	Cache.m_Error = false;
+	Cache.m_pTask = HttpGet(Url.c_str());
+	Cache.m_pTask->LogProgress(HTTPLOG::FAILURE);
+	Cache.m_pTask->Timeout(CTimeout{30000, 0, 1000, 5});
+	Http()->Run(Cache.m_pTask);
+}
+
+bool CVoiceChat::TryDecodeWav(const uint8_t *pData, int DataSize, int NativeSampleRate, int NativeChannels, std::vector<int16_t> &vPcmOut)
+{
+	SDL_RWops *pRw = SDL_RWFromConstMem(pData, DataSize);
+	if(!pRw)
+		return false;
+
+	SDL_AudioSpec WavSpec = {};
+	Uint8 *pWavBuf = nullptr;
+	Uint32 WavLen = 0;
+	const SDL_AudioSpec *pLoaded = SDL_LoadWAV_RW(pRw, 1, &WavSpec, &pWavBuf, &WavLen);
+	if(!pLoaded || !pWavBuf || WavLen == 0)
+	{
+		if(pWavBuf) SDL_FreeWAV(pWavBuf);
+		return false;
+	}
+
+	SDL_AudioCVT Cvt;
+	if(SDL_BuildAudioCVT(&Cvt, WavSpec.format, WavSpec.channels, WavSpec.freq,
+		AUDIO_S16SYS, 1, BestClientVoice::SAMPLE_RATE) < 0)
+	{
+		SDL_FreeWAV(pWavBuf);
+		return false;
+	}
+
+	if(Cvt.needed)
+	{
+		Cvt.len = (int)WavLen;
+		std::vector<uint8_t> vConvBuf((size_t)((int)(WavLen * Cvt.len_mult) + 16));
+		mem_copy(vConvBuf.data(), pWavBuf, WavLen);
+		Cvt.buf = vConvBuf.data();
+		if(SDL_ConvertAudio(&Cvt) < 0)
+		{
+			SDL_FreeWAV(pWavBuf);
+			return false;
+		}
+		const int OutSamples = Cvt.len_cvt / (int)sizeof(int16_t);
+		vPcmOut.resize((size_t)OutSamples);
+		mem_copy(vPcmOut.data(), vConvBuf.data(), (size_t)Cvt.len_cvt);
+	}
+	else
+	{
+		const int OutSamples = (int)WavLen / (int)sizeof(int16_t);
+		vPcmOut.resize((size_t)OutSamples);
+		mem_copy(vPcmOut.data(), pWavBuf, WavLen);
+	}
+
+	SDL_FreeWAV(pWavBuf);
+	(void)NativeSampleRate;
+	(void)NativeChannels;
+	return true;
+}
+
+#ifdef VOICE_HAS_FFMPEG
+static bool TryDecodeAudioFfmpeg(const uint8_t *pData, int DataSize, std::vector<int16_t> &vPcmOut)
+{
+	constexpr int AVIO_BUF_SIZE = 4096;
+	unsigned char *pAvioCtxBuf = (unsigned char *)av_malloc(AVIO_BUF_SIZE);
+	if(!pAvioCtxBuf)
+		return false;
+
+	struct FfReader
+	{
+		const uint8_t *pData;
+		int Size;
+		int Pos;
+	};
+	auto *pReader = new FfReader{pData, DataSize, 0};
+
+	AVIOContext *pAvioCtx = avio_alloc_context(
+		pAvioCtxBuf, AVIO_BUF_SIZE, 0, pReader,
+		[](void *pOp, uint8_t *pBuf, int BufSize) -> int {
+			auto *r = (FfReader *)pOp;
+			int N = std::min(BufSize, r->Size - r->Pos);
+			if(N <= 0)
+				return AVERROR_EOF;
+			mem_copy(pBuf, r->pData + r->Pos, N);
+			r->Pos += N;
+			return N;
+		},
+		nullptr,
+		[](void *pOp, int64_t Offset, int Whence) -> int64_t {
+			auto *r = (FfReader *)pOp;
+			if(Whence == AVSEEK_SIZE)
+				return r->Size;
+			int64_t Base = (Whence == SEEK_SET) ? 0 : (Whence == SEEK_END) ? r->Size : r->Pos;
+			r->Pos = (int)std::max<int64_t>(0, std::min<int64_t>(r->Size, Base + Offset));
+			return r->Pos;
+		});
+	if(!pAvioCtx)
+	{
+		av_free(pAvioCtxBuf);
+		delete pReader;
+		return false;
+	}
+
+	AVFormatContext *pFmtCtx = avformat_alloc_context();
+	pFmtCtx->pb = pAvioCtx;
+
+	bool bOk = false;
+	AVCodecContext *pDecCtx = nullptr;
+	SwrContext *pSwr = nullptr;
+	AVFrame *pFrame = av_frame_alloc();
+	AVPacket *pPkt = av_packet_alloc();
+
+	if(avformat_open_input(&pFmtCtx, nullptr, nullptr, nullptr) != 0)
+		goto cleanup;
+	if(avformat_find_stream_info(pFmtCtx, nullptr) < 0)
+		goto cleanup;
+
+	{
+		int StreamIdx = av_find_best_stream(pFmtCtx, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+		if(StreamIdx < 0)
+			goto cleanup;
+
+		const AVCodec *pCodec = avcodec_find_decoder(pFmtCtx->streams[StreamIdx]->codecpar->codec_id);
+		if(!pCodec)
+			goto cleanup;
+		pDecCtx = avcodec_alloc_context3(pCodec);
+		if(!pDecCtx)
+			goto cleanup;
+		avcodec_parameters_to_context(pDecCtx, pFmtCtx->streams[StreamIdx]->codecpar);
+		if(avcodec_open2(pDecCtx, pCodec, nullptr) < 0)
+			goto cleanup;
+
+		pSwr = swr_alloc();
+		av_opt_set_chlayout(pSwr, "in_chlayout", &pDecCtx->ch_layout, 0);
+		{
+			AVChannelLayout ChLayoutMono = AV_CHANNEL_LAYOUT_MONO;
+			av_opt_set_chlayout(pSwr, "out_chlayout", &ChLayoutMono, 0);
+		}
+		av_opt_set_int(pSwr, "in_sample_rate", pDecCtx->sample_rate, 0);
+		av_opt_set_int(pSwr, "out_sample_rate", BestClientVoice::SAMPLE_RATE, 0);
+		av_opt_set_sample_fmt(pSwr, "in_sample_fmt", pDecCtx->sample_fmt, 0);
+		av_opt_set_sample_fmt(pSwr, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
+		if(swr_init(pSwr) < 0)
+			goto cleanup;
+
+		while(av_read_frame(pFmtCtx, pPkt) >= 0)
+		{
+			if(pPkt->stream_index != StreamIdx)
+			{
+				av_packet_unref(pPkt);
+				continue;
+			}
+			if(avcodec_send_packet(pDecCtx, pPkt) < 0)
+			{
+				av_packet_unref(pPkt);
+				continue;
+			}
+			av_packet_unref(pPkt);
+			while(avcodec_receive_frame(pDecCtx, pFrame) == 0)
+			{
+				const int64_t OutSamples = swr_get_delay(pSwr, pDecCtx->sample_rate) + pFrame->nb_samples;
+				const int MaxOut = (int)av_rescale_rnd(OutSamples, BestClientVoice::SAMPLE_RATE, pDecCtx->sample_rate, AV_ROUND_UP);
+				const size_t OldSize = vPcmOut.size();
+				vPcmOut.resize(OldSize + MaxOut);
+				uint8_t *pOutPtr = (uint8_t *)(vPcmOut.data() + OldSize);
+				int Converted = swr_convert(pSwr, &pOutPtr, MaxOut, (const uint8_t **)pFrame->data, pFrame->nb_samples);
+				if(Converted < MaxOut)
+					vPcmOut.resize(OldSize + Converted);
+				av_frame_unref(pFrame);
+			}
+		}
+		avcodec_send_packet(pDecCtx, nullptr);
+		while(avcodec_receive_frame(pDecCtx, pFrame) == 0)
+		{
+			const int MaxOut = 4096;
+			const size_t OldSize = vPcmOut.size();
+			vPcmOut.resize(OldSize + MaxOut);
+			uint8_t *pOutPtr = (uint8_t *)(vPcmOut.data() + OldSize);
+			int Converted = swr_convert(pSwr, &pOutPtr, MaxOut, nullptr, 0);
+			vPcmOut.resize(OldSize + (Converted > 0 ? Converted : 0));
+			av_frame_unref(pFrame);
+		}
+		{
+			const size_t OldSize = vPcmOut.size();
+			vPcmOut.resize(OldSize + 4096);
+			uint8_t *pOutPtr = (uint8_t *)(vPcmOut.data() + OldSize);
+			int Converted = swr_convert(pSwr, &pOutPtr, 4096, nullptr, 0);
+			vPcmOut.resize(OldSize + (Converted > 0 ? Converted : 0));
+		}
+		bOk = !vPcmOut.empty();
+	}
+
+cleanup:
+	if(pSwr)
+		swr_free(&pSwr);
+	if(pDecCtx)
+		avcodec_free_context(&pDecCtx);
+	if(pFmtCtx)
+		avformat_close_input(&pFmtCtx);
+	if(pAvioCtx)
+	{
+		av_freep(&pAvioCtx->buffer);
+		avio_context_free(&pAvioCtx);
+	}
+	if(pFrame)
+		av_frame_free(&pFrame);
+	if(pPkt)
+		av_packet_free(&pPkt);
+	delete pReader;
+	return bOk;
+}
+#endif
+
+void CVoiceChat::TickSoundboard()
+{
+	if(m_pSoundboardListTask && m_pSoundboardListTask->Done())
+		FinishSoundboardList();
+
+	TickSoundboardUpload();
+	TickSoundboardDelete();
+
+	for(auto &Pair : m_SoundboardAudioCache)
+	{
+		SSoundboardCachedAudio &Cache = Pair.second;
+		if(!Cache.m_Loading || !Cache.m_pTask)
+			continue;
+		if(!Cache.m_pTask->Done())
+			continue;
+
+		const int Index = Pair.first;
+		if(Cache.m_pTask->State() == EHttpState::DONE)
+		{
+			unsigned char *pRaw = nullptr;
+			size_t RawSize = 0;
+			Cache.m_pTask->Result(&pRaw, &RawSize);
+			std::vector<int16_t> vPcm;
+			bool bDecoded = false;
+#ifdef VOICE_HAS_FFMPEG
+			if(pRaw && RawSize > 0)
+				bDecoded = TryDecodeAudioFfmpeg(pRaw, (int)RawSize, vPcm);
+#endif
+			if(!bDecoded && pRaw && RawSize > 0)
+				bDecoded = TryDecodeWav(pRaw, (int)RawSize, 0, 0, vPcm);
+			if(bDecoded)
+			{
+				Cache.m_vPcm = std::move(vPcm);
+				Cache.m_Loaded = true;
+				const int PendingToVoice = Cache.m_PendingPlayToVoice;
+				const int PendingLocal = Cache.m_PendingPlayLocal;
+				Cache.m_PendingPlayToVoice = 0;
+				Cache.m_PendingPlayLocal = 0;
+				for(int i = 0; i < PendingToVoice; ++i)
+					PlaySoundboardItem(Index, true);
+				for(int i = 0; i < PendingLocal; ++i)
+					PlaySoundboardItem(Index, false);
+			}
+			else
+			{
+				Cache.m_Error = true;
+			}
+		}
+		else
+		{
+			Cache.m_Error = true;
+		}
+		Cache.m_Loading = false;
+		Cache.m_pTask->Abort();
+		Cache.m_pTask = nullptr;
+	}
+
+	if(!m_vSoundboardPlayInstances.empty() && m_PlaybackDevice)
+	{
+		const float MasterVol = g_Config.m_BcVoiceChatHeadphonesMuted ? 0.0f : std::clamp(g_Config.m_BcVoiceChatVolume / 100.0f, 0.0f, 2.0f);
+		const int64_t Now = time_get();
+		size_t MaxToQueue = 0;
+		for(const auto &Play : m_vSoundboardPlayInstances)
+		{
+			const int64_t Elapsed = Now - Play.m_StartTick;
+			if(Elapsed <= 0) continue;
+			const int64_t SamplesTarget = Elapsed * BestClientVoice::SAMPLE_RATE / time_freq();
+			const size_t ToQueue = (size_t)std::max((int64_t)0, SamplesTarget - (int64_t)Play.m_LocalPlayQueued);
+			MaxToQueue = maximum(MaxToQueue, ToQueue);
+		}
+		const size_t Count = minimum(MaxToQueue, (size_t)(BestClientVoice::FRAME_SIZE * 4));
+		if(Count > 0)
+		{
+			std::vector<int32_t> vMixMono(Count, 0);
+			for(auto &Play : m_vSoundboardPlayInstances)
+			{
+				if(Play.m_vPcm.empty()) continue;
+				const int64_t Elapsed = Now - Play.m_StartTick;
+				if(Elapsed <= 0) continue;
+				const int64_t SamplesTarget = Elapsed * BestClientVoice::SAMPLE_RATE / time_freq();
+				const size_t ToQueue = (size_t)std::max((int64_t)0, SamplesTarget - (int64_t)Play.m_LocalPlayQueued);
+				const size_t Available = Play.m_vPcm.size() - minimum(Play.m_LocalPlayQueued, Play.m_vPcm.size());
+				const size_t Take = minimum(Count, minimum(ToQueue, Available));
+				for(size_t i = 0; i < Take; ++i)
+					vMixMono[i] += Play.m_vPcm[Play.m_LocalPlayQueued + i];
+				Play.m_LocalPlayQueued += Take;
+			}
+			std::vector<int16_t> vStereo(Count * 2);
+			for(size_t i = 0; i < Count; ++i)
+			{
+				const int MixedSample = std::clamp((int)((float)vMixMono[i] * MasterVol), (int)std::numeric_limits<int16_t>::min(), (int)std::numeric_limits<int16_t>::max());
+				vStereo[i * 2] = (int16_t)MixedSample;
+				vStereo[i * 2 + 1] = (int16_t)MixedSample;
+			}
+			SDL_QueueAudio(m_PlaybackDevice, vStereo.data(), (Uint32)(vStereo.size() * sizeof(int16_t)));
+		}
+
+		std::erase_if(m_vSoundboardPlayInstances, [Now](const SSoundboardPlayInstance &Play) {
+			const int64_t Elapsed = Now - Play.m_StartTick;
+			const int64_t TimeDoneSamples = Elapsed > 0 ? (Elapsed * BestClientVoice::SAMPLE_RATE / time_freq()) : 0;
+			const bool TimeDone = (size_t)TimeDoneSamples >= Play.m_vPcm.size() + (size_t)BestClientVoice::FRAME_SIZE;
+			const bool LocalDone = Play.m_LocalPlayQueued >= Play.m_vPcm.size() || TimeDone;
+			const bool VoiceDone = !Play.m_SendToVoice || Play.m_VoiceInjectPos >= Play.m_vPcm.size() || TimeDone;
+			return LocalDone && VoiceDone;
+		});
+	}
+}
+
+void CVoiceChat::PlaySoundboardItem(int Index, bool SendToVoice)
+{
+	if(Index < 0 || Index >= (int)m_vSoundboardItems.size())
+		return;
+	const auto It = m_SoundboardAudioCache.find(Index);
+	if(It == m_SoundboardAudioCache.end() || !It->second.m_Loaded)
+		return;
+
+	StopSoundboard();
+
+	SSoundboardPlayInstance Play;
+	Play.m_vPcm = It->second.m_vPcm;
+	Play.m_SendToVoice = SendToVoice;
+	Play.m_ItemIndex = Index;
+	Play.m_StartTick = time_get();
+	m_vSoundboardPlayInstances.push_back(std::move(Play));
+}
+
+void CVoiceChat::StopSoundboard()
+{
+	m_vSoundboardPlayInstances.clear();
+	if(m_PlaybackDevice)
+		SDL_ClearQueuedAudio(m_PlaybackDevice);
+}
+
+void CVoiceChat::ProcessSoundboardVoiceInject()
+{
+	if(m_vSoundboardPlayInstances.empty())
+		return;
+	if(!m_Registered || !m_pEncoder)
+		return;
+	if(IsInGameOnlyBlocked())
+		return;
+
+	const int64_t Now = time_get();
+	constexpr int MaxVoiceFramesPerTick = 3;
+	int SentFrames = 0;
+	while(SentFrames < MaxVoiceFramesPerTick)
+	{
+		bool HasFrameToSend = false;
+		for(const auto &Play : m_vSoundboardPlayInstances)
+		{
+			if(!Play.m_SendToVoice || Play.m_vPcm.empty()) continue;
+			const int64_t Elapsed = Now - Play.m_StartTick;
+			if(Elapsed <= 0) continue;
+			const int64_t SamplesTarget = Elapsed * BestClientVoice::SAMPLE_RATE / time_freq();
+			if((int64_t)Play.m_VoiceInjectPos + BestClientVoice::FRAME_SIZE <= SamplesTarget &&
+				Play.m_VoiceInjectPos + (size_t)BestClientVoice::FRAME_SIZE <= Play.m_vPcm.size())
+			{
+				HasFrameToSend = true;
+				break;
+			}
+		}
+		if(!HasFrameToSend)
+			break;
+
+		int32_t aMixedFrame[BestClientVoice::FRAME_SIZE] = {};
+		for(auto &Play : m_vSoundboardPlayInstances)
+		{
+			if(!Play.m_SendToVoice || Play.m_vPcm.empty()) continue;
+			const int64_t Elapsed = Now - Play.m_StartTick;
+			if(Elapsed <= 0) continue;
+			const int64_t SamplesTarget = Elapsed * BestClientVoice::SAMPLE_RATE / time_freq();
+			if((int64_t)Play.m_VoiceInjectPos + BestClientVoice::FRAME_SIZE > SamplesTarget)
+				continue;
+			if(Play.m_VoiceInjectPos + (size_t)BestClientVoice::FRAME_SIZE > Play.m_vPcm.size())
+				continue;
+			const int16_t *pFrame = Play.m_vPcm.data() + Play.m_VoiceInjectPos;
+			for(int i = 0; i < BestClientVoice::FRAME_SIZE; ++i)
+				aMixedFrame[i] += pFrame[i];
+			Play.m_VoiceInjectPos += (size_t)BestClientVoice::FRAME_SIZE;
+		}
+
+		int16_t aFrame16[BestClientVoice::FRAME_SIZE];
+		for(int i = 0; i < BestClientVoice::FRAME_SIZE; ++i)
+			aFrame16[i] = (int16_t)std::clamp(aMixedFrame[i], (int32_t)std::numeric_limits<int16_t>::min(), (int32_t)std::numeric_limits<int16_t>::max());
+
+		uint8_t aEncoded[BestClientVoice::MAX_OPUS_PACKET_SIZE];
+		const int EncodedSize = opus_encode(m_pEncoder, aFrame16, BestClientVoice::FRAME_SIZE, aEncoded, (int)sizeof(aEncoded));
+		if(EncodedSize > 0)
+		{
+			const vec2 Pos = LocalPosition();
+			const int Team = LocalVoiceTeam();
+			SendVoiceFrame(aEncoded, EncodedSize, Team, Pos);
+			if(ShouldUseSecondaryTeamConnection())
+				SendVoiceFrameSecondary(aEncoded, EncodedSize, LocalOwnVoiceTeam(), Pos);
+			++SentFrames;
+		}
+	}
+}
+
+bool CVoiceChat::IsSoundboardItemPlaying(int ItemIndex) const
+{
+	const int64_t Now = time_get();
+	for(const auto &Play : m_vSoundboardPlayInstances)
+	{
+		if(Play.m_ItemIndex != ItemIndex) continue;
+		const int64_t Elapsed = Now - Play.m_StartTick;
+		const int64_t TimeDoneSamples = Elapsed > 0 ? (Elapsed * BestClientVoice::SAMPLE_RATE / time_freq()) : 0;
+		const bool TimeDone = (size_t)TimeDoneSamples >= Play.m_vPcm.size() + (size_t)BestClientVoice::FRAME_SIZE;
+		const bool LocalActive = Play.m_LocalPlayQueued < Play.m_vPcm.size() && !TimeDone;
+		const bool VoiceActive = Play.m_SendToVoice && Play.m_VoiceInjectPos < Play.m_vPcm.size() && !TimeDone;
+		if(LocalActive || VoiceActive)
+			return true;
+	}
+	return false;
+}
+
+void CVoiceChat::StartSoundboardUpload()
+{
+	if(m_SoundboardUpload.m_State == ESoundboardUploadState::UPLOADING)
+		return;
+
+	const char *pPath = m_SoundboardUpload.m_aPathBuf;
+	if(pPath[0] == '\0')
+	{
+		str_copy(m_SoundboardUpload.m_aError, "Please enter a file path.", sizeof(m_SoundboardUpload.m_aError));
+		m_SoundboardUpload.m_State = ESoundboardUploadState::ERROR;
+		return;
+	}
+
+	IOHANDLE File = io_open(pPath, IOFLAG_READ);
+	if(!File)
+	{
+		str_format(m_SoundboardUpload.m_aError, sizeof(m_SoundboardUpload.m_aError), "Cannot open file: %s", pPath);
+		m_SoundboardUpload.m_State = ESoundboardUploadState::ERROR;
+		return;
+	}
+
+	const int64_t FileSize = io_length(File);
+	const int MaxBytes = g_Config.m_UcSoundboardMaxUploadBytes > 0 ? g_Config.m_UcSoundboardMaxUploadBytes : 5 * 1024 * 1024;
+	if(FileSize <= 0 || FileSize > MaxBytes)
+	{
+		io_close(File);
+		str_format(m_SoundboardUpload.m_aError, sizeof(m_SoundboardUpload.m_aError), "File too large or empty (max %d bytes).", MaxBytes);
+		m_SoundboardUpload.m_State = ESoundboardUploadState::ERROR;
+		return;
+	}
+
+	std::vector<unsigned char> vData((size_t)FileSize);
+	const unsigned int BytesRead = io_read(File, vData.data(), (unsigned int)FileSize);
+	io_close(File);
+	if((int64_t)BytesRead != FileSize)
+	{
+		str_copy(m_SoundboardUpload.m_aError, "Failed to read file.", sizeof(m_SoundboardUpload.m_aError));
+		m_SoundboardUpload.m_State = ESoundboardUploadState::ERROR;
+		return;
+	}
+
+	const char *pDot = str_rchr(pPath, '.');
+	const char *pContentType = "audio/wav";
+	if(pDot)
+	{
+		if(str_comp_nocase(pDot, ".mp3") == 0)
+			pContentType = "audio/mpeg";
+		else if(str_comp_nocase(pDot, ".ogg") == 0)
+			pContentType = "audio/ogg";
+	}
+
+	const char *pUploadUrl = g_Config.m_UcSoundboardUploadUrl;
+	if(pUploadUrl[0] == '\0')
+	{
+		str_copy(m_SoundboardUpload.m_aError, "Upload URL not configured (uc_soundboard_upload_url).", sizeof(m_SoundboardUpload.m_aError));
+		m_SoundboardUpload.m_State = ESoundboardUploadState::ERROR;
+		return;
+	}
+
+	auto pTask = HttpPost(pUploadUrl, vData.data(), vData.size());
+	char aContentTypeHeader[128];
+	str_format(aContentTypeHeader, sizeof(aContentTypeHeader), "Content-Type: %s", pContentType);
+	pTask->Header(aContentTypeHeader);
+	pTask->Header("Accept: application/json");
+	const char *pInstallId = g_Config.m_UcInstallUuid[0] ? g_Config.m_UcInstallUuid : "anonymous";
+	char aInstallHeader[128];
+	str_format(aInstallHeader, sizeof(aInstallHeader), "x-uclient-install-id: %s", pInstallId);
+	pTask->Header(aInstallHeader);
+	if(m_SoundboardUpload.m_aTitleBuf[0])
+	{
+		char aTitleHeader[256];
+		str_format(aTitleHeader, sizeof(aTitleHeader), "x-sound-title: %s", m_SoundboardUpload.m_aTitleBuf);
+		pTask->Header(aTitleHeader);
+	}
+	pTask->FailOnErrorStatus(false);
+	pTask->MaxResponseSize(64 * 1024);
+	pTask->LogProgress(HTTPLOG::FAILURE);
+	m_SoundboardUpload.m_State = ESoundboardUploadState::UPLOADING;
+	m_SoundboardUpload.m_aError[0] = '\0';
+	m_SoundboardUpload.m_pTask = std::move(pTask);
+	Http()->Run(m_SoundboardUpload.m_pTask);
+}
+
+void CVoiceChat::RequestSoundboardDeleteConfirm(int Index)
+{
+	if(Index < 0 || Index >= (int)m_vSoundboardItems.size())
+		return;
+
+	m_SoundboardDeleteConfirmIndex = Index;
+	m_SoundboardPanelRestoreAfterDeleteConfirm = m_SoundboardPanelActive;
+	if(m_SoundboardPanelActive)
+		SetSoundboardPanelActive(false);
+	const bool WasActive = GameClient()->m_Menus.IsActive();
+	m_DeactivateMenusAfterDeleteConfirm = !WasActive;
+	GameClient()->m_Menus.OpenSoundboardDeletePopup();
+	if(!WasActive)
+		GameClient()->m_Menus.SetActive(true);
+}
+
+void CVoiceChat::ConfirmSoundboardDelete()
+{
+	if(m_SoundboardDeleteConfirmIndex >= 0)
+		StartSoundboardItemDelete(m_SoundboardDeleteConfirmIndex);
+	m_SoundboardDeleteConfirmIndex = -1;
+	if(m_DeactivateMenusAfterDeleteConfirm)
+		GameClient()->m_Menus.SetActive(false);
+	m_DeactivateMenusAfterDeleteConfirm = false;
+	if(m_SoundboardPanelRestoreAfterDeleteConfirm)
+	{
+		SetSoundboardPanelActive(true);
+		m_SoundboardPanelRestoreAfterDeleteConfirm = false;
+	}
+}
+
+void CVoiceChat::CancelSoundboardDelete()
+{
+	m_SoundboardDeleteConfirmIndex = -1;
+	if(m_DeactivateMenusAfterDeleteConfirm)
+		GameClient()->m_Menus.SetActive(false);
+	m_DeactivateMenusAfterDeleteConfirm = false;
+	if(m_SoundboardPanelRestoreAfterDeleteConfirm)
+	{
+		SetSoundboardPanelActive(true);
+		m_SoundboardPanelRestoreAfterDeleteConfirm = false;
+	}
+}
+
+void CVoiceChat::StartSoundboardItemDelete(int Index)
+{
+	if(m_pSoundboardDeleteTask && !m_pSoundboardDeleteTask->Done())
+		return;
+	if(Index < 0 || Index >= (int)m_vSoundboardItems.size())
+		return;
+
+	const std::string &ItemId = m_vSoundboardItems[(size_t)Index].m_Id;
+	char aUrl[512];
+	str_copy(aUrl, g_Config.m_UcSoundboardApiBaseUrl, sizeof(aUrl));
+	str_append(aUrl, "/", sizeof(aUrl));
+	str_append(aUrl, ItemId.c_str(), sizeof(aUrl));
+
+	auto pTask = HttpDeleteReq(aUrl);
+	pTask->LogProgress(HTTPLOG::FAILURE);
+	const char *pInstallId = g_Config.m_UcInstallUuid[0] ? g_Config.m_UcInstallUuid : "anonymous";
+	char aInstallHeader[128];
+	str_format(aInstallHeader, sizeof(aInstallHeader), "x-uclient-install-id: %s", pInstallId);
+	pTask->Header(aInstallHeader);
+	m_pSoundboardDeleteTask = std::move(pTask);
+	Http()->Run(m_pSoundboardDeleteTask);
+	m_SoundboardDeleteTaskIndex = Index;
+}
+
+void CVoiceChat::TickSoundboardDelete()
+{
+	if(!m_pSoundboardDeleteTask || !m_pSoundboardDeleteTask->Done())
+		return;
+
+	const EHttpState State = m_pSoundboardDeleteTask->State();
+	m_pSoundboardDeleteTask->Abort();
+	m_pSoundboardDeleteTask = nullptr;
+	m_SoundboardDeleteTaskIndex = -1;
+
+	if(State == EHttpState::DONE)
+	{
+		m_SoundboardLoadState = 0;
+		m_vSoundboardItems.clear();
+		m_SoundboardAudioCache.clear();
+		m_vSoundboardItemButtons.clear();
+		m_vSoundboardItemDeleteButtons.clear();
+		if(m_pSoundboardListTask)
+		{
+			m_pSoundboardListTask->Abort();
+			m_pSoundboardListTask = nullptr;
+		}
+	}
+}
+
+void CVoiceChat::TickSoundboardUpload()
+{
+	if(!m_SoundboardUpload.m_pTask || !m_SoundboardUpload.m_pTask->Done())
+		return;
+
+	auto pTask = m_SoundboardUpload.m_pTask;
+	m_SoundboardUpload.m_pTask = nullptr;
+
+	if(pTask->State() != EHttpState::DONE)
+	{
+		str_copy(m_SoundboardUpload.m_aError, "Upload request failed.", sizeof(m_SoundboardUpload.m_aError));
+		m_SoundboardUpload.m_State = ESoundboardUploadState::ERROR;
+		return;
+	}
+
+	const int StatusCode = pTask->StatusCode();
+	if(StatusCode < 200 || StatusCode >= 300)
+	{
+		json_value *pJson = pTask->ResultJson();
+		if(pJson)
+		{
+			const json_value *pError = json_object_get(pJson, "error");
+			if(pError && pError->type == json_string)
+				str_copy(m_SoundboardUpload.m_aError, pError->u.string.ptr, sizeof(m_SoundboardUpload.m_aError));
+			else
+				str_format(m_SoundboardUpload.m_aError, sizeof(m_SoundboardUpload.m_aError), "Upload failed (HTTP %d).", StatusCode);
+			json_value_free(pJson);
+		}
+		else
+		{
+			str_format(m_SoundboardUpload.m_aError, sizeof(m_SoundboardUpload.m_aError), "Upload failed (HTTP %d).", StatusCode);
+		}
+		m_SoundboardUpload.m_State = ESoundboardUploadState::ERROR;
+		return;
+	}
+
+	m_SoundboardUpload.m_State = ESoundboardUploadState::DONE;
+	m_SoundboardUpload.m_aTitleBuf[0] = '\0';
+	m_SoundboardUpload.m_aPathBuf[0] = '\0';
 }

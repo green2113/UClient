@@ -33,6 +33,7 @@ public:
 	};
 
 	typedef std::function<void(const char *pLine)> FClipboardLineCallback;
+	typedef std::function<bool()> FClipboardImagePasteCallback;
 	typedef std::function<const char *(char *pCurrentText, size_t NumChars)> FDisplayTextCallback;
 	typedef std::function<bool()> FCalculateOffsetCallback;
 
@@ -74,6 +75,7 @@ private:
 	bool m_Hidden;
 	const char *m_pEmptyText;
 	FClipboardLineCallback m_pfnClipboardLineCallback;
+	FClipboardImagePasteCallback m_pfnClipboardImagePasteCallback;
 	FDisplayTextCallback m_pfnDisplayTextCallback;
 	FCalculateOffsetCallback m_pfnCalculateOffsetCallback;
 	bool m_WasChanged;
@@ -170,6 +172,7 @@ public:
 	void SetEmptyText(const char *pText) { m_pEmptyText = pText; }
 
 	void SetClipboardLineCallback(const FClipboardLineCallback &pfnClipboardLineCallback) { m_pfnClipboardLineCallback = pfnClipboardLineCallback; }
+	void SetClipboardImagePasteCallback(const FClipboardImagePasteCallback &pfnClipboardImagePasteCallback) { m_pfnClipboardImagePasteCallback = pfnClipboardImagePasteCallback; }
 	void SetDisplayTextCallback(const FDisplayTextCallback &pfnDisplayTextCallback) { m_pfnDisplayTextCallback = pfnDisplayTextCallback; }
 	void SetCalculateOffsetCallback(const FCalculateOffsetCallback &pfnCalculateOffsetCallback) { m_pfnCalculateOffsetCallback = pfnCalculateOffsetCallback; }
 

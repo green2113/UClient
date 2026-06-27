@@ -260,6 +260,9 @@ bool CHttpRequest::ConfigureHandle(void *pHandle)
 		curl_easy_setopt(pH, CURLOPT_POSTFIELDS, m_pBody);
 		curl_easy_setopt(pH, CURLOPT_POSTFIELDSIZE, m_BodyLength);
 		break;
+	case REQUEST::DEL:
+		curl_easy_setopt(pH, CURLOPT_CUSTOMREQUEST, "DELETE");
+		break;
 	}
 
 	curl_easy_setopt(pH, CURLOPT_HTTPHEADER, m_pHeaders);
@@ -388,11 +391,18 @@ void CHttpRequest::OnCompletionInternal(void *pHandle, unsigned int Result)
 	const CURLcode Code = static_cast<CURLcode>(Result);
 	if(Code != CURLE_OK)
 	{
-		if(g_Config.m_DbgCurl || m_LogProgress >= HTTPLOG::FAILURE)
+		if(Code == CURLE_ABORTED_BY_CALLBACK)
 		{
-			log_error("http", "%s failed. libcurl error (%u): %s", m_aUrl, Code, m_aErr[0] != '\0' ? m_aErr : curl_easy_strerror(Code));
+			if(g_Config.m_DbgCurl)
+				log_debug("http", "%s aborted", m_aUrl);
+			State = EHttpState::ABORTED;
 		}
-		State = (Code == CURLE_ABORTED_BY_CALLBACK) ? EHttpState::ABORTED : EHttpState::ERROR;
+		else
+		{
+			if(g_Config.m_DbgCurl || m_LogProgress >= HTTPLOG::FAILURE)
+				log_error("http", "%s failed. libcurl error (%u): %s", m_aUrl, Code, m_aErr[0] != '\0' ? m_aErr : curl_easy_strerror(Code));
+			State = EHttpState::ERROR;
+		}
 	}
 	else
 	{

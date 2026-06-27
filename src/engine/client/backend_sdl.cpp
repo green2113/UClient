@@ -23,6 +23,10 @@
 
 #include "backend_sdl.h"
 
+#if defined(CONF_FAMILY_WINDOWS)
+#include "clipboard_image.h"
+#endif
+
 #if defined(CONF_HEADLESS_CLIENT)
 #include "backend/null/backend_null.h"
 #endif
@@ -1364,6 +1368,10 @@ int CGraphicsBackend_SDL_GL::Init(const char *pName, int *pScreen, int *pWidth, 
 		else
 			return EGraphicsBackendErrorCodes::GRAPHICS_BACKEND_ERROR_CODE_SDL_WINDOW_CREATE_FAILED;
 	}
+
+#if defined(CONF_FAMILY_WINDOWS)
+	SetClipboardOwnerWindow(m_pWindow);
+#endif
 
 	int GlewMajor = 0;
 	int GlewMinor = 0;

@@ -305,6 +305,7 @@ public:
 	const CExcludedCommunityTypeFilterList &TypesFilter() const override { return m_TypesFilter; }
 	void CleanFilters() override;
 	void SetBestClientPlayers(const std::vector<CBestClientPlayerEntry> &vPlayers) override;
+	void SetUcClientPlayers(const std::unordered_map<std::string, std::unordered_set<std::string>> &UcPlayersByServer) override;
 
 	//
 	void Update();
@@ -346,6 +347,7 @@ private:
 	std::vector<CCommunity> m_vCommunities;
 	std::unordered_map<NETADDR, CCommunityServer> m_CommunityServersByAddr;
 	std::unordered_map<std::string, std::unordered_map<std::string, bool>> m_BestClientPlayersByServer;
+	std::unordered_map<std::string, std::unordered_set<std::string>> m_UcClientPlayersByServer;
 
 	int m_OwnLocation = CServerInfo::LOC_UNKNOWN;
 

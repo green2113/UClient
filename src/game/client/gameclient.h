@@ -40,6 +40,7 @@
 #include "components/bestclient/music_player.h"
 #include "components/bestclient/translate.h"
 #include "components/bestclient/voice/voice.h"
+#include "components/uclient/uclient.h"
 #include "components/binds.h"
 #include "components/broadcast.h"
 #include "components/camera.h"
@@ -1115,6 +1116,8 @@ public:
 	bool IsSnapTapBlockedByCommunity() const;
 	std::optional<CServerInfo> m_ConnectServerInfo = std::nullopt;
 	void SetConnectInfo(const NETADDR *pAddress) override;
+
+	CUClient m_UClient;
 };
 
 ColorRGBA CalculateNameColor(ColorHSLA TextColorHSL);

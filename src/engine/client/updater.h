@@ -71,6 +71,7 @@ class CUpdater : public IUpdater
 	void StartReleaseFetch() REQUIRES(!m_Lock);
 	bool ParseReleaseTask() REQUIRES(!m_Lock);
 	void StartArchiveDownload() REQUIRES(!m_Lock);
+	bool WriteApplyScript(char *pScriptPath, int ScriptPathSize, char *pInstallDir, int InstallDirSize, char *pExePath, int ExePathSize);
 	bool LaunchApplyScriptAndQuit() REQUIRES(!m_Lock);
 
 	void SetCurrentState(EUpdaterState NewState) REQUIRES(!m_Lock);

@@ -18,7 +18,7 @@ MACRO_CONFIG_INT(BcChatMediaPreview, bc_chat_media_preview, 1, 0, 1, CFGFLAG_CLI
 MACRO_CONFIG_INT(BcChatMediaPhotos, bc_chat_media_photos, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Render photo previews from chat links")
 MACRO_CONFIG_INT(BcChatMediaGifs, bc_chat_media_gifs, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Render GIF and animated media previews from chat links")
 MACRO_CONFIG_INT(BcChatMediaContentFilter, bc_chat_media_content_filter, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Allow chat media previews only from configured domains")
-MACRO_CONFIG_STR(BcChatMediaAllowedDomains, bc_chat_media_allowed_domains, 512, "tenor.com; imgur.com; giphy.com", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Semicolon-separated allowlist for chat media domains")
+MACRO_CONFIG_STR(BcChatMediaAllowedDomains, bc_chat_media_allowed_domains, 512, "tenor.com; imgur.com; giphy.com; media.under1111.com", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Semicolon-separated allowlist for chat media domains")
 MACRO_CONFIG_INT(BcChatMediaPreviewMaxWidth, bc_chat_media_preview_max_width, 220, 120, 400, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum width of chat media previews")
 MACRO_CONFIG_INT(BcChatMediaViewer, bc_chat_media_viewer, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable fullscreen media viewer for chat previews")
 MACRO_CONFIG_INT(BcChatMediaViewerMaxZoom, bc_chat_media_viewer_max_zoom, 800, 100, 2000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum zoom of the chat media viewer in percent")
@@ -260,6 +260,7 @@ MACRO_CONFIG_INT(BcChatBubbleRounding, bc_chat_bubble_rounding, 100, 0, 200, CFG
 
 // Client Indicator
 MACRO_CONFIG_INT(BcClientIndicator, bc_client_indicator, 1, 1, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Client indicator is always enabled")
+MACRO_CONFIG_INT(BcClientIndicatorSendInfo, bc_client_indicator_send_info, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Send usage info to BestClient indicator server (0=hidden, 1=broadcast). UClient presence is always broadcast.")
 MACRO_CONFIG_INT(BcClientIndicatorVersions, bc_client_indicator_versions, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show versions tab in BestClient server browser panel")
 MACRO_CONFIG_INT(DbgClientIndicator, dbg_client_indicator, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Debug logging for BestClient indicator (1=verbose, 2=dump all UDP packet bytes sent/received)")
 MACRO_CONFIG_INT(DbgMusicPlayer, dbg_music_player, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Debug logging for music player (0=off, 1=state changes, 2=verbose periodic diagnostics)")
@@ -341,3 +342,7 @@ MACRO_CONFIG_INT(Bc3dParticlesGlowAlpha, bc_3d_particles_glow_alpha, 35, 1, 100,
 MACRO_CONFIG_INT(BcCasinoBalance, bc_casino_balance, 500, 0, 9999999, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Casino game balance in dollars")
 MACRO_CONFIG_INT(BcCasinoLastClaim, bc_casino_last_claim, 0, 0, 2147483647, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Unix timestamp of last casino free claim")
 MACRO_CONFIG_INT(Bc3dParticlesGlowOffset, bc_3d_particles_glow_offset, 2, 1, 20, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Glow offset for 3D particles")
+
+// Giphy GIF search popup position
+MACRO_CONFIG_INT(BcGiphyPopupX, bc_giphy_popup_x, 50, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Giphy popup X position (percent)")
+MACRO_CONFIG_INT(BcGiphyPopupY, bc_giphy_popup_y, 50, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Giphy popup Y position (percent)")
