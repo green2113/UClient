@@ -4389,7 +4389,11 @@ bool CVoiceChat::IsUcTeamOverrideMode() const
 
 int CVoiceChat::UcTargetVoiceTeam() const
 {
+#if defined(CONF_DEBUG) || defined(CONF_UCLIENT_DEV_BUILD)
 	return maximum(g_Config.m_UcVoiceTeam, 0);
+#else
+	return 0;
+#endif
 }
 
 bool CVoiceChat::IsUcIncludeOwnTeamMode() const
@@ -5654,6 +5658,7 @@ void CVoiceChat::ConVoiceStatus(IConsole::IResult *pResult, void *pUserData)
 	(void)pResult;
 	CVoiceChat *pSelf = static_cast<CVoiceChat *>(pUserData);
 	char aMsg[512];
+#if defined(CONF_DEBUG) || defined(CONF_UCLIENT_DEV_BUILD)
 	str_format(aMsg, sizeof(aMsg),
 		"enabled=%d connected=%d participants=%d server='%s' ptt=%d radius=%d radius_tiles=%d uc_id=%d uc_team=%d uc_include_own=%d",
 		g_Config.m_BcVoiceChatEnable ? 1 : 0,
@@ -5666,6 +5671,18 @@ void CVoiceChat::ConVoiceStatus(IConsole::IResult *pResult, void *pUserData)
 		g_Config.m_UcVoiceId,
 		g_Config.m_UcVoiceTeam,
 		g_Config.m_UcVoiceTeamIncludeOwn ? 1 : 0);
+#else
+	str_format(aMsg, sizeof(aMsg),
+		"enabled=%d connected=%d participants=%d server='%s' ptt=%d radius=%d radius_tiles=%d uc_include_own=%d",
+		g_Config.m_BcVoiceChatEnable ? 1 : 0,
+		pSelf->m_Registered ? 1 : 0,
+		(int)pSelf->m_vVisibleMemberPeerIds.size(),
+		pSelf->EffectiveServerLabel(),
+		pSelf->m_PushToTalkPressed ? 1 : 0,
+		g_Config.m_BcVoiceChatRadiusEnabled ? 1 : 0,
+		std::clamp(g_Config.m_BcVoiceChatRadiusTiles, 1, 500),
+		g_Config.m_UcVoiceTeamIncludeOwn ? 1 : 0);
+#endif
 	dbg_msg("voice", "%s", aMsg);
 }
 

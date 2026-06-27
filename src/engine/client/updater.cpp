@@ -461,7 +461,7 @@ bool CUpdater::ParseReleaseTask()
 	}
 
 	// Update is available only when the remote tag is higher than current version.
-	if(CompareVersionStrings(m_aLatestVersion, BESTCLIENT_VERSION) <= 0)
+	if(CompareVersionStrings(m_aLatestVersion, UCLIENT_VERSION) <= 0)
 	{
 		SetStatus("No new release found");
 		SetCurrentState(IUpdater::CLEAN);

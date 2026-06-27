@@ -16,8 +16,10 @@ MACRO_CONFIG_STR(UcUpdateLatestUrl, uc_update_latest_url, 256, "https://ddnet.un
 MACRO_CONFIG_STR(UcPresenceApiBaseUrl, uc_presence_api_base_url, 256, "https://ddnet.under1111.com/api/presence", CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient presence API base URL (GET list, POST /join /heartbeat /leave /switch)")
 MACRO_CONFIG_INT(UcPresenceHttpHeartbeatSeconds, uc_presence_http_heartbeat_seconds, 60, 60, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Presence HTTP heartbeat interval in seconds (used for /heartbeat API writes)")
 MACRO_CONFIG_INT(UcChatPlayerSearchEngine, uc_chat_player_search_engine, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Search engine used when clicking player names in chat (0=DDNet, 1=DDStats)")
+#if defined(CONF_DEBUG) || defined(CONF_UCLIENT_DEV_BUILD)
 MACRO_CONFIG_INT(UcVoiceTeam, uc_voice_team, -1, -1, 63, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Voice target team override (-1=off, 0..63=force that team, dev only)")
 MACRO_CONFIG_INT(UcVoiceId, uc_voice_id, -1, -1, 63, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Voice client id override (-1=off, dev only)")
+#endif
 MACRO_CONFIG_STR(UcSoundboardApiBaseUrl, uc_soundboard_api_base_url, 256, "https://ddnet.under1111.com/api/soundboard", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Base URL for soundboard API")
 MACRO_CONFIG_STR(UcSoundboardUploadUrl, uc_soundboard_upload_url, 256, "https://ddnet.under1111.com/api/soundboard/upload", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Upload endpoint used for personal soundboard sounds")
 MACRO_CONFIG_INT(UcSoundboardMaxUploadBytes, uc_soundboard_max_upload_bytes, 5242880, 0, 33554432, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum upload size for personal soundboard files")

@@ -212,9 +212,25 @@ if(NOT(CMAKE_BUILD_TYPE))
   endif()
 endif()
 
-if(NOT(CMAKE_BUILD_TYPE MATCHES "^(Release|Debug|RelWithDebInfo|MinSizeRel)$"))
-  message(WARNING "Unknown CMAKE_BUILD_TYPE, should be one of Release, Debug, RelWithDebInfo or MinSizeRel")
+if(NOT(CMAKE_BUILD_TYPE MATCHES "^(Release|Debug|RelWithDebInfo|MinSizeRel|DevRelease)$"))
+  message(WARNING "Unknown CMAKE_BUILD_TYPE, should be one of Release, Debug, RelWithDebInfo, MinSizeRel or DevRelease")
 endif()
+
+# Add a selectable developer-only release-like configuration.
+if(CMAKE_CONFIGURATION_TYPES)
+  list(FIND CMAKE_CONFIGURATION_TYPES "DevRelease" DEVRELEASE_CONFIG_INDEX)
+  if(DEVRELEASE_CONFIG_INDEX EQUAL -1)
+    list(APPEND CMAKE_CONFIGURATION_TYPES DevRelease)
+    set(CMAKE_CONFIGURATION_TYPES "${CMAKE_CONFIGURATION_TYPES}" CACHE STRING "Build configurations" FORCE)
+  endif()
+endif()
+
+# Make DevRelease use the same optimization/debug-info strategy as Release.
+set(CMAKE_C_FLAGS_DEVRELEASE "${CMAKE_C_FLAGS_RELEASE}" CACHE STRING "C flags for DevRelease" FORCE)
+set(CMAKE_CXX_FLAGS_DEVRELEASE "${CMAKE_CXX_FLAGS_RELEASE}" CACHE STRING "CXX flags for DevRelease" FORCE)
+set(CMAKE_EXE_LINKER_FLAGS_DEVRELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE}" CACHE STRING "EXE linker flags for DevRelease" FORCE)
+set(CMAKE_SHARED_LINKER_FLAGS_DEVRELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE}" CACHE STRING "Shared linker flags for DevRelease" FORCE)
+set(CMAKE_MODULE_LINKER_FLAGS_DEVRELEASE "${CMAKE_MODULE_LINKER_FLAGS_RELEASE}" CACHE STRING "Module linker flags for DevRelease" FORCE)
 
 option(UCLIENT_DEV_BUILD "Enable UClient developer features (uc_voice_id, uc_voice_team visible in console)" OFF)
 
@@ -4399,6 +4415,7 @@ foreach(target ${TARGETS_OWN})
   target_include_directories(${target} PRIVATE src)
   target_include_directories(${target} PRIVATE src/rust-bridge)
   target_compile_definitions(${target} PRIVATE $<$<CONFIG:Debug>:CONF_DEBUG>)
+  target_compile_definitions(${target} PRIVATE $<$<CONFIG:DevRelease>:CONF_UCLIENT_DEV_BUILD>)
   if(UCLIENT_DEV_BUILD)
     target_compile_definitions(${target} PRIVATE CONF_UCLIENT_DEV_BUILD)
   endif()

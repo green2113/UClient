@@ -1683,8 +1683,8 @@ void CBestClient::FinishBestClientInfo()
 
 	const char *pCurrentVersion = FindBestClientReleaseVersion(pJson);
 
-	// Update is available only when the remote tag is higher than current version.
-	if(pCurrentVersion && CompareBestClientVersions(pCurrentVersion, BESTCLIENT_VERSION) > 0)
+	// Update is available only when the remote tag is higher than current UClient version.
+	if(pCurrentVersion && CompareBestClientVersions(pCurrentVersion, UCLIENT_VERSION) > 0)
 		str_copy(m_aVersionStr, pCurrentVersion, sizeof(m_aVersionStr));
 	else
 	{
