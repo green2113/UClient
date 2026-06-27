@@ -231,13 +231,17 @@ jobs:
             --s3-provider Cloudflare \
             --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
             --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-            --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY} > /tmp/versions_existing.json; then
-            EXISTING=$(cat /tmp/versions_existing.json)
+            --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY} > /tmp/versions_existing.json 2>/dev/null; then
+            if [ -s /tmp/versions_existing.json ] && jq -e 'type == "array"' /tmp/versions_existing.json >/dev/null 2>&1; then
+              EXISTING=$(jq -c . /tmp/versions_existing.json)
+            else
+              echo "Existing uclient/versions.json missing or invalid; starting from empty list"
+            fi
           fi
 
           jq --arg ver "${{ steps.release_meta.outputs.version }}" --arg released_at "${{ steps.release_meta.outputs.released_at }}" -n \
             --argjson existing "$EXISTING" \
-            '([{"version": $ver, "releasedAt": $released_at}] + ((if ($existing | type) == "array" then $existing else [] end) | map(select(.version != $ver))))' \
+            '([{"version": $ver, "releasedAt": $released_at}] + ($existing | map(select(.version != $ver))))' \
             > ./artifacts/update-meta/versions.json
 
           rclone copyto ./artifacts/update-meta/latest.json \
