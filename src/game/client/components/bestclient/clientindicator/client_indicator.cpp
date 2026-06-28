@@ -1348,13 +1348,15 @@ void CClientIndicator::UpdatePresence()
 	if(pCurrentGameServer[0] == '\0')
 	{
 		SetPresenceBlockReason("presence update skipped: current game server address is empty");
+		if(!m_RegisteredClientIds.empty())
+			SendLeaveForAll();
 		if(m_PresenceCache.SetServerAddress(""))
-		{
-			m_RegisteredClientIds.clear();
-			m_DeveloperClientIds.clear();
-			m_LastHeartbeatTick = 0;
-			m_LastHttpHeartbeatTick = 0;
-		}
+			SchedulePresenceBrowserRefresh();
+		m_RegisteredClientIds.clear();
+		m_DeveloperClientIds.clear();
+		m_ClientVersions.clear();
+		m_LastHeartbeatTick = 0;
+		m_LastHttpHeartbeatTick = 0;
 		m_WasPresenceEnabled = PresenceEnabled;
 		return;
 	}
