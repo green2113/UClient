@@ -1,0 +1,19 @@
+[package]
+name = "uclient-presence-server"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Zlib"
+
+[workspace]
+
+[dependencies]
+constant_time_eq = "0.4.2"
+dotenvy = "0.15.7"
+hex = "0.4.3"
+hmac = "0.12.1"
+reqwest = { version = "0.12.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.114"
+sha2 = "0.10.8"
+tokio = { version = "1.36.0", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }

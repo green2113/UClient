@@ -1065,6 +1065,22 @@ add_custom_target(bestclient-indicator-server
   DEPENDS ${RUST_CLIENTINDICATORSRV}
 )
 
+set_glob(RUST_UCLIENTPRESENCESRV GLOB_RECURSE "rs;toml;lock;example;md;sh" src/uclientpresencesrv
+  .env.example
+  Cargo.lock
+  Cargo.toml
+  README.md
+  run.sh
+  src/main.rs
+)
+
+add_custom_target(uclient-presence-server
+  COMMAND ${CMAKE_COMMAND} -E env CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=${PROJECT_BINARY_DIR}/uclientpresencesrv ${RUST_CARGO} build --release --locked --manifest-path "${PROJECT_SOURCE_DIR}/src/uclientpresencesrv/Cargo.toml"
+  WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+  USES_TERMINAL
+  DEPENDS ${RUST_UCLIENTPRESENCESRV}
+)
+
 if(TARGET_OS STREQUAL "android")
   set(CARGO_BUILD_DIR "${CARGO_NDK_TARGET}/")
   set(CARGO_BUILD ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${PROJECT_BINARY_DIR} DDNET_TEST_NO_LINK=1 ${RUST_CARGO} ndk --manifest-path "${PROJECT_SOURCE_DIR}/Cargo.toml" --target ${CARGO_NDK_TARGET} --platform ${CARGO_NDK_API} build --locked)
@@ -2510,6 +2526,8 @@ set_src(ENGINE_SHARED GLOB_RECURSE src/engine/shared
   assertion_logger.h
   bestclient_indicator_protocol.cpp
   bestclient_indicator_protocol.h
+  uclient_presence_protocol.cpp
+  uclient_presence_protocol.h
   compression.cpp
   compression.h
   config.cpp
@@ -3867,7 +3885,7 @@ function(regex_inverted VAR)
   set(${VAR} ${RESULT} PARENT_SCOPE)
 endfunction()
 
-set(CPACK_PACKAGE_NAME "bestclient")
+set(CPACK_PACKAGE_NAME "uclient")
 set(CPACK_GENERATOR TGZ TXZ)
 set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
 if(TARGET_OS STREQUAL "mac")

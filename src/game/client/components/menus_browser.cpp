@@ -1920,7 +1920,6 @@ void CMenus::RenderServerbrowserBestClient(CUIRect View)
 
 void CMenus::RenderServerbrowserFriends(CUIRect View)
 {
-	GameClient()->m_ClientIndicator.RefreshUcPresenceList(false);
 	GameClient()->m_ClientIndicator.ReapplyBrowserSnapshot();
 
 	const float FontSize = 10.0f;
@@ -2485,7 +2484,6 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 
 void CMenus::FriendlistOnUpdate()
 {
-	GameClient()->m_ClientIndicator.ReapplyBrowserSnapshot();
 }
 
 void CMenus::PopupConfirmRemoveFriend()

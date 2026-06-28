@@ -105,14 +105,19 @@ void CServerBrowser::OnInit()
 
 void CServerBrowser::SetBestClientPlayers(const std::vector<CBestClientPlayerEntry> &vPlayers)
 {
-	m_BestClientPlayersByServer.clear();
+	std::unordered_map<std::string, std::unordered_map<std::string, bool>> NewMap;
 	for(const auto &Entry : vPlayers)
 	{
 		if(Entry.m_aServerAddress[0] == '\0' || Entry.m_aName[0] == '\0')
 			continue;
-		bool &Developer = m_BestClientPlayersByServer[Entry.m_aServerAddress][Entry.m_aName];
+		bool &Developer = NewMap[Entry.m_aServerAddress][Entry.m_aName];
 		Developer = Developer || Entry.m_Developer;
 	}
+
+	if(NewMap == m_BestClientPlayersByServer)
+		return;
+
+	m_BestClientPlayersByServer = std::move(NewMap);
 
 	for(CServerEntry *pEntry : m_vpServerlist)
 	{
@@ -1724,6 +1729,9 @@ void CServerBrowser::UpdateServerRank(CServerInfo *pInfo) const
 
 void CServerBrowser::SetUcClientPlayers(const std::unordered_map<std::string, std::unordered_set<std::string>> &UcPlayersByServer)
 {
+	if(UcPlayersByServer == m_UcClientPlayersByServer)
+		return;
+
 	m_UcClientPlayersByServer = UcPlayersByServer;
 	for(CServerEntry *pEntry : m_vpServerlist)
 		UpdateServerBestClients(&pEntry->m_Info);

@@ -48,6 +48,9 @@ private:
 	NETADDR m_ServerAddr{};
 	bool m_HasServerAddr = false;
 	char m_aLastPresenceServerAddr[256] = "";
+	NETADDR m_UcServerAddr{};
+	bool m_HasUcServerAddr = false;
+	char m_aLastUcPresenceServerAddr[256] = "";
 	char m_aLastGameServerAddr[NETADDR_MAXSTRSIZE] = "";
 	char m_aLastBlockedGameServerAddr[NETADDR_MAXSTRSIZE] = "";
 	bool m_WasPresenceEnabled = false;
@@ -76,6 +79,8 @@ private:
 	std::shared_ptr<CHttpRequest> m_pUcPresenceTask = nullptr;
 	int64_t m_LastUcPresenceRefreshTick = 0;
 	std::unordered_map<std::string, std::unordered_set<std::string>> m_UcPresenceByServer;
+	mutable char m_aUcPresenceLookupServer[NETADDR_MAXSTRSIZE] = "";
+	mutable const std::unordered_set<std::string> *m_pUcPresenceLookupNames = nullptr;
 	CBrowserCache m_BrowserCache;
 	char m_aWebSharedToken[256] = "";
 	std::string m_LastPresenceBlockReason;
@@ -84,10 +89,12 @@ private:
 	void ClosePresenceSocket();
 	void StopPresence(bool SendLeavePackets);
 	void EnsurePresenceSocket();
+	void EnsureUcPresenceSocket();
 	void UpdatePresence();
 	void ProcessIncomingPackets(bool Force = false);
 	void SyncLocalRegistrations(bool Force = false);
 	void SendPresencePacket(int ClientId, int PacketType);
+	void SendUcPresenceUdpPacket(int ClientId, int PacketType, const char *pFromServer = nullptr);
 	void SendPresenceHttpEvent(int ClientId, const char *pEventPath);
 	void SendPresenceHttpSwitchEvent(int ClientId, const char *pFromServerAddress, const char *pToServerAddress);
 	void PresenceHttpPlayerId(char *pBuffer, int BufferSize) const;
@@ -112,12 +119,16 @@ private:
 	bool HasPendingNetworkTask() const;
 	bool IsBrowserSnapshotEnabled() const;
 	bool IsPresenceEnabled() const;
+	bool IsUcPresenceUdpEnabled() const;
+	bool NeedsBcPresenceUdp() const;
+	bool NeedsAnyPresenceUdp() const;
 	const char *EffectiveSharedToken() const;
 	void DebugLog(const char *pText) const;
 	[[gnu::format(printf, 2, 3)]]
 	void DebugLogF(const char *pFormat, ...) const;
 	void SetPresenceBlockReason(const char *pReason);
 	void ClearPresenceBlockReason();
+	void InvalidateUcPresenceLookupCache();
 };
 
 #endif
