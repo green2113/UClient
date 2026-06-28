@@ -13,15 +13,16 @@ use tokio::net::UdpSocket;
 use tokio::time;
 
 const PROTOCOL_MAGIC: [u8; 4] = [0x55, 0x43, 0x50, 0x31]; // UCP1
-const PROTOCOL_VERSION: u8 = 1;
+const PROTOCOL_VERSION_V1: u8 = 1;
+const PROTOCOL_VERSION_V2: u8 = 2;
 const DEFAULT_UDP_BIND: &str = "0.0.0.0:8778";
 const DEFAULT_SYNC_URL: &str = "https://ddnet.under1111.com/api/presence/sync";
 const MAX_UDP_PACKET_SIZE: usize = 2048;
 const PROOF_SIZE: usize = 32;
 const NONCE_RETENTION: Duration = Duration::from_secs(60);
-const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(120);
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(1);
-const DEFAULT_HEARTBEAT_SYNC_DEBOUNCE: Duration = Duration::from_secs(60);
+const DEFAULT_HEARTBEAT_SYNC_DEBOUNCE: Duration = Duration::from_secs(15);
 const MAX_ENTRIES: usize = 5000;
 const MAX_NONCES: usize = 20000;
 
@@ -55,6 +56,7 @@ struct PresencePacket {
     server_address: String,
     player_name: String,
     client_id: i16,
+    client_version: String,
     from_server_address: Option<String>,
 }
 
@@ -64,6 +66,7 @@ struct PresenceEntry {
     server_address: String,
     player_name: String,
     client_id: i16,
+    client_version: String,
     last_seen: Instant,
     last_seen_ms: u64,
 }
@@ -79,6 +82,8 @@ struct SyncPayload<'a> {
     name: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     clientId: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     fromServer: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -140,7 +145,7 @@ impl ServerState {
     fn handle_packet(&mut self, packet: PresencePacket, now: Instant) -> Option<PresenceEntry> {
         let key = SessionKey {
             player_id: packet.player_id.clone(),
-            session_id: format_uuid(packet.session_id),
+            session_id: session_id_for_packet(&packet),
         };
 
         match packet.packet_type {
@@ -156,6 +161,7 @@ impl ServerState {
                     server_address: packet.server_address,
                     player_name: packet.player_name,
                     client_id: packet.client_id,
+                    client_version: packet.client_version,
                     last_seen: now,
                     last_seen_ms: packet.timestamp.saturating_mul(1000),
                 };
@@ -171,6 +177,7 @@ impl ServerState {
                     server_address: packet.server_address,
                     player_name: packet.player_name,
                     client_id: packet.client_id,
+                    client_version: packet.client_version,
                     last_seen: now,
                     last_seen_ms: packet.timestamp.saturating_mul(1000),
                 };
@@ -343,6 +350,7 @@ struct SyncJob {
     server: Option<String>,
     name: Option<String>,
     client_id: Option<i16>,
+    version: Option<String>,
     from_server: Option<String>,
     to_server: Option<String>,
     timestamp_ms: u64,
@@ -366,7 +374,7 @@ impl SyncJob {
         Self {
             event,
             player_id: packet.player_id.clone(),
-            session_id: format_uuid(packet.session_id),
+            session_id: session_id_for_packet(&packet),
             server: if packet.packet_type == PACKET_SWITCH {
                 packet.from_server_address.clone()
             } else {
@@ -374,6 +382,11 @@ impl SyncJob {
             },
             name: Some(packet.player_name.clone()),
             client_id: Some(packet.client_id),
+            version: if packet.client_version.is_empty() {
+                None
+            } else {
+                Some(packet.client_version.clone())
+            },
             from_server: packet.from_server_address.clone(),
             to_server: if packet.packet_type == PACKET_SWITCH {
                 Some(packet.server_address.clone())
@@ -393,6 +406,11 @@ impl SyncJob {
             server: Some(entry.server_address),
             name: Some(entry.player_name),
             client_id: Some(entry.client_id),
+            version: if entry.client_version.is_empty() {
+                None
+            } else {
+                Some(entry.client_version)
+            },
             from_server: None,
             to_server: None,
             timestamp_ms,
@@ -441,7 +459,7 @@ fn handle_udp_packet(
     if packet.packet_type == PACKET_HEARTBEAT {
         let key = SessionKey {
             player_id: packet.player_id.clone(),
-            session_id: format_uuid(packet.session_id),
+            session_id: session_id_for_packet(&packet),
         };
         if !state.should_sync_heartbeat(&key, now, heartbeat_sync_debounce) {
             job.force = false;
@@ -465,6 +483,7 @@ async fn post_sync(client: &reqwest::Client, config: &Config, job: SyncJob) -> R
         server: job.server.as_deref(),
         name: job.name.as_deref(),
         clientId: client_id,
+        version: job.version.as_deref(),
         fromServer: job.from_server.as_deref(),
         toServer: job.to_server.as_deref(),
         timestampMs: Some(job.timestamp_ms),
@@ -482,15 +501,25 @@ async fn post_sync(client: &reqwest::Client, config: &Config, job: SyncJob) -> R
     Ok(())
 }
 
-fn packet_type(data: &[u8]) -> Option<u8> {
-    if data.len() < 6 || data[..4] != PROTOCOL_MAGIC || data[5] != PROTOCOL_VERSION {
+fn wire_protocol_version(data: &[u8]) -> Option<u8> {
+    if data.len() < 6 || data[..4] != PROTOCOL_MAGIC {
         return None;
     }
+    let version = data[5];
+    if version != PROTOCOL_VERSION_V1 && version != PROTOCOL_VERSION_V2 {
+        return None;
+    }
+    Some(version)
+}
+
+fn packet_type(data: &[u8]) -> Option<u8> {
+    wire_protocol_version(data)?;
     Some(data[4])
 }
 
 fn read_presence_packet(data: &[u8]) -> Option<PresencePacket> {
     let packet_type = packet_type(data)?;
+    let wire_version = wire_protocol_version(data)?;
     if data.len() < PROOF_SIZE {
         return None;
     }
@@ -504,6 +533,11 @@ fn read_presence_packet(data: &[u8]) -> Option<PresencePacket> {
     let server_address = reader.string()?;
     let player_name = reader.string()?;
     let client_id = reader.i16()?;
+    let client_version = if wire_version >= PROTOCOL_VERSION_V2 {
+        reader.string()?
+    } else {
+        String::new()
+    };
     let from_server_address = if packet_type == PACKET_SWITCH {
         Some(reader.string()?)
     } else {
@@ -521,6 +555,7 @@ fn read_presence_packet(data: &[u8]) -> Option<PresencePacket> {
         server_address,
         player_name,
         client_id,
+        client_version,
         from_server_address,
     })
 }
@@ -603,6 +638,10 @@ fn format_uuid(uuid: [u8; 16]) -> String {
     )
 }
 
+fn session_id_for_packet(packet: &PresencePacket) -> String {
+    format!("{}:{}", format_uuid(packet.session_id), packet.client_id)
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -618,7 +657,7 @@ mod tests {
         let mut out = Vec::new();
         out.extend_from_slice(&PROTOCOL_MAGIC);
         out.push(packet_type);
-        out.push(PROTOCOL_VERSION);
+        out.push(PROTOCOL_VERSION_V2);
         write_string(&mut out, "player-1");
         out.extend_from_slice(&[1; 16]);
         out.extend_from_slice(&[2; 16]);
@@ -626,6 +665,7 @@ mod tests {
         write_string(&mut out, "127.0.0.1:8303");
         write_string(&mut out, "dev");
         out.extend_from_slice(&4i16.to_be_bytes());
+        write_string(&mut out, "2.4.0");
         if let Some(value) = from_server {
             write_string(&mut out, value);
         }
@@ -648,7 +688,38 @@ mod tests {
         let parsed = read_presence_packet(&packet).unwrap();
         assert_eq!(parsed.packet_type, PACKET_JOIN);
         assert_eq!(parsed.client_id, 4);
+        assert_eq!(parsed.client_version, "2.4.0");
         assert!(validate_proof("shared", &packet));
+    }
+
+    #[test]
+    fn parses_v1_presence_packet_without_version() {
+        let mut out = Vec::new();
+        out.extend_from_slice(&PROTOCOL_MAGIC);
+        out.push(PACKET_JOIN);
+        out.push(PROTOCOL_VERSION_V1);
+        write_string(&mut out, "player-1");
+        out.extend_from_slice(&[1; 16]);
+        out.extend_from_slice(&[2; 16]);
+        out.extend_from_slice(&123u64.to_be_bytes());
+        write_string(&mut out, "127.0.0.1:8303");
+        write_string(&mut out, "dev");
+        out.extend_from_slice(&4i16.to_be_bytes());
+        let mut sha = Sha256::new();
+        sha.update("shared".as_bytes());
+        sha.update(&out);
+        out.extend_from_slice(&sha.finalize());
+        let parsed = read_presence_packet(&out).unwrap();
+        assert_eq!(parsed.client_version, "");
+    }
+
+    #[test]
+    fn session_ids_differ_by_client_id() {
+        let mut packet_a = read_presence_packet(&write_presence_packet(PACKET_JOIN, "shared", None)).unwrap();
+        packet_a.client_id = 1;
+        let mut packet_b = packet_a.clone();
+        packet_b.client_id = 2;
+        assert_ne!(session_id_for_packet(&packet_a), session_id_for_packet(&packet_b));
     }
 
     #[test]

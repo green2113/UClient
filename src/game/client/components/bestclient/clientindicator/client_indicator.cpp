@@ -16,6 +16,7 @@
 #include <engine/shared/uclient_presence_protocol.h>
 
 #include <game/client/gameclient.h>
+#include <game/version.h>
 
 #include <algorithm>
 #include <cstdarg>
@@ -840,6 +841,32 @@ const char *CClientIndicator::CurrentGameServerAddress()
 	return m_aLastGameServerAddr;
 }
 
+const char *CClientIndicator::EffectivePresenceServerAddress()
+{
+	const char *pCurrent = CurrentGameServerAddress();
+	if(pCurrent[0] != '\0')
+	{
+		char aNormalized[NETADDR_MAXSTRSIZE];
+		if(NormalizePresenceServerAddress(pCurrent, aNormalized, sizeof(aNormalized)))
+			str_copy(m_aLastKnownPresenceServerAddr, aNormalized, sizeof(m_aLastKnownPresenceServerAddr));
+		else
+			str_copy(m_aLastKnownPresenceServerAddr, pCurrent, sizeof(m_aLastKnownPresenceServerAddr));
+		m_GameServerEmptySinceTick = 0;
+		return m_aLastKnownPresenceServerAddr;
+	}
+
+	// Still connected to a game server: keep heartbeating with the last known
+	// address even if ServerAddress() briefly returns empty (background/AFK/map load).
+	if(Client()->State() == IClient::STATE_ONLINE && m_aLastKnownPresenceServerAddr[0] != '\0')
+	{
+		if(m_GameServerEmptySinceTick == 0)
+			m_GameServerEmptySinceTick = time_get();
+		return m_aLastKnownPresenceServerAddr;
+	}
+
+	return "";
+}
+
 const char *CClientIndicator::PlayerNameForClient(int ClientId) const
 {
 	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
@@ -904,7 +931,7 @@ void CClientIndicator::SendUcPresenceUdpPacket(int ClientId, int PacketType, con
 	if(!IsUcPresenceUdpEnabled() || !m_Socket || !m_HasUcServerAddr || ClientId < 0 || ClientId >= MAX_CLIENTS)
 		return;
 
-	const char *pServerAddress = CurrentGameServerAddress();
+	const char *pServerAddress = EffectivePresenceServerAddress();
 	if((PacketType == UClientPresence::PACKET_JOIN ||
 		   PacketType == UClientPresence::PACKET_HEARTBEAT ||
 		   PacketType == UClientPresence::PACKET_SWITCH) &&
@@ -926,6 +953,7 @@ void CClientIndicator::SendUcPresenceUdpPacket(int ClientId, int PacketType, con
 	UClientPresence::WriteString(vPacket, pServerAddress);
 	UClientPresence::WriteString(vPacket, PlayerNameForClient(ClientId));
 	UClientPresence::WriteS16(vPacket, (int16_t)ClientId);
+	UClientPresence::WriteString(vPacket, UCLIENT_VERSION);
 	if(PacketType == UClientPresence::PACKET_SWITCH)
 		UClientPresence::WriteString(vPacket, pFromServer);
 	UClientPresence::AppendProof(vPacket, g_Config.m_UcPresenceUdpSharedToken);
@@ -953,6 +981,15 @@ void CClientIndicator::PresenceHttpPlayerId(char *pBuffer, int BufferSize) const
 	FormatUuid(m_ClientInstanceId, pBuffer, BufferSize);
 }
 
+void CClientIndicator::PresenceSessionIdForClient(int ClientId, char *pBuffer, int BufferSize) const
+{
+	if(!pBuffer || BufferSize <= 0)
+		return;
+	char aInstanceId[UUID_MAXSTRSIZE];
+	FormatUuid(m_ClientInstanceId, aInstanceId, sizeof(aInstanceId));
+	str_format(pBuffer, BufferSize, "%s:%d", aInstanceId, ClientId);
+}
+
 void CClientIndicator::SendPresenceHttpEvent(int ClientId, const char *pEventPath)
 {
 	if(ClientId < 0 || ClientId >= MAX_CLIENTS || !pEventPath || pEventPath[0] == '\0')
@@ -977,7 +1014,7 @@ void CClientIndicator::SendPresenceHttpEvent(int ClientId, const char *pEventPat
 	Writer.WriteAttribute("playerId");
 	Writer.WriteStrValue(g_Config.m_UcInstallUuid);
 	char aSessionId[UUID_MAXSTRSIZE];
-	FormatUuid(m_ClientInstanceId, aSessionId, sizeof(aSessionId));
+	PresenceSessionIdForClient(ClientId, aSessionId, sizeof(aSessionId));
 	Writer.WriteAttribute("sessionId");
 	Writer.WriteStrValue(aSessionId);
 	if(pServerAddress[0] != '\0')
@@ -987,6 +1024,11 @@ void CClientIndicator::SendPresenceHttpEvent(int ClientId, const char *pEventPat
 	}
 	Writer.WriteAttribute("name");
 	Writer.WriteStrValue(PlayerNameForClient(ClientId));
+	if(UCLIENT_VERSION[0] != '\0')
+	{
+		Writer.WriteAttribute("version");
+		Writer.WriteStrValue(UCLIENT_VERSION);
+	}
 	Writer.WriteAttribute("clientId");
 	char aClientId[16];
 	str_format(aClientId, sizeof(aClientId), "%d", ClientId);
@@ -1031,7 +1073,7 @@ void CClientIndicator::SendPresenceHttpSwitchEvent(int ClientId, const char *pFr
 	Writer.WriteAttribute("playerId");
 	Writer.WriteStrValue(g_Config.m_UcInstallUuid);
 	char aSessionId[UUID_MAXSTRSIZE];
-	FormatUuid(m_ClientInstanceId, aSessionId, sizeof(aSessionId));
+	PresenceSessionIdForClient(ClientId, aSessionId, sizeof(aSessionId));
 	Writer.WriteAttribute("sessionId");
 	Writer.WriteStrValue(aSessionId);
 	Writer.WriteAttribute("server");
@@ -1040,6 +1082,11 @@ void CClientIndicator::SendPresenceHttpSwitchEvent(int ClientId, const char *pFr
 	Writer.WriteStrValue(pToServerAddress);
 	Writer.WriteAttribute("name");
 	Writer.WriteStrValue(PlayerNameForClient(ClientId));
+	if(UCLIENT_VERSION[0] != '\0')
+	{
+		Writer.WriteAttribute("version");
+		Writer.WriteStrValue(UCLIENT_VERSION);
+	}
 	Writer.WriteAttribute("clientId");
 	char aClientId[16];
 	str_format(aClientId, sizeof(aClientId), "%d", ClientId);
@@ -1125,6 +1172,47 @@ void CClientIndicator::SendLeaveForAll()
 {
 	for(const int ClientId : m_RegisteredClientIds)
 		SendPresencePacket(ClientId, BestClientIndicator::PACKET_LEAVE);
+}
+
+void CClientIndicator::NotifyPresenceServerChanged(const char *pFromServer, const char *pToServer)
+{
+	if(!pToServer || pToServer[0] == '\0')
+		return;
+
+	std::vector<int> vClientIds;
+	vClientIds.reserve(NUM_DUMMIES);
+	for(const int ClientId : GameClient()->m_aLocalIds)
+	{
+		if(ClientId >= 0 && ClientId < MAX_CLIENTS)
+			vClientIds.push_back(ClientId);
+	}
+	if(vClientIds.empty())
+	{
+		vClientIds.assign(m_RegisteredClientIds.begin(), m_RegisteredClientIds.end());
+	}
+	if(vClientIds.empty())
+		return;
+
+	const bool CanSwitch = pFromServer && pFromServer[0] != '\0' && str_comp(pFromServer, pToServer) != 0;
+	for(const int ClientId : vClientIds)
+	{
+		if(CanSwitch)
+			SendPresenceHttpSwitchEvent(ClientId, pFromServer, pToServer);
+		else
+			SendPresencePacket(ClientId, BestClientIndicator::PACKET_JOIN);
+		m_RegisteredClientIds.insert(ClientId);
+		m_PresenceCache.SetPresent(ClientId, true);
+	}
+
+	str_copy(m_aPreviousPresenceServerForSwitch, pToServer, sizeof(m_aPreviousPresenceServerForSwitch));
+	m_GameServerEmptySinceTick = 0;
+	m_LastRegistrationSyncTick = 0;
+	m_LastHeartbeatTick = 0;
+	m_LastHttpHeartbeatTick = 0;
+	InvalidateUcPresenceLookupCache();
+	SchedulePresenceBrowserRefresh();
+	DebugLogF("presence server changed from=%s to=%s switch=%d clients=%llu",
+		CanSwitch ? pFromServer : "(none)", pToServer, CanSwitch ? 1 : 0, (unsigned long long)vClientIds.size());
 }
 
 void CClientIndicator::ProcessIncomingPackets(bool Force)
@@ -1347,47 +1435,36 @@ void CClientIndicator::UpdatePresence()
 			SetPresenceBlockReason("presence update skipped: uc udp socket is not ready");
 	}
 
-	const char *pCurrentGameServer = CurrentGameServerAddress();
-	if(pCurrentGameServer[0] == '\0')
+	const char *pEffectiveGameServer = EffectivePresenceServerAddress();
+	if(pEffectiveGameServer[0] == '\0')
 	{
 		SetPresenceBlockReason("presence update skipped: current game server address is empty");
-		if(!m_RegisteredClientIds.empty())
-			SendLeaveForAll();
-		if(m_PresenceCache.SetServerAddress(""))
-			SchedulePresenceBrowserRefresh();
-		m_RegisteredClientIds.clear();
-		m_DeveloperClientIds.clear();
-		m_ClientVersions.clear();
-		m_LastHeartbeatTick = 0;
-		m_LastHttpHeartbeatTick = 0;
 		m_WasPresenceEnabled = PresenceEnabled;
 		return;
 	}
 	const std::string PreviousGameServer = m_PresenceCache.ServerAddress();
-	if(m_PresenceCache.SetServerAddress(pCurrentGameServer))
+	const bool ServerChanged = m_PresenceCache.SetServerAddress(pEffectiveGameServer);
+	if(ServerChanged)
 	{
-		DebugLogF("presence server changed to game server %s", pCurrentGameServer);
-		InvalidateUcPresenceLookupCache();
-		if(!PreviousGameServer.empty() && str_comp(PreviousGameServer.c_str(), pCurrentGameServer) != 0)
-		{
-			for(const int ClientId : m_RegisteredClientIds)
-				SendPresenceHttpSwitchEvent(ClientId, PreviousGameServer.c_str(), pCurrentGameServer);
-		}
-		m_RegisteredClientIds.clear();
+		const char *pFromServer = !PreviousGameServer.empty()
+			? PreviousGameServer.c_str()
+			: m_aPreviousPresenceServerForSwitch;
+		NotifyPresenceServerChanged(pFromServer, pEffectiveGameServer);
 		m_DeveloperClientIds.clear();
 		m_ClientVersions.clear();
-		m_LastHeartbeatTick = 0;
-		m_LastHttpHeartbeatTick = 0;
-		SchedulePresenceBrowserRefresh();
 	}
 	ClearPresenceBlockReason();
 
-	SyncLocalRegistrations(false);
+	SyncLocalRegistrations(ServerChanged);
+	if(m_RegisteredClientIds.empty())
+		SyncLocalRegistrations(true);
 	ProcessIncomingPackets(false);
 
 	const int64_t Now = time_get();
 	if(m_LastHeartbeatTick == 0 || Now - m_LastHeartbeatTick > time_freq() * 5)
 	{
+		if(m_RegisteredClientIds.empty())
+			SyncLocalRegistrations(true);
 		for(const int ClientId : m_RegisteredClientIds)
 			SendPresencePacket(ClientId, BestClientIndicator::PACKET_HEARTBEAT);
 		m_LastHeartbeatTick = Now;
@@ -1638,6 +1715,9 @@ void CClientIndicator::ResetPresenceState()
 	m_PresenceCache.Clear();
 	m_aLastGameServerAddr[0] = '\0';
 	m_aLastBlockedGameServerAddr[0] = '\0';
+	m_GameServerEmptySinceTick = 0;
+	m_aLastKnownPresenceServerAddr[0] = '\0';
+	m_aPreviousPresenceServerForSwitch[0] = '\0';
 	m_LastPresenceBlockReason.clear();
 }
 

@@ -53,6 +53,9 @@ private:
 	char m_aLastUcPresenceServerAddr[256] = "";
 	char m_aLastGameServerAddr[NETADDR_MAXSTRSIZE] = "";
 	char m_aLastBlockedGameServerAddr[NETADDR_MAXSTRSIZE] = "";
+	int64_t m_GameServerEmptySinceTick = 0;
+	char m_aLastKnownPresenceServerAddr[NETADDR_MAXSTRSIZE] = "";
+	char m_aPreviousPresenceServerForSwitch[NETADDR_MAXSTRSIZE] = "";
 	bool m_WasPresenceEnabled = false;
 	ESubsystemRuntimeState m_RuntimeState = ESubsystemRuntimeState::DISABLED;
 	int64_t m_LastHeartbeatTick = 0;
@@ -98,10 +101,13 @@ private:
 	void SendPresenceHttpEvent(int ClientId, const char *pEventPath);
 	void SendPresenceHttpSwitchEvent(int ClientId, const char *pFromServerAddress, const char *pToServerAddress);
 	void PresenceHttpPlayerId(char *pBuffer, int BufferSize) const;
+	void PresenceSessionIdForClient(int ClientId, char *pBuffer, int BufferSize) const;
 	void SendDevAuthPacket(int ClientId);
 	void SendVersionPacket(int ClientId);
 	void SendLeaveForAll();
+	void NotifyPresenceServerChanged(const char *pFromServer, const char *pToServer);
 	const char *CurrentGameServerAddress();
+	const char *EffectivePresenceServerAddress();
 	const char *PlayerNameForClient(int ClientId) const;
 
 	void FinishBrowserCacheRefresh();

@@ -14,7 +14,8 @@
 namespace UClientPresence
 {
 constexpr uint32_t PROTOCOL_MAGIC = 0x55435031u; // UCP1
-constexpr uint8_t PROTOCOL_VERSION = 1;
+constexpr uint8_t PROTOCOL_VERSION = 2;
+constexpr uint8_t PROTOCOL_VERSION_MIN = 1;
 constexpr int DEFAULT_PORT = 8778;
 constexpr int CLIENT_PACKET_PROOF_SIZE = BestClientIndicator::CLIENT_PACKET_PROOF_SIZE;
 
@@ -36,6 +37,7 @@ struct CClientPresencePacket
 	std::string m_ServerAddress;
 	std::string m_PlayerName;
 	int m_ClientId = -1;
+	std::string m_ClientVersion;
 	std::string m_FromServerAddress;
 };
 
@@ -53,7 +55,7 @@ using BestClientIndicator::WriteU64;
 using BestClientIndicator::WriteUuid;
 
 void WriteHeader(std::vector<uint8_t> &vOut, EPacketType Type);
-bool ReadHeader(const uint8_t *pData, int DataSize, EPacketType &Type, int &Offset);
+bool ReadHeader(const uint8_t *pData, int DataSize, EPacketType &Type, int &Offset, uint8_t *pProtocolVersion = nullptr);
 bool ReadClientPresencePacket(const uint8_t *pData, int DataSize, CClientPresencePacket &Out);
 }
 
