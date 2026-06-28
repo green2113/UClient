@@ -684,6 +684,7 @@ void CClientIndicator::OpenPresenceSocket()
 		char aServerAddr[NETADDR_MAXSTRSIZE];
 		net_addr_str(&m_UcServerAddr, aServerAddr, sizeof(aServerAddr), true);
 		DebugLogF("presence socket opened, uc udp target=%s", aServerAddr);
+		m_LastRegistrationSyncTick = 0;
 	}
 }
 
@@ -1293,6 +1294,8 @@ void CClientIndicator::SyncLocalRegistrations(bool Force)
 	{
 		if(m_RegisteredClientIds.find(ClientId) == m_RegisteredClientIds.end())
 		{
+			if(IsUcPresenceUdpEnabled() && (!m_Socket || !m_HasUcServerAddr))
+				continue;
 			SendPresencePacket(ClientId, BestClientIndicator::PACKET_JOIN);
 			SendVersionPacket(ClientId);
 			SendDevAuthPacket(ClientId);
