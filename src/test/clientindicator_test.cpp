@@ -46,6 +46,71 @@ TEST(ClientIndicator, CollectActiveLocalClientIdsDeduplicatesLocalSlots)
 	EXPECT_TRUE(Snapshot.Contains(9));
 }
 
+TEST(ClientIndicator, UcLocalSlotTickLeavesOnlyInactiveDummySlot)
+{
+	using BestClientIndicatorClient::ComputeUcLocalSlotTick;
+	using BestClientIndicatorClient::SUcLocalSlotState;
+
+	std::array<SUcLocalSlotState, NUM_DUMMIES> aSlots{};
+	aSlots[0] = {3, true};
+	aSlots[1] = {17, true};
+
+	const auto DummyTick = ComputeUcLocalSlotTick(aSlots[1], -1);
+	EXPECT_TRUE(DummyTick.m_SendLeave);
+	EXPECT_EQ(DummyTick.m_LeaveClientId, 17);
+	EXPECT_FALSE(DummyTick.m_SendJoin);
+	EXPECT_FALSE(DummyTick.m_SendHeartbeat);
+	EXPECT_FALSE(DummyTick.m_NextState.m_Joined);
+
+	aSlots[1] = DummyTick.m_NextState;
+
+	const auto MainTick = ComputeUcLocalSlotTick(aSlots[0], 3);
+	EXPECT_FALSE(MainTick.m_SendLeave);
+	EXPECT_TRUE(MainTick.m_SendHeartbeat);
+	EXPECT_EQ(MainTick.m_HeartbeatClientId, 3);
+	EXPECT_TRUE(MainTick.m_NextState.m_Joined);
+	EXPECT_EQ(MainTick.m_NextState.m_LastClientId, 3);
+}
+
+TEST(ClientIndicator, UcLocalSlotTickLeavesAllSlotsOnShutdown)
+{
+	using BestClientIndicatorClient::ComputeUcLocalSlotTick;
+	using BestClientIndicatorClient::SUcLocalSlotState;
+
+	std::array<SUcLocalSlotState, NUM_DUMMIES> aSlots{};
+	aSlots[0] = {3, true};
+	aSlots[1] = {17, true};
+
+	for(int Slot = 0; Slot < NUM_DUMMIES; ++Slot)
+	{
+		const auto Tick = ComputeUcLocalSlotTick(aSlots[Slot], -1);
+		EXPECT_TRUE(Tick.m_SendLeave);
+		EXPECT_FALSE(Tick.m_SendJoin);
+		EXPECT_FALSE(Tick.m_SendHeartbeat);
+		EXPECT_FALSE(Tick.m_NextState.m_Joined);
+		EXPECT_EQ(Tick.m_NextState.m_LastClientId, -1);
+		aSlots[Slot] = Tick.m_NextState;
+	}
+}
+
+TEST(ClientIndicator, UcLocalSlotTickRejoinsAfterClientIdChange)
+{
+	using BestClientIndicatorClient::ComputeUcLocalSlotTick;
+	using BestClientIndicatorClient::SUcLocalSlotState;
+
+	SUcLocalSlotState State{5, true};
+	const auto Tick = ComputeUcLocalSlotTick(State, 9);
+
+	EXPECT_TRUE(Tick.m_SendLeave);
+	EXPECT_EQ(Tick.m_LeaveClientId, 5);
+	EXPECT_TRUE(Tick.m_SendJoin);
+	EXPECT_EQ(Tick.m_JoinClientId, 9);
+	EXPECT_TRUE(Tick.m_SendHeartbeat);
+	EXPECT_EQ(Tick.m_HeartbeatClientId, 9);
+	EXPECT_TRUE(Tick.m_NextState.m_Joined);
+	EXPECT_EQ(Tick.m_NextState.m_LastClientId, 9);
+}
+
 TEST(ClientIndicator, BrowserCacheParsesDeveloperFlag)
 {
 	json_value *pJson = ParseJson(R"([{"server_address":"127.0.0.1:8303","players":[{"name":"dev","developer":true,"version":"1.7.1"},{"name":"user"}]}])");

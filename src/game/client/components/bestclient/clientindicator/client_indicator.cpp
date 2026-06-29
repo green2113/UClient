@@ -1195,10 +1195,15 @@ void CClientIndicator::SendUcLeaveForAllLocalClients()
 {
 	if(!IsUcPresenceUdpEnabled())
 		return;
-	for(const int ClientId : GameClient()->m_aLocalIds)
+	for(BestClientIndicatorClient::SUcLocalSlotState &SlotState : m_aUcLocalSlots)
 	{
-		if(ClientId >= 0 && ClientId < MAX_CLIENTS)
-			SendUcPresenceUdpPacket(ClientId, UClientPresence::PACKET_LEAVE);
+		if(!SlotState.m_Joined || SlotState.m_LastClientId < 0)
+			continue;
+		SendUcPresenceUdpPacket(SlotState.m_LastClientId, UClientPresence::PACKET_LEAVE);
+		m_PresenceCache.SetPresent(SlotState.m_LastClientId, false);
+		DebugLogF("uc presence leave all slot client_id=%d", SlotState.m_LastClientId);
+		SlotState.m_Joined = false;
+		SlotState.m_LastClientId = -1;
 	}
 }
 
@@ -1209,38 +1214,30 @@ void CClientIndicator::UpdateUcPresenceForLocalClients()
 	if(EffectivePresenceServerAddress()[0] == '\0')
 		return;
 
-	std::unordered_set<int> ActiveLocalClientIds;
-	for(const int ClientId : GameClient()->m_aLocalIds)
+	for(int Slot = 0; Slot < NUM_DUMMIES; ++Slot)
 	{
-		if(ClientId >= 0 && ClientId < MAX_CLIENTS)
-			ActiveLocalClientIds.insert(ClientId);
-	}
+		const int ClientId = GameClient()->m_aLocalIds[Slot];
+		const BestClientIndicatorClient::SUcLocalSlotTickResult Tick = BestClientIndicatorClient::ComputeUcLocalSlotTick(m_aUcLocalSlots[Slot], ClientId);
 
-	for(const int ClientId : ActiveLocalClientIds)
-	{
-		if(m_RegisteredClientIds.find(ClientId) == m_RegisteredClientIds.end())
+		if(Tick.m_SendLeave)
 		{
-			SendUcPresenceUdpPacket(ClientId, UClientPresence::PACKET_JOIN);
-			m_RegisteredClientIds.insert(ClientId);
-			m_PresenceCache.SetPresent(ClientId, true);
-			DebugLogF("uc presence auto-registered local client_id=%d name='%s'", ClientId, PlayerNameForClient(ClientId));
+			SendUcPresenceUdpPacket(Tick.m_LeaveClientId, UClientPresence::PACKET_LEAVE);
+			m_PresenceCache.SetPresent(Tick.m_LeaveClientId, false);
+			if(Tick.m_SendJoin)
+				DebugLogF("uc presence slot=%d client_id changed from=%d to=%d", Slot, Tick.m_LeaveClientId, Tick.m_JoinClientId);
+			else
+				DebugLogF("uc presence left slot=%d client_id=%d", Slot, Tick.m_LeaveClientId);
 		}
-		SendUcPresenceUdpPacket(ClientId, UClientPresence::PACKET_HEARTBEAT);
-	}
+		if(Tick.m_SendJoin)
+		{
+			SendUcPresenceUdpPacket(Tick.m_JoinClientId, UClientPresence::PACKET_JOIN);
+			m_PresenceCache.SetPresent(Tick.m_JoinClientId, true);
+			DebugLogF("uc presence joined slot=%d client_id=%d name='%s'", Slot, Tick.m_JoinClientId, PlayerNameForClient(Tick.m_JoinClientId));
+		}
+		if(Tick.m_SendHeartbeat)
+			SendUcPresenceUdpPacket(Tick.m_HeartbeatClientId, UClientPresence::PACKET_HEARTBEAT);
 
-	for(auto It = m_RegisteredClientIds.begin(); It != m_RegisteredClientIds.end();)
-	{
-		if(ActiveLocalClientIds.find(*It) == ActiveLocalClientIds.end())
-		{
-			SendUcPresenceUdpPacket(*It, UClientPresence::PACKET_LEAVE);
-			m_PresenceCache.SetPresent(*It, false);
-			DebugLogF("uc presence unregistered local client_id=%d", *It);
-			It = m_RegisteredClientIds.erase(It);
-		}
-		else
-		{
-			++It;
-		}
+		m_aUcLocalSlots[Slot] = Tick.m_NextState;
 	}
 }
 
@@ -1799,6 +1796,7 @@ void CClientIndicator::ResetPresenceState()
 	m_WasPresenceEnabled = false;
 	m_WasUcPresenceActive = false;
 	m_RegisteredClientIds.clear();
+	m_aUcLocalSlots = {};
 	m_DeveloperClientIds.clear();
 	m_ClientVersions.clear();
 	m_PresenceCache.Clear();

@@ -9,11 +9,14 @@
 
 #include <base/net.h>
 
+#include <engine/client/enums.h>
+
 #include <game/client/component.h>
 
 #include <engine/shared/http.h>
 #include <engine/shared/uuid_manager.h>
 
+#include <array>
 #include <memory>
 #include <unordered_map>
 #include <string>
@@ -74,6 +77,7 @@ private:
 	int64_t m_UpdateSamples = 0;
 	CUuid m_ClientInstanceId = UUID_ZEROED;
 	std::unordered_set<int> m_RegisteredClientIds;
+	std::array<BestClientIndicatorClient::SUcLocalSlotState, NUM_DUMMIES> m_aUcLocalSlots{};
 	std::unordered_set<int> m_DeveloperClientIds;
 	std::unordered_map<int, std::string> m_ClientVersions;
 	CPresenceCache m_PresenceCache;
