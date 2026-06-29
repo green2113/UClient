@@ -92,6 +92,10 @@ void NormalizeLanguageCode(const char *pLanguage, char *pOut, size_t Size)
 		{"brasileiro", "pt"},
 		{"tr", "tr"},
 		{"turkish", "tr"},
+		{"ko", "ko"},
+		{"korean", "ko"},
+		{"ja", "ja"},
+		{"japanese", "ja"},
 	};
 
 	for(const auto &Mapping : aMappings)

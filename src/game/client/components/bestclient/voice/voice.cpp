@@ -4107,6 +4107,24 @@ void CVoiceChat::ProcessPlayback()
 			}
 		}
 
+		for(size_t i = 0; i < (size_t)BestClientVoice::FRAME_SIZE; ++i)
+		{
+			int32_t SoundboardSample = 0;
+			for(auto &Play : m_vSoundboardPlayInstances)
+			{
+				if(Play.m_LocalPlayQueued >= Play.m_vPcm.size())
+					continue;
+				SoundboardSample += Play.m_vPcm[Play.m_LocalPlayQueued];
+				Play.m_LocalPlayQueued++;
+			}
+			if(SoundboardSample != 0)
+			{
+				const int Mixed = (int)(SoundboardSample * MasterVolume);
+				aMix[i * 2u] += Mixed;
+				aMix[i * 2u + 1] += Mixed;
+			}
+		}
+
 		int64_t Peak = 0;
 		for(int i = 0; i < BestClientVoice::FRAME_SIZE * 2; ++i)
 		{
@@ -4313,6 +4331,11 @@ bool CVoiceChat::HasPendingPlaybackAudio() const
 	for(const auto &PeerPair : m_Peers)
 	{
 		if(PeerPair.second.m_DecodedPcm.Size() > 0)
+			return true;
+	}
+	for(const auto &Play : m_vSoundboardPlayInstances)
+	{
+		if(Play.m_LocalPlayQueued < Play.m_vPcm.size())
 			return true;
 	}
 	return false;
@@ -6493,46 +6516,9 @@ void CVoiceChat::TickSoundboard()
 		Cache.m_pTask = nullptr;
 	}
 
-	if(!m_vSoundboardPlayInstances.empty() && m_PlaybackDevice)
+	if(!m_vSoundboardPlayInstances.empty())
 	{
-		const float MasterVol = g_Config.m_BcVoiceChatHeadphonesMuted ? 0.0f : std::clamp(g_Config.m_BcVoiceChatVolume / 100.0f, 0.0f, 2.0f);
 		const int64_t Now = time_get();
-		size_t MaxToQueue = 0;
-		for(const auto &Play : m_vSoundboardPlayInstances)
-		{
-			const int64_t Elapsed = Now - Play.m_StartTick;
-			if(Elapsed <= 0) continue;
-			const int64_t SamplesTarget = Elapsed * BestClientVoice::SAMPLE_RATE / time_freq();
-			const size_t ToQueue = (size_t)std::max((int64_t)0, SamplesTarget - (int64_t)Play.m_LocalPlayQueued);
-			MaxToQueue = maximum(MaxToQueue, ToQueue);
-		}
-		const size_t Count = minimum(MaxToQueue, (size_t)(BestClientVoice::FRAME_SIZE * 4));
-		if(Count > 0)
-		{
-			std::vector<int32_t> vMixMono(Count, 0);
-			for(auto &Play : m_vSoundboardPlayInstances)
-			{
-				if(Play.m_vPcm.empty()) continue;
-				const int64_t Elapsed = Now - Play.m_StartTick;
-				if(Elapsed <= 0) continue;
-				const int64_t SamplesTarget = Elapsed * BestClientVoice::SAMPLE_RATE / time_freq();
-				const size_t ToQueue = (size_t)std::max((int64_t)0, SamplesTarget - (int64_t)Play.m_LocalPlayQueued);
-				const size_t Available = Play.m_vPcm.size() - minimum(Play.m_LocalPlayQueued, Play.m_vPcm.size());
-				const size_t Take = minimum(Count, minimum(ToQueue, Available));
-				for(size_t i = 0; i < Take; ++i)
-					vMixMono[i] += Play.m_vPcm[Play.m_LocalPlayQueued + i];
-				Play.m_LocalPlayQueued += Take;
-			}
-			std::vector<int16_t> vStereo(Count * 2);
-			for(size_t i = 0; i < Count; ++i)
-			{
-				const int MixedSample = std::clamp((int)((float)vMixMono[i] * MasterVol), (int)std::numeric_limits<int16_t>::min(), (int)std::numeric_limits<int16_t>::max());
-				vStereo[i * 2] = (int16_t)MixedSample;
-				vStereo[i * 2 + 1] = (int16_t)MixedSample;
-			}
-			SDL_QueueAudio(m_PlaybackDevice, vStereo.data(), (Uint32)(vStereo.size() * sizeof(int16_t)));
-		}
-
 		std::erase_if(m_vSoundboardPlayInstances, [Now](const SSoundboardPlayInstance &Play) {
 			const int64_t Elapsed = Now - Play.m_StartTick;
 			const int64_t TimeDoneSamples = Elapsed > 0 ? (Elapsed * BestClientVoice::SAMPLE_RATE / time_freq()) : 0;
@@ -6565,8 +6551,6 @@ void CVoiceChat::PlaySoundboardItem(int Index, bool SendToVoice)
 void CVoiceChat::StopSoundboard()
 {
 	m_vSoundboardPlayInstances.clear();
-	if(m_PlaybackDevice)
-		SDL_ClearQueuedAudio(m_PlaybackDevice);
 }
 
 void CVoiceChat::ProcessSoundboardVoiceInject()
