@@ -22,7 +22,7 @@ const PROOF_SIZE: usize = 32;
 const NONCE_RETENTION: Duration = Duration::from_secs(60);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(120);
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(1);
-const DEFAULT_HEARTBEAT_SYNC_DEBOUNCE: Duration = Duration::from_secs(15);
+const DEFAULT_HEARTBEAT_SYNC_DEBOUNCE: Duration = Duration::from_secs(10);
 const MAX_ENTRIES: usize = 5000;
 const MAX_NONCES: usize = 20000;
 
@@ -321,24 +321,18 @@ async fn udp_loop(
 
 async fn cleanup_loop(
     state: Arc<Mutex<ServerState>>,
-    config: Arc<Config>,
-    client: reqwest::Client,
+    _config: Arc<Config>,
+    _client: reqwest::Client,
 ) -> io::Result<()> {
     let mut interval = time::interval(CLEANUP_INTERVAL);
     loop {
         interval.tick().await;
-        let jobs = {
+        let removed = {
             let mut state = state.lock().unwrap();
-            state
-                .cleanup(Instant::now())
-                .into_iter()
-                .map(|entry| SyncJob::leave(entry, now_ms()))
-                .collect::<Vec<_>>()
+            state.cleanup(Instant::now()).len()
         };
-        for job in jobs {
-            if let Err(err) = post_sync(&client, &config, job).await {
-                eprintln!("presence leave sync failed: {err}");
-            }
+        if removed > 0 {
+            eprintln!("presence cleanup evicted {removed} stale udp entries (kv left unchanged)");
         }
     }
 }
@@ -457,13 +451,7 @@ fn handle_udp_packet(
 
     let mut job = SyncJob::from_packet(&packet);
     if packet.packet_type == PACKET_HEARTBEAT {
-        let key = SessionKey {
-            player_id: packet.player_id.clone(),
-            session_id: session_id_for_packet(&packet),
-        };
-        if !state.should_sync_heartbeat(&key, now, heartbeat_sync_debounce) {
-            job.force = false;
-        }
+        job.force = true;
     }
 
     state.handle_packet(packet, now);

@@ -57,6 +57,7 @@ private:
 	char m_aLastKnownPresenceServerAddr[NETADDR_MAXSTRSIZE] = "";
 	char m_aPreviousPresenceServerForSwitch[NETADDR_MAXSTRSIZE] = "";
 	bool m_WasPresenceEnabled = false;
+	bool m_WasUcPresenceActive = false;
 	ESubsystemRuntimeState m_RuntimeState = ESubsystemRuntimeState::DISABLED;
 	int64_t m_LastHeartbeatTick = 0;
 	int64_t m_LastHttpHeartbeatTick = 0;
@@ -105,6 +106,9 @@ private:
 	void SendDevAuthPacket(int ClientId);
 	void SendVersionPacket(int ClientId);
 	void SendLeaveForAll();
+	void SendUcLeaveForAllLocalClients();
+	void UpdateUcPresenceForLocalClients();
+	void SendBcPresencePacket(int ClientId, int PacketType);
 	void NotifyPresenceServerChanged(const char *pFromServer, const char *pToServer);
 	const char *CurrentGameServerAddress();
 	const char *EffectivePresenceServerAddress();
@@ -125,6 +129,7 @@ private:
 	bool HasPendingNetworkTask() const;
 	bool IsBrowserSnapshotEnabled() const;
 	bool IsPresenceEnabled() const;
+	bool ShouldRunUcPresence() const;
 	bool IsUcPresenceUdpEnabled() const;
 	bool NeedsBcPresenceUdp() const;
 	bool NeedsAnyPresenceUdp() const;

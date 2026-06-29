@@ -470,10 +470,10 @@ void CClientIndicator::RefreshToken(bool Force)
 void CClientIndicator::OnUpdate()
 {
 	const int64_t PerfStart = time_get();
-	if(!IsBrowserSnapshotEnabled())
+	if(!IsBrowserSnapshotEnabled() && !ShouldRunUcPresence())
 	{
 		m_RuntimeState = ESubsystemRuntimeState::DISABLED;
-		if(m_WasPresenceEnabled || m_Socket || HasPendingNetworkTask() || m_aWebSharedToken[0] != '\0')
+		if(m_WasPresenceEnabled || m_WasUcPresenceActive || m_Socket || HasPendingNetworkTask() || m_aWebSharedToken[0] != '\0')
 		{
 			StopPresence(true);
 			ResetBrowserTask();
@@ -482,6 +482,14 @@ void CClientIndicator::OnUpdate()
 		ClearBrowserSnapshot();
 		SetPresenceBlockReason("presence update skipped: indicator disabled");
 		m_WasPresenceEnabled = false;
+		m_WasUcPresenceActive = false;
+		return;
+	}
+
+	if(!IsBrowserSnapshotEnabled() && ShouldRunUcPresence())
+	{
+		UpdatePresence();
+		m_LastUpdateCostTick = time_get() - PerfStart;
 		return;
 	}
 
@@ -514,18 +522,19 @@ void CClientIndicator::OnUpdate()
 		if(!g_Config.m_BcClientIndicatorSendInfo && !IsUcPresenceUdpEnabled() && m_Socket)
 			ClosePresenceSocket();
 	}
-	else if(!PresenceEnabled)
+	else if(!PresenceEnabled && !ShouldRunUcPresence())
 	{
 		m_RuntimeState = ESubsystemRuntimeState::COOLDOWN;
 		if(!m_pBrowserTask && (m_LastBrowserRefreshTick == 0 || Now - m_LastBrowserRefreshTick >= BrowserRefreshInterval))
 			RefreshBrowserCache(false);
-		if(m_WasPresenceEnabled || m_Socket || m_HasServerAddr || m_HasUcServerAddr || m_pTokenTask || m_aWebSharedToken[0] != '\0')
+		if(m_WasPresenceEnabled || m_WasUcPresenceActive || m_Socket || m_HasServerAddr || m_HasUcServerAddr || m_pTokenTask || m_aWebSharedToken[0] != '\0')
 		{
 			StopPresence(true);
 			ResetTokenState();
 		}
 		SetPresenceBlockReason("presence update skipped: client offline");
 		m_WasPresenceEnabled = false;
+		m_WasUcPresenceActive = false;
 	}
 
 	if(m_pBrowserTask && m_pBrowserTask->State() == EHttpState::DONE)
@@ -574,7 +583,7 @@ void CClientIndicator::OnUpdate()
 		char aOldEffectiveToken[sizeof(m_aWebSharedToken)];
 		str_copy(aOldEffectiveToken, EffectiveSharedToken(), sizeof(aOldEffectiveToken));
 		m_aWebSharedToken[0] = '\0';
-		if(str_comp(aOldEffectiveToken, EffectiveSharedToken()) != 0)
+		if(NeedsBcPresenceUdp() && str_comp(aOldEffectiveToken, EffectiveSharedToken()) != 0)
 			StopPresence(true);
 		ResetTokenTask();
 	}
@@ -584,7 +593,7 @@ void CClientIndicator::OnUpdate()
 		ResetTokenTask();
 	}
 
-	if(PresenceEnabled)
+	if(PresenceEnabled || ShouldRunUcPresence())
 		UpdatePresence();
 
 	m_LastUpdateCostTick = time_get() - PerfStart;
@@ -733,8 +742,6 @@ void CClientIndicator::EnsureUcPresenceSocket()
 	if(ServerChanged)
 	{
 		DebugLogF("uc presence server address changed, resetting state old=%s new=%s", m_aLastUcPresenceServerAddr, g_Config.m_UcPresenceUdpServerAddress);
-		if(m_Socket && m_HasUcServerAddr && !m_RegisteredClientIds.empty())
-			SendLeaveForAll();
 		m_aLastUcPresenceServerAddr[0] = '\0';
 	}
 
@@ -762,7 +769,7 @@ void CClientIndicator::EnsureUcPresenceSocket()
 void CClientIndicator::EnsurePresenceSocket()
 {
 	NormalizeBestClientIndicatorConfig();
-	if(!g_Config.m_BcClientIndicator || Client()->State() != IClient::STATE_ONLINE)
+	if(Client()->State() != IClient::STATE_ONLINE || !NeedsAnyPresenceUdp())
 	{
 		SetPresenceBlockReason("presence socket skipped: indicator disabled or client offline");
 		return;
@@ -773,8 +780,9 @@ void CClientIndicator::EnsurePresenceSocket()
 		str_comp(m_aLastPresenceServerAddr, g_Config.m_BcClientIndicatorServerAddress) != 0;
 	if(BcServerChanged)
 	{
-		DebugLogF("presence server address changed, resetting state old=%s new=%s", m_aLastPresenceServerAddr, g_Config.m_BcClientIndicatorServerAddress);
-		StopPresence(true);
+		DebugLogF("presence server address changed, resetting bc state old=%s new=%s", m_aLastPresenceServerAddr, g_Config.m_BcClientIndicatorServerAddress);
+		m_HasServerAddr = false;
+		m_aLastPresenceServerAddr[0] = '\0';
 	}
 
 	if(!NeedsAnyPresenceUdp())
@@ -880,35 +888,43 @@ const char *CClientIndicator::PlayerNameForClient(int ClientId) const
 	return "";
 }
 
-void CClientIndicator::SendPresencePacket(int ClientId, int PacketType)
+void CClientIndicator::SendBcPresencePacket(int ClientId, int PacketType)
 {
 	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
 		return;
 
 	const char *pSharedToken = EffectiveSharedToken();
-	if(NeedsBcPresenceUdp() && m_Socket && m_HasServerAddr && pSharedToken && pSharedToken[0] != '\0')
-	{
-		std::vector<uint8_t> vPacket;
-		vPacket.reserve(256);
-		BestClientIndicator::WriteHeader(vPacket, (BestClientIndicator::EPacketType)PacketType);
-		BestClientIndicator::WriteUuid(vPacket, m_ClientInstanceId);
-		const CUuid Nonce = RandomUuid();
-		BestClientIndicator::WriteUuid(vPacket, Nonce);
-		BestClientIndicator::WriteU64(vPacket, (uint64_t)time_timestamp());
-		BestClientIndicator::WriteString(vPacket, CurrentGameServerAddress());
-		BestClientIndicator::WriteString(vPacket, PlayerNameForClient(ClientId));
-		BestClientIndicator::WriteS16(vPacket, (int16_t)ClientId);
-		BestClientIndicator::AppendProof(vPacket, pSharedToken);
+	if(!NeedsBcPresenceUdp() || !m_Socket || !m_HasServerAddr || !pSharedToken || pSharedToken[0] == '\0')
+		return;
 
-		if(g_Config.m_DbgClientIndicator >= 2)
-			DumpUdpPacketBytes("sent", m_ServerAddr, vPacket.data(), (int)vPacket.size());
+	std::vector<uint8_t> vPacket;
+	vPacket.reserve(256);
+	BestClientIndicator::WriteHeader(vPacket, (BestClientIndicator::EPacketType)PacketType);
+	BestClientIndicator::WriteUuid(vPacket, m_ClientInstanceId);
+	const CUuid Nonce = RandomUuid();
+	BestClientIndicator::WriteUuid(vPacket, Nonce);
+	BestClientIndicator::WriteU64(vPacket, (uint64_t)time_timestamp());
+	BestClientIndicator::WriteString(vPacket, CurrentGameServerAddress());
+	BestClientIndicator::WriteString(vPacket, PlayerNameForClient(ClientId));
+	BestClientIndicator::WriteS16(vPacket, (int16_t)ClientId);
+	BestClientIndicator::AppendProof(vPacket, pSharedToken);
 
-		const int Sent = net_udp_send(m_Socket, &m_ServerAddr, vPacket.data(), (int)vPacket.size());
-		char aServerAddr[NETADDR_MAXSTRSIZE];
-		net_addr_str(&m_ServerAddr, aServerAddr, sizeof(aServerAddr), true);
-		DebugLogF("sent %s packet client_id=%d player='%s' game_server=%s indicator_server=%s bytes=%d result=%d",
-			PacketTypeName(PacketType), ClientId, PlayerNameForClient(ClientId), CurrentGameServerAddress(), aServerAddr, (int)vPacket.size(), Sent);
-	}
+	if(g_Config.m_DbgClientIndicator >= 2)
+		DumpUdpPacketBytes("sent", m_ServerAddr, vPacket.data(), (int)vPacket.size());
+
+	const int Sent = net_udp_send(m_Socket, &m_ServerAddr, vPacket.data(), (int)vPacket.size());
+	char aServerAddr[NETADDR_MAXSTRSIZE];
+	net_addr_str(&m_ServerAddr, aServerAddr, sizeof(aServerAddr), true);
+	DebugLogF("sent %s packet client_id=%d player='%s' game_server=%s indicator_server=%s bytes=%d result=%d",
+		PacketTypeName(PacketType), ClientId, PlayerNameForClient(ClientId), CurrentGameServerAddress(), aServerAddr, (int)vPacket.size(), Sent);
+}
+
+void CClientIndicator::SendPresencePacket(int ClientId, int PacketType)
+{
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return;
+
+	SendBcPresencePacket(ClientId, PacketType);
 
 	if(PacketType == BestClientIndicator::PACKET_JOIN)
 	{
@@ -1005,7 +1021,7 @@ void CClientIndicator::SendPresenceHttpEvent(int ClientId, const char *pEventPat
 	if(Base.empty())
 		return;
 
-	const char *pServerAddress = CurrentGameServerAddress();
+	const char *pServerAddress = EffectivePresenceServerAddress();
 	if((str_comp(pEventPath, "join") == 0 || str_comp(pEventPath, "heartbeat") == 0) && pServerAddress[0] == '\0')
 		return;
 
@@ -1171,7 +1187,61 @@ void CClientIndicator::SendVersionPacket(int ClientId)
 void CClientIndicator::SendLeaveForAll()
 {
 	for(const int ClientId : m_RegisteredClientIds)
-		SendPresencePacket(ClientId, BestClientIndicator::PACKET_LEAVE);
+		SendBcPresencePacket(ClientId, BestClientIndicator::PACKET_LEAVE);
+	SendUcLeaveForAllLocalClients();
+}
+
+void CClientIndicator::SendUcLeaveForAllLocalClients()
+{
+	if(!IsUcPresenceUdpEnabled())
+		return;
+	for(const int ClientId : GameClient()->m_aLocalIds)
+	{
+		if(ClientId >= 0 && ClientId < MAX_CLIENTS)
+			SendUcPresenceUdpPacket(ClientId, UClientPresence::PACKET_LEAVE);
+	}
+}
+
+void CClientIndicator::UpdateUcPresenceForLocalClients()
+{
+	if(!ShouldRunUcPresence() || !m_Socket || !m_HasUcServerAddr)
+		return;
+	if(EffectivePresenceServerAddress()[0] == '\0')
+		return;
+
+	std::unordered_set<int> ActiveLocalClientIds;
+	for(const int ClientId : GameClient()->m_aLocalIds)
+	{
+		if(ClientId >= 0 && ClientId < MAX_CLIENTS)
+			ActiveLocalClientIds.insert(ClientId);
+	}
+
+	for(const int ClientId : ActiveLocalClientIds)
+	{
+		if(m_RegisteredClientIds.find(ClientId) == m_RegisteredClientIds.end())
+		{
+			SendUcPresenceUdpPacket(ClientId, UClientPresence::PACKET_JOIN);
+			m_RegisteredClientIds.insert(ClientId);
+			m_PresenceCache.SetPresent(ClientId, true);
+			DebugLogF("uc presence auto-registered local client_id=%d name='%s'", ClientId, PlayerNameForClient(ClientId));
+		}
+		SendUcPresenceUdpPacket(ClientId, UClientPresence::PACKET_HEARTBEAT);
+	}
+
+	for(auto It = m_RegisteredClientIds.begin(); It != m_RegisteredClientIds.end();)
+	{
+		if(ActiveLocalClientIds.find(*It) == ActiveLocalClientIds.end())
+		{
+			SendUcPresenceUdpPacket(*It, UClientPresence::PACKET_LEAVE);
+			m_PresenceCache.SetPresent(*It, false);
+			DebugLogF("uc presence unregistered local client_id=%d", *It);
+			It = m_RegisteredClientIds.erase(It);
+		}
+		else
+		{
+			++It;
+		}
+	}
 }
 
 void CClientIndicator::NotifyPresenceServerChanged(const char *pFromServer, const char *pToServer)
@@ -1398,7 +1468,7 @@ void CClientIndicator::SyncLocalRegistrations(bool Force)
 	{
 		if(!DesiredClientIds.Contains(*It))
 		{
-			SendPresencePacket(*It, BestClientIndicator::PACKET_LEAVE);
+			SendBcPresencePacket(*It, BestClientIndicator::PACKET_LEAVE);
 			m_PresenceCache.SetPresent(*It, false);
 			m_DeveloperClientIds.erase(*It);
 			DebugLogF("unregistered local client_id=%d", *It);
@@ -1413,13 +1483,25 @@ void CClientIndicator::SyncLocalRegistrations(bool Force)
 
 void CClientIndicator::UpdatePresence()
 {
-	const bool PresenceEnabled = g_Config.m_BcClientIndicator != 0;
-	if(!PresenceEnabled || Client()->State() != IClient::STATE_ONLINE)
+	const bool BcPresence = IsPresenceEnabled();
+	const bool UcPresence = ShouldRunUcPresence();
+	if(!BcPresence && !UcPresence)
 	{
-		if(m_WasPresenceEnabled || m_Socket)
+		if(m_WasPresenceEnabled || m_WasUcPresenceActive || m_Socket)
 			StopPresence(true);
 		SetPresenceBlockReason("presence update skipped: indicator disabled or client offline");
 		m_WasPresenceEnabled = false;
+		m_WasUcPresenceActive = false;
+		return;
+	}
+
+	if(Client()->State() != IClient::STATE_ONLINE)
+	{
+		if(m_WasPresenceEnabled || m_WasUcPresenceActive || m_Socket)
+			StopPresence(true);
+		SetPresenceBlockReason("presence update skipped: client offline");
+		m_WasPresenceEnabled = false;
+		m_WasUcPresenceActive = false;
 		return;
 	}
 
@@ -1429,7 +1511,7 @@ void CClientIndicator::UpdatePresence()
 		if(m_LastPresenceBlockReason.empty())
 			SetPresenceBlockReason("presence update skipped: bc udp socket is not ready");
 	}
-	else if(IsUcPresenceUdpEnabled() && (!m_Socket || !m_HasUcServerAddr))
+	else if(UcPresence && (!m_Socket || !m_HasUcServerAddr))
 	{
 		if(m_LastPresenceBlockReason.empty())
 			SetPresenceBlockReason("presence update skipped: uc udp socket is not ready");
@@ -1439,7 +1521,8 @@ void CClientIndicator::UpdatePresence()
 	if(pEffectiveGameServer[0] == '\0')
 	{
 		SetPresenceBlockReason("presence update skipped: current game server address is empty");
-		m_WasPresenceEnabled = PresenceEnabled;
+		m_WasPresenceEnabled = BcPresence;
+		m_WasUcPresenceActive = UcPresence;
 		return;
 	}
 	const std::string PreviousGameServer = m_PresenceCache.ServerAddress();
@@ -1455,42 +1538,47 @@ void CClientIndicator::UpdatePresence()
 	}
 	ClearPresenceBlockReason();
 
-	SyncLocalRegistrations(ServerChanged);
-	if(m_RegisteredClientIds.empty())
-		SyncLocalRegistrations(true);
-	ProcessIncomingPackets(false);
+	if(BcPresence)
+	{
+		SyncLocalRegistrations(ServerChanged);
+		if(m_RegisteredClientIds.empty())
+			SyncLocalRegistrations(true);
+		ProcessIncomingPackets(false);
+	}
 
 	const int64_t Now = time_get();
 	if(m_LastHeartbeatTick == 0 || Now - m_LastHeartbeatTick > time_freq() * 5)
 	{
-		if(m_RegisteredClientIds.empty())
-			SyncLocalRegistrations(true);
-		for(const int ClientId : m_RegisteredClientIds)
-			SendPresencePacket(ClientId, BestClientIndicator::PACKET_HEARTBEAT);
+		if(UcPresence)
+			UpdateUcPresenceForLocalClients();
+		if(BcPresence)
+		{
+			if(m_RegisteredClientIds.empty())
+				SyncLocalRegistrations(true);
+			for(const int ClientId : m_RegisteredClientIds)
+				SendBcPresencePacket(ClientId, BestClientIndicator::PACKET_HEARTBEAT);
+		}
 		m_LastHeartbeatTick = Now;
-		DebugLogF("heartbeat tick sent for %llu local clients", (unsigned long long)m_RegisteredClientIds.size());
+		DebugLogF("heartbeat tick sent bc=%d uc=%d clients=%llu", BcPresence ? 1 : 0, UcPresence ? 1 : 0, (unsigned long long)m_RegisteredClientIds.size());
 	}
 
 	if(g_Config.m_UcPresenceHttpHeartbeat)
 	{
-		const int64_t HttpHeartbeatIntervalSeconds = maximum(60, g_Config.m_UcPresenceHttpHeartbeatSeconds);
+		const int64_t HttpHeartbeatIntervalSeconds = maximum(30, g_Config.m_UcPresenceHttpHeartbeatSeconds);
 		if(m_LastHttpHeartbeatTick == 0 || Now - m_LastHttpHeartbeatTick > time_freq() * HttpHeartbeatIntervalSeconds)
 		{
-			// One HTTP heartbeat per interval is enough: playerId is the install UUID.
-			int HeartbeatClientId = -1;
-			for(const int ClientId : m_RegisteredClientIds)
-			{
-				HeartbeatClientId = ClientId;
-				break;
-			}
-			if(HeartbeatClientId >= 0)
-				SendPresenceHttpEvent(HeartbeatClientId, "heartbeat");
+		for(const int ClientId : GameClient()->m_aLocalIds)
+		{
+			if(ClientId >= 0 && ClientId < MAX_CLIENTS)
+				SendPresenceHttpEvent(ClientId, "heartbeat");
+		}
 			m_LastHttpHeartbeatTick = Now;
-			DebugLogF("http heartbeat tick sent for client_id=%d interval=%llds", HeartbeatClientId, (long long)HttpHeartbeatIntervalSeconds);
+			DebugLogF("http heartbeat tick sent interval=%llds", (long long)HttpHeartbeatIntervalSeconds);
 		}
 	}
 
-	m_WasPresenceEnabled = PresenceEnabled;
+	m_WasPresenceEnabled = BcPresence;
+	m_WasUcPresenceActive = UcPresence;
 }
 
 void CClientIndicator::FinishBrowserCacheRefresh()
@@ -1709,6 +1797,7 @@ void CClientIndicator::ResetPresenceState()
 	m_LastPresenceStartAttempt = 0;
 	m_NextPresenceBrowserRefreshTick = 0;
 	m_WasPresenceEnabled = false;
+	m_WasUcPresenceActive = false;
 	m_RegisteredClientIds.clear();
 	m_DeveloperClientIds.clear();
 	m_ClientVersions.clear();
@@ -1758,6 +1847,11 @@ bool CClientIndicator::IsPresenceEnabled() const
 	return g_Config.m_BcClientIndicator != 0 &&
 	       Client()->State() == IClient::STATE_ONLINE &&
 	       (!pGameClient || !pGameClient->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_OTHERS_CLIENT_INDICATOR));
+}
+
+bool CClientIndicator::ShouldRunUcPresence() const
+{
+	return Client()->State() == IClient::STATE_ONLINE && IsUcPresenceUdpEnabled();
 }
 
 bool CClientIndicator::IsUcPresenceUdpEnabled() const
