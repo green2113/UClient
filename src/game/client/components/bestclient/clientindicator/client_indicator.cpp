@@ -1440,7 +1440,7 @@ void CClientIndicator::ProcessIncomingPackets(bool Force)
 			{
 				UClientPresence::EPacketType Type = (UClientPresence::EPacketType)0;
 				int Offset = 0;
-				const bool HasHeader = UClientPresence::ReadHeader(pRawData, DataSize, Type, Offset);
+				const bool HasHeader = UClientPresence::ReadHeader(pRawData, DataSize, Type, Offset, nullptr);
 				char aFrom[NETADDR_MAXSTRSIZE];
 				net_addr_str(&From, aFrom, sizeof(aFrom), true);
 				if(HasHeader)

@@ -28,16 +28,11 @@ bool ReadHeader(const uint8_t *pData, int DataSize, EPacketType &Type, int &Offs
 	return true;
 }
 
-bool ReadHeader(const uint8_t *pData, int DataSize, EPacketType &Type, int &Offset)
-{
-	return ReadHeader(pData, DataSize, Type, Offset, nullptr);
-}
-
 static bool ReadPeerPacketCommon(const uint8_t *pData, int DataSize, CPeerState &Out, EPacketType ExpectedType)
 {
 	int Offset = 0;
 	EPacketType Type;
-	if(!ReadHeader(pData, DataSize, Type, Offset) || Type != ExpectedType)
+	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != ExpectedType)
 		return false;
 
 	int16_t ClientId = -1;
@@ -66,7 +61,7 @@ bool ReadPeerListPacket(const uint8_t *pData, int DataSize, CPeerList &Out)
 {
 	int Offset = 0;
 	EPacketType Type;
-	if(!ReadHeader(pData, DataSize, Type, Offset) || Type != PACKET_PEER_LIST)
+	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != PACKET_PEER_LIST)
 		return false;
 
 	uint16_t Count = 0;

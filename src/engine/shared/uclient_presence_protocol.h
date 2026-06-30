@@ -79,7 +79,7 @@ using BestClientIndicator::WriteU64;
 using BestClientIndicator::WriteUuid;
 
 void WriteHeader(std::vector<uint8_t> &vOut, EPacketType Type);
-bool ReadHeader(const uint8_t *pData, int DataSize, EPacketType &Type, int &Offset, uint8_t *pProtocolVersion = nullptr);
+bool ReadHeader(const uint8_t *pData, int DataSize, EPacketType &Type, int &Offset, uint8_t *pProtocolVersion);
 bool ReadClientPresencePacket(const uint8_t *pData, int DataSize, CClientPresencePacket &Out);
 
 bool ReadPeerStatePacket(const uint8_t *pData, int DataSize, CPeerState &Out);
