@@ -22,6 +22,12 @@
 #include <string>
 #include <unordered_set>
 
+namespace UClientPresence
+{
+struct CPeerState;
+struct CPeerList;
+}
+
 class CClientIndicator : public CComponent
 {
 public:
