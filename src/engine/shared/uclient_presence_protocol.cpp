@@ -33,6 +33,82 @@ bool ReadHeader(const uint8_t *pData, int DataSize, EPacketType &Type, int &Offs
 	return ReadHeader(pData, DataSize, Type, Offset, nullptr);
 }
 
+static bool ReadPeerPacketCommon(const uint8_t *pData, int DataSize, CPeerState &Out, EPacketType ExpectedType)
+{
+	int Offset = 0;
+	EPacketType Type;
+	if(!ReadHeader(pData, DataSize, Type, Offset) || Type != ExpectedType)
+		return false;
+
+	int16_t ClientId = -1;
+	if(!ReadString(pData, DataSize, Offset, Out.m_ServerAddress) ||
+		!ReadString(pData, DataSize, Offset, Out.m_PlayerName) ||
+		!ReadS16(pData, DataSize, Offset, ClientId))
+	{
+		return false;
+	}
+
+	Out.m_ClientId = ClientId;
+	return Offset == DataSize;
+}
+
+bool ReadPeerStatePacket(const uint8_t *pData, int DataSize, CPeerState &Out)
+{
+	return ReadPeerPacketCommon(pData, DataSize, Out, PACKET_PEER_STATE);
+}
+
+bool ReadPeerRemovePacket(const uint8_t *pData, int DataSize, CPeerState &Out)
+{
+	return ReadPeerPacketCommon(pData, DataSize, Out, PACKET_PEER_REMOVE);
+}
+
+bool ReadPeerListPacket(const uint8_t *pData, int DataSize, CPeerList &Out)
+{
+	int Offset = 0;
+	EPacketType Type;
+	if(!ReadHeader(pData, DataSize, Type, Offset) || Type != PACKET_PEER_LIST)
+		return false;
+
+	uint16_t Count = 0;
+	if(!ReadString(pData, DataSize, Offset, Out.m_ServerAddress) || !ReadU16(pData, DataSize, Offset, Count))
+		return false;
+
+	Out.m_vPeers.clear();
+	Out.m_vPeers.reserve(Count);
+	for(uint16_t i = 0; i < Count; ++i)
+	{
+		CPeerListEntry Entry;
+		int16_t ClientId = -1;
+		if(!ReadS16(pData, DataSize, Offset, ClientId) || !ReadString(pData, DataSize, Offset, Entry.m_PlayerName))
+			return false;
+		Entry.m_ClientId = ClientId;
+		Out.m_vPeers.push_back(std::move(Entry));
+	}
+	return Offset == DataSize;
+}
+
+void WritePeerStatePacket(std::vector<uint8_t> &vOut, EPacketType Type, const char *pServerAddress, const char *pPlayerName, int ClientId)
+{
+	vOut.clear();
+	WriteHeader(vOut, Type);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pPlayerName);
+	WriteS16(vOut, ClientId);
+}
+
+void WritePeerListPacket(std::vector<uint8_t> &vOut, const char *pServerAddress, const std::vector<CPeerListEntry> &vPeers)
+{
+	vOut.clear();
+	WriteHeader(vOut, PACKET_PEER_LIST);
+	WriteString(vOut, pServerAddress);
+	WriteU16(vOut, (uint16_t)vPeers.size());
+	for(const CPeerListEntry &Peer : vPeers)
+	{
+		WriteS16(vOut, Peer.m_ClientId);
+		WriteString(vOut, Peer.m_PlayerName.c_str());
+	}
+}
+
 bool ReadClientPresencePacket(const uint8_t *pData, int DataSize, CClientPresencePacket &Out)
 {
 	int Offset = 0;

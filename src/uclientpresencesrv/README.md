@@ -6,6 +6,12 @@ Cloudflare Pages `/api/presence/sync` endpoint over HTTPS with an HMAC-authentic
 Data flow:
 
 `UClient -> UDP :8778 -> Rust relay -> HTTPS /api/presence/sync -> PRESENCE_KV`
+`Rust relay -> UDP peer notify -> other UClients on the same game server`
+
+When a client joins, leaves, or changes name/client id on a game server, the relay
+notifies the other UC clients on that server in real time (`PEER_STATE`,
+`PEER_REMOVE`, `PEER_LIST`). Clients track UC players by **game server client id**,
+so renamed players keep the UC indicator.
 
 ## Config
 
@@ -41,4 +47,4 @@ uc_presence_udp_shared_token <same value as UC_PRESENCE_UDP_SHARED_TOKEN>
 uc_install_uuid <generated install uuid>
 ```
 
-When UDP presence is configured, join/leave/switch/heartbeat events use UDP and HTTP is used only for the public GET list.
+When UDP presence is configured, join/leave/switch/heartbeat events use UDP and HTTP is used only for the public GET list and as a 5-minute browser fallback. Same-server UC detection in-game uses UDP peer notifications.

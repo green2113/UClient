@@ -66,11 +66,13 @@ class CUpdater : public IUpdater
 	char m_aArchiveName[128];
 	char m_aArchiveUrl[2048];
 	char m_aArchivePath[IO_MAX_PATH_LENGTH];
+	int64_t m_ExpectedArchiveSize = 0;
 
 	void ResetTask() REQUIRES(!m_Lock);
 	void StartReleaseFetch() REQUIRES(!m_Lock);
 	bool ParseReleaseTask() REQUIRES(!m_Lock);
 	void StartArchiveDownload() REQUIRES(!m_Lock);
+	bool ValidateDownloadedArchive() REQUIRES(!m_Lock);
 	bool WriteApplyScript(char *pScriptPath, int ScriptPathSize, char *pInstallDir, int InstallDirSize, char *pExePath, int ExePathSize);
 	bool LaunchApplyScriptAndQuit() REQUIRES(!m_Lock);
 

@@ -30,6 +30,9 @@ const PACKET_JOIN: u8 = 1;
 const PACKET_HEARTBEAT: u8 = 2;
 const PACKET_LEAVE: u8 = 3;
 const PACKET_SWITCH: u8 = 4;
+const PACKET_PEER_STATE: u8 = 5;
+const PACKET_PEER_REMOVE: u8 = 6;
+const PACKET_PEER_LIST: u8 = 7;
 
 #[derive(Clone)]
 struct Config {
@@ -69,6 +72,12 @@ struct PresenceEntry {
     client_version: String,
     last_seen: Instant,
     last_seen_ms: u64,
+    return_addr: SocketAddr,
+}
+
+struct UdpOutcome {
+    sync_jobs: Vec<SyncJob>,
+    outbound: Vec<(SocketAddr, Vec<u8>)>,
 }
 
 #[derive(Serialize)]
@@ -142,55 +151,58 @@ impl ServerState {
         }
     }
 
-    fn handle_packet(&mut self, packet: PresencePacket, now: Instant) -> Option<PresenceEntry> {
-        let key = SessionKey {
-            player_id: packet.player_id.clone(),
-            session_id: session_id_for_packet(&packet),
-        };
-
-        match packet.packet_type {
-            PACKET_JOIN | PACKET_HEARTBEAT => {
-                if packet.client_id < 0 || packet.server_address.is_empty() || packet.player_id.is_empty() {
-                    return None;
-                }
-                if self.entries.len() >= MAX_ENTRIES && !self.entries.contains_key(&key) {
-                    return None;
-                }
-                let entry = PresenceEntry {
-                    key: key.clone(),
-                    server_address: packet.server_address,
-                    player_name: packet.player_name,
-                    client_id: packet.client_id,
-                    client_version: packet.client_version,
-                    last_seen: now,
-                    last_seen_ms: packet.timestamp.saturating_mul(1000),
-                };
-                self.entries.insert(key, entry.clone());
-                Some(entry)
-            }
-            PACKET_SWITCH => {
-                if packet.client_id < 0 || packet.server_address.is_empty() || packet.player_id.is_empty() {
-                    return None;
-                }
-                let entry = PresenceEntry {
-                    key: key.clone(),
-                    server_address: packet.server_address,
-                    player_name: packet.player_name,
-                    client_id: packet.client_id,
-                    client_version: packet.client_version,
-                    last_seen: now,
-                    last_seen_ms: packet.timestamp.saturating_mul(1000),
-                };
-                self.entries.insert(key, entry.clone());
-                Some(entry)
-            }
-            PACKET_LEAVE => {
-                self.entries.remove(&key);
-                self.last_heartbeat_sync.remove(&key);
-                None
-            }
-            _ => None,
+    fn upsert_entry(
+        &mut self,
+        packet: &PresencePacket,
+        from: SocketAddr,
+        now: Instant,
+        key: &SessionKey,
+    ) -> Option<PresenceEntry> {
+        if packet.client_id < 0 || packet.server_address.is_empty() || packet.player_id.is_empty() {
+            return None;
         }
+        if self.entries.len() >= MAX_ENTRIES && !self.entries.contains_key(key) {
+            return None;
+        }
+        let entry = PresenceEntry {
+            key: key.clone(),
+            server_address: packet.server_address.clone(),
+            player_name: packet.player_name.clone(),
+            client_id: packet.client_id,
+            client_version: packet.client_version.clone(),
+            last_seen: now,
+            last_seen_ms: packet.timestamp.saturating_mul(1000),
+            return_addr: from,
+        };
+        self.entries.insert(key.clone(), entry.clone());
+        Some(entry)
+    }
+
+    fn remove_entry(&mut self, key: &SessionKey) -> Option<PresenceEntry> {
+        let removed = self.entries.remove(key);
+        if removed.is_some() {
+            self.last_heartbeat_sync.remove(key);
+        }
+        removed
+    }
+
+    fn peers_on_server<'a>(
+        &'a self,
+        server_address: &str,
+        except: Option<&SessionKey>,
+    ) -> Vec<&'a PresenceEntry> {
+        self.entries
+            .iter()
+            .filter_map(|(key, entry)| {
+                if entry.server_address != server_address {
+                    return None;
+                }
+                if except.is_some_and(|skip| skip == key) {
+                    return None;
+                }
+                Some(entry)
+            })
+            .collect()
     }
 
     fn cleanup(&mut self, now: Instant) -> Vec<PresenceEntry> {
@@ -242,7 +254,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Arc::clone(&config),
         client.clone(),
     ));
-    let cleanup_task = tokio::spawn(cleanup_loop(Arc::clone(&state), Arc::clone(&config), client));
+    let cleanup_task = tokio::spawn(cleanup_loop(
+        Arc::clone(&udp_socket),
+        Arc::clone(&state),
+        Arc::clone(&config),
+        client,
+    ));
 
     tokio::select! {
         result = udp_task => result??,
@@ -298,28 +315,41 @@ impl Config {
 }
 
 async fn udp_loop(
-    _socket: Arc<UdpSocket>,
+    socket: Arc<UdpSocket>,
     state: Arc<Mutex<ServerState>>,
     config: Arc<Config>,
     client: reqwest::Client,
 ) -> io::Result<()> {
     let mut buf = [0u8; MAX_UDP_PACKET_SIZE];
     loop {
-        let (size, from) = _socket.recv_from(&mut buf).await?;
+        let (size, from) = socket.recv_from(&mut buf).await?;
         let data = &buf[..size];
-        let sync_jobs = {
+        let outcome = {
             let mut state = state.lock().unwrap();
-            handle_udp_packet(&mut state, &config.shared_token, from.ip(), data, config.heartbeat_sync_debounce)
+            handle_udp_packet(
+                &mut state,
+                &config.shared_token,
+                from.ip(),
+                from,
+                data,
+                config.heartbeat_sync_debounce,
+            )
         };
-        for job in sync_jobs {
+        for job in outcome.sync_jobs {
             if let Err(err) = post_sync(&client, &config, job).await {
                 eprintln!("presence sync failed: {err}");
+            }
+        }
+        for (addr, packet) in outcome.outbound {
+            if let Err(err) = socket.send_to(&packet, addr).await {
+                eprintln!("presence peer notify failed for {addr}: {err}");
             }
         }
     }
 }
 
 async fn cleanup_loop(
+    socket: Arc<UdpSocket>,
     state: Arc<Mutex<ServerState>>,
     _config: Arc<Config>,
     _client: reqwest::Client,
@@ -327,12 +357,26 @@ async fn cleanup_loop(
     let mut interval = time::interval(CLEANUP_INTERVAL);
     loop {
         interval.tick().await;
-        let removed = {
+        let outbound = {
             let mut state = state.lock().unwrap();
-            state.cleanup(Instant::now()).len()
+            let removed = state.cleanup(Instant::now());
+            let removed_count = removed.len();
+            let mut packets = Vec::new();
+            for entry in removed {
+                append_peer_remove_notifications(&state, &entry, &mut packets);
+            }
+            (removed_count, packets)
         };
-        if removed > 0 {
-            eprintln!("presence cleanup evicted {removed} stale udp entries (kv left unchanged)");
+        if outbound.0 > 0 {
+            eprintln!(
+                "presence cleanup evicted {} stale udp entries (kv left unchanged)",
+                outbound.0
+            );
+        }
+        for (addr, packet) in outbound.1 {
+            if let Err(err) = socket.send_to(&packet, addr).await {
+                eprintln!("presence cleanup notify failed for {addr}: {err}");
+            }
         }
     }
 }
@@ -417,49 +461,222 @@ fn handle_udp_packet(
     state: &mut ServerState,
     shared_token: &str,
     ip: IpAddr,
+    from: SocketAddr,
     data: &[u8],
-    heartbeat_sync_debounce: Duration,
-) -> Vec<SyncJob> {
+    _heartbeat_sync_debounce: Duration,
+) -> UdpOutcome {
+    let mut outcome = UdpOutcome {
+        sync_jobs: Vec::new(),
+        outbound: Vec::new(),
+    };
     let now = Instant::now();
     if data.len() > MAX_UDP_PACKET_SIZE {
-        return Vec::new();
+        return outcome;
     }
     let Some(packet_type) = packet_type(data) else {
         state.log_invalid(ip, now, "bad header");
-        return Vec::new();
+        return outcome;
     };
     if !matches!(
         packet_type,
         PACKET_JOIN | PACKET_HEARTBEAT | PACKET_LEAVE | PACKET_SWITCH
     ) {
         state.log_invalid(ip, now, "unsupported packet type");
-        return Vec::new();
+        return outcome;
     }
 
     let Some(packet) = read_presence_packet(data) else {
         state.log_invalid(ip, now, "bad presence payload");
-        return Vec::new();
+        return outcome;
     };
     if !validate_proof(shared_token, data) {
         state.log_invalid(ip, now, "invalid presence proof");
-        return Vec::new();
+        return outcome;
     }
     if !state.remember_nonce(packet.session_id, packet.nonce, now) {
         state.log_invalid(ip, now, "nonce replay");
-        return Vec::new();
+        return outcome;
     }
+
+    let key = SessionKey {
+        player_id: packet.player_id.clone(),
+        session_id: session_id_for_packet(&packet),
+    };
+    let previous = state.entries.get(&key).cloned();
 
     let mut job = SyncJob::from_packet(&packet);
     if packet.packet_type == PACKET_HEARTBEAT {
         job.force = true;
     }
-
-    state.handle_packet(packet, now);
     if job.force {
-        vec![job]
-    } else {
-        Vec::new()
+        outcome.sync_jobs.push(job);
     }
+
+    match packet.packet_type {
+        PACKET_LEAVE => {
+            if let Some(entry) = state.remove_entry(&key) {
+                append_peer_remove_notifications(state, &entry, &mut outcome.outbound);
+            }
+        }
+        PACKET_SWITCH => {
+            if let Some(prev) = previous.as_ref() {
+                if prev.server_address != packet.server_address {
+                    append_peer_remove_notifications(state, prev, &mut outcome.outbound);
+                }
+            }
+            if let Some(entry) = state.upsert_entry(&packet, from, now, &key) {
+                append_join_notifications(state, &entry, from, &key, &mut outcome.outbound);
+            }
+        }
+        PACKET_JOIN | PACKET_HEARTBEAT => {
+            let was_new = previous.is_none();
+            if let Some(entry) = state.upsert_entry(&packet, from, now, &key) {
+                if packet.packet_type == PACKET_JOIN || was_new {
+                    append_join_notifications(state, &entry, from, &key, &mut outcome.outbound);
+                } else if let Some(prev) = previous {
+                    if prev.server_address == entry.server_address {
+                        if prev.client_id != entry.client_id {
+                            append_peer_remove_for_entry(
+                                state,
+                                &prev.server_address,
+                                prev.client_id,
+                                &prev.player_name,
+                                Some(&key),
+                                &mut outcome.outbound,
+                            );
+                            append_peer_state_notifications(
+                                state,
+                                &entry,
+                                Some(&key),
+                                &mut outcome.outbound,
+                            );
+                        } else if prev.player_name != entry.player_name {
+                            append_peer_state_notifications(
+                                state,
+                                &entry,
+                                Some(&key),
+                                &mut outcome.outbound,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    outcome
+}
+
+fn append_join_notifications(
+    state: &ServerState,
+    entry: &PresenceEntry,
+    joiner_addr: SocketAddr,
+    joiner_key: &SessionKey,
+    outbound: &mut Vec<(SocketAddr, Vec<u8>)>,
+) {
+    let peers = state.peers_on_server(&entry.server_address, Some(joiner_key));
+    if !peers.is_empty() {
+        let mut list_entries = Vec::with_capacity(peers.len());
+        for peer in &peers {
+            list_entries.push((peer.client_id, peer.player_name.clone()));
+        }
+        outbound.push((joiner_addr, encode_peer_list(&entry.server_address, &list_entries)));
+        let join_packet = encode_peer_state(&entry.server_address, &entry.player_name, entry.client_id);
+        for peer in peers {
+            outbound.push((peer.return_addr, join_packet.clone()));
+        }
+    }
+}
+
+fn append_peer_state_notifications(
+    state: &ServerState,
+    entry: &PresenceEntry,
+    except: Option<&SessionKey>,
+    outbound: &mut Vec<(SocketAddr, Vec<u8>)>,
+) {
+    let packet = encode_peer_state(&entry.server_address, &entry.player_name, entry.client_id);
+    for peer in state.peers_on_server(&entry.server_address, except) {
+        outbound.push((peer.return_addr, packet.clone()));
+    }
+    if except.is_none() {
+        outbound.push((entry.return_addr, packet));
+    }
+}
+
+fn append_peer_remove_for_entry(
+    state: &ServerState,
+    server_address: &str,
+    client_id: i16,
+    player_name: &str,
+    except: Option<&SessionKey>,
+    outbound: &mut Vec<(SocketAddr, Vec<u8>)>,
+) {
+    let packet = encode_peer_remove(server_address, player_name, client_id);
+    for peer in state.peers_on_server(server_address, except) {
+        outbound.push((peer.return_addr, packet.clone()));
+    }
+}
+
+fn append_peer_remove_notifications(
+    state: &ServerState,
+    entry: &PresenceEntry,
+    outbound: &mut Vec<(SocketAddr, Vec<u8>)>,
+) {
+    append_peer_remove_for_entry(
+        state,
+        &entry.server_address,
+        entry.client_id,
+        &entry.player_name,
+        Some(&entry.key),
+        outbound,
+    );
+}
+
+fn encode_peer_state(server_address: &str, player_name: &str, client_id: i16) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_header(&mut out, PACKET_PEER_STATE);
+    write_string(&mut out, server_address);
+    write_string(&mut out, player_name);
+    out.extend_from_slice(&client_id.to_be_bytes());
+    out
+}
+
+fn encode_peer_remove(server_address: &str, player_name: &str, client_id: i16) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_header(&mut out, PACKET_PEER_REMOVE);
+    write_string(&mut out, server_address);
+    write_string(&mut out, player_name);
+    out.extend_from_slice(&client_id.to_be_bytes());
+    out
+}
+
+fn encode_peer_list(server_address: &str, peers: &[(i16, String)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_header(&mut out, PACKET_PEER_LIST);
+    write_string(&mut out, server_address);
+    write_u16(&mut out, peers.len() as u16);
+    for (client_id, player_name) in peers {
+        out.extend_from_slice(&client_id.to_be_bytes());
+        write_string(&mut out, player_name);
+    }
+    out
+}
+
+fn write_header(out: &mut Vec<u8>, packet_type: u8) {
+    out.extend_from_slice(&PROTOCOL_MAGIC);
+    out.push(packet_type);
+    out.push(PROTOCOL_VERSION_V2);
+}
+
+fn write_u16(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_be_bytes());
+}
+
+fn write_string(out: &mut Vec<u8>, value: &str) {
+    let bytes = value.as_bytes();
+    write_u16(out, bytes.len() as u16);
+    out.extend_from_slice(bytes);
 }
 
 async fn post_sync(client: &reqwest::Client, config: &Config, job: SyncJob) -> Result<(), reqwest::Error> {

@@ -89,6 +89,14 @@ private:
 	std::unordered_map<std::string, std::unordered_set<std::string>> m_UcPresenceByServer;
 	mutable char m_aUcPresenceLookupServer[NETADDR_MAXSTRSIZE] = "";
 	mutable const std::unordered_set<std::string> *m_pUcPresenceLookupNames = nullptr;
+
+	struct SUcPeerInfo
+	{
+		std::string m_PlayerName;
+	};
+	std::unordered_map<std::string, std::unordered_map<int, SUcPeerInfo>> m_UcPeersByServer;
+	mutable char m_aUcPeerLookupServer[NETADDR_MAXSTRSIZE] = "";
+	mutable const std::unordered_map<int, SUcPeerInfo> *m_pUcPeersOnCurrentServer = nullptr;
 	CBrowserCache m_BrowserCache;
 	char m_aWebSharedToken[256] = "";
 	std::string m_LastPresenceBlockReason;
@@ -100,6 +108,12 @@ private:
 	void EnsureUcPresenceSocket();
 	void UpdatePresence();
 	void ProcessIncomingPackets(bool Force = false);
+	void ProcessUcPresencePacket(const unsigned char *pData, int DataSize);
+	void ApplyUcPeerState(const UClientPresence::CPeerState &State);
+	void ApplyUcPeerRemove(const UClientPresence::CPeerState &State);
+	void ApplyUcPeerList(const UClientPresence::CPeerList &PeerList);
+	void ClearUcPeersForServer(const char *pNormalizedServer);
+	bool UcPeerAppliesToCurrentServer(const char *pServerAddress) const;
 	void SyncLocalRegistrations(bool Force = false);
 	void SendPresencePacket(int ClientId, int PacketType);
 	void SendUcPresenceUdpPacket(int ClientId, int PacketType, const char *pFromServer = nullptr);
@@ -144,6 +158,7 @@ private:
 	void SetPresenceBlockReason(const char *pReason);
 	void ClearPresenceBlockReason();
 	void InvalidateUcPresenceLookupCache();
+	void InvalidateUcPeerLookupCache();
 };
 
 #endif

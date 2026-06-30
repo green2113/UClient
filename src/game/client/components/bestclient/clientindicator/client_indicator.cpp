@@ -190,6 +190,12 @@ namespace
 			return "leave";
 		case UClientPresence::PACKET_SWITCH:
 			return "switch";
+		case UClientPresence::PACKET_PEER_STATE:
+			return "uc_peer_state";
+		case UClientPresence::PACKET_PEER_REMOVE:
+			return "uc_peer_remove";
+		case UClientPresence::PACKET_PEER_LIST:
+			return "uc_peer_list";
 		default:
 			return "unknown";
 		}
@@ -234,14 +240,22 @@ void CClientIndicator::OnReset()
 	ResetTokenState();
 	ResetUcPresenceTask();
 	m_UcPresenceByServer.clear();
+	m_UcPeersByServer.clear();
 	m_LastUcPresenceRefreshTick = 0;
 	InvalidateUcPresenceLookupCache();
+	InvalidateUcPeerLookupCache();
 }
 
 void CClientIndicator::InvalidateUcPresenceLookupCache()
 {
 	m_aUcPresenceLookupServer[0] = '\0';
 	m_pUcPresenceLookupNames = nullptr;
+}
+
+void CClientIndicator::InvalidateUcPeerLookupCache()
+{
+	m_aUcPeerLookupServer[0] = '\0';
+	m_pUcPeersOnCurrentServer = nullptr;
 }
 
 void CClientIndicator::OnStateChange(int NewState, int OldState)
@@ -549,8 +563,8 @@ void CClientIndicator::OnUpdate()
 		ResetBrowserTask();
 	}
 
-	// UClient presence list for scoreboard/nameplate UC detection (60s interval).
-	const int64_t UcPresenceRefreshInterval = 60 * time_freq();
+	// UClient presence list for server browser (5 min HTTP fallback).
+	const int64_t UcPresenceRefreshInterval = 300 * time_freq();
 	if(g_Config.m_UcPresenceApiBaseUrl[0] != '\0' &&
 		!m_pUcPresenceTask &&
 		(m_LastUcPresenceRefreshTick == 0 || Now - m_LastUcPresenceRefreshTick >= UcPresenceRefreshInterval))
@@ -1272,15 +1286,124 @@ void CClientIndicator::NotifyPresenceServerChanged(const char *pFromServer, cons
 	m_LastRegistrationSyncTick = 0;
 	m_LastHeartbeatTick = 0;
 	m_LastHttpHeartbeatTick = 0;
+	char aNormalizedTo[NETADDR_MAXSTRSIZE];
+	if(NormalizePresenceServerAddress(pToServer, aNormalizedTo, sizeof(aNormalizedTo)))
+		ClearUcPeersForServer(aNormalizedTo);
 	InvalidateUcPresenceLookupCache();
+	InvalidateUcPeerLookupCache();
 	SchedulePresenceBrowserRefresh();
 	DebugLogF("presence server changed from=%s to=%s switch=%d clients=%llu",
 		CanSwitch ? pFromServer : "(none)", pToServer, CanSwitch ? 1 : 0, (unsigned long long)vClientIds.size());
 }
 
+bool CClientIndicator::UcPeerAppliesToCurrentServer(const char *pServerAddress) const
+{
+	if(!pServerAddress || pServerAddress[0] == '\0')
+		return false;
+
+	char aCurrentServerAddress[NETADDR_MAXSTRSIZE];
+	net_addr_str(&Client()->ServerAddress(), aCurrentServerAddress, sizeof(aCurrentServerAddress), true);
+	if(aCurrentServerAddress[0] == '\0')
+		return false;
+
+	char aNormalizedCurrent[NETADDR_MAXSTRSIZE];
+	char aNormalizedPacket[NETADDR_MAXSTRSIZE];
+	if(!NormalizePresenceServerAddress(aCurrentServerAddress, aNormalizedCurrent, sizeof(aNormalizedCurrent)))
+		return false;
+	if(!NormalizePresenceServerAddress(pServerAddress, aNormalizedPacket, sizeof(aNormalizedPacket)))
+		return false;
+	return str_comp(aNormalizedCurrent, aNormalizedPacket) == 0;
+}
+
+void CClientIndicator::ClearUcPeersForServer(const char *pNormalizedServer)
+{
+	if(!pNormalizedServer || pNormalizedServer[0] == '\0')
+		return;
+	m_UcPeersByServer.erase(pNormalizedServer);
+	InvalidateUcPeerLookupCache();
+}
+
+void CClientIndicator::ApplyUcPeerState(const UClientPresence::CPeerState &State)
+{
+	if(State.m_ClientId < 0)
+		return;
+
+	char aNormalizedServer[NETADDR_MAXSTRSIZE];
+	if(!NormalizePresenceServerAddress(State.m_ServerAddress.c_str(), aNormalizedServer, sizeof(aNormalizedServer)))
+		return;
+	if(!UcPeerAppliesToCurrentServer(aNormalizedServer))
+		return;
+
+	auto &Peers = m_UcPeersByServer[aNormalizedServer];
+	Peers[State.m_ClientId] = SUcPeerInfo{State.m_PlayerName};
+	InvalidateUcPeerLookupCache();
+	DebugLogF("uc peer state client_id=%d name='%s' server=%s", State.m_ClientId, State.m_PlayerName.c_str(), aNormalizedServer);
+}
+
+void CClientIndicator::ApplyUcPeerRemove(const UClientPresence::CPeerState &State)
+{
+	if(State.m_ClientId < 0)
+		return;
+
+	char aNormalizedServer[NETADDR_MAXSTRSIZE];
+	if(!NormalizePresenceServerAddress(State.m_ServerAddress.c_str(), aNormalizedServer, sizeof(aNormalizedServer)))
+		return;
+	if(!UcPeerAppliesToCurrentServer(aNormalizedServer))
+		return;
+
+	auto ItServer = m_UcPeersByServer.find(aNormalizedServer);
+	if(ItServer == m_UcPeersByServer.end())
+		return;
+
+	ItServer->second.erase(State.m_ClientId);
+	if(ItServer->second.empty())
+		m_UcPeersByServer.erase(ItServer);
+	InvalidateUcPeerLookupCache();
+	DebugLogF("uc peer remove client_id=%d name='%s' server=%s", State.m_ClientId, State.m_PlayerName.c_str(), aNormalizedServer);
+}
+
+void CClientIndicator::ApplyUcPeerList(const UClientPresence::CPeerList &PeerList)
+{
+	char aNormalizedServer[NETADDR_MAXSTRSIZE];
+	if(!NormalizePresenceServerAddress(PeerList.m_ServerAddress.c_str(), aNormalizedServer, sizeof(aNormalizedServer)))
+		return;
+	if(!UcPeerAppliesToCurrentServer(aNormalizedServer))
+		return;
+
+	auto &Peers = m_UcPeersByServer[aNormalizedServer];
+	for(const UClientPresence::CPeerListEntry &Entry : PeerList.m_vPeers)
+	{
+		if(Entry.m_ClientId < 0)
+			continue;
+		Peers[Entry.m_ClientId] = SUcPeerInfo{Entry.m_PlayerName};
+	}
+	InvalidateUcPeerLookupCache();
+	DebugLogF("uc peer list server=%s count=%llu", aNormalizedServer, (unsigned long long)PeerList.m_vPeers.size());
+}
+
+void CClientIndicator::ProcessUcPresencePacket(const unsigned char *pData, int DataSize)
+{
+	UClientPresence::CPeerState PeerState;
+	if(UClientPresence::ReadPeerStatePacket(pData, DataSize, PeerState))
+	{
+		ApplyUcPeerState(PeerState);
+		return;
+	}
+
+	if(UClientPresence::ReadPeerRemovePacket(pData, DataSize, PeerState))
+	{
+		ApplyUcPeerRemove(PeerState);
+		return;
+	}
+
+	UClientPresence::CPeerList PeerList;
+	if(UClientPresence::ReadPeerListPacket(pData, DataSize, PeerList))
+		ApplyUcPeerList(PeerList);
+}
+
 void CClientIndicator::ProcessIncomingPackets(bool Force)
 {
-	if(!m_Socket || !m_HasServerAddr)
+	if(!m_Socket || (!m_HasServerAddr && !m_HasUcServerAddr))
 		return;
 
 	const int64_t StartTick = time_get();
@@ -1297,6 +1420,40 @@ void CClientIndicator::ProcessIncomingPackets(bool Force)
 		if(DataSize <= 0 || !pRawData)
 			break;
 		ReceivedPackets++;
+
+		const bool FromBc = m_HasServerAddr && net_addr_comp(&From, &m_ServerAddr) == 0;
+		const bool FromUc = m_HasUcServerAddr && net_addr_comp(&From, &m_UcServerAddr) == 0;
+		if(!FromBc && !FromUc)
+		{
+			if(g_Config.m_DbgClientIndicator >= 2)
+			{
+				char aFrom[NETADDR_MAXSTRSIZE];
+				net_addr_str(&From, aFrom, sizeof(aFrom), true);
+				DebugLogF("ignoring udp packet from unexpected addr=%s", aFrom);
+			}
+			continue;
+		}
+
+		if(FromUc)
+		{
+			if(g_Config.m_DbgClientIndicator >= 2)
+			{
+				UClientPresence::EPacketType Type = (UClientPresence::EPacketType)0;
+				int Offset = 0;
+				const bool HasHeader = UClientPresence::ReadHeader(pRawData, DataSize, Type, Offset);
+				char aFrom[NETADDR_MAXSTRSIZE];
+				net_addr_str(&From, aFrom, sizeof(aFrom), true);
+				if(HasHeader)
+					DebugLogF("received uc udp packet from=%s bytes=%d type=%d(%s)", aFrom, DataSize, (int)Type, UcPacketTypeName((int)Type));
+				else
+					DebugLogF("received uc udp packet from=%s bytes=%d type=invalid", aFrom, DataSize);
+				DumpUdpPacketBytes("recv", From, pRawData, DataSize);
+			}
+			ProcessedPackets++;
+			ProcessUcPresencePacket(pRawData, DataSize);
+			continue;
+		}
+
 		if(g_Config.m_DbgClientIndicator >= 2)
 		{
 			char aFrom[NETADDR_MAXSTRSIZE];
@@ -1312,19 +1469,6 @@ void CClientIndicator::ProcessIncomingPackets(bool Force)
 				DebugLogF("received udp packet from=%s bytes=%d type=invalid expected_indicator_server=%s", aFrom, DataSize, aServerAddr);
 
 			DumpUdpPacketBytes("recv", From, pRawData, DataSize);
-		}
-
-		if(net_addr_comp(&From, &m_ServerAddr) != 0)
-		{
-			if(g_Config.m_DbgClientIndicator >= 2)
-			{
-				char aFrom[NETADDR_MAXSTRSIZE];
-				char aServerAddr[NETADDR_MAXSTRSIZE];
-				net_addr_str(&From, aFrom, sizeof(aFrom), true);
-				net_addr_str(&m_ServerAddr, aServerAddr, sizeof(aServerAddr), true);
-				DebugLogF("ignoring udp packet from=%s (expected indicator_server=%s)", aFrom, aServerAddr);
-			}
-			continue;
 		}
 
 		ProcessedPackets++;
@@ -1536,8 +1680,10 @@ void CClientIndicator::UpdatePresence()
 		SyncLocalRegistrations(ServerChanged);
 		if(m_RegisteredClientIds.empty())
 			SyncLocalRegistrations(true);
-		ProcessIncomingPackets(false);
 	}
+
+	if(BcPresence || UcPresence)
+		ProcessIncomingPackets(false);
 
 	const int64_t Now = time_get();
 	if(m_LastHeartbeatTick == 0 || Now - m_LastHeartbeatTick > time_freq() * 5)
@@ -1610,7 +1756,7 @@ void CClientIndicator::RefreshUcPresenceCache(bool Force)
 		return;
 
 	const int64_t Now = time_get();
-	const int64_t RefreshInterval = 60 * time_freq();
+	const int64_t RefreshInterval = 300 * time_freq();
 	if(!Force && m_LastUcPresenceRefreshTick != 0 && Now - m_LastUcPresenceRefreshTick < RefreshInterval)
 		return;
 
@@ -1676,6 +1822,27 @@ bool CClientIndicator::IsPlayerUClient(int ClientId) const
 	char aNormalizedServer[NETADDR_MAXSTRSIZE];
 	if(!NormalizePresenceServerAddress(aCurrentServerAddress, aNormalizedServer, sizeof(aNormalizedServer)))
 		return false;
+
+	const std::unordered_map<int, SUcPeerInfo> *pPeers = m_pUcPeersOnCurrentServer;
+	if(str_comp(m_aUcPeerLookupServer, aNormalizedServer) != 0)
+	{
+		const auto ItServer = m_UcPeersByServer.find(aNormalizedServer);
+		if(ItServer == m_UcPeersByServer.end())
+		{
+			m_aUcPeerLookupServer[0] = '\0';
+			m_pUcPeersOnCurrentServer = nullptr;
+			pPeers = nullptr;
+		}
+		else
+		{
+			str_copy(m_aUcPeerLookupServer, aNormalizedServer, sizeof(m_aUcPeerLookupServer));
+			m_pUcPeersOnCurrentServer = &ItServer->second;
+			pPeers = m_pUcPeersOnCurrentServer;
+		}
+	}
+
+	if(pPeers && ClientId >= 0 && pPeers->find(ClientId) != pPeers->end())
+		return true;
 
 	const std::unordered_set<std::string> *pNames = m_pUcPresenceLookupNames;
 	if(str_comp(m_aUcPresenceLookupServer, aNormalizedServer) != 0)

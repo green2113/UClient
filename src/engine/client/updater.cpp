@@ -259,7 +259,7 @@ static bool ParseReleaseObject(const json_value *pJson, char *pVersion, int Vers
 	return true;
 }
 
-static bool ParseLatestPlatformObject(const json_value *pJson, char *pVersion, int VersionSize, char *pArchiveName, int ArchiveNameSize, char *pArchiveUrl, int ArchiveUrlSize)
+static bool ParseLatestPlatformObject(const json_value *pJson, char *pVersion, int VersionSize, char *pArchiveName, int ArchiveNameSize, char *pArchiveUrl, int ArchiveUrlSize, int64_t *pExpectedSize)
 {
 	if(!pJson || pJson->type != json_object)
 		return false;
@@ -299,6 +299,13 @@ static bool ParseLatestPlatformObject(const json_value *pJson, char *pVersion, i
 	str_copy(pVersion, pVersionValue, VersionSize);
 	str_copy(pArchiveName, pName, ArchiveNameSize);
 	str_copy(pArchiveUrl, pUrl, ArchiveUrlSize);
+	if(pExpectedSize)
+	{
+		*pExpectedSize = 0;
+		const json_value *pSize = json_object_get(pPlatform, "size");
+		if(pSize && pSize->type == json_integer)
+			*pExpectedSize = pSize->u.integer;
+	}
 	return true;
 }
 
@@ -364,6 +371,7 @@ CUpdater::CUpdater()
 	m_aArchiveName[0] = '\0';
 	m_aArchiveUrl[0] = '\0';
 	str_copy(m_aArchivePath, UPDATE_ARCHIVE_PATH, sizeof(m_aArchivePath));
+	m_ExpectedArchiveSize = 0;
 }
 
 void CUpdater::Init(CHttp *pHttp)
@@ -422,6 +430,7 @@ void CUpdater::ResetTask()
 void CUpdater::StartReleaseFetch()
 {
 	ResetTask();
+	m_ExpectedArchiveSize = 0;
 	SetStatus("Checking latest release");
 	SetPercent(0);
 	SetCurrentState(IUpdater::GETTING_MANIFEST);
@@ -449,7 +458,7 @@ bool CUpdater::ParseReleaseTask()
 		return false;
 	}
 
-	const bool Parsed = ParseLatestPlatformObject(pJson, m_aLatestVersion, sizeof(m_aLatestVersion), m_aArchiveName, sizeof(m_aArchiveName), m_aArchiveUrl, sizeof(m_aArchiveUrl)) ||
+	const bool Parsed = ParseLatestPlatformObject(pJson, m_aLatestVersion, sizeof(m_aLatestVersion), m_aArchiveName, sizeof(m_aArchiveName), m_aArchiveUrl, sizeof(m_aArchiveUrl), &m_ExpectedArchiveSize) ||
 		ParseLatestRelease(pJson, m_aLatestVersion, sizeof(m_aLatestVersion), m_aArchiveName, sizeof(m_aArchiveName), m_aArchiveUrl, sizeof(m_aArchiveUrl));
 	json_value_free(pJson);
 
@@ -487,6 +496,55 @@ void CUpdater::StartArchiveDownload()
 	m_pCurrentTask->Timeout(CTimeout{10000, 0, 500, 10});
 	m_pCurrentTask->IpResolve(IPRESOLVE::V4);
 	m_pHttp->Run(m_pCurrentTask);
+}
+
+bool CUpdater::ValidateDownloadedArchive()
+{
+	char aArchivePath[IO_MAX_PATH_LENGTH];
+	m_pStorage->GetBinaryPath(m_aArchivePath, aArchivePath, sizeof(aArchivePath));
+	if(!m_pStorage->FileExists(aArchivePath, IStorage::TYPE_ABSOLUTE))
+	{
+		SetStatus("Downloaded archive missing");
+		return false;
+	}
+
+	IOHANDLE File = io_open(aArchivePath, IOFLAG_READ);
+	if(!File)
+	{
+		SetStatus("Downloaded archive unreadable");
+		return false;
+	}
+
+	const int64_t FileSize = io_length(File);
+	unsigned char aMagic[4] = {0, 0, 0, 0};
+	const unsigned MagicLength = io_read(File, aMagic, sizeof(aMagic));
+	io_close(File);
+
+	if(FileSize < 1024 * 1024)
+	{
+		SetStatus("Downloaded file is too small");
+		return false;
+	}
+
+	if(m_ExpectedArchiveSize > 0)
+	{
+		const int64_t MinSize = m_ExpectedArchiveSize * 95 / 100;
+		if(FileSize < MinSize)
+		{
+			SetStatus("Downloaded file size mismatch");
+			return false;
+		}
+	}
+
+#if defined(CONF_FAMILY_WINDOWS)
+	if(MagicLength < 2 || aMagic[0] != 'P' || aMagic[1] != 'K')
+	{
+		SetStatus("Downloaded file is not a zip archive");
+		return false;
+	}
+#endif
+
+	return true;
 }
 
 bool CUpdater::WriteApplyScript(char *pScriptPath, int ScriptPathSize, char *pInstallDir, int InstallDirSize, char *pExePath, int ExePathSize)
@@ -654,6 +712,12 @@ void CUpdater::Update()
 	if(m_TaskKind == ETaskKind::DOWNLOAD_ARCHIVE)
 	{
 		ResetTask();
+		if(!ValidateDownloadedArchive())
+		{
+			m_pStorage->RemoveBinaryFile(m_aArchivePath);
+			SetCurrentState(IUpdater::FAIL);
+			return;
+		}
 		SetPercent(100);
 		SetStatus(m_aArchiveName[0] != '\0' ? m_aArchiveName : "update");
 		SetCurrentState(IUpdater::NEED_RESTART);
