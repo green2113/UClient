@@ -549,13 +549,9 @@ void CClientIndicator::OnUpdate()
 		ResetBrowserTask();
 	}
 
-	// UClient presence refresh (60s interval, menu/offline only)
+	// UClient presence list for scoreboard/nameplate UC detection (60s interval).
 	const int64_t UcPresenceRefreshInterval = 60 * time_freq();
-	const bool NeedsUcPresenceList =
-		Client()->State() == IClient::STATE_OFFLINE ||
-		(Client()->State() == IClient::STATE_ONLINE && GameClient()->m_Menus.IsActive());
-	if(NeedsUcPresenceList &&
-		g_Config.m_UcPresenceApiBaseUrl[0] != '\0' &&
+	if(g_Config.m_UcPresenceApiBaseUrl[0] != '\0' &&
 		!m_pUcPresenceTask &&
 		(m_LastUcPresenceRefreshTick == 0 || Now - m_LastUcPresenceRefreshTick >= UcPresenceRefreshInterval))
 	{

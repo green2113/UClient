@@ -1267,11 +1267,20 @@ void CNamePlates::RenderNamePlateGame(vec2 Position, const CNetObj_PlayerInfo *p
 	Data.m_HookStrongWeakState = EHookStrongWeakState::NEUTRAL;
 	Data.m_ShowHookStrongWeakId = false;
 	Data.m_HookStrongWeakId = 0;
-	Data.m_ShowBClientIndicator = g_Config.m_BcClientIndicator && g_Config.m_BcClientIndicatorInNamePlate &&
-				      (!pPlayerInfo->m_Local || g_Config.m_BcClientIndicatorInNamePlateAboveSelf);
-	Data.m_IsUserUClientIndicator = Data.m_ShowBClientIndicator && GameClient()->m_ClientIndicator.IsPlayerUClient(pPlayerInfo->m_ClientId);
-	Data.m_IsUserBClientIndicator = Data.m_ShowBClientIndicator && !Data.m_IsUserUClientIndicator && GameClient()->m_ClientIndicator.IsPlayerBClient(pPlayerInfo->m_ClientId);
-	Data.m_IsUserDeveloperIndicator = Data.m_ShowBClientIndicator && GameClient()->m_ClientIndicator.IsPlayerDeveloper(pPlayerInfo->m_ClientId);
+	const bool IsUcPlayer = GameClient()->m_ClientIndicator.IsPlayerUClient(pPlayerInfo->m_ClientId);
+	const bool ShowUcIndicator = g_Config.m_UcClientIndicatorInNamePlate && IsUcPlayer &&
+		(!pPlayerInfo->m_Local || g_Config.m_UcClientIndicatorInNamePlateAboveSelf);
+	const bool ShowBcIndicator = g_Config.m_BcClientIndicator && g_Config.m_BcClientIndicatorInNamePlate && !IsUcPlayer &&
+		GameClient()->m_ClientIndicator.IsPlayerBClient(pPlayerInfo->m_ClientId) &&
+		(!pPlayerInfo->m_Local || g_Config.m_BcClientIndicatorInNamePlateAboveSelf);
+	Data.m_ShowBClientIndicator = ShowUcIndicator || ShowBcIndicator;
+	Data.m_IsUserUClientIndicator = ShowUcIndicator;
+	Data.m_IsUserBClientIndicator = ShowBcIndicator;
+	Data.m_IsUserDeveloperIndicator = ShowBcIndicator && GameClient()->m_ClientIndicator.IsPlayerDeveloper(pPlayerInfo->m_ClientId);
+	if(ShowUcIndicator)
+		Data.m_FontSizeBClientIndicator = 18.0f + 20.0f * g_Config.m_UcClientIndicatorInNamePlateSize / 100.0f;
+	else if(ShowBcIndicator)
+		Data.m_FontSizeBClientIndicator = 18.0f + 20.0f * g_Config.m_BcClientIndicatorInNamePlateSize / 100.0f;
 	Data.m_ShowBClientVersion = false;
 	Data.m_FontSizeBClientVersion = 0.0f;
 	Data.m_aBClientVersion[0] = '\0';
@@ -1368,15 +1377,21 @@ void CNamePlates::RenderNamePlatePreview(vec2 Position, int Dummy)
 	Data.m_FontSizeDirection = FontSizeDirection;
 	const bool HasPreviewClient = GameClient()->m_aLocalIds[Dummy] >= 0;
 	const int PreviewDisplayClientId = HasPreviewClient ? GameClient()->m_aLocalIds[Dummy] : Dummy;
-	Data.m_ShowBClientIndicator = g_Config.m_BcClientIndicator && g_Config.m_BcClientIndicatorInNamePlate &&
-				      (Dummy != 0 || g_Config.m_BcClientIndicatorInNamePlateAboveSelf);
-	Data.m_FontSizeBClientIndicator = FontSizeBClientIndicator;
-	Data.m_IsUserUClientIndicator = Data.m_ShowBClientIndicator &&
-					HasPreviewClient && GameClient()->m_ClientIndicator.IsPlayerUClient(PreviewDisplayClientId);
-	Data.m_IsUserBClientIndicator = Data.m_ShowBClientIndicator && !Data.m_IsUserUClientIndicator &&
-					(HasPreviewClient ? GameClient()->m_ClientIndicator.IsPlayerBClient(PreviewDisplayClientId) : true);
-	Data.m_IsUserDeveloperIndicator = Data.m_ShowBClientIndicator &&
-					  HasPreviewClient && GameClient()->m_ClientIndicator.IsPlayerDeveloper(PreviewDisplayClientId);
+	const bool PreviewIsUc = HasPreviewClient && GameClient()->m_ClientIndicator.IsPlayerUClient(PreviewDisplayClientId);
+	const bool ShowUcPreview = g_Config.m_UcClientIndicatorInNamePlate && PreviewIsUc &&
+		(Dummy != 0 || g_Config.m_UcClientIndicatorInNamePlateAboveSelf);
+	const bool ShowBcPreview = g_Config.m_BcClientIndicator && g_Config.m_BcClientIndicatorInNamePlate && !PreviewIsUc &&
+		(HasPreviewClient ? GameClient()->m_ClientIndicator.IsPlayerBClient(PreviewDisplayClientId) : true) &&
+		(Dummy != 0 || g_Config.m_BcClientIndicatorInNamePlateAboveSelf);
+	Data.m_ShowBClientIndicator = ShowUcPreview || ShowBcPreview;
+	Data.m_IsUserUClientIndicator = ShowUcPreview;
+	Data.m_IsUserBClientIndicator = ShowBcPreview;
+	Data.m_IsUserDeveloperIndicator = ShowBcPreview &&
+		HasPreviewClient && GameClient()->m_ClientIndicator.IsPlayerDeveloper(PreviewDisplayClientId);
+	if(ShowUcPreview)
+		Data.m_FontSizeBClientIndicator = 18.0f + 20.0f * g_Config.m_UcClientIndicatorInNamePlateSize / 100.0f;
+	else if(ShowBcPreview)
+		Data.m_FontSizeBClientIndicator = FontSizeBClientIndicator;
 	Data.m_ShowBClientVersion = false;
 	Data.m_FontSizeBClientVersion = maximum(10.0f, FontSize * 0.75f);
 	Data.m_aBClientVersion[0] = '\0';

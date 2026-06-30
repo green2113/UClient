@@ -24,6 +24,7 @@
 #include <game/client/components/countryflags.h>
 #include <game/client/components/motd.h>
 #include <game/client/components/statboard.h>
+#include <game/client/components/bestclient/clientindicator/client_indicator.h>
 #include <game/client/gameclient.h>
 #include <game/client/ui.h>
 #include <game/localization.h>
@@ -1126,21 +1127,25 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 			}
 			const float ScoreTextX = ScoreOffset + ScoreLength - ScoreTextWidth;
 
-			if(g_Config.m_BcClientIndicatorInScoreboard && pInfo->m_ClientId >= 0 && GameClient()->m_ClientIndicator.IsPlayerBestClient(pInfo->m_ClientId))
+			const CClientIndicator &Indicator = GameClient()->m_ClientIndicator;
+			const bool IsUc = Indicator.IsPlayerUClient(pInfo->m_ClientId);
+			const bool ShowUcIcon = g_Config.m_UcClientIndicatorInScoreboard && pInfo->m_ClientId >= 0 && IsUc;
+			const bool ShowBcIcon = g_Config.m_BcClientIndicatorInScoreboard && pInfo->m_ClientId >= 0 &&
+				!IsUc && Indicator.IsPlayerBestClient(pInfo->m_ClientId);
+			if(ShowUcIcon || ShowBcIcon)
 			{
-				const float IconSize = FontSize * (0.8f + 0.3f * g_Config.m_BcClientIndicatorInSoreboardSize / 100.0f);
+				const int SizePercent = ShowUcIcon ? g_Config.m_UcClientIndicatorInScoreboardSize : g_Config.m_BcClientIndicatorInSoreboardSize;
+				const float IconSize = FontSize * (0.8f + 0.3f * SizePercent / 100.0f);
 				const float IconSpacing = 4.0f;
 				const CUIRect IconRect = {
 					ScoreTextX - IconSize - IconSpacing,
 					Row.y + (Row.h - IconSize) / 2.0f,
 					IconSize,
 					IconSize};
-				const bool IsLocalClient = (GameClient()->m_aLocalIds[0] == pInfo->m_ClientId ||
-					(Client()->DummyConnected() && GameClient()->m_aLocalIds[1] == pInfo->m_ClientId));
-				if(IsLocalClient || GameClient()->m_ClientIndicator.IsPlayerUClient(pInfo->m_ClientId))
+				if(ShowUcIcon)
 					RenderUcClientIcon(Graphics(), m_UcLogoTexture, IconRect);
 				else
-					RenderBestClientIcon(Graphics(), IconRect, GameClient()->m_ClientIndicator.IsPlayerDeveloper(pInfo->m_ClientId));
+					RenderBestClientIcon(Graphics(), IconRect, Indicator.IsPlayerDeveloper(pInfo->m_ClientId));
 			}
 
 			if(Race7)
