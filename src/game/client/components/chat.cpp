@@ -7406,7 +7406,8 @@ void CChat::UpdateGiphySearch()
 	else
 	{
 		char aBuf[128];
-		str_format(aBuf, sizeof(aBuf), "%s (%d)", Localize("Giphy request failed"), pRequest->StatusCode());
+		const int StatusCode = pRequest->State() == EHttpState::DONE ? pRequest->StatusCode() : -1;
+		str_format(aBuf, sizeof(aBuf), "%s (%d)", Localize("Giphy request failed"), StatusCode);
 		m_GiphyStatusText = aBuf;
 		m_GiphyHasMoreResults = false;
 		m_GiphyBrowser.ClearResults();
