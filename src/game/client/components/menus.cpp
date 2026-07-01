@@ -3521,7 +3521,10 @@ void CMenus::RefreshBrowserTab(bool Force)
 	}
 
 	if(BrowserRefreshed)
+	{
 		GameClient()->m_ClientIndicator.RefreshBrowserCache(false);
+		GameClient()->m_ClientIndicator.RefreshUcPresenceList(true);
+	}
 }
 
 void CMenus::ForceRefreshLanPage()
