@@ -17,6 +17,31 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
+
+static void UnloadPendingUploadTextures(IGraphics *pGraphics, IGraphics::CTextureHandle &Texture, IGraphics::CTextureHandle &OriginalTexture)
+{
+	if(Texture.IsValid())
+	{
+		const int TextureId = Texture.Id();
+		pGraphics->UnloadTexture(&Texture);
+		if(OriginalTexture.IsValid() && OriginalTexture.Id() == TextureId)
+			OriginalTexture.Invalidate();
+	}
+	if(OriginalTexture.IsValid())
+		pGraphics->UnloadTexture(&OriginalTexture);
+}
+
+static void UnloadPendingUploadDisplayTexture(IGraphics *pGraphics, IGraphics::CTextureHandle &Texture, IGraphics::CTextureHandle &OriginalTexture)
+{
+	if(!Texture.IsValid())
+		return;
+
+	const int TextureId = Texture.Id();
+	pGraphics->UnloadTexture(&Texture);
+	if(OriginalTexture.IsValid() && OriginalTexture.Id() == TextureId)
+		OriginalTexture.Invalidate();
+}
 
 static float NormalizeMediaPreviewCoord(float Value, float Start, float Length)
 {
@@ -142,6 +167,572 @@ static void DrawRoundedMediaPreview(IGraphics *pGraphics, const IGraphics::CText
 	pGraphics->TextureClear();
 }
 
+bool CUClientChatPasteImage::CropRectIsFull(const SImageCropRect &Crop) const
+{
+	return Crop.m_X0 <= 0.001f && Crop.m_Y0 <= 0.001f && Crop.m_X1 >= 0.999f && Crop.m_Y1 >= 0.999f;
+}
+
+void CUClientChatPasteImage::NormalizeCropRect(SImageCropRect &Crop) const
+{
+	if(Crop.m_X0 > Crop.m_X1)
+		std::swap(Crop.m_X0, Crop.m_X1);
+	if(Crop.m_Y0 > Crop.m_Y1)
+		std::swap(Crop.m_Y0, Crop.m_Y1);
+	Crop.m_X0 = std::clamp(Crop.m_X0, 0.0f, 1.0f);
+	Crop.m_Y0 = std::clamp(Crop.m_Y0, 0.0f, 1.0f);
+	Crop.m_X1 = std::clamp(Crop.m_X1, 0.0f, 1.0f);
+	Crop.m_Y1 = std::clamp(Crop.m_Y1, 0.0f, 1.0f);
+}
+
+float CUClientChatPasteImage::CropAspectRatio(ECropAspectPreset Preset) const
+{
+	switch(Preset)
+	{
+	case ECropAspectPreset::SQUARE:
+		return 1.0f;
+	case ECropAspectPreset::RATIO_4_3:
+		return 4.0f / 3.0f;
+	case ECropAspectPreset::RATIO_16_9:
+		return 16.0f / 9.0f;
+	default:
+		return 0.0f;
+	}
+}
+
+float CUClientChatPasteImage::ImageEditorToolbarHeight() const
+{
+	return m_ImageEditor.m_CurrentTool == EImageEditorTool::CROP ? 128.0f : 88.0f;
+}
+
+void CUClientChatPasteImage::ClampCropRect(SImageCropRect &Crop, int ImgW, int ImgH, ECropAspectPreset Aspect, ECropHandle ActiveHandle) const
+{
+	NormalizeCropRect(Crop);
+
+	const float MinNormW = (float)CROP_MIN_PIXELS / maximum(1, ImgW);
+	const float MinNormH = (float)CROP_MIN_PIXELS / maximum(1, ImgH);
+
+	float Width = maximum(MinNormW, Crop.m_X1 - Crop.m_X0);
+	float Height = maximum(MinNormH, Crop.m_Y1 - Crop.m_Y0);
+
+	const float TargetAspect = CropAspectRatio(Aspect);
+	if(TargetAspect > 0.0f)
+	{
+		const float CurrentAspect = Width / maximum(Height, 0.0001f);
+		if(CurrentAspect > TargetAspect)
+			Width = Height * TargetAspect;
+		else
+			Height = Width / TargetAspect;
+		Width = maximum(Width, MinNormW);
+		Height = maximum(Height, MinNormH);
+	}
+
+	const bool AnchorRight = ActiveHandle == ECropHandle::TOP_LEFT || ActiveHandle == ECropHandle::LEFT || ActiveHandle == ECropHandle::BOTTOM_LEFT;
+	const bool AnchorLeft = ActiveHandle == ECropHandle::TOP_RIGHT || ActiveHandle == ECropHandle::RIGHT || ActiveHandle == ECropHandle::BOTTOM_RIGHT;
+	const bool AnchorBottom = ActiveHandle == ECropHandle::TOP_LEFT || ActiveHandle == ECropHandle::TOP || ActiveHandle == ECropHandle::TOP_RIGHT;
+	const bool AnchorTop = ActiveHandle == ECropHandle::BOTTOM_LEFT || ActiveHandle == ECropHandle::BOTTOM || ActiveHandle == ECropHandle::BOTTOM_RIGHT;
+
+	float X0 = Crop.m_X0;
+	float Y0 = Crop.m_Y0;
+	float X1 = Crop.m_X1;
+	float Y1 = Crop.m_Y1;
+
+	if(ActiveHandle == ECropHandle::MOVE || ActiveHandle == ECropHandle::NEW_SELECTION || ActiveHandle == ECropHandle::NONE)
+	{
+		X0 = Crop.m_X0;
+		Y0 = Crop.m_Y0;
+		X1 = X0 + Width;
+		Y1 = Y0 + Height;
+	}
+	else if(AnchorRight && !AnchorLeft)
+	{
+		X0 = X1 - Width;
+	}
+	else if(AnchorLeft && !AnchorRight)
+	{
+		X1 = X0 + Width;
+	}
+	else
+	{
+		const float CenterX = (Crop.m_X0 + Crop.m_X1) * 0.5f;
+		X0 = CenterX - Width * 0.5f;
+		X1 = CenterX + Width * 0.5f;
+	}
+
+	if(ActiveHandle == ECropHandle::MOVE || ActiveHandle == ECropHandle::NEW_SELECTION || ActiveHandle == ECropHandle::NONE)
+	{
+		// already set
+	}
+	else if(AnchorBottom && !AnchorTop)
+	{
+		Y0 = Y1 - Height;
+	}
+	else if(AnchorTop && !AnchorBottom)
+	{
+		Y1 = Y0 + Height;
+	}
+	else
+	{
+		const float CenterY = (Crop.m_Y0 + Crop.m_Y1) * 0.5f;
+		Y0 = CenterY - Height * 0.5f;
+		Y1 = CenterY + Height * 0.5f;
+	}
+
+	if(X0 < 0.0f)
+	{
+		X1 -= X0;
+		X0 = 0.0f;
+	}
+	if(Y0 < 0.0f)
+	{
+		Y1 -= Y0;
+		Y0 = 0.0f;
+	}
+	if(X1 > 1.0f)
+	{
+		X0 -= X1 - 1.0f;
+		X1 = 1.0f;
+	}
+	if(Y1 > 1.0f)
+	{
+		Y0 -= Y1 - 1.0f;
+		Y1 = 1.0f;
+	}
+
+	X0 = std::clamp(X0, 0.0f, 1.0f - MinNormW);
+	Y0 = std::clamp(Y0, 0.0f, 1.0f - MinNormH);
+	X1 = std::clamp(X1, X0 + MinNormW, 1.0f);
+	Y1 = std::clamp(Y1, Y0 + MinNormH, 1.0f);
+
+	Crop.m_X0 = X0;
+	Crop.m_Y0 = Y0;
+	Crop.m_X1 = X1;
+	Crop.m_Y1 = Y1;
+}
+
+CUClientChatPasteImage::SRenderRect CUClientChatPasteImage::CropRectToCanvasRect(const SImageCropRect &Crop) const
+{
+	SImageCropRect Normalized = Crop;
+	NormalizeCropRect(Normalized);
+	CUClientChatPasteImage::SRenderRect Result;
+	Result.m_X = m_ImageEditorCanvasRect.m_X + Normalized.m_X0 * m_ImageEditorCanvasRect.m_W;
+	Result.m_Y = m_ImageEditorCanvasRect.m_Y + Normalized.m_Y0 * m_ImageEditorCanvasRect.m_H;
+	Result.m_W = (Normalized.m_X1 - Normalized.m_X0) * m_ImageEditorCanvasRect.m_W;
+	Result.m_H = (Normalized.m_Y1 - Normalized.m_Y0) * m_ImageEditorCanvasRect.m_H;
+	return Result;
+}
+
+vec2 CUClientChatPasteImage::CanvasToImageNorm(const vec2 &CanvasPoint) const
+{
+	const float X = (CanvasPoint.x - m_ImageEditorCanvasRect.m_X) / maximum(1.0f, m_ImageEditorCanvasRect.m_W);
+	const float Y = (CanvasPoint.y - m_ImageEditorCanvasRect.m_Y) / maximum(1.0f, m_ImageEditorCanvasRect.m_H);
+	return vec2(std::clamp(X, 0.0f, 1.0f), std::clamp(Y, 0.0f, 1.0f));
+}
+
+vec2 CUClientChatPasteImage::ImageNormToCanvas(const vec2 &Norm) const
+{
+	return vec2(
+		m_ImageEditorCanvasRect.m_X + std::clamp(Norm.x, 0.0f, 1.0f) * m_ImageEditorCanvasRect.m_W,
+		m_ImageEditorCanvasRect.m_Y + std::clamp(Norm.y, 0.0f, 1.0f) * m_ImageEditorCanvasRect.m_H);
+}
+
+void CUClientChatPasteImage::CropRectToPixelRect(const SImageCropRect &Crop, int ImgW, int ImgH, int &OutX0, int &OutY0, int &OutW, int &OutH) const
+{
+	SImageCropRect Normalized = Crop;
+	NormalizeCropRect(Normalized);
+
+	const int X0 = std::clamp((int)floorf(Normalized.m_X0 * ImgW), 0, maximum(0, ImgW - 1));
+	const int Y0 = std::clamp((int)floorf(Normalized.m_Y0 * ImgH), 0, maximum(0, ImgH - 1));
+	const int X1 = std::clamp((int)ceilf(Normalized.m_X1 * ImgW), X0 + 1, ImgW);
+	const int Y1 = std::clamp((int)ceilf(Normalized.m_Y1 * ImgH), Y0 + 1, ImgH);
+	OutX0 = X0;
+	OutY0 = Y0;
+	OutW = maximum(CROP_MIN_PIXELS, X1 - X0);
+	OutH = maximum(CROP_MIN_PIXELS, Y1 - Y0);
+	if(OutX0 + OutW > ImgW)
+		OutX0 = maximum(0, ImgW - OutW);
+	if(OutY0 + OutH > ImgH)
+		OutY0 = maximum(0, ImgH - OutH);
+}
+
+CUClientChatPasteImage::ECropHandle CUClientChatPasteImage::HitTestCropHandle(const vec2 &MousePos, const SRenderRect &SelectionCanvas) const
+{
+	if(SelectionCanvas.m_W <= 0.0f || SelectionCanvas.m_H <= 0.0f)
+		return ECropHandle::NONE;
+
+	const float HandleRadius = 7.0f;
+	const float HandleRadiusSq = HandleRadius * HandleRadius;
+
+	auto NearPoint = [&](float X, float Y) {
+		const float Dx = MousePos.x - X;
+		const float Dy = MousePos.y - Y;
+		return Dx * Dx + Dy * Dy <= HandleRadiusSq;
+	};
+
+	const float L = SelectionCanvas.m_X;
+	const float T = SelectionCanvas.m_Y;
+	const float R = SelectionCanvas.m_X + SelectionCanvas.m_W;
+	const float B = SelectionCanvas.m_Y + SelectionCanvas.m_H;
+	const float CX = (L + R) * 0.5f;
+	const float CY = (T + B) * 0.5f;
+
+	if(NearPoint(L, T))
+		return ECropHandle::TOP_LEFT;
+	if(NearPoint(CX, T))
+		return ECropHandle::TOP;
+	if(NearPoint(R, T))
+		return ECropHandle::TOP_RIGHT;
+	if(NearPoint(L, CY))
+		return ECropHandle::LEFT;
+	if(NearPoint(R, CY))
+		return ECropHandle::RIGHT;
+	if(NearPoint(L, B))
+		return ECropHandle::BOTTOM_LEFT;
+	if(NearPoint(CX, B))
+		return ECropHandle::BOTTOM;
+	if(NearPoint(R, B))
+		return ECropHandle::BOTTOM_RIGHT;
+
+	return ECropHandle::NONE;
+}
+
+bool CUClientChatPasteImage::IsPointInsideCropSelection(const vec2 &MousePos, const SRenderRect &SelectionCanvas) const
+{
+	return MousePos.x >= SelectionCanvas.m_X && MousePos.x <= SelectionCanvas.m_X + SelectionCanvas.m_W &&
+		MousePos.y >= SelectionCanvas.m_Y && MousePos.y <= SelectionCanvas.m_Y + SelectionCanvas.m_H;
+}
+
+void CUClientChatPasteImage::ApplyCropAspectToRect(SImageCropRect &Crop, ECropAspectPreset Aspect, ECropHandle AnchorHandle) const
+{
+	if(Aspect == ECropAspectPreset::FREE)
+		return;
+	ClampCropRect(Crop, m_PendingUploadImage.m_Width, m_PendingUploadImage.m_Height, Aspect, AnchorHandle);
+}
+
+void CUClientChatPasteImage::ResetCropRectToFull()
+{
+	m_ImageEditor.m_CropRect = {};
+}
+
+void CUClientChatPasteImage::UpdateCropDrag(const vec2 &MousePos, int ImgW, int ImgH)
+{
+	SImageCropRect &Crop = m_ImageEditor.m_CropRect;
+	const SImageCropRect &Start = m_ImageEditor.m_CropDragStartRect;
+	const vec2 Anchor = m_ImageEditor.m_CropDragAnchor;
+	const vec2 Norm = CanvasToImageNorm(MousePos);
+
+	switch(m_ImageEditor.m_CropActiveHandle)
+	{
+	case ECropHandle::NEW_SELECTION:
+		Crop.m_X0 = Anchor.x;
+		Crop.m_Y0 = Anchor.y;
+		Crop.m_X1 = Norm.x;
+		Crop.m_Y1 = Norm.y;
+		break;
+	case ECropHandle::MOVE:
+	{
+		const float Width = Start.m_X1 - Start.m_X0;
+		const float Height = Start.m_Y1 - Start.m_Y0;
+		const float DeltaX = Norm.x - Anchor.x;
+		const float DeltaY = Norm.y - Anchor.y;
+		Crop.m_X0 = Start.m_X0 + DeltaX;
+		Crop.m_Y0 = Start.m_Y0 + DeltaY;
+		Crop.m_X1 = Crop.m_X0 + Width;
+		Crop.m_Y1 = Crop.m_Y0 + Height;
+		break;
+	}
+	case ECropHandle::TOP_LEFT:
+		Crop.m_X0 = Norm.x;
+		Crop.m_Y0 = Norm.y;
+		Crop.m_X1 = Start.m_X1;
+		Crop.m_Y1 = Start.m_Y1;
+		break;
+	case ECropHandle::TOP:
+		Crop.m_X0 = Start.m_X0;
+		Crop.m_Y0 = Norm.y;
+		Crop.m_X1 = Start.m_X1;
+		Crop.m_Y1 = Start.m_Y1;
+		break;
+	case ECropHandle::TOP_RIGHT:
+		Crop.m_X0 = Start.m_X0;
+		Crop.m_Y0 = Norm.y;
+		Crop.m_X1 = Norm.x;
+		Crop.m_Y1 = Start.m_Y1;
+		break;
+	case ECropHandle::LEFT:
+		Crop.m_X0 = Norm.x;
+		Crop.m_Y0 = Start.m_Y0;
+		Crop.m_X1 = Start.m_X1;
+		Crop.m_Y1 = Start.m_Y1;
+		break;
+	case ECropHandle::RIGHT:
+		Crop.m_X0 = Start.m_X0;
+		Crop.m_Y0 = Start.m_Y0;
+		Crop.m_X1 = Norm.x;
+		Crop.m_Y1 = Start.m_Y1;
+		break;
+	case ECropHandle::BOTTOM_LEFT:
+		Crop.m_X0 = Norm.x;
+		Crop.m_Y0 = Start.m_Y0;
+		Crop.m_X1 = Start.m_X1;
+		Crop.m_Y1 = Norm.y;
+		break;
+	case ECropHandle::BOTTOM:
+		Crop.m_X0 = Start.m_X0;
+		Crop.m_Y0 = Start.m_Y0;
+		Crop.m_X1 = Start.m_X1;
+		Crop.m_Y1 = Norm.y;
+		break;
+	case ECropHandle::BOTTOM_RIGHT:
+		Crop.m_X0 = Start.m_X0;
+		Crop.m_Y0 = Start.m_Y0;
+		Crop.m_X1 = Norm.x;
+		Crop.m_Y1 = Norm.y;
+		break;
+	default:
+		break;
+	}
+
+	ClampCropRect(Crop, ImgW, ImgH, m_ImageEditor.m_CropAspect, m_ImageEditor.m_CropActiveHandle);
+}
+
+void CUClientChatPasteImage::RemapStrokesAfterCrop(const SImageCropRect &AppliedCrop, int OldImgW, int OldImgH, const SRenderRect &OldCanvasRect, const SRenderRect &NewCanvasRect)
+{
+	SImageCropRect Crop = AppliedCrop;
+	NormalizeCropRect(Crop);
+	const float CropW = maximum(0.0001f, Crop.m_X1 - Crop.m_X0);
+	const float CropH = maximum(0.0001f, Crop.m_Y1 - Crop.m_Y0);
+
+	auto RemapPoint = [&](const vec2 &CanvasPoint) -> std::optional<vec2> {
+		const float NormX = (CanvasPoint.x - OldCanvasRect.m_X) / maximum(1.0f, OldCanvasRect.m_W);
+		const float NormY = (CanvasPoint.y - OldCanvasRect.m_Y) / maximum(1.0f, OldCanvasRect.m_H);
+		if(NormX < Crop.m_X0 || NormX > Crop.m_X1 || NormY < Crop.m_Y0 || NormY > Crop.m_Y1)
+			return std::nullopt;
+
+		const float NewNormX = (NormX - Crop.m_X0) / CropW;
+		const float NewNormY = (NormY - Crop.m_Y0) / CropH;
+		return vec2(
+			NewCanvasRect.m_X + NewNormX * NewCanvasRect.m_W,
+			NewCanvasRect.m_Y + NewNormY * NewCanvasRect.m_H);
+	};
+
+	auto RemapStroke = [&](SImageEditorStroke &Stroke) {
+		std::vector<vec2> vNewPoints;
+		vNewPoints.reserve(Stroke.m_vPoints.size());
+		for(const vec2 &Point : Stroke.m_vPoints)
+		{
+			if(const std::optional<vec2> NewPoint = RemapPoint(Point))
+				vNewPoints.push_back(*NewPoint);
+		}
+		Stroke.m_vPoints = std::move(vNewPoints);
+	};
+
+	for(SImageEditorStroke &Stroke : m_ImageEditor.m_vStrokes)
+		RemapStroke(Stroke);
+
+	m_ImageEditor.m_vStrokes.erase(
+		std::remove_if(m_ImageEditor.m_vStrokes.begin(), m_ImageEditor.m_vStrokes.end(),
+			[](const SImageEditorStroke &Stroke) { return Stroke.m_vPoints.size() < 2; }),
+		m_ImageEditor.m_vStrokes.end());
+
+	RemapStroke(m_ImageEditor.m_CurrentStroke);
+	if(m_ImageEditor.m_CurrentStroke.m_vPoints.size() < 2)
+		m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
+
+	(void)OldImgW;
+	(void)OldImgH;
+}
+
+bool CUClientChatPasteImage::ApplyImageCrop(CChat *pChat)
+{
+	if(!m_PendingUploadImage.HasImage() || m_PendingUploadImage.m_vOriginalPng.empty())
+		return false;
+	if(CropRectIsFull(m_ImageEditor.m_CropRect))
+		return true;
+
+	const SImageCropRect AppliedCrop = m_ImageEditor.m_CropRect;
+	const SRenderRect OldCanvasRect = m_ImageEditorCanvasRect;
+	const int OldImgW = m_PendingUploadImage.m_Width;
+	const int OldImgH = m_PendingUploadImage.m_Height;
+
+	CImageInfo BaseImage;
+	if(!pChat->Graphics()->LoadPng(BaseImage, m_PendingUploadImage.m_vOriginalPng.data(), m_PendingUploadImage.m_vOriginalPng.size(), "chat-paste-crop"))
+	{
+		pChat->Echo("Unable to decode the pending image for cropping.");
+		return false;
+	}
+
+	if(BaseImage.m_Format != CImageInfo::FORMAT_RGBA)
+	{
+		CImageInfo RgbaImage;
+		RgbaImage.m_Width = BaseImage.m_Width;
+		RgbaImage.m_Height = BaseImage.m_Height;
+		RgbaImage.m_Format = CImageInfo::FORMAT_RGBA;
+		RgbaImage.m_pData = (uint8_t *)malloc(RgbaImage.DataSize());
+		if(RgbaImage.m_pData == nullptr)
+		{
+			BaseImage.Free();
+			pChat->Echo("Unable to allocate image buffer for cropping.");
+			return false;
+		}
+
+		for(size_t y = 0; y < BaseImage.m_Height; ++y)
+			for(size_t x = 0; x < BaseImage.m_Width; ++x)
+				RgbaImage.SetPixelColor(x, y, BaseImage.PixelColor(x, y));
+
+		BaseImage.Free();
+		BaseImage = std::move(RgbaImage);
+	}
+
+	int CropX = 0;
+	int CropY = 0;
+	int CropW = 0;
+	int CropH = 0;
+	CropRectToPixelRect(AppliedCrop, (int)BaseImage.m_Width, (int)BaseImage.m_Height, CropX, CropY, CropW, CropH);
+
+	CImageInfo CroppedImage;
+	CroppedImage.m_Width = CropW;
+	CroppedImage.m_Height = CropH;
+	CroppedImage.m_Format = CImageInfo::FORMAT_RGBA;
+	CroppedImage.m_pData = (uint8_t *)malloc(CroppedImage.DataSize());
+	if(CroppedImage.m_pData == nullptr)
+	{
+		BaseImage.Free();
+		pChat->Echo("Unable to allocate cropped image buffer.");
+		return false;
+	}
+
+	const int SrcW = (int)BaseImage.m_Width;
+	for(int y = 0; y < CropH; ++y)
+	{
+		const uint8_t *pSrc = &BaseImage.m_pData[((size_t)(CropY + y) * (size_t)SrcW + (size_t)CropX) * 4ull];
+		uint8_t *pDst = &CroppedImage.m_pData[(size_t)y * (size_t)CropW * 4ull];
+		mem_copy(pDst, pSrc, (size_t)CropW * 4ull);
+	}
+	BaseImage.Free();
+
+	CByteBufferWriter Writer;
+	if(!CImageLoader::SavePng(Writer, CroppedImage))
+	{
+		CroppedImage.Free();
+		pChat->Echo("Unable to save cropped image.");
+		return false;
+	}
+
+	const IGraphics::CTextureHandle NewTexture = pChat->Graphics()->LoadTextureRaw(CroppedImage, 0, "chat-paste-cropped");
+	CroppedImage.Free();
+	if(!NewTexture.IsValid())
+	{
+		pChat->Echo("Unable to load cropped image texture.");
+		return false;
+	}
+
+	UnloadPendingUploadTextures(pChat->Graphics(), m_PendingUploadImage.m_Texture, m_PendingUploadImage.m_OriginalTexture);
+
+	m_PendingUploadImage.m_Texture = NewTexture;
+	m_PendingUploadImage.m_OriginalTexture = NewTexture;
+	m_PendingUploadImage.m_Width = CropW;
+	m_PendingUploadImage.m_Height = CropH;
+	m_PendingUploadImage.m_vOriginalPng.assign(Writer.Data(), Writer.Data() + Writer.Size());
+	m_PendingUploadImage.m_vPng = m_PendingUploadImage.m_vOriginalPng;
+
+	const float ScreenW = maximum(1.0f, (float)pChat->Graphics()->WindowWidth());
+	const float ScreenH = maximum(1.0f, (float)pChat->Graphics()->WindowHeight());
+	const float WindowMargin = 18.0f;
+	const float WindowW = ScreenW - WindowMargin * 2.0f;
+	const float WindowH = ScreenH - WindowMargin * 2.0f;
+	const float ToolbarH = ImageEditorToolbarHeight();
+	const float CanvasPad = 16.0f;
+	const float CanvasX = WindowMargin + CanvasPad;
+	const float CanvasY = WindowMargin + ToolbarH + CanvasPad;
+	const float CanvasW = WindowW - CanvasPad * 2.0f;
+	const float CanvasH = WindowH - ToolbarH - CanvasPad * 2.0f;
+	const float ImgW = (float)m_PendingUploadImage.m_Width;
+	const float ImgH = (float)m_PendingUploadImage.m_Height;
+	const float Scale = minimum(CanvasW / maximum(1.0f, ImgW), CanvasH / maximum(1.0f, ImgH));
+	const float FinalW = maximum(1.0f, ImgW * Scale);
+	const float FinalH = maximum(1.0f, ImgH * Scale);
+	const float ImgX = CanvasX + (CanvasW - FinalW) / 2.0f;
+	const float ImgY = CanvasY + (CanvasH - FinalH) / 2.0f;
+	const SRenderRect NewCanvasRect = {ImgX, ImgY, FinalW, FinalH};
+
+	RemapStrokesAfterCrop(AppliedCrop, OldImgW, OldImgH, OldCanvasRect, NewCanvasRect);
+	m_ImageEditorCanvasRect = NewCanvasRect;
+
+	ResetCropRectToFull();
+	m_ImageEditor.m_CropDragging = false;
+	m_ImageEditor.m_CropActiveHandle = ECropHandle::NONE;
+	m_ImageEditor.m_CurrentTool = EImageEditorTool::PEN;
+	return true;
+}
+
+void CUClientChatPasteImage::RenderCropOverlay(CChat *pChat, const SRenderRect &SelectionCanvas, const vec2 &MousePos) const
+{
+	const ColorRGBA MaskColor(0.02f, 0.03f, 0.05f, 0.62f);
+	const float CanvasX = m_ImageEditorCanvasRect.m_X;
+	const float CanvasY = m_ImageEditorCanvasRect.m_Y;
+	const float CanvasW = m_ImageEditorCanvasRect.m_W;
+	const float CanvasH = m_ImageEditorCanvasRect.m_H;
+	const float SelL = SelectionCanvas.m_X;
+	const float SelT = SelectionCanvas.m_Y;
+	const float SelR = SelectionCanvas.m_X + SelectionCanvas.m_W;
+	const float SelB = SelectionCanvas.m_Y + SelectionCanvas.m_H;
+
+	if(SelT > CanvasY)
+		pChat->Graphics()->DrawRect(CanvasX, CanvasY, CanvasW, SelT - CanvasY, MaskColor, 0, 0);
+	if(SelB < CanvasY + CanvasH)
+		pChat->Graphics()->DrawRect(CanvasX, SelB, CanvasW, CanvasY + CanvasH - SelB, MaskColor, 0, 0);
+	if(SelL > CanvasX)
+		pChat->Graphics()->DrawRect(CanvasX, SelT, SelL - CanvasX, SelectionCanvas.m_H, MaskColor, 0, 0);
+	if(SelR < CanvasX + CanvasW)
+		pChat->Graphics()->DrawRect(SelR, SelT, CanvasX + CanvasW - SelR, SelectionCanvas.m_H, MaskColor, 0, 0);
+
+	pChat->Graphics()->DrawRect(SelL, SelT, SelectionCanvas.m_W, SelectionCanvas.m_H, ColorRGBA(0.95f, 0.97f, 1.0f, 0.92f), IGraphics::CORNER_ALL, 2.0f);
+
+	const ColorRGBA GuideColor(1.0f, 1.0f, 1.0f, 0.18f);
+	for(int i = 1; i <= 2; ++i)
+	{
+		const float TX = SelL + SelectionCanvas.m_W * (float)i / 3.0f;
+		const float TY = SelT + SelectionCanvas.m_H * (float)i / 3.0f;
+		pChat->Graphics()->DrawRect(TX, SelT, 1.0f, SelectionCanvas.m_H, GuideColor, 0, 0);
+		pChat->Graphics()->DrawRect(SelL, TY, SelectionCanvas.m_W, 1.0f, GuideColor, 0, 0);
+	}
+
+	const float HandleRadius = 6.0f;
+	const ECropHandle HoveredHandle = HitTestCropHandle(MousePos, SelectionCanvas);
+	auto DrawHandle = [&](float X, float Y, ECropHandle Handle) {
+		const bool Hovered = HoveredHandle == Handle;
+		const float Radius = Hovered ? HandleRadius + 1.5f : HandleRadius;
+		pChat->Graphics()->DrawRect(X - Radius - 1.0f, Y - Radius - 1.0f, (Radius + 1.0f) * 2.0f, (Radius + 1.0f) * 2.0f, ColorRGBA(0.21f, 0.56f, 0.94f, 0.95f), IGraphics::CORNER_ALL, Radius + 1.0f);
+		pChat->Graphics()->DrawRect(X - Radius, Y - Radius, Radius * 2.0f, Radius * 2.0f, ColorRGBA(0.97f, 0.98f, 1.0f, 0.98f), IGraphics::CORNER_ALL, Radius);
+	};
+
+	const float CX = (SelL + SelR) * 0.5f;
+	const float CY = (SelT + SelB) * 0.5f;
+	DrawHandle(SelL, SelT, ECropHandle::TOP_LEFT);
+	DrawHandle(CX, SelT, ECropHandle::TOP);
+	DrawHandle(SelR, SelT, ECropHandle::TOP_RIGHT);
+	DrawHandle(SelL, CY, ECropHandle::LEFT);
+	DrawHandle(SelR, CY, ECropHandle::RIGHT);
+	DrawHandle(SelL, SelB, ECropHandle::BOTTOM_LEFT);
+	DrawHandle(CX, SelB, ECropHandle::BOTTOM);
+	DrawHandle(SelR, SelB, ECropHandle::BOTTOM_RIGHT);
+
+	const int CropPxW = maximum(1, (int)roundf((m_ImageEditor.m_CropRect.m_X1 - m_ImageEditor.m_CropRect.m_X0) * m_PendingUploadImage.m_Width));
+	const int CropPxH = maximum(1, (int)roundf((m_ImageEditor.m_CropRect.m_Y1 - m_ImageEditor.m_CropRect.m_Y0) * m_PendingUploadImage.m_Height));
+	char aSizeLabel[64];
+	str_format(aSizeLabel, sizeof(aSizeLabel), "%d x %d", CropPxW, CropPxH);
+	const float LabelSize = 11.0f;
+	const float LabelWidth = pChat->TextRender()->TextWidth(LabelSize, aSizeLabel, -1, -1);
+	const float LabelX = SelL + maximum(0.0f, (SelectionCanvas.m_W - LabelWidth) * 0.5f);
+	const float LabelY = SelB + 6.0f;
+	pChat->Graphics()->DrawRect(LabelX - 6.0f, LabelY - 2.0f, LabelWidth + 12.0f, LabelSize + 6.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.55f), IGraphics::CORNER_ALL, 3.0f);
+	CTextCursor SizeCursor;
+	SizeCursor.SetPosition(vec2(LabelX, LabelY));
+	SizeCursor.m_FontSize = LabelSize;
+	pChat->TextRender()->TextColor(0.95f, 0.97f, 1.0f, 0.95f);
+	pChat->TextRender()->TextEx(&SizeCursor, aSizeLabel);
+}
+
 
 void CUClientChatPasteImage::Reset(CChat *pChat)
 {
@@ -254,10 +845,7 @@ void CUClientChatPasteImage::ClearPendingUploadImage(CChat *pChat)
 		m_PendingUploadImage.m_pRequest->Abort();
 		m_PendingUploadImage.m_pRequest.reset();
 	}
-	if(m_PendingUploadImage.m_Texture.IsValid())
-		pChat->Graphics()->UnloadTexture(&m_PendingUploadImage.m_Texture);
-	if(m_PendingUploadImage.m_OriginalTexture.IsValid())
-		pChat->Graphics()->UnloadTexture(&m_PendingUploadImage.m_OriginalTexture);
+	UnloadPendingUploadTextures(pChat->Graphics(), m_PendingUploadImage.m_Texture, m_PendingUploadImage.m_OriginalTexture);
 	m_PendingUploadImage = CUClientChatPasteImage::SPendingUploadImage();
 	m_PendingUploadClosePressed = false;
 	m_PendingUploadCloseRectValid = false;
@@ -267,6 +855,9 @@ void CUClientChatPasteImage::ClearPendingUploadImage(CChat *pChat)
 	m_ImageEditor.m_IsDrawing = false;
 	m_ImageEditor.m_Active = false;
 	m_ImageEditor.m_MouseDownLastFrame = false;
+	m_ImageEditor.m_CropDragging = false;
+	m_ImageEditor.m_CropActiveHandle = ECropHandle::NONE;
+	ResetCropRectToFull();
 }
 
 bool CUClientChatPasteImage::SetPendingUploadImage(CChat *pChat, const IInput::SClipboardImage &Image)
@@ -326,6 +917,9 @@ bool CUClientChatPasteImage::SetPendingUploadImage(CChat *pChat, const IInput::S
 	m_ImageEditor.m_IsDrawing = false;
 	m_ImageEditor.m_Active = false;
 	m_ImageEditor.m_MouseDownLastFrame = false;
+	m_ImageEditor.m_CropDragging = false;
+	m_ImageEditor.m_CropActiveHandle = ECropHandle::NONE;
+	ResetCropRectToFull();
 	return true;
 }
 
@@ -597,12 +1191,15 @@ void CUClientChatPasteImage::OpenImageEditor(CChat *pChat)
 		return;
 
 	m_ImageEditor.m_vStrokeSnapshot = m_ImageEditor.m_vStrokes;
+	m_ImageEditor.m_CropSnapshot = m_ImageEditor.m_CropRect;
 	m_ImageEditor.m_Active = true;
 	m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
 	m_ImageEditor.m_CurrentTool = CUClientChatPasteImage::EImageEditorTool::PEN;
 	m_ImageEditor.m_PenThickness = maximum(1.0f, m_ImageEditor.m_PenThickness);
 	m_ImageEditor.m_IsDrawing = false;
 	m_ImageEditor.m_MouseDownLastFrame = false;
+	m_ImageEditor.m_CropDragging = false;
+	m_ImageEditor.m_CropActiveHandle = ECropHandle::NONE;
 }
 
 void CUClientChatPasteImage::CloseImageEditor()
@@ -611,11 +1208,14 @@ void CUClientChatPasteImage::CloseImageEditor()
 	m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
 	m_ImageEditor.m_IsDrawing = false;
 	m_ImageEditor.m_MouseDownLastFrame = false;
+	m_ImageEditor.m_CropDragging = false;
+	m_ImageEditor.m_CropActiveHandle = ECropHandle::NONE;
 }
 
 void CUClientChatPasteImage::CancelImageEditor(CChat *pChat)
 {
 	m_ImageEditor.m_vStrokes = m_ImageEditor.m_vStrokeSnapshot;
+	m_ImageEditor.m_CropRect = m_ImageEditor.m_CropSnapshot;
 	m_ImageEditor.m_vStrokeSnapshot.clear();
 	CloseImageEditor();
 }
@@ -630,7 +1230,19 @@ void CUClientChatPasteImage::SaveImageEditorChanges(CChat *pChat)
 		return;
 	}
 
-	if(m_ImageEditor.m_vStrokes.empty() && m_ImageEditor.m_CurrentStroke.m_vPoints.empty())
+	const bool HasStrokes = !m_ImageEditor.m_vStrokes.empty() || !m_ImageEditor.m_CurrentStroke.m_vPoints.empty();
+	const bool HasPendingCrop = !CropRectIsFull(m_ImageEditor.m_CropRect);
+	if(!HasStrokes && !HasPendingCrop)
+	{
+		m_ImageEditor.m_vStrokeSnapshot.clear();
+		CloseImageEditor();
+		return;
+	}
+
+	if(HasPendingCrop && !ApplyImageCrop(pChat))
+		return;
+
+	if(!HasStrokes)
 	{
 		m_ImageEditor.m_vStrokeSnapshot.clear();
 		CloseImageEditor();
@@ -791,8 +1403,7 @@ void CUClientChatPasteImage::SaveImageEditorChanges(CChat *pChat)
 		return;
 	}
 
-	if(m_PendingUploadImage.m_Texture.IsValid())
-		pChat->Graphics()->UnloadTexture(&m_PendingUploadImage.m_Texture);
+	UnloadPendingUploadDisplayTexture(pChat->Graphics(), m_PendingUploadImage.m_Texture, m_PendingUploadImage.m_OriginalTexture);
 	m_PendingUploadImage.m_Texture = NewTexture;
 	m_PendingUploadImage.m_vPng.assign(Writer.Data(), Writer.Data() + Writer.Size());
 	m_ImageEditor.m_vStrokeSnapshot.clear();
@@ -834,6 +1445,32 @@ void CUClientChatPasteImage::UpdateImageEditorInput(CChat *pChat)
 	if(MouseClicked && InRect(m_ImageEditorEraserButtonRect))
 		m_ImageEditor.m_CurrentTool = CUClientChatPasteImage::EImageEditorTool::ERASER;
 
+	if(MouseClicked && InRect(m_ImageEditorCropButtonRect))
+	{
+		m_ImageEditor.m_CurrentTool = CUClientChatPasteImage::EImageEditorTool::CROP;
+		m_ImageEditor.m_IsDrawing = false;
+		m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
+	}
+
+	if(MouseClicked && m_ImageEditor.m_CurrentTool == EImageEditorTool::CROP && InRect(m_ImageEditorCropApplyRect))
+	{
+		ApplyImageCrop(pChat);
+		m_ImageEditor.m_MouseDownLastFrame = MouseDown;
+		return;
+	}
+
+	if(MouseClicked && m_ImageEditor.m_CurrentTool == EImageEditorTool::CROP && InRect(m_ImageEditorCropResetRect))
+		ResetCropRectToFull();
+
+	for(size_t i = 0; i < std::size(m_aImageEditorAspectRects); ++i)
+	{
+		if(MouseClicked && m_ImageEditor.m_CurrentTool == EImageEditorTool::CROP && InRect(m_aImageEditorAspectRects[i]))
+		{
+			m_ImageEditor.m_CropAspect = (ECropAspectPreset)i;
+			ApplyCropAspectToRect(m_ImageEditor.m_CropRect, m_ImageEditor.m_CropAspect, ECropHandle::NONE);
+		}
+	}
+
 	if(MouseClicked && InRect(m_ImageEditorClearButtonRect))
 	{
 		m_ImageEditor.m_vStrokes.clear();
@@ -857,25 +1494,67 @@ void CUClientChatPasteImage::UpdateImageEditorInput(CChat *pChat)
 
 	for(size_t i = 0; i < std::size(m_aImageEditorColorRects); ++i)
 	{
-		if(MouseClicked && InRect(m_aImageEditorColorRects[i]))
+		if(MouseClicked && InRect(m_aImageEditorColorRects[i]) && m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
 			m_ImageEditor.m_PenColor = aPalette[i];
 	}
 
-	if(MouseClicked && InRect(m_ImageEditorThicknessMinusRect))
+	if(MouseClicked && InRect(m_ImageEditorThicknessMinusRect) && m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
 		m_ImageEditor.m_PenThickness = maximum(1.0f, m_ImageEditor.m_PenThickness - 1.0f);
 
-	if(MouseClicked && InRect(m_ImageEditorThicknessPlusRect))
+	if(MouseClicked && InRect(m_ImageEditorThicknessPlusRect) && m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
 		m_ImageEditor.m_PenThickness = minimum(14.0f, m_ImageEditor.m_PenThickness + 1.0f);
 
-	if(MouseDown && InRect(m_ImageEditorThicknessRect))
+	if(MouseDown && InRect(m_ImageEditorThicknessRect) && m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
 	{
 		const float T = std::clamp((MousePos.x - m_ImageEditorThicknessRect.m_X) / maximum(1.0f, m_ImageEditorThicknessRect.m_W), 0.0f, 1.0f);
 		m_ImageEditor.m_PenThickness = 1.0f + T * 13.0f;
 	}
 
 	const bool MouseOverCanvas = InRect(m_ImageEditorCanvasRect);
+	const SRenderRect CropSelectionCanvas = CropRectToCanvasRect(m_ImageEditor.m_CropRect);
 
-	if(m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::PEN)
+	if(m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::CROP)
+	{
+		if(MouseClicked && MouseOverCanvas)
+		{
+			const ECropHandle Handle = HitTestCropHandle(MousePos, CropSelectionCanvas);
+			if(Handle != ECropHandle::NONE)
+			{
+				m_ImageEditor.m_CropDragging = true;
+				m_ImageEditor.m_CropActiveHandle = Handle;
+				m_ImageEditor.m_CropDragStartRect = m_ImageEditor.m_CropRect;
+				m_ImageEditor.m_CropDragAnchor = CanvasToImageNorm(MousePos);
+			}
+			else if(IsPointInsideCropSelection(MousePos, CropSelectionCanvas))
+			{
+				m_ImageEditor.m_CropDragging = true;
+				m_ImageEditor.m_CropActiveHandle = ECropHandle::MOVE;
+				m_ImageEditor.m_CropDragStartRect = m_ImageEditor.m_CropRect;
+				m_ImageEditor.m_CropDragAnchor = CanvasToImageNorm(MousePos);
+			}
+			else
+			{
+				m_ImageEditor.m_CropDragging = true;
+				m_ImageEditor.m_CropActiveHandle = ECropHandle::NEW_SELECTION;
+				m_ImageEditor.m_CropDragStartRect = m_ImageEditor.m_CropRect;
+				m_ImageEditor.m_CropDragAnchor = CanvasToImageNorm(MousePos);
+				m_ImageEditor.m_CropRect.m_X0 = m_ImageEditor.m_CropDragAnchor.x;
+				m_ImageEditor.m_CropRect.m_Y0 = m_ImageEditor.m_CropDragAnchor.y;
+				m_ImageEditor.m_CropRect.m_X1 = m_ImageEditor.m_CropDragAnchor.x;
+				m_ImageEditor.m_CropRect.m_Y1 = m_ImageEditor.m_CropDragAnchor.y;
+			}
+		}
+
+		if(m_ImageEditor.m_CropDragging && MouseDown)
+			UpdateCropDrag(MousePos, m_PendingUploadImage.m_Width, m_PendingUploadImage.m_Height);
+
+		if(m_ImageEditor.m_CropDragging && MouseReleased)
+		{
+			m_ImageEditor.m_CropDragging = false;
+			m_ImageEditor.m_CropActiveHandle = ECropHandle::NONE;
+		}
+	}
+	else if(m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::PEN)
 	{
 		if(MouseDown && MouseOverCanvas)
 		{
@@ -908,7 +1587,7 @@ void CUClientChatPasteImage::UpdateImageEditorInput(CChat *pChat)
 			m_ImageEditor.m_IsDrawing = false;
 		}
 	}
-	else
+	else if(m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::ERASER)
 	{
 		if(m_ImageEditor.m_IsDrawing && MouseReleased)
 		{
@@ -976,17 +1655,18 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 	const float WindowY = WindowMargin;
 	const float WindowW = ScreenW - WindowMargin * 2.0f;
 	const float WindowH = ScreenH - WindowMargin * 2.0f;
-	const float ToolbarH = 88.0f;
+	const float ToolbarH = ImageEditorToolbarHeight();
 	const float ToolbarPad = 16.0f;
-	const float ButtonH = ToolbarH - ToolbarPad * 2.0f;
+	const float ButtonH = 56.0f;
 
-	m_ImageEditorPenButtonRect = {WindowX + 18.0f, WindowY + ToolbarPad, 100.0f, ButtonH};
-	m_ImageEditorEraserButtonRect = {m_ImageEditorPenButtonRect.m_X + m_ImageEditorPenButtonRect.m_W + 10.0f, WindowY + ToolbarPad, 124.0f, ButtonH};
-	m_ImageEditorClearButtonRect = {m_ImageEditorEraserButtonRect.m_X + m_ImageEditorEraserButtonRect.m_W + 10.0f, WindowY + ToolbarPad, 96.0f, ButtonH};
+	m_ImageEditorPenButtonRect = {WindowX + 18.0f, WindowY + ToolbarPad, 84.0f, ButtonH};
+	m_ImageEditorEraserButtonRect = {m_ImageEditorPenButtonRect.m_X + m_ImageEditorPenButtonRect.m_W + 8.0f, WindowY + ToolbarPad, 96.0f, ButtonH};
+	m_ImageEditorCropButtonRect = {m_ImageEditorEraserButtonRect.m_X + m_ImageEditorEraserButtonRect.m_W + 8.0f, WindowY + ToolbarPad, 84.0f, ButtonH};
+	m_ImageEditorClearButtonRect = {m_ImageEditorCropButtonRect.m_X + m_ImageEditorCropButtonRect.m_W + 8.0f, WindowY + ToolbarPad, 84.0f, ButtonH};
 	m_ImageEditorCancelButtonRect = {WindowX + WindowW - 226.0f, WindowY + ToolbarPad, 96.0f, ButtonH};
 	m_ImageEditorSaveButtonRect = {WindowX + WindowW - 118.0f, WindowY + ToolbarPad, 100.0f, ButtonH};
 
-	const float ColorStartX = m_ImageEditorClearButtonRect.m_X + m_ImageEditorClearButtonRect.m_W + 28.0f;
+	const float ColorStartX = m_ImageEditorClearButtonRect.m_X + m_ImageEditorClearButtonRect.m_W + 20.0f;
 	const float ColorSize = 28.0f;
 	for(size_t i = 0; i < std::size(m_aImageEditorColorRects); ++i)
 	{
@@ -996,6 +1676,19 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 	m_ImageEditorThicknessMinusRect = {ColorStartX, WindowY + 54.0f, 26.0f, 14.0f};
 	m_ImageEditorThicknessRect = {m_ImageEditorThicknessMinusRect.m_X + 32.0f, WindowY + 54.0f, 156.0f, 14.0f};
 	m_ImageEditorThicknessPlusRect = {m_ImageEditorThicknessRect.m_X + m_ImageEditorThicknessRect.m_W + 6.0f, WindowY + 54.0f, 26.0f, 14.0f};
+
+	const float CropRowY = WindowY + 88.0f;
+	const char *apAspectLabels[4] = {"Free", "1:1", "4:3", "16:9"};
+	const float AspectChipW = 52.0f;
+	const float AspectChipH = 24.0f;
+	float AspectX = WindowX + 18.0f;
+	for(size_t i = 0; i < std::size(m_aImageEditorAspectRects); ++i)
+	{
+		m_aImageEditorAspectRects[i] = {AspectX, CropRowY, AspectChipW, AspectChipH};
+		AspectX += AspectChipW + 8.0f;
+	}
+	m_ImageEditorCropResetRect = {WindowX + WindowW - 226.0f, CropRowY, 96.0f, AspectChipH};
+	m_ImageEditorCropApplyRect = {WindowX + WindowW - 118.0f, CropRowY, 100.0f, AspectChipH};
 
 	const float CanvasPad = 16.0f;
 	const float CanvasX = WindowX + CanvasPad;
@@ -1042,44 +1735,60 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 
 	DrawButton(m_ImageEditorPenButtonRect, "Pen", m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::PEN, ColorRGBA(0.24f, 0.36f, 0.54f, 0.96f));
 	DrawButton(m_ImageEditorEraserButtonRect, "Eraser", m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::ERASER, ColorRGBA(0.30f, 0.26f, 0.24f, 0.96f));
+	DrawButton(m_ImageEditorCropButtonRect, "Crop", m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::CROP, ColorRGBA(0.22f, 0.40f, 0.34f, 0.96f));
 	DrawButton(m_ImageEditorClearButtonRect, "Clear", false, ColorRGBA(0.45f, 0.20f, 0.20f, 0.96f));
 	DrawButton(m_ImageEditorCancelButtonRect, "Cancel", false, ColorRGBA(0.30f, 0.24f, 0.24f, 0.96f));
 	DrawButton(m_ImageEditorSaveButtonRect, "Save", false, ColorRGBA(0.19f, 0.44f, 0.28f, 0.96f));
 
-	for(size_t i = 0; i < std::size(m_aImageEditorColorRects); ++i)
+	if(m_ImageEditor.m_CurrentTool == EImageEditorTool::CROP)
 	{
-		const CUClientChatPasteImage::SRenderRect &Rect = m_aImageEditorColorRects[i];
-		const bool Selected =
-			absolute(m_ImageEditor.m_PenColor.r - aPalette[i].r) < 0.001f &&
-			absolute(m_ImageEditor.m_PenColor.g - aPalette[i].g) < 0.001f &&
-			absolute(m_ImageEditor.m_PenColor.b - aPalette[i].b) < 0.001f;
-		const float Border = Selected ? 2.0f : 1.0f;
-		pChat->Graphics()->DrawRect(Rect.m_X - Border, Rect.m_Y - Border, Rect.m_W + Border * 2.0f, Rect.m_H + Border * 2.0f, ColorRGBA(0.96f, 0.98f, 1.0f, Selected ? 0.95f : 0.35f), IGraphics::CORNER_ALL, 3.0f);
-		pChat->Graphics()->DrawRect(Rect.m_X, Rect.m_Y, Rect.m_W, Rect.m_H, aPalette[i], IGraphics::CORNER_ALL, 3.0f);
+		pChat->Graphics()->DrawRect(WindowX + 2.0f, CropRowY - 6.0f, WindowW - 4.0f, 36.0f, ColorRGBA(0.06f, 0.08f, 0.11f, 0.92f), IGraphics::CORNER_NONE, 0.0f);
+		for(size_t i = 0; i < std::size(m_aImageEditorAspectRects); ++i)
+		{
+			const bool Selected = (int)m_ImageEditor.m_CropAspect == (int)i;
+			DrawButton(m_aImageEditorAspectRects[i], apAspectLabels[i], Selected, ColorRGBA(0.24f, 0.36f, 0.54f, 0.96f));
+		}
+		DrawButton(m_ImageEditorCropResetRect, "Reset", false, ColorRGBA(0.30f, 0.24f, 0.24f, 0.96f));
+		DrawButton(m_ImageEditorCropApplyRect, "Apply", false, ColorRGBA(0.19f, 0.44f, 0.28f, 0.96f));
 	}
 
-	pChat->Graphics()->DrawRect(m_ImageEditorThicknessMinusRect.m_X, m_ImageEditorThicknessMinusRect.m_Y, m_ImageEditorThicknessMinusRect.m_W, m_ImageEditorThicknessMinusRect.m_H, ColorRGBA(0.17f, 0.20f, 0.27f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
-	pChat->Graphics()->DrawRect(m_ImageEditorThicknessPlusRect.m_X, m_ImageEditorThicknessPlusRect.m_Y, m_ImageEditorThicknessPlusRect.m_W, m_ImageEditorThicknessPlusRect.m_H, ColorRGBA(0.17f, 0.20f, 0.27f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
+	if(m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
+	{
+		for(size_t i = 0; i < std::size(m_aImageEditorColorRects); ++i)
+		{
+			const CUClientChatPasteImage::SRenderRect &Rect = m_aImageEditorColorRects[i];
+			const bool Selected =
+				absolute(m_ImageEditor.m_PenColor.r - aPalette[i].r) < 0.001f &&
+				absolute(m_ImageEditor.m_PenColor.g - aPalette[i].g) < 0.001f &&
+				absolute(m_ImageEditor.m_PenColor.b - aPalette[i].b) < 0.001f;
+			const float Border = Selected ? 2.0f : 1.0f;
+			pChat->Graphics()->DrawRect(Rect.m_X - Border, Rect.m_Y - Border, Rect.m_W + Border * 2.0f, Rect.m_H + Border * 2.0f, ColorRGBA(0.96f, 0.98f, 1.0f, Selected ? 0.95f : 0.35f), IGraphics::CORNER_ALL, 3.0f);
+			pChat->Graphics()->DrawRect(Rect.m_X, Rect.m_Y, Rect.m_W, Rect.m_H, aPalette[i], IGraphics::CORNER_ALL, 3.0f);
+		}
 
-	pChat->Graphics()->DrawRect(m_ImageEditorThicknessRect.m_X, m_ImageEditorThicknessRect.m_Y, m_ImageEditorThicknessRect.m_W, m_ImageEditorThicknessRect.m_H, ColorRGBA(0.12f, 0.15f, 0.21f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
-	const float ThicknessT = std::clamp((m_ImageEditor.m_PenThickness - 1.0f) / 13.0f, 0.0f, 1.0f);
-	const float KnobX = m_ImageEditorThicknessRect.m_X + m_ImageEditorThicknessRect.m_W * ThicknessT;
-	pChat->Graphics()->DrawRect(KnobX - 2.0f, m_ImageEditorThicknessRect.m_Y - 1.5f, 4.0f, m_ImageEditorThicknessRect.m_H + 3.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.95f), IGraphics::CORNER_ALL, 1.5f);
+		pChat->Graphics()->DrawRect(m_ImageEditorThicknessMinusRect.m_X, m_ImageEditorThicknessMinusRect.m_Y, m_ImageEditorThicknessMinusRect.m_W, m_ImageEditorThicknessMinusRect.m_H, ColorRGBA(0.17f, 0.20f, 0.27f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
+		pChat->Graphics()->DrawRect(m_ImageEditorThicknessPlusRect.m_X, m_ImageEditorThicknessPlusRect.m_Y, m_ImageEditorThicknessPlusRect.m_W, m_ImageEditorThicknessPlusRect.m_H, ColorRGBA(0.17f, 0.20f, 0.27f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
 
-	Cursor.SetPosition(vec2(m_ImageEditorThicknessRect.m_X - 16.0f, m_ImageEditorThicknessRect.m_Y - 2.0f));
-	Cursor.m_FontSize = 11.0f;
-	pChat->TextRender()->TextColor(0.89f, 0.92f, 0.97f, 0.95f);
-	pChat->TextRender()->TextEx(&Cursor, "-");
+		pChat->Graphics()->DrawRect(m_ImageEditorThicknessRect.m_X, m_ImageEditorThicknessRect.m_Y, m_ImageEditorThicknessRect.m_W, m_ImageEditorThicknessRect.m_H, ColorRGBA(0.12f, 0.15f, 0.21f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
+		const float ThicknessT = std::clamp((m_ImageEditor.m_PenThickness - 1.0f) / 13.0f, 0.0f, 1.0f);
+		const float KnobX = m_ImageEditorThicknessRect.m_X + m_ImageEditorThicknessRect.m_W * ThicknessT;
+		pChat->Graphics()->DrawRect(KnobX - 2.0f, m_ImageEditorThicknessRect.m_Y - 1.5f, 4.0f, m_ImageEditorThicknessRect.m_H + 3.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.95f), IGraphics::CORNER_ALL, 1.5f);
 
-	Cursor.SetPosition(vec2(m_ImageEditorThicknessPlusRect.m_X + 7.0f, m_ImageEditorThicknessPlusRect.m_Y - 2.0f));
-	Cursor.m_FontSize = 11.0f;
-	pChat->TextRender()->TextEx(&Cursor, "+");
+		Cursor.SetPosition(vec2(m_ImageEditorThicknessRect.m_X - 16.0f, m_ImageEditorThicknessRect.m_Y - 2.0f));
+		Cursor.m_FontSize = 11.0f;
+		pChat->TextRender()->TextColor(0.89f, 0.92f, 0.97f, 0.95f);
+		pChat->TextRender()->TextEx(&Cursor, "-");
 
-	char aThickness[32];
-	str_format(aThickness, sizeof(aThickness), "%.1f px", m_ImageEditor.m_PenThickness);
-	Cursor.SetPosition(vec2(m_ImageEditorThicknessPlusRect.m_X + 36.0f, m_ImageEditorThicknessPlusRect.m_Y - 2.0f));
-	Cursor.m_FontSize = 11.0f;
-	pChat->TextRender()->TextEx(&Cursor, aThickness);
+		Cursor.SetPosition(vec2(m_ImageEditorThicknessPlusRect.m_X + 7.0f, m_ImageEditorThicknessPlusRect.m_Y - 2.0f));
+		Cursor.m_FontSize = 11.0f;
+		pChat->TextRender()->TextEx(&Cursor, "+");
+
+		char aThickness[32];
+		str_format(aThickness, sizeof(aThickness), "%.1f px", m_ImageEditor.m_PenThickness);
+		Cursor.SetPosition(vec2(m_ImageEditorThicknessPlusRect.m_X + 36.0f, m_ImageEditorThicknessPlusRect.m_Y - 2.0f));
+		Cursor.m_FontSize = 11.0f;
+		pChat->TextRender()->TextEx(&Cursor, aThickness);
+	}
 
 	pChat->Graphics()->DrawRect(CanvasX, CanvasY, CanvasW, CanvasH, ColorRGBA(0.07f, 0.09f, 0.13f, 0.98f), IGraphics::CORNER_ALL, 5.0f);
 	pChat->Graphics()->DrawRect(ImgX - 2.0f, ImgY - 2.0f, FinalW + 4.0f, FinalH + 4.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.24f), IGraphics::CORNER_ALL, 4.0f);
@@ -1130,12 +1839,25 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 	if(m_ImageEditor.m_IsDrawing && m_ImageEditor.m_CurrentStroke.m_vPoints.size() > 1)
 		DrawStroke(m_ImageEditor.m_CurrentStroke);
 
+	if(m_ImageEditor.m_CurrentTool == EImageEditorTool::CROP)
+		RenderCropOverlay(pChat, CropRectToCanvasRect(m_ImageEditor.m_CropRect), MousePos);
+
 	const bool MouseInsideEditor = MousePos.x >= WindowX && MousePos.x <= WindowX + WindowW &&
 		MousePos.y >= WindowY && MousePos.y <= WindowY + WindowH;
 	const bool MouseInsideCanvas = InRect(m_ImageEditorCanvasRect);
 
 	if(MouseInsideEditor)
 	{
+		if(m_ImageEditor.m_CurrentTool == EImageEditorTool::CROP)
+		{
+			const float CrosshairRadius = 12.0f;
+			pChat->Graphics()->DrawRect(MousePos.x - CrosshairRadius, MousePos.y - 1.0f, CrosshairRadius * 2.0f, 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
+			pChat->Graphics()->DrawRect(MousePos.x - 1.0f, MousePos.y - CrosshairRadius, 2.0f, CrosshairRadius * 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
+			pChat->Graphics()->DrawRect(MousePos.x - CrosshairRadius + 1.0f, MousePos.y - 0.5f, CrosshairRadius * 2.0f - 2.0f, 1.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
+			pChat->Graphics()->DrawRect(MousePos.x - 0.5f, MousePos.y - CrosshairRadius + 1.0f, 1.0f, CrosshairRadius * 2.0f - 2.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
+		}
+		else
+		{
 		const float CrosshairRadius = maximum(14.0f, m_ImageEditor.m_PenThickness * 2.2f);
 		const float InnerRadius = maximum(4.0f, m_ImageEditor.m_PenThickness * 0.8f);
 		const ColorRGBA CursorAccent = m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::PEN ? m_ImageEditor.m_PenColor : ColorRGBA(1.0f, 0.48f, 0.48f, 1.0f);
@@ -1167,6 +1889,7 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 				pChat->Graphics()->DrawRect(MousePos.x - CursorSize, MousePos.y - CursorSize, 2.0f, CursorSize * 2.0f, ColorRGBA(1.0f, 0.60f, 0.60f, 0.95f), IGraphics::CORNER_ALL, 1.0f);
 				pChat->Graphics()->DrawRect(MousePos.x + CursorSize - 2.0f, MousePos.y - CursorSize, 2.0f, CursorSize * 2.0f, ColorRGBA(1.0f, 0.60f, 0.60f, 0.95f), IGraphics::CORNER_ALL, 1.0f);
 			}
+		}
 		}
 	}
 	pChat->TextRender()->TextColor(pChat->TextRender()->DefaultTextColor());

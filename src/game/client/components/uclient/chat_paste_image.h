@@ -54,6 +54,38 @@ class CUClientChatPasteImage
 	{
 		PEN = 0,
 		ERASER = 1,
+		CROP = 2,
+	};
+
+	enum class ECropAspectPreset
+	{
+		FREE = 0,
+		SQUARE,
+		RATIO_4_3,
+		RATIO_16_9,
+	};
+
+	enum class ECropHandle
+	{
+		NONE = 0,
+		MOVE,
+		NEW_SELECTION,
+		TOP_LEFT,
+		TOP,
+		TOP_RIGHT,
+		LEFT,
+		RIGHT,
+		BOTTOM_LEFT,
+		BOTTOM,
+		BOTTOM_RIGHT,
+	};
+
+	struct SImageCropRect
+	{
+		float m_X0 = 0.0f;
+		float m_Y0 = 0.0f;
+		float m_X1 = 1.0f;
+		float m_Y1 = 1.0f;
 	};
 
 	struct SImageEditorStroke
@@ -75,6 +107,13 @@ class CUClientChatPasteImage
 		float m_PenThickness = 3.0f;
 		bool m_IsDrawing = false;
 		bool m_MouseDownLastFrame = false;
+		SImageCropRect m_CropRect;
+		SImageCropRect m_CropSnapshot;
+		ECropAspectPreset m_CropAspect = ECropAspectPreset::FREE;
+		bool m_CropDragging = false;
+		ECropHandle m_CropActiveHandle = ECropHandle::NONE;
+		vec2 m_CropDragAnchor = vec2(0.0f, 0.0f);
+		SImageCropRect m_CropDragStartRect;
 	};
 
 public:
@@ -92,6 +131,8 @@ public:
 	void CancelPasteWarning(CChat *pChat);
 
 private:
+	static constexpr int CROP_MIN_PIXELS = 32;
+
 	void ClearPendingUploadImage(CChat *pChat);
 	bool SetPendingUploadImage(CChat *pChat, const IInput::SClipboardImage &Image);
 	bool TryPasteClipboardImage(CChat *pChat);
@@ -107,6 +148,24 @@ private:
 	void RenderImageEditor(CChat *pChat);
 	void OpenPasteWarningPopup(CChat *pChat);
 
+	bool CropRectIsFull(const SImageCropRect &Crop) const;
+	void NormalizeCropRect(SImageCropRect &Crop) const;
+	float CropAspectRatio(ECropAspectPreset Preset) const;
+	void ClampCropRect(SImageCropRect &Crop, int ImgW, int ImgH, ECropAspectPreset Aspect, ECropHandle ActiveHandle) const;
+	SRenderRect CropRectToCanvasRect(const SImageCropRect &Crop) const;
+	vec2 CanvasToImageNorm(const vec2 &CanvasPoint) const;
+	vec2 ImageNormToCanvas(const vec2 &Norm) const;
+	void CropRectToPixelRect(const SImageCropRect &Crop, int ImgW, int ImgH, int &OutX0, int &OutY0, int &OutW, int &OutH) const;
+	ECropHandle HitTestCropHandle(const vec2 &MousePos, const SRenderRect &SelectionCanvas) const;
+	bool IsPointInsideCropSelection(const vec2 &MousePos, const SRenderRect &SelectionCanvas) const;
+	void ApplyCropAspectToRect(SImageCropRect &Crop, ECropAspectPreset Aspect, ECropHandle AnchorHandle) const;
+	void RemapStrokesAfterCrop(const SImageCropRect &AppliedCrop, int OldImgW, int OldImgH, const SRenderRect &OldCanvasRect, const SRenderRect &NewCanvasRect);
+	bool ApplyImageCrop(CChat *pChat);
+	void ResetCropRectToFull();
+	void UpdateCropDrag(const vec2 &MousePos, int ImgW, int ImgH);
+	void RenderCropOverlay(CChat *pChat, const SRenderRect &SelectionCanvas, const vec2 &MousePos) const;
+	float ImageEditorToolbarHeight() const;
+
 	SPendingUploadImage m_PendingUploadImage;
 	IInput::SClipboardImage m_WarningPendingClipboardImage;
 	bool m_PendingUploadClosePressed = false;
@@ -117,6 +176,10 @@ private:
 	bool m_ImageEditorEditButtonRectValid = false;
 	SRenderRect m_ImageEditorPenButtonRect;
 	SRenderRect m_ImageEditorEraserButtonRect;
+	SRenderRect m_ImageEditorCropButtonRect;
+	std::array<SRenderRect, 4> m_aImageEditorAspectRects;
+	SRenderRect m_ImageEditorCropResetRect;
+	SRenderRect m_ImageEditorCropApplyRect;
 	std::array<SRenderRect, 6> m_aImageEditorColorRects;
 	SRenderRect m_ImageEditorCanvasRect;
 	SRenderRect m_ImageEditorThicknessRect;
