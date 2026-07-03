@@ -1461,9 +1461,12 @@ void CMenus::PopupCancelStoredLink()
 	m_PopupDeactivateAfterButton = false;
 }
 
-void CMenus::OpenSoundboardDeletePopup()
+void CMenus::OpenSoundboardDeletePopup(bool LocalFile)
 {
-	PopupConfirm(Localize("Delete sound"), Localize("Are you sure you want to delete this sound?"),
+	const char *pBody = LocalFile ?
+		Localize("Are you sure you want to delete this recording from your computer?") :
+		Localize("Are you sure you want to delete this sound?");
+	PopupConfirm(Localize("Delete sound"), pBody,
 		Localize("Delete"), Localize("Cancel"),
 		&CMenus::PopupConfirmSoundboardDelete, POPUP_NONE, &CMenus::PopupCancelSoundboardDelete);
 	SetActive(true);

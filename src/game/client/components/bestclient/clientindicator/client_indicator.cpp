@@ -145,6 +145,14 @@ namespace
 		return net_addr_is_local(&Addr);
 	}
 
+	bool EnsureUcInstallUuid()
+	{
+		if(g_Config.m_UcInstallUuid[0] != '\0')
+			return false;
+		FormatUuid(RandomUuid(), g_Config.m_UcInstallUuid, sizeof(g_Config.m_UcInstallUuid));
+		return true;
+	}
+
 	const char *PacketTypeName(int PacketType)
 	{
 		switch(PacketType)
@@ -231,6 +239,11 @@ void CClientIndicator::OnInit()
 	NormalizeBestClientIndicatorConfig();
 	if(m_ClientInstanceId == UUID_ZEROED)
 		m_ClientInstanceId = RandomUuid();
+	if(EnsureUcInstallUuid())
+	{
+		DebugLogF("generated uc install uuid=%s", g_Config.m_UcInstallUuid);
+		ConfigManager()->Save();
+	}
 	DebugLogF("init server=%s token_url=%s browser_url=%s", g_Config.m_BcClientIndicatorServerAddress, g_Config.m_BcClientIndicatorTokenUrl, g_Config.m_BcClientIndicatorBrowserUrl);
 }
 

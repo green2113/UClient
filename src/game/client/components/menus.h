@@ -1101,7 +1101,7 @@ public:
 	void PopupOpenStoredLink();
 	void PopupCancelStoredLink();
 
-	void OpenSoundboardDeletePopup();
+	void OpenSoundboardDeletePopup(bool LocalFile = false);
 	void PopupConfirmSoundboardDelete();
 	void PopupCancelSoundboardDelete();
 

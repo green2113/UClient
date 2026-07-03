@@ -18,6 +18,7 @@
 #include <engine/shared/http.h>
 #include <engine/external/json-parser/json.h>
 #include <engine/shared/json.h>
+#include <engine/shared/jsonwriter.h>
 #include <engine/storage.h>
 #include <engine/textrender.h>
 
@@ -75,6 +76,134 @@ namespace
 	constexpr int SERVER_LIST_PING_INTERVAL_SEC = 30;
 	constexpr const char *MANAGED_VOICE_SERVER_CONFIG = "managed";
 	constexpr const char *VOICE_MUTED_CFG_PATH = "BestClient/voice_muted.cfg";
+	constexpr const char *VOICE_RECORD_DIR = "UClient/soundboard/voice_record";
+	constexpr const char *VOICE_RECORD_DIR_PREFIX = "UClient/soundboard/voice_record/";
+	constexpr const char *VOICE_RECORD_MANIFEST_PATH = "UClient/soundboard/voice_record/manifest.json";
+	constexpr int VOICE_RECORD_MIN_SAMPLES = BestClientVoice::SAMPLE_RATE * 3 / 10;
+
+	struct SVoiceRecordManifestEntry
+	{
+		std::string m_File;
+		std::string m_Title;
+		std::string m_PlayerName;
+	};
+
+	bool EnsureVoiceRecordStorageDirs(IStorage *pStorage)
+	{
+		return pStorage->CreateFolder("UClient", IStorage::TYPE_SAVE) &&
+			pStorage->CreateFolder("UClient/soundboard", IStorage::TYPE_SAVE) &&
+			pStorage->CreateFolder(VOICE_RECORD_DIR, IStorage::TYPE_SAVE);
+	}
+
+	bool WritePcmWavFile(IOHANDLE File, const int16_t *pSamples, size_t SampleCount)
+	{
+		if(!File || !pSamples || SampleCount == 0)
+			return false;
+
+		const uint32_t DataSize = (uint32_t)(SampleCount * sizeof(int16_t));
+		const uint32_t RiffSize = 36 + DataSize;
+		const uint16_t AudioFormat = 1;
+		const uint16_t NumChannels = 1;
+		const uint32_t SampleRate = BestClientVoice::SAMPLE_RATE;
+		const uint16_t BitsPerSample = 16;
+		const uint16_t BlockAlign = NumChannels * BitsPerSample / 8;
+		const uint32_t ByteRate = SampleRate * BlockAlign;
+
+		auto WriteU32 = [&](uint32_t Value) { return io_write(File, &Value, sizeof(Value)) == sizeof(Value); };
+		auto WriteU16 = [&](uint16_t Value) { return io_write(File, &Value, sizeof(Value)) == sizeof(Value); };
+
+		if(!io_write(File, "RIFF", 4) || !WriteU32(RiffSize) || !io_write(File, "WAVE", 4))
+			return false;
+		if(!io_write(File, "fmt ", 4) || !WriteU32(16) || !WriteU16(AudioFormat) || !WriteU16(NumChannels) ||
+			!WriteU32(SampleRate) || !WriteU32(ByteRate) || !WriteU16(BlockAlign) || !WriteU16(BitsPerSample))
+			return false;
+		if(!io_write(File, "data", 4) || !WriteU32(DataSize))
+			return false;
+		return io_write(File, pSamples, DataSize) == DataSize;
+	}
+
+	bool LoadVoiceRecordManifest(IStorage *pStorage, std::vector<SVoiceRecordManifestEntry> &vEntries)
+	{
+		vEntries.clear();
+		void *pData = nullptr;
+		unsigned DataSize = 0;
+		if(!pStorage->ReadFile(VOICE_RECORD_MANIFEST_PATH, IStorage::TYPE_SAVE, &pData, &DataSize))
+			return true;
+
+		json_value *pJson = json_parse((const char *)pData, DataSize);
+		free(pData);
+		if(!pJson)
+			return false;
+
+		if(pJson->type == json_array)
+		{
+			for(unsigned i = 0; i < pJson->u.array.length; ++i)
+			{
+				const json_value *pObj = pJson->u.array.values[i];
+				if(!pObj || pObj->type != json_object)
+					continue;
+				const json_value *pFile = json_object_get(pObj, "file");
+				const json_value *pTitle = json_object_get(pObj, "title");
+				const json_value *pPlayerName = json_object_get(pObj, "playerName");
+				if(!pFile || pFile->type != json_string || !pTitle || pTitle->type != json_string)
+					continue;
+				SVoiceRecordManifestEntry Entry;
+				Entry.m_File = pFile->u.string.ptr;
+				Entry.m_Title = pTitle->u.string.ptr;
+				Entry.m_PlayerName = (pPlayerName && pPlayerName->type == json_string) ? pPlayerName->u.string.ptr : Entry.m_Title;
+				vEntries.push_back(std::move(Entry));
+			}
+		}
+		json_value_free(pJson);
+		return true;
+	}
+
+	bool SaveVoiceRecordManifest(IStorage *pStorage, const std::vector<SVoiceRecordManifestEntry> &vEntries)
+	{
+		if(!EnsureVoiceRecordStorageDirs(pStorage))
+			return false;
+
+		CJsonStringWriter Writer;
+		Writer.BeginArray();
+		for(const SVoiceRecordManifestEntry &Entry : vEntries)
+		{
+			Writer.BeginObject();
+			Writer.WriteAttribute("file");
+			Writer.WriteStrValue(Entry.m_File.c_str());
+			Writer.WriteAttribute("title");
+			Writer.WriteStrValue(Entry.m_Title.c_str());
+			Writer.WriteAttribute("playerName");
+			Writer.WriteStrValue(Entry.m_PlayerName.c_str());
+			Writer.EndObject();
+		}
+		Writer.EndArray();
+
+		IOHANDLE File = pStorage->OpenFile(VOICE_RECORD_MANIFEST_PATH, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+		if(!File)
+			return false;
+		const std::string Output = Writer.GetOutputString();
+		const bool Ok = io_write(File, Output.data(), Output.size()) == Output.size();
+		io_close(File);
+		return Ok;
+	}
+
+	std::string BuildVoiceRecordTitle(const std::vector<SVoiceRecordManifestEntry> &vEntries, const char *pPlayerName)
+	{
+		if(!pPlayerName || pPlayerName[0] == '\0')
+			return "Unknown";
+
+		int Count = 0;
+		for(const SVoiceRecordManifestEntry &Entry : vEntries)
+		{
+			if(str_comp_nocase(Entry.m_PlayerName.c_str(), pPlayerName) == 0)
+				++Count;
+		}
+		if(Count == 0)
+			return pPlayerName;
+		char aBuf[128];
+		str_format(aBuf, sizeof(aBuf), "%s (%d)", pPlayerName, Count + 1);
+		return aBuf;
+	}
 	constexpr uint8_t OBFUSCATION_KEY = 0x5a;
 	constexpr std::array<uint8_t, 19> OBFUSCATED_DEFAULT_VOICE_SERVER_ADDRESS = {
 		107, 99, 105, 116, 104, 105, 116, 104, 106, 107, 116, 107, 104, 111, 96, 98, 109, 109, 109};
@@ -699,6 +828,8 @@ void CVoiceChat::OnConsoleInit()
 	Console()->Register("toggle_voice_mic_mute", "", CFGFLAG_CLIENT, ConToggleVoiceMicMute, this, "Toggle voice microphone mute");
 	Console()->Register("toggle_voice_headphones_mute", "", CFGFLAG_CLIENT, ConToggleVoiceHeadphonesMute, this, "Toggle voice headphones mute");
 	Console()->Register("toggle_voice_soundboard_panel", "", CFGFLAG_CLIENT, ConToggleVoiceSoundboardPanel, this, "Toggle voice soundboard panel");
+	Console()->Register("record_voice", "i[client_id]", CFGFLAG_CLIENT, ConRecordVoice, this, "Record the next voice utterance from a player to local soundboard");
+	Console()->Register("record_voice_stop", "", CFGFLAG_CLIENT, ConRecordVoiceStop, this, "Cancel pending or active voice recording without saving");
 }
 
 void CVoiceChat::OnReset()
@@ -749,6 +880,7 @@ void CVoiceChat::OnReset()
 	m_CapturePcm.Clear();
 	m_MicMonitorPcm.Clear();
 	InvalidatePeerCaches();
+	CancelVoiceRecord(false);
 }
 
 void CVoiceChat::LoadMutedNamesFromFile()
@@ -1050,6 +1182,7 @@ void CVoiceChat::OnUpdate()
 	m_SnapMappingDirty = true;
 	m_TalkingStateDirty = true;
 	RefreshPeerCaches();
+	TickVoiceRecord();
 
 	if(ShouldKeepVoicePipelineActive())
 	{
@@ -2231,6 +2364,8 @@ void CVoiceChat::SetSoundboardPanelActive(bool Active)
 		SetUiMousePos(Ui()->Screen()->Center());
 		if(m_SoundboardLoadState == 0)
 			FetchSoundboardList();
+		else if(m_SoundboardLoadState == 2)
+			ReloadLocalVoiceRecordItems();
 	}
 	else if(m_MouseUnlocked && !m_PanelActive)
 	{
@@ -3122,6 +3257,9 @@ void CVoiceChat::ProcessVoiceRelayPacket(const uint8_t *pRawData, int DataSize, 
 	Peer.m_LastVoiceTick = Now;
 	m_TalkingStateDirty = true;
 
+	const int ResolvedClientId = ResolvePeerClientId(Peer);
+	AppendVoiceRecordSamples(ResolvedClientId, aDecoded, (size_t)DecodedSamples);
+
 	const size_t Dropped = Peer.m_DecodedPcm.PushBack(aDecoded, (size_t)DecodedSamples);
 	if(Dropped > 0 && Peer.m_DecodedPcm.Size() > PLAYBACK_MAX_RESYNC_FRAMES)
 		Peer.m_DecodedPcm.DiscardFront(Peer.m_DecodedPcm.Size() - PLAYBACK_MAX_RESYNC_FRAMES);
@@ -4002,6 +4140,8 @@ void CVoiceChat::ProcessCapture()
 			opus_encoder_ctl(m_pEncoder, OPUS_RESET_STATE);
 			m_WasTransmitActive = true;
 		}
+
+		AppendVoiceRecordSamples(LocalGameClientId(), aFrame, BestClientVoice::FRAME_SIZE);
 
 		uint8_t aEncoded[BestClientVoice::MAX_OPUS_PACKET_SIZE];
 		const int EncodedSize = opus_encode(m_pEncoder, aFrame, BestClientVoice::FRAME_SIZE, aEncoded, (int)sizeof(aEncoded));
@@ -5650,6 +5790,238 @@ void CVoiceChat::StartServerListPings()
 	m_LastServerListPingSweepTick = time_get();
 }
 
+void CVoiceChat::ArmVoiceRecord(int ClientId)
+{
+	m_VoiceRecord = {};
+	m_VoiceRecord.m_TargetClientId = ClientId;
+}
+
+void CVoiceChat::CancelVoiceRecord(bool Notify)
+{
+	const bool HadSession = m_VoiceRecord.m_TargetClientId >= 0 || m_VoiceRecord.m_Active;
+	m_VoiceRecord = {};
+	if(Notify && HadSession)
+		GameClient()->Echo("Voice recording cancelled.");
+}
+
+void CVoiceChat::AppendVoiceRecordSamples(int ClientId, const int16_t *pSamples, size_t SampleCount)
+{
+	if(m_VoiceRecord.m_TargetClientId < 0 || !m_VoiceRecord.m_Active || ClientId != m_VoiceRecord.m_TargetClientId)
+		return;
+	if(!pSamples || SampleCount == 0)
+		return;
+	m_VoiceRecord.m_vPcm.insert(m_VoiceRecord.m_vPcm.end(), pSamples, pSamples + SampleCount);
+}
+
+void CVoiceChat::FinalizeVoiceRecord()
+{
+	const int ClientId = m_VoiceRecord.m_TargetClientId;
+	const std::vector<int16_t> vPcm = std::move(m_VoiceRecord.m_vPcm);
+	m_VoiceRecord.m_Active = false;
+	m_VoiceRecord.m_TargetClientId = -1;
+	m_VoiceRecord.m_WasTalking = false;
+
+	if(vPcm.size() < (size_t)VOICE_RECORD_MIN_SAMPLES)
+		return;
+
+	const char *pPlayerName = "Unknown";
+	if(ClientId >= 0 && ClientId < MAX_CLIENTS && GameClient()->m_aClients[ClientId].m_Active)
+		pPlayerName = GameClient()->m_aClients[ClientId].m_aName;
+
+	char aTitle[128];
+	if(!SaveVoiceRecordWav(vPcm, pPlayerName, ClientId, aTitle, sizeof(aTitle)))
+	{
+		GameClient()->Echo("Failed to save voice recording.");
+		return;
+	}
+
+	char aMsg[256];
+	str_format(aMsg, sizeof(aMsg), "Voice recording saved: %s", aTitle);
+	GameClient()->Echo(aMsg);
+	ReloadLocalVoiceRecordItems();
+}
+
+void CVoiceChat::TickVoiceRecord()
+{
+	if(m_VoiceRecord.m_TargetClientId < 0)
+		return;
+
+	const int ClientId = m_VoiceRecord.m_TargetClientId;
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS || !GameClient()->m_aClients[ClientId].m_Active)
+	{
+		CancelVoiceRecord(false);
+		return;
+	}
+
+	const bool Talking = IsClientTalking(ClientId);
+	if(Talking && !m_VoiceRecord.m_Active)
+	{
+		m_VoiceRecord.m_vPcm.clear();
+		m_VoiceRecord.m_Active = true;
+	}
+	else if(m_VoiceRecord.m_Active && !Talking && m_VoiceRecord.m_WasTalking)
+	{
+		FinalizeVoiceRecord();
+		return;
+	}
+
+	m_VoiceRecord.m_WasTalking = Talking;
+}
+
+bool CVoiceChat::SaveVoiceRecordWav(const std::vector<int16_t> &vPcm, const char *pPlayerName, int ClientId, char *pOutTitle, int TitleSize)
+{
+	if(vPcm.empty() || !pOutTitle || TitleSize <= 0)
+		return false;
+	if(!EnsureVoiceRecordStorageDirs(Storage()))
+		return false;
+
+	std::vector<SVoiceRecordManifestEntry> vManifest;
+	if(!LoadVoiceRecordManifest(Storage(), vManifest))
+		vManifest.clear();
+
+	const std::string Title = BuildVoiceRecordTitle(vManifest, pPlayerName);
+	str_copy(pOutTitle, Title.c_str(), TitleSize);
+
+	const int64_t Now = time_timestamp();
+	char aFileName[128];
+	str_format(aFileName, sizeof(aFileName), "uclient_voice_record_%lld_%d.wav", (long long)Now, ClientId);
+
+	char aRelativePath[IO_MAX_PATH_LENGTH];
+	str_format(aRelativePath, sizeof(aRelativePath), "%s/%s", VOICE_RECORD_DIR, aFileName);
+
+	IOHANDLE File = Storage()->OpenFile(aRelativePath, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+	if(!File)
+		return false;
+	const bool Wrote = WritePcmWavFile(File, vPcm.data(), vPcm.size());
+	io_close(File);
+	if(!Wrote)
+	{
+		Storage()->RemoveFile(aRelativePath, IStorage::TYPE_SAVE);
+		return false;
+	}
+
+	SVoiceRecordManifestEntry Entry;
+	Entry.m_File = aFileName;
+	Entry.m_Title = Title;
+	Entry.m_PlayerName = pPlayerName ? pPlayerName : "";
+	vManifest.push_back(std::move(Entry));
+	return SaveVoiceRecordManifest(Storage(), vManifest);
+}
+
+void CVoiceChat::ReloadLocalVoiceRecordItems()
+{
+	std::vector<SSoundboardItem> vRemote;
+	vRemote.reserve(m_vSoundboardItems.size());
+	for(SSoundboardItem &Item : m_vSoundboardItems)
+	{
+		if(Item.m_Source == ESoundboardItemSource::REMOTE)
+			vRemote.push_back(std::move(Item));
+	}
+
+	m_vSoundboardItems = std::move(vRemote);
+	m_SoundboardAudioCache.clear();
+
+	std::vector<SVoiceRecordManifestEntry> vManifest;
+	if(!LoadVoiceRecordManifest(Storage(), vManifest))
+		return;
+
+	for(const SVoiceRecordManifestEntry &Entry : vManifest)
+	{
+		if(Entry.m_File.empty())
+			continue;
+
+		char aRelativePath[IO_MAX_PATH_LENGTH];
+		str_format(aRelativePath, sizeof(aRelativePath), "%s/%s", VOICE_RECORD_DIR, Entry.m_File.c_str());
+
+		IOHANDLE File = Storage()->OpenFile(aRelativePath, IOFLAG_READ, IStorage::TYPE_SAVE);
+		if(!File)
+			continue;
+		io_close(File);
+
+		SSoundboardItem Item;
+		Item.m_Source = ESoundboardItemSource::LOCAL_VOICE_RECORD;
+		const size_t Dot = Entry.m_File.find_last_of('.');
+		Item.m_Id = Dot == std::string::npos ? Entry.m_File : Entry.m_File.substr(0, Dot);
+		Item.m_Title = Entry.m_Title;
+		Item.m_Scope = "voice_record";
+		Item.m_OwnerName = Entry.m_PlayerName;
+		str_copy(Item.m_aLocalPath, aRelativePath, sizeof(Item.m_aLocalPath));
+		m_vSoundboardItems.push_back(std::move(Item));
+	}
+}
+
+void CVoiceChat::DeleteLocalVoiceRecordItem(int Index)
+{
+	if(Index < 0 || Index >= (int)m_vSoundboardItems.size())
+		return;
+
+	const SSoundboardItem &Item = m_vSoundboardItems[(size_t)Index];
+	if(Item.m_Source != ESoundboardItemSource::LOCAL_VOICE_RECORD)
+		return;
+
+	if(Item.m_aLocalPath[0] != '\0')
+		Storage()->RemoveFile(Item.m_aLocalPath, IStorage::TYPE_SAVE);
+
+	std::vector<SVoiceRecordManifestEntry> vManifest;
+	if(LoadVoiceRecordManifest(Storage(), vManifest))
+	{
+		const char *pFileName = str_startswith(Item.m_aLocalPath, VOICE_RECORD_DIR_PREFIX) ? Item.m_aLocalPath + str_length(VOICE_RECORD_DIR_PREFIX) : nullptr;
+		if(!pFileName || pFileName[0] == '\0')
+		{
+			char aFileName[IO_MAX_PATH_LENGTH];
+			str_copy(aFileName, Item.m_aLocalPath, sizeof(aFileName));
+			const char *pSlash = str_rchr(aFileName, '/');
+			pFileName = pSlash ? pSlash + 1 : aFileName;
+		}
+
+		vManifest.erase(
+			std::remove_if(vManifest.begin(), vManifest.end(),
+				[&](const SVoiceRecordManifestEntry &Entry) { return str_comp(Entry.m_File.c_str(), pFileName) == 0; }),
+			vManifest.end());
+		SaveVoiceRecordManifest(Storage(), vManifest);
+	}
+
+	ReloadLocalVoiceRecordItems();
+}
+
+void CVoiceChat::ConRecordVoice(IConsole::IResult *pResult, void *pUserData)
+{
+	CVoiceChat *pSelf = static_cast<CVoiceChat *>(pUserData);
+	const int ClientId = pResult->GetInteger(0);
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "voice", "Invalid client id.");
+		return;
+	}
+	if(!pSelf->m_Registered)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "voice", "Voice chat is not connected.");
+		return;
+	}
+	if(!pSelf->GameClient()->m_aClients[ClientId].m_Active)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "voice", "Client is not active.");
+		return;
+	}
+
+	pSelf->ArmVoiceRecord(ClientId);
+	char aMsg[256];
+	str_format(aMsg, sizeof(aMsg), "Recording next voice from %s (id %d)", pSelf->GameClient()->m_aClients[ClientId].m_aName, ClientId);
+	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "voice", aMsg);
+}
+
+void CVoiceChat::ConRecordVoiceStop(IConsole::IResult *pResult, void *pUserData)
+{
+	(void)pResult;
+	CVoiceChat *pSelf = static_cast<CVoiceChat *>(pUserData);
+	if(pSelf->m_VoiceRecord.m_TargetClientId < 0 && !pSelf->m_VoiceRecord.m_Active)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "voice", "No voice recording in progress.");
+		return;
+	}
+	pSelf->CancelVoiceRecord(true);
+}
+
 void CVoiceChat::ConVoiceConnect(IConsole::IResult *pResult, void *pUserData)
 {
 	CVoiceChat *pSelf = static_cast<CVoiceChat *>(pUserData);
@@ -5848,9 +6220,15 @@ void CVoiceChat::RenderSoundboardPanel(const CUIRect &Screen)
 	for(int ItemIndex = 0; ItemIndex < Count; ++ItemIndex)
 	{
 		const SSoundboardItem &Item = m_vSoundboardItems[(size_t)ItemIndex];
-		const bool IsDefault = str_comp_nocase(Item.m_Scope.c_str(), "default") == 0;
+		const bool IsLocalVoiceRecord = Item.m_Source == ESoundboardItemSource::LOCAL_VOICE_RECORD;
+		const bool IsDefault = !IsLocalVoiceRecord && str_comp_nocase(Item.m_Scope.c_str(), "default") == 0;
 		std::string GroupKey, GroupTitle;
-		if(IsDefault)
+		if(IsLocalVoiceRecord)
+		{
+			GroupKey = "soundboard:voice_record";
+			GroupTitle = "Voice Record";
+		}
+		else if(IsDefault)
 		{
 			GroupKey = "soundboard:default";
 			GroupTitle = "UClient Sound";
@@ -5891,7 +6269,9 @@ void CVoiceChat::RenderSoundboardPanel(const CUIRect &Screen)
 				const bool IsLoading = It != m_SoundboardAudioCache.end() && It->second.m_Loading;
 				const bool IsLoaded = It != m_SoundboardAudioCache.end() && It->second.m_Loaded;
 				const bool IsPlaying = IsSoundboardItemPlaying(Index);
-				const bool IsPersonal = str_comp_nocase(Item.m_Scope.c_str(), "default") != 0;
+				const bool IsLocalVoiceRecord = Item.m_Source == ESoundboardItemSource::LOCAL_VOICE_RECORD;
+				const bool IsPersonal = !IsLocalVoiceRecord && str_comp_nocase(Item.m_Scope.c_str(), "default") != 0;
+				const bool IsDeletable = IsPersonal || IsLocalVoiceRecord;
 
 				CUIRect DelBtn;
 				DelBtn.x = Tile.x + Tile.w - 3.0f - 14.0f;
@@ -5905,7 +6285,7 @@ void CVoiceChat::RenderSoundboardPanel(const CUIRect &Screen)
 
 				int DelClicked = 0;
 				bool DelHot = false;
-				if(IsPersonal)
+				if(IsDeletable)
 				{
 					CButtonContainer &DelButton = m_vSoundboardItemDeleteButtons[(size_t)Index];
 					DelClicked = Ui()->DoButtonLogic(&DelButton, 0, &DelBtn, BUTTONFLAG_LEFT, CUi::EButtonSoundType::BUTTON);
@@ -5951,7 +6331,7 @@ void CVoiceChat::RenderSoundboardPanel(const CUIRect &Screen)
 					LoadingRow.HSplitTop(16.0f, nullptr, &LoadingRow);
 					Ui()->DoLabel(&LoadingRow, Localize("Loading..."), 8.0f, TEXTALIGN_MC, {.m_MaxWidth = LoadingRow.w});
 				}
-				if(IsPersonal)
+				if(IsDeletable)
 				{
 					CButtonContainer &DelButton = m_vSoundboardItemDeleteButtons[(size_t)Index];
 					(void)DelButton;
@@ -6021,13 +6401,21 @@ void CVoiceChat::RenderSoundboardPanel(const CUIRect &Screen)
 	};
 
 	const SSoundboardRenderGroup *pDefaultGroup = nullptr;
+	const SSoundboardRenderGroup *pVoiceRecordGroup = nullptr;
 	for(const auto &Group : vGroups)
 	{
+		if(Group.m_Key == "soundboard:voice_record")
+		{
+			pVoiceRecordGroup = &Group;
+			continue;
+		}
 		if(Group.m_Default) { pDefaultGroup = &Group; continue; }
 		RenderGroup(Group);
 	}
 	if(pDefaultGroup)
 		RenderGroup(*pDefaultGroup);
+	if(pVoiceRecordGroup)
+		RenderGroup(*pVoiceRecordGroup);
 
 	if(Count == 0 && m_SoundboardLoadState == 2)
 	{
@@ -6222,6 +6610,7 @@ void CVoiceChat::FinishSoundboardList()
 			}
 			json_value_free(pJson);
 			m_SoundboardLoadState = 2;
+			ReloadLocalVoiceRecordItems();
 		}
 		else
 		{
@@ -6244,6 +6633,37 @@ void CVoiceChat::StartSoundboardItemDownload(int Index)
 	auto &Cache = m_SoundboardAudioCache[Index];
 	if(Cache.m_Loaded || Cache.m_Loading)
 		return;
+
+	const SSoundboardItem &Item = m_vSoundboardItems[(size_t)Index];
+	if(Item.m_Source == ESoundboardItemSource::LOCAL_VOICE_RECORD)
+	{
+		Cache.m_Loading = true;
+		Cache.m_Error = false;
+		void *pData = nullptr;
+		unsigned DataSize = 0;
+		const bool ReadOk = Item.m_aLocalPath[0] != '\0' &&
+			Storage()->ReadFile(Item.m_aLocalPath, IStorage::TYPE_SAVE, &pData, &DataSize);
+		if(ReadOk && TryDecodeWav((const uint8_t *)pData, (int)DataSize, 0, 0, Cache.m_vPcm))
+		{
+			Cache.m_Loaded = true;
+			const int PendingToVoice = Cache.m_PendingPlayToVoice;
+			const int PendingLocal = Cache.m_PendingPlayLocal;
+			Cache.m_PendingPlayToVoice = 0;
+			Cache.m_PendingPlayLocal = 0;
+			for(int i = 0; i < PendingToVoice; ++i)
+				PlaySoundboardItem(Index, true);
+			for(int i = 0; i < PendingLocal; ++i)
+				PlaySoundboardItem(Index, false);
+		}
+		else
+		{
+			Cache.m_Error = true;
+		}
+		if(pData)
+			free(pData);
+		Cache.m_Loading = false;
+		return;
+	}
 
 	const std::string &Url = m_vSoundboardItems[(size_t)Index].m_Url;
 	Cache.m_Loading = true;
@@ -6725,12 +7145,13 @@ void CVoiceChat::RequestSoundboardDeleteConfirm(int Index)
 		return;
 
 	m_SoundboardDeleteConfirmIndex = Index;
+	m_SoundboardDeleteIsLocal = m_vSoundboardItems[(size_t)Index].m_Source == ESoundboardItemSource::LOCAL_VOICE_RECORD;
 	m_SoundboardPanelRestoreAfterDeleteConfirm = m_SoundboardPanelActive;
 	if(m_SoundboardPanelActive)
 		SetSoundboardPanelActive(false);
 	const bool WasActive = GameClient()->m_Menus.IsActive();
 	m_DeactivateMenusAfterDeleteConfirm = !WasActive;
-	GameClient()->m_Menus.OpenSoundboardDeletePopup();
+	GameClient()->m_Menus.OpenSoundboardDeletePopup(m_SoundboardDeleteIsLocal);
 	if(!WasActive)
 		GameClient()->m_Menus.SetActive(true);
 }
@@ -6740,6 +7161,7 @@ void CVoiceChat::ConfirmSoundboardDelete()
 	if(m_SoundboardDeleteConfirmIndex >= 0)
 		StartSoundboardItemDelete(m_SoundboardDeleteConfirmIndex);
 	m_SoundboardDeleteConfirmIndex = -1;
+	m_SoundboardDeleteIsLocal = false;
 	if(m_DeactivateMenusAfterDeleteConfirm)
 		GameClient()->m_Menus.SetActive(false);
 	m_DeactivateMenusAfterDeleteConfirm = false;
@@ -6753,6 +7175,7 @@ void CVoiceChat::ConfirmSoundboardDelete()
 void CVoiceChat::CancelSoundboardDelete()
 {
 	m_SoundboardDeleteConfirmIndex = -1;
+	m_SoundboardDeleteIsLocal = false;
 	if(m_DeactivateMenusAfterDeleteConfirm)
 		GameClient()->m_Menus.SetActive(false);
 	m_DeactivateMenusAfterDeleteConfirm = false;
@@ -6770,7 +7193,14 @@ void CVoiceChat::StartSoundboardItemDelete(int Index)
 	if(Index < 0 || Index >= (int)m_vSoundboardItems.size())
 		return;
 
-	const std::string &ItemId = m_vSoundboardItems[(size_t)Index].m_Id;
+	const SSoundboardItem &Item = m_vSoundboardItems[(size_t)Index];
+	if(Item.m_Source == ESoundboardItemSource::LOCAL_VOICE_RECORD)
+	{
+		DeleteLocalVoiceRecordItem(Index);
+		return;
+	}
+
+	const std::string &ItemId = Item.m_Id;
 	char aUrl[512];
 	str_copy(aUrl, g_Config.m_UcSoundboardApiBaseUrl, sizeof(aUrl));
 	str_append(aUrl, "/", sizeof(aUrl));

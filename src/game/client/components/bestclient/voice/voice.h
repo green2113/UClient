@@ -86,8 +86,14 @@ public:
 	void RequestSoundboardDeleteConfirm(int Index);
 	void ConfirmSoundboardDelete();
 	void CancelSoundboardDelete();
+	bool IsSoundboardDeleteLocal() const { return m_SoundboardDeleteIsLocal; }
 
 private:
+	enum class ESoundboardItemSource
+	{
+		REMOTE = 0,
+		LOCAL_VOICE_RECORD,
+	};
 	template<size_t Capacity>
 	class CFixedSampleRingBuffer
 	{
@@ -365,6 +371,7 @@ private:
 	std::vector<CButtonContainer> m_vSoundboardItemButtons;
 	std::vector<CButtonContainer> m_vSoundboardItemDeleteButtons;
 	int m_SoundboardDeleteConfirmIndex = -1;
+	bool m_SoundboardDeleteIsLocal = false;
 	std::shared_ptr<CHttpRequest> m_pSoundboardDeleteTask;
 	int m_SoundboardDeleteTaskIndex = -1;
 	CButtonContainer m_SoundboardDeleteConfirmBtn;
@@ -373,6 +380,7 @@ private:
 	// ---- Soundboard data ----
 	struct SSoundboardItem
 	{
+		ESoundboardItemSource m_Source = ESoundboardItemSource::REMOTE;
 		std::string m_Id;
 		std::string m_Title;
 		std::string m_Url;
@@ -380,6 +388,14 @@ private:
 		std::string m_OwnerName;
 		std::string m_Scope;
 		int m_DurationMs = 0;
+		char m_aLocalPath[IO_MAX_PATH_LENGTH] = "";
+	};
+	struct SVoiceRecordSession
+	{
+		int m_TargetClientId = -1;
+		bool m_Active = false;
+		bool m_WasTalking = false;
+		std::vector<int16_t> m_vPcm;
 	};
 	struct SSoundboardCachedAudio
 	{
@@ -417,6 +433,7 @@ private:
 		char m_aPathBuf[512] = {};
 	};
 	SSoundboardUploadState m_SoundboardUpload;
+	SVoiceRecordSession m_VoiceRecord;
 	CButtonContainer m_SoundboardUploadButton;
 	CButtonContainer m_SoundboardBrowseFileButton;
 	CButtonContainer m_SoundboardUploadRefreshButton;
@@ -492,6 +509,7 @@ private:
 	void ResetServerListTask();
 	void FetchSoundboardList();
 	void FinishSoundboardList();
+	void ReloadLocalVoiceRecordItems();
 	void StartSoundboardItemDownload(int Index);
 	void StartSoundboardItemDelete(int Index);
 	void TickSoundboardDelete();
@@ -503,6 +521,13 @@ private:
 	void StartSoundboardUpload();
 	void TickSoundboardUpload();
 	static bool TryDecodeWav(const uint8_t *pData, int DataSize, int NativeSampleRate, int NativeChannels, std::vector<int16_t> &vPcmOut);
+	void ArmVoiceRecord(int ClientId);
+	void CancelVoiceRecord(bool Notify);
+	void TickVoiceRecord();
+	void AppendVoiceRecordSamples(int ClientId, const int16_t *pSamples, size_t SampleCount);
+	void FinalizeVoiceRecord();
+	bool SaveVoiceRecordWav(const std::vector<int16_t> &vPcm, const char *pPlayerName, int ClientId, char *pOutTitle, int TitleSize);
+	void DeleteLocalVoiceRecordItem(int Index);
 	void StartServerListPings();
 	void CloseServerListPingSocket();
 	void LoadMutedNamesFromFile();
@@ -526,6 +551,8 @@ private:
 	static void ConToggleVoiceMicMute(IConsole::IResult *pResult, void *pUserData);
 	static void ConToggleVoiceHeadphonesMute(IConsole::IResult *pResult, void *pUserData);
 	static void ConToggleVoiceSoundboardPanel(IConsole::IResult *pResult, void *pUserData);
+	static void ConRecordVoice(IConsole::IResult *pResult, void *pUserData);
+	static void ConRecordVoiceStop(IConsole::IResult *pResult, void *pUserData);
 };
 
 #endif
