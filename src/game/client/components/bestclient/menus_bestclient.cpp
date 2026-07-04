@@ -105,6 +105,7 @@ static const SBestClientComponentEntry gs_aBestClientComponentEntries[] = {
 	{CBestClient::COMPONENT_GAMEPLAY_SPEEDRUN_TIMER, "Speedrun Timer", COMPONENTS_GROUP_GAMEPLAY},
 	{CBestClient::COMPONENT_GAMEPLAY_FINISH_PREDICTION, "Finish Prediction", COMPONENTS_GROUP_GAMEPLAY},
 	{CBestClient::COMPONENT_GAMEPLAY_AUTO_TEAM_LOCK, "Auto Team Lock", COMPONENTS_GROUP_GAMEPLAY},
+	{CBestClient::COMPONENT_GAMEPLAY_AUTO_LOGIN, "Auto Login", COMPONENTS_GROUP_GAMEPLAY},
 	{CBestClient::COMPONENT_GAMEPLAY_GORES_MODE, "Gores Mode", COMPONENTS_GROUP_GAMEPLAY},
 	{CBestClient::COMPONENT_VISUALS_OPTIMIZER, "Optimizer", COMPONENTS_GROUP_GAMEPLAY},
 	{CBestClient::COMPONENT_VISUALS_FOCUS_MODE, "Focus Mode", COMPONENTS_GROUP_GAMEPLAY},
@@ -2624,6 +2625,45 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClFocusModeHideChat, BCLocalize("Hide Chat"), &g_Config.m_ClFocusModeHideChat, &Expand, LineSize);
 				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClFocusModeHideScoreboard, BCLocalize("Hide Scoreboard"), &g_Config.m_ClFocusModeHideScoreboard, &Expand, LineSize);
 				DoLine_KeyReader(Expand, s_FocusModeBindReader, s_FocusModeBindClear, BCLocalize("Focus mode bind"), "toggle p_focus_mode 0 1");
+			}
+		}
+
+		if(!GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_AUTO_LOGIN))
+		{
+			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+			static float s_AutoLoginPhase = 0.0f;
+			const bool AutoLoginExpanded = g_Config.m_UcAutoLoginJapan != 0;
+			UpdateRevealPhase(s_AutoLoginPhase, AutoLoginExpanded);
+
+			const float CodeBoxHeight = LineSize;
+			const float ExpandedTargetHeight = MarginSmall + CodeBoxHeight;
+			const float ContentHeight = LineSize + MarginSmall + LineSize + ExpandedTargetHeight * s_AutoLoginPhase;
+			CUIRect Content, Label, Visible, Row;
+			BeginBlock(Column, ContentHeight, Content);
+
+			Content.HSplitTop(LineSize, &Label, &Content);
+			Ui()->DoLabel(&Label, BCLocalize("Auto Login"), HeadlineFontSize, TEXTALIGN_ML);
+			Content.HSplitTop(MarginSmall, nullptr, &Content);
+
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcAutoLoginJapan, "Auto login to Japan server", &g_Config.m_UcAutoLoginJapan, &Content, LineSize);
+
+			const float CurHeight = ExpandedTargetHeight * s_AutoLoginPhase;
+			if(CurHeight > 0.0f)
+			{
+				Content.HSplitTop(CurHeight, &Visible, &Content);
+				Ui()->ClipEnable(&Visible);
+				struct SScopedClip
+				{
+					CUi *m_pUi;
+					~SScopedClip() { m_pUi->ClipDisable(); }
+				} ClipGuard{Ui()};
+
+				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
+				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
+				Expand.HSplitTop(CodeBoxHeight, &Row, &Expand);
+				static CLineInput s_AutoLoginJapanCode(g_Config.m_UcAutoLoginJapanCode, sizeof(g_Config.m_UcAutoLoginJapanCode));
+				s_AutoLoginJapanCode.SetEmptyText("Enter Japan server login code");
+				Ui()->DoClearableEditBox(&s_AutoLoginJapanCode, &Row, 14.0f);
 			}
 		}
 

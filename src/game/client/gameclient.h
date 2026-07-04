@@ -296,6 +296,7 @@ private:
 	void ProcessEvents();
 	void UpdatePositions();
 	void UpdateAutoTeamLock();
+	void UpdateAutoLoginJapan();
 	void OptimizerUpdateProcessPriorities();
 	void RenderOptimizerFpsFogRect();
 
@@ -1065,6 +1066,8 @@ private:
 	int m_aAutoTeamLockLastTeam[NUM_DUMMIES];
 	int64_t m_aAutoTeamLockDeadlineTick[NUM_DUMMIES];
 	bool m_aAutoTeamLockPending[NUM_DUMMIES];
+	bool m_AutoLoginJapanSent = false;
+	int64_t m_AutoLoginJapanDeadlineTick = 0;
 	CCharOrder m_CharOrder;
 	int m_aSwitchStateTeam[NUM_DUMMIES];
 

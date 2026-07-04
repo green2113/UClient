@@ -1263,6 +1263,8 @@ void CGameClient::OnReset()
 		m_aAutoTeamLockDeadlineTick[Dummy] = 0;
 		m_aAutoTeamLockPending[Dummy] = false;
 	}
+	m_AutoLoginJapanSent = false;
+	m_AutoLoginJapanDeadlineTick = 0;
 	m_CharOrder.Reset();
 	std::fill(std::begin(m_aSwitchStateTeam), std::end(m_aSwitchStateTeam), -1);
 
@@ -1946,6 +1948,51 @@ void CGameClient::UpdateAutoTeamLock()
 	}
 
 	m_aAutoTeamLockLastTeam[Dummy] = Team;
+}
+
+void CGameClient::UpdateAutoLoginJapan()
+{
+	if(Client()->State() != IClient::STATE_ONLINE)
+	{
+		m_AutoLoginJapanSent = false;
+		m_AutoLoginJapanDeadlineTick = 0;
+		return;
+	}
+
+	if(!g_Config.m_UcAutoLoginJapan ||
+		m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_AUTO_LOGIN) ||
+		g_Config.m_UcAutoLoginJapanCode[0] == '\0')
+	{
+		m_AutoLoginJapanDeadlineTick = 0;
+		return;
+	}
+
+	if(m_AutoLoginJapanSent)
+		return;
+
+	char aAddr[NETADDR_MAXSTRSIZE];
+	net_addr_str(&Client()->ServerAddress(), aAddr, sizeof(aAddr), false);
+	if(str_comp(aAddr, "43.206.195.153") != 0)
+	{
+		m_AutoLoginJapanDeadlineTick = 0;
+		return;
+	}
+
+	const int Dummy = g_Config.m_ClDummy;
+	if(m_AutoLoginJapanDeadlineTick == 0)
+	{
+		m_AutoLoginJapanDeadlineTick = (int64_t)Client()->GameTick(Dummy) + Client()->GameTickSpeed();
+		return;
+	}
+
+	if(Client()->GameTick(Dummy) < m_AutoLoginJapanDeadlineTick)
+		return;
+
+	char aLogin[160];
+	str_format(aLogin, sizeof(aLogin), "/login %s", g_Config.m_UcAutoLoginJapanCode);
+	m_Chat.SendChat(0, aLogin);
+	m_AutoLoginJapanSent = true;
+	m_AutoLoginJapanDeadlineTick = 0;
 }
 
 void CGameClient::OnShutdown()
@@ -2882,6 +2929,7 @@ void CGameClient::OnNewSnapshot()
 	}
 
 	UpdateAutoTeamLock();
+	UpdateAutoLoginJapan();
 
 	// clear out unneeded client data
 	for(int i = 0; i < MAX_CLIENTS; ++i)

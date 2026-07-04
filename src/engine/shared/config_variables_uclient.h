@@ -33,3 +33,7 @@ MACRO_CONFIG_STR(UcSoundboardUploadUrl, uc_soundboard_upload_url, 256, "https://
 MACRO_CONFIG_INT(UcSoundboardMaxUploadBytes, uc_soundboard_max_upload_bytes, 5242880, 0, 33554432, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum upload size for personal soundboard files")
 MACRO_CONFIG_INT(UcSoundboardMaxUploadSeconds, uc_soundboard_max_upload_seconds, 10, 1, 120, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum upload length in seconds for personal soundboard files")
 MACRO_CONFIG_INT(UcVoiceTeamIncludeOwn, uc_voice_team_include_own, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "When uc_voice_team is active, also include your current team audio (0/1)")
+
+// Auto login (Japan server)
+MACRO_CONFIG_INT(UcAutoLoginJapan, uc_auto_login_japan, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Automatically send /login on the Japan server")
+MACRO_CONFIG_STR(UcAutoLoginJapanCode, uc_auto_login_japan_code, 128, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Login code sent as /login on the Japan server")
