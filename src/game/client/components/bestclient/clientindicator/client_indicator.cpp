@@ -1383,13 +1383,17 @@ void CClientIndicator::ApplyUcPeerList(const UClientPresence::CPeerList &PeerLis
 	if(!UcPeerAppliesToCurrentServer(aNormalizedServer))
 		return;
 
+	// PEER_LIST is an authoritative snapshot for this game server.
 	auto &Peers = m_UcPeersByServer[aNormalizedServer];
+	Peers.clear();
 	for(const UClientPresence::CPeerListEntry &Entry : PeerList.m_vPeers)
 	{
 		if(Entry.m_ClientId < 0)
 			continue;
 		Peers[Entry.m_ClientId] = SUcPeerInfo{Entry.m_PlayerName};
 	}
+	if(Peers.empty())
+		m_UcPeersByServer.erase(aNormalizedServer);
 	InvalidateUcPeerLookupCache();
 	DebugLogF("uc peer list server=%s count=%llu", aNormalizedServer, (unsigned long long)PeerList.m_vPeers.size());
 }

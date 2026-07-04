@@ -5,7 +5,7 @@
 
 class CGameClient;
 
-// Ctrl+Tab in chat: cycle through player names sorted by distance from the camera.
+// Ctrl+Tab in chat: cycle through player names sorted by distance (all DDRace teams).
 class CUClientChatNearbyTab
 {
 public:

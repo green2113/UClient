@@ -532,31 +532,45 @@ fn handle_udp_packet(
             let was_new = previous.is_none();
             if let Some(entry) = state.upsert_entry(&packet, from, now, &key) {
                 if packet.packet_type == PACKET_JOIN || was_new {
+                    // Tell the joiner about every UC peer already on this game server,
+                    // and tell those peers about the joiner.
                     append_join_notifications(state, &entry, from, &key, &mut outcome.outbound);
-                } else if let Some(prev) = previous {
-                    if prev.server_address == entry.server_address {
-                        if prev.client_id != entry.client_id {
-                            append_peer_remove_for_entry(
-                                state,
-                                &prev.server_address,
-                                prev.client_id,
-                                &prev.player_name,
-                                Some(&key),
-                                &mut outcome.outbound,
-                            );
-                            append_peer_state_notifications(
-                                state,
-                                &entry,
-                                Some(&key),
-                                &mut outcome.outbound,
-                            );
-                        } else if prev.player_name != entry.player_name {
-                            append_peer_state_notifications(
-                                state,
-                                &entry,
-                                Some(&key),
-                                &mut outcome.outbound,
-                            );
+                } else {
+                    // Heartbeat refresh: PEER_LIST can be lost over UDP, so resend the
+                    // current UC peer snapshot to this client on every heartbeat.
+                    append_peer_list_to(
+                        state,
+                        &entry.server_address,
+                        Some(&key),
+                        from,
+                        &mut outcome.outbound,
+                    );
+
+                    if let Some(prev) = previous {
+                        if prev.server_address == entry.server_address {
+                            if prev.client_id != entry.client_id {
+                                append_peer_remove_for_entry(
+                                    state,
+                                    &prev.server_address,
+                                    prev.client_id,
+                                    &prev.player_name,
+                                    Some(&key),
+                                    &mut outcome.outbound,
+                                );
+                                append_peer_state_notifications(
+                                    state,
+                                    &entry,
+                                    Some(&key),
+                                    &mut outcome.outbound,
+                                );
+                            } else if prev.player_name != entry.player_name {
+                                append_peer_state_notifications(
+                                    state,
+                                    &entry,
+                                    Some(&key),
+                                    &mut outcome.outbound,
+                                );
+                            }
                         }
                     }
                 }
@@ -568,6 +582,21 @@ fn handle_udp_packet(
     outcome
 }
 
+fn append_peer_list_to(
+    state: &ServerState,
+    server_address: &str,
+    except: Option<&SessionKey>,
+    to_addr: SocketAddr,
+    outbound: &mut Vec<(SocketAddr, Vec<u8>)>,
+) {
+    let peers = state.peers_on_server(server_address, except);
+    let mut list_entries = Vec::with_capacity(peers.len());
+    for peer in &peers {
+        list_entries.push((peer.client_id, peer.player_name.clone()));
+    }
+    outbound.push((to_addr, encode_peer_list(server_address, &list_entries)));
+}
+
 fn append_join_notifications(
     state: &ServerState,
     entry: &PresenceEntry,
@@ -576,13 +605,26 @@ fn append_join_notifications(
     outbound: &mut Vec<(SocketAddr, Vec<u8>)>,
 ) {
     let peers = state.peers_on_server(&entry.server_address, Some(joiner_key));
+
+    // Always send the current peer snapshot to the joiner (may be empty).
+    // Also send individual PEER_STATE packets so a lost PEER_LIST still leaves partial info.
+    let mut list_entries = Vec::with_capacity(peers.len());
+    for peer in &peers {
+        list_entries.push((peer.client_id, peer.player_name.clone()));
+        outbound.push((
+            joiner_addr,
+            encode_peer_state(&entry.server_address, &peer.player_name, peer.client_id),
+        ));
+    }
+    outbound.push((
+        joiner_addr,
+        encode_peer_list(&entry.server_address, &list_entries),
+    ));
+
+    // Tell everyone already on the server about the joiner.
     if !peers.is_empty() {
-        let mut list_entries = Vec::with_capacity(peers.len());
-        for peer in &peers {
-            list_entries.push((peer.client_id, peer.player_name.clone()));
-        }
-        outbound.push((joiner_addr, encode_peer_list(&entry.server_address, &list_entries)));
-        let join_packet = encode_peer_state(&entry.server_address, &entry.player_name, entry.client_id);
+        let join_packet =
+            encode_peer_state(&entry.server_address, &entry.player_name, entry.client_id);
         for peer in peers {
             outbound.push((peer.return_addr, join_packet.clone()));
         }

@@ -756,6 +756,19 @@ bool CUClientChatPasteImage::OnRenderEditor(CChat *pChat)
 	pChat->Graphics()->MapScreen(0.0f, 0.0f, WindowSize.x, WindowSize.y);
 	RenderImageEditor(pChat);
 
+	// Render the color picker popup on top of the editor in UI space.
+	if(pChat->Ui()->IsPopupOpen())
+	{
+		pChat->Ui()->StartCheck();
+		pChat->Ui()->Update();
+		pChat->Ui()->MapScreen();
+		pChat->Ui()->RenderPopupMenus();
+		pChat->Ui()->FinishCheck();
+		pChat->Ui()->ClearHotkeys();
+		// Draw the cursor above the popup so it is never hidden behind it.
+		pChat->RenderTools()->RenderCursor(pChat->Ui()->MousePos(), 24.0f);
+	}
+
 	const float Height = 300.0f;
 	const float Width = Height * pChat->Graphics()->ScreenAspect();
 	pChat->Graphics()->MapScreen(0.0f, 0.0f, Width, Height);
@@ -773,6 +786,14 @@ bool CUClientChatPasteImage::TrySendOnEnter(CChat *pChat, const char *pMessagePr
 bool CUClientChatPasteImage::OnInput(CChat *pChat, const IInput::CEvent &Event)
 {
 	const bool ChatInputActive = pChat->m_Mode != CChat::MODE_NONE;
+
+	// While the color picker popup is open let the CUi input system handle
+	// everything (hex field, ESC to close, mouse) instead of the editor.
+	if(m_ImageEditor.m_Active && pChat->Ui()->IsPopupOpen())
+	{
+		pChat->Ui()->OnInput(Event);
+		return true;
+	}
 
 	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_ESCAPE && m_ImageEditor.m_Active)
 	{
@@ -1214,6 +1235,7 @@ void CUClientChatPasteImage::CloseImageEditor()
 
 void CUClientChatPasteImage::CancelImageEditor(CChat *pChat)
 {
+	pChat->Ui()->ClosePopupMenu(&m_PenColorPickerContext);
 	m_ImageEditor.m_vStrokes = m_ImageEditor.m_vStrokeSnapshot;
 	m_ImageEditor.m_CropRect = m_ImageEditor.m_CropSnapshot;
 	m_ImageEditor.m_vStrokeSnapshot.clear();
@@ -1222,6 +1244,7 @@ void CUClientChatPasteImage::CancelImageEditor(CChat *pChat)
 
 void CUClientChatPasteImage::SaveImageEditorChanges(CChat *pChat)
 {
+	pChat->Ui()->ClosePopupMenu(&m_PenColorPickerContext);
 	if(!m_ImageEditor.m_Active)
 		return;
 	if(!m_PendingUploadImage.HasImage() || m_PendingUploadImage.m_vOriginalPng.empty())
@@ -1416,6 +1439,18 @@ void CUClientChatPasteImage::UpdateImageEditorInput(CChat *pChat)
 	if(!m_ImageEditor.m_Active || !m_PendingUploadImage.HasImage())
 		return;
 
+	// Keep the active pen color in sync with the persistent color picker value.
+	m_ImageEditor.m_PenColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcChatImagePenColor, false));
+
+	// While the color picker popup is open the CUi input system owns the mouse,
+	// so skip the editor's manual hit-testing to avoid drawing behind the popup.
+	if(pChat->Ui()->IsPopupOpen())
+	{
+		m_ImageEditor.m_IsDrawing = false;
+		m_ImageEditor.m_MouseDownLastFrame = pChat->Input()->KeyIsPressed(KEY_MOUSE_1);
+		return;
+	}
+
 	const float ScreenW = maximum(1.0f, (float)pChat->Graphics()->WindowWidth());
 	const float ScreenH = maximum(1.0f, (float)pChat->Graphics()->WindowHeight());
 	const vec2 WindowSize(ScreenW, ScreenH);
@@ -1424,15 +1459,6 @@ void CUClientChatPasteImage::UpdateImageEditorInput(CChat *pChat)
 	const bool MouseDown = pChat->Input()->KeyIsPressed(KEY_MOUSE_1);
 	const bool MouseClicked = MouseDown && !m_ImageEditor.m_MouseDownLastFrame;
 	const bool MouseReleased = !MouseDown && m_ImageEditor.m_MouseDownLastFrame;
-
-	const ColorRGBA aPalette[6] = {
-		ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f),
-		ColorRGBA(0.12f, 0.12f, 0.12f, 1.0f),
-		ColorRGBA(0.96f, 0.31f, 0.27f, 1.0f),
-		ColorRGBA(0.23f, 0.74f, 0.36f, 1.0f),
-		ColorRGBA(0.21f, 0.56f, 0.94f, 1.0f),
-		ColorRGBA(0.99f, 0.81f, 0.20f, 1.0f),
-	};
 
 	auto InRect = [&](const CUClientChatPasteImage::SRenderRect &Rect) {
 		return MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
@@ -1492,10 +1518,30 @@ void CUClientChatPasteImage::UpdateImageEditorInput(CChat *pChat)
 		return;
 	}
 
-	for(size_t i = 0; i < std::size(m_aImageEditorColorRects); ++i)
+	if(m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
 	{
-		if(MouseClicked && InRect(m_aImageEditorColorRects[i]) && m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
-			m_ImageEditor.m_PenColor = aPalette[i];
+		if(MouseClicked && InRect(m_ImageEditorColorSwatchRect))
+			m_ImageEditorColorSwatchPressed = true;
+
+		// Open on release so the click that opens the popup is not immediately
+		// interpreted as an "outside click" that closes it again.
+		if(MouseReleased && m_ImageEditorColorSwatchPressed && InRect(m_ImageEditorColorSwatchRect))
+		{
+			const float UiW = pChat->Ui()->Screen()->w;
+			const float UiH = pChat->Ui()->Screen()->h;
+			const float PopupX = (m_ImageEditorColorSwatchRect.m_X + m_ImageEditorColorSwatchRect.m_W + 8.0f) * UiW / ScreenW;
+			const float PopupY = m_ImageEditorColorSwatchRect.m_Y * UiH / ScreenH;
+
+			m_PenColorPickerContext.m_pHslaColor = &g_Config.m_UcChatImagePenColor;
+			m_PenColorPickerContext.m_HslaColor = ColorHSLA(g_Config.m_UcChatImagePenColor, false);
+			m_PenColorPickerContext.m_HsvaColor = color_cast<ColorHSVA>(m_PenColorPickerContext.m_HslaColor);
+			m_PenColorPickerContext.m_RgbaColor = color_cast<ColorRGBA>(m_PenColorPickerContext.m_HsvaColor);
+			m_PenColorPickerContext.m_Alpha = false;
+			pChat->Ui()->ShowPopupColorPicker(PopupX, PopupY, &m_PenColorPickerContext);
+		}
+
+		if(MouseReleased)
+			m_ImageEditorColorSwatchPressed = false;
 	}
 
 	if(MouseClicked && InRect(m_ImageEditorThicknessMinusRect) && m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
@@ -1636,15 +1682,6 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 	const vec2 UiMousePos = pChat->Ui()->UpdatedMousePos() * vec2(pChat->Ui()->Screen()->w, pChat->Ui()->Screen()->h) / WindowSize;
 	const vec2 MousePos(UiMousePos.x * ScreenW / pChat->Ui()->Screen()->w, UiMousePos.y * ScreenH / pChat->Ui()->Screen()->h);
 
-	const ColorRGBA aPalette[6] = {
-		ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f),
-		ColorRGBA(0.12f, 0.12f, 0.12f, 1.0f),
-		ColorRGBA(0.96f, 0.31f, 0.27f, 1.0f),
-		ColorRGBA(0.23f, 0.74f, 0.36f, 1.0f),
-		ColorRGBA(0.21f, 0.56f, 0.94f, 1.0f),
-		ColorRGBA(0.99f, 0.81f, 0.20f, 1.0f),
-	};
-
 	auto InRect = [&](const CUClientChatPasteImage::SRenderRect &Rect) {
 		return MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
 			MousePos.y >= Rect.m_Y && MousePos.y <= Rect.m_Y + Rect.m_H;
@@ -1667,11 +1704,9 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 	m_ImageEditorSaveButtonRect = {WindowX + WindowW - 118.0f, WindowY + ToolbarPad, 100.0f, ButtonH};
 
 	const float ColorStartX = m_ImageEditorClearButtonRect.m_X + m_ImageEditorClearButtonRect.m_W + 20.0f;
+	const float ColorLabelW = 40.0f;
 	const float ColorSize = 28.0f;
-	for(size_t i = 0; i < std::size(m_aImageEditorColorRects); ++i)
-	{
-		m_aImageEditorColorRects[i] = {ColorStartX + (float)i * (ColorSize + 8.0f), WindowY + 16.0f, ColorSize, ColorSize};
-	}
+	m_ImageEditorColorSwatchRect = {ColorStartX + ColorLabelW, WindowY + 16.0f, ColorSize, ColorSize};
 
 	m_ImageEditorThicknessMinusRect = {ColorStartX, WindowY + 54.0f, 26.0f, 14.0f};
 	m_ImageEditorThicknessRect = {m_ImageEditorThicknessMinusRect.m_X + 32.0f, WindowY + 54.0f, 156.0f, 14.0f};
@@ -1754,17 +1789,16 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 
 	if(m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
 	{
-		for(size_t i = 0; i < std::size(m_aImageEditorColorRects); ++i)
-		{
-			const CUClientChatPasteImage::SRenderRect &Rect = m_aImageEditorColorRects[i];
-			const bool Selected =
-				absolute(m_ImageEditor.m_PenColor.r - aPalette[i].r) < 0.001f &&
-				absolute(m_ImageEditor.m_PenColor.g - aPalette[i].g) < 0.001f &&
-				absolute(m_ImageEditor.m_PenColor.b - aPalette[i].b) < 0.001f;
-			const float Border = Selected ? 2.0f : 1.0f;
-			pChat->Graphics()->DrawRect(Rect.m_X - Border, Rect.m_Y - Border, Rect.m_W + Border * 2.0f, Rect.m_H + Border * 2.0f, ColorRGBA(0.96f, 0.98f, 1.0f, Selected ? 0.95f : 0.35f), IGraphics::CORNER_ALL, 3.0f);
-			pChat->Graphics()->DrawRect(Rect.m_X, Rect.m_Y, Rect.m_W, Rect.m_H, aPalette[i], IGraphics::CORNER_ALL, 3.0f);
-		}
+		Cursor.SetPosition(vec2(ColorStartX, m_ImageEditorColorSwatchRect.m_Y + (ColorSize - 12.0f) * 0.5f));
+		Cursor.m_FontSize = 12.0f;
+		pChat->TextRender()->TextColor(0.89f, 0.92f, 0.97f, 0.95f);
+		pChat->TextRender()->TextEx(&Cursor, "Color");
+
+		const CUClientChatPasteImage::SRenderRect &SwatchRect = m_ImageEditorColorSwatchRect;
+		const bool SwatchHovered = InRect(SwatchRect);
+		const float SwatchBorder = SwatchHovered ? 2.0f : 1.0f;
+		pChat->Graphics()->DrawRect(SwatchRect.m_X - SwatchBorder, SwatchRect.m_Y - SwatchBorder, SwatchRect.m_W + SwatchBorder * 2.0f, SwatchRect.m_H + SwatchBorder * 2.0f, ColorRGBA(0.96f, 0.98f, 1.0f, SwatchHovered ? 0.95f : 0.45f), IGraphics::CORNER_ALL, 3.0f);
+		pChat->Graphics()->DrawRect(SwatchRect.m_X, SwatchRect.m_Y, SwatchRect.m_W, SwatchRect.m_H, m_ImageEditor.m_PenColor, IGraphics::CORNER_ALL, 3.0f);
 
 		pChat->Graphics()->DrawRect(m_ImageEditorThicknessMinusRect.m_X, m_ImageEditorThicknessMinusRect.m_Y, m_ImageEditorThicknessMinusRect.m_W, m_ImageEditorThicknessMinusRect.m_H, ColorRGBA(0.17f, 0.20f, 0.27f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
 		pChat->Graphics()->DrawRect(m_ImageEditorThicknessPlusRect.m_X, m_ImageEditorThicknessPlusRect.m_Y, m_ImageEditorThicknessPlusRect.m_W, m_ImageEditorThicknessPlusRect.m_H, ColorRGBA(0.17f, 0.20f, 0.27f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
@@ -1846,7 +1880,9 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 		MousePos.y >= WindowY && MousePos.y <= WindowY + WindowH;
 	const bool MouseInsideCanvas = InRect(m_ImageEditorCanvasRect);
 
-	if(MouseInsideEditor)
+	// While the color picker popup is open the standard UI cursor is drawn on top
+	// of the popup instead, so skip the editor's custom brush cursor here.
+	if(MouseInsideEditor && !pChat->Ui()->IsPopupOpen())
 	{
 		if(m_ImageEditor.m_CurrentTool == EImageEditorTool::CROP)
 		{

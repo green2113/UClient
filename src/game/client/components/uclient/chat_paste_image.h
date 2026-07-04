@@ -4,6 +4,8 @@
 #include <engine/graphics.h>
 #include <engine/input.h>
 
+#include <game/client/ui.h>
+
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -180,7 +182,9 @@ private:
 	std::array<SRenderRect, 4> m_aImageEditorAspectRects;
 	SRenderRect m_ImageEditorCropResetRect;
 	SRenderRect m_ImageEditorCropApplyRect;
-	std::array<SRenderRect, 6> m_aImageEditorColorRects;
+	SRenderRect m_ImageEditorColorSwatchRect;
+	bool m_ImageEditorColorSwatchPressed = false;
+	CUi::SColorPickerPopupContext m_PenColorPickerContext;
 	SRenderRect m_ImageEditorCanvasRect;
 	SRenderRect m_ImageEditorThicknessRect;
 	SRenderRect m_ImageEditorThicknessMinusRect;
