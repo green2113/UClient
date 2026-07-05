@@ -249,6 +249,12 @@ void CClientIndicator::OnInit()
 
 void CClientIndicator::OnReset()
 {
+	if(!GameClient())
+	{
+		ResetPresenceState();
+		return;
+	}
+
 	const int ClientState = Client()->State();
 	const bool MapReload = ClientState == IClient::STATE_ONLINE || ClientState == IClient::STATE_LOADING;
 
@@ -270,6 +276,8 @@ void CClientIndicator::OnReset()
 
 void CClientIndicator::OnMapLoad()
 {
+	if(!GameClient() || Client()->State() == IClient::STATE_OFFLINE)
+		return;
 	NotifyUcPresenceMapReload();
 }
 
