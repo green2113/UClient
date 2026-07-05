@@ -993,7 +993,7 @@ void ApplyTranslateLanguage(char *pConfig, size_t ConfigSize, int Index, const S
 
 void CChat::OpenTranslateSettingsPopup(const CUIRect &ButtonRect)
 {
-	Ui()->DoPopupMenu(&m_TranslateSettingsPopupId, ButtonRect.x, ButtonRect.y, 300.0f, 255.0f, this, PopupTranslateSettings);
+	Ui()->DoPopupMenu(&m_TranslateSettingsPopupId, ButtonRect.x, ButtonRect.y, 300.0f, 283.0f, this, PopupTranslateSettings);
 }
 
 CUi::EPopupMenuFunctionResult CChat::PopupTranslateSettings(void *pContext, CUIRect View, bool Active)
@@ -1075,6 +1075,11 @@ CUi::EPopupMenuFunctionResult CChat::PopupTranslateSettings(void *pContext, CUIR
 	pChat->Ui()->DoClearableEditBox(&s_IncomingIgnoreLanguagesInput, &IgnoreEditBox, 14.0f);
 	pChat->GameClient()->m_Tooltips.DoToolTip(&s_IncomingIgnoreLanguagesInput, &IgnoreEditBox, Localize("Semicolon-separated source languages to skip for auto-translation, for example: ru; en; zh"));
 
+	View.HSplitTop(Spacing, nullptr, &View);
+	static CButtonContainer s_TranslateKeyReader;
+	static CButtonContainer s_TranslateKeyClear;
+	pChat->GameClient()->m_Menus.DoLine_KeyReader(View, s_TranslateKeyReader, s_TranslateKeyClear, Localize("Toggle translate"), "toggle_translate");
+
 	return CUi::POPUP_KEEP_OPEN;
 }
 
@@ -1090,8 +1095,10 @@ void CChat::RenderTranslateSettingsButton(const CUIRect &ButtonRect)
 	const bool Hovered = MousePos.x >= ButtonRect.x && MousePos.x <= ButtonRect.x + ButtonRect.w &&
 		MousePos.y >= ButtonRect.y && MousePos.y <= ButtonRect.y + ButtonRect.h;
 	const bool IsOpen = Ui()->IsPopupOpen(&m_TranslateSettingsPopupId);
+	const bool IsTranslateActive = g_Config.m_TcTranslateAutoIncoming || g_Config.m_TcTranslateAutoOutgoing;
 	const ColorRGBA ButtonColor = IsOpen ? ColorRGBA(0.35f, 0.45f, 0.70f, 0.90f) :
-		(Hovered ? ColorRGBA(0.28f, 0.28f, 0.28f, 0.90f) : ColorRGBA(0.16f, 0.16f, 0.16f, 0.82f));
+		(IsTranslateActive ? (Hovered ? ColorRGBA(0.22f, 0.58f, 0.22f, 0.92f) : ColorRGBA(0.15f, 0.48f, 0.15f, 0.85f)) :
+		(Hovered ? ColorRGBA(0.28f, 0.28f, 0.28f, 0.90f) : ColorRGBA(0.16f, 0.16f, 0.16f, 0.82f)));
 	const float ButtonRounding = maximum(3.0f, ButtonRect.h * 0.28f);
 
 	ButtonRect.Draw(ButtonColor, IGraphics::CORNER_ALL, ButtonRounding);
