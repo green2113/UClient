@@ -22,6 +22,7 @@
 static constexpr const char *DEFAULT_UPDATE_LATEST_URL = "https://ddnet.under1111.com/api/uclient/update/latest";
 static constexpr const char *UPDATE_ARCHIVE_PATH = "update/uclient-release.zip";
 static constexpr const char *UPDATE_SCRIPT_PATH = "update/apply_uclient_update.ps1";
+static constexpr const char *UPDATE_HELPER_EXEC = "bestclient-updater.exe";
 
 static const char *CurrentPlatformKey()
 {
@@ -608,6 +609,37 @@ bool CUpdater::WriteApplyScript(char *pScriptPath, int ScriptPathSize, char *pIn
 	return true;
 }
 
+#if defined(CONF_FAMILY_WINDOWS)
+static bool ResolveUpdatePaths(IStorage *pStorage, const char *pArchiveStoragePath, char *pArchivePath, int ArchivePathSize, char *pInstallDir, int InstallDirSize, char *pExePath, int ExePathSize)
+{
+	pStorage->GetBinaryPath(pArchiveStoragePath, pArchivePath, ArchivePathSize);
+	if(!pStorage->FileExists(pArchivePath, IStorage::TYPE_ABSOLUTE))
+		return false;
+
+	pStorage->GetBinaryPathAbsolute(PLAT_CLIENT_EXEC, pExePath, ExePathSize);
+	str_copy(pInstallDir, pExePath, InstallDirSize);
+	StripFilename(pInstallDir);
+	return true;
+}
+
+static bool LaunchNativeUpdater(IStorage *pStorage, const char *pPid, const char *pArchivePath, const char *pInstallDir, const char *pExePath)
+{
+	char aUpdaterPath[IO_MAX_PATH_LENGTH];
+	pStorage->GetBinaryPathAbsolute(UPDATE_HELPER_EXEC, aUpdaterPath, sizeof(aUpdaterPath));
+	if(!pStorage->FileExists(aUpdaterPath, IStorage::TYPE_ABSOLUTE))
+		return false;
+
+	const char *apArguments[] = {
+		pPid,
+		pArchivePath,
+		pInstallDir,
+		pExePath,
+	};
+
+	return process_execute(aUpdaterPath, EShellExecuteWindowState::FOREGROUND, apArguments, std::size(apArguments)) != INVALID_PROCESS;
+}
+#endif
+
 bool CUpdater::LaunchApplyScriptAndQuit()
 {
 #if defined(CONF_FAMILY_WINDOWS)
@@ -617,11 +649,17 @@ bool CUpdater::LaunchApplyScriptAndQuit()
 	char aExePath[IO_MAX_PATH_LENGTH];
 	char aPid[32];
 
-	m_pStorage->GetBinaryPath(m_aArchivePath, aArchivePath, sizeof(aArchivePath));
-	if(!m_pStorage->FileExists(aArchivePath, IStorage::TYPE_ABSOLUTE))
+	if(!ResolveUpdatePaths(m_pStorage, m_aArchivePath, aArchivePath, sizeof(aArchivePath), aInstallDir, sizeof(aInstallDir), aExePath, sizeof(aExePath)))
 	{
 		SetStatus("Downloaded archive missing");
 		return false;
+	}
+
+	str_format(aPid, sizeof(aPid), "%d", process_id());
+	if(LaunchNativeUpdater(m_pStorage, aPid, aArchivePath, aInstallDir, aExePath))
+	{
+		m_pClient->Quit();
+		return true;
 	}
 
 	if(!WriteApplyScript(aScriptPath, sizeof(aScriptPath), aInstallDir, sizeof(aInstallDir), aExePath, sizeof(aExePath)))
@@ -630,7 +668,6 @@ bool CUpdater::LaunchApplyScriptAndQuit()
 		return false;
 	}
 
-	str_format(aPid, sizeof(aPid), "%d", process_id());
 	const char *apArguments[] = {
 		"-NoProfile",
 		"-NonInteractive",
