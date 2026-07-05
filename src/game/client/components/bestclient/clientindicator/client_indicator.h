@@ -120,6 +120,7 @@ private:
 	void ApplyUcPeerList(const UClientPresence::CPeerList &PeerList);
 	void ClearUcPeersForServer(const char *pNormalizedServer);
 	bool UcPeerAppliesToCurrentServer(const char *pServerAddress) const;
+	void PruneStaleUcPeers();
 	void SyncLocalRegistrations(bool Force = false);
 	void SendPresencePacket(int ClientId, int PacketType);
 	void SendUcPresenceUdpPacket(int ClientId, int PacketType, const char *pFromServer = nullptr);

@@ -1375,6 +1375,46 @@ void CClientIndicator::ApplyUcPeerRemove(const UClientPresence::CPeerState &Stat
 	DebugLogF("uc peer remove client_id=%d name='%s' server=%s", State.m_ClientId, State.m_PlayerName.c_str(), aNormalizedServer);
 }
 
+void CClientIndicator::PruneStaleUcPeers()
+{
+	if(Client()->State() != IClient::STATE_ONLINE)
+		return;
+
+	char aCurrentServerAddress[NETADDR_MAXSTRSIZE];
+	net_addr_str(&Client()->ServerAddress(), aCurrentServerAddress, sizeof(aCurrentServerAddress), true);
+	if(aCurrentServerAddress[0] == '\0')
+		return;
+
+	char aNormalizedServer[NETADDR_MAXSTRSIZE];
+	if(!NormalizePresenceServerAddress(aCurrentServerAddress, aNormalizedServer, sizeof(aNormalizedServer)))
+		return;
+
+	auto ItServer = m_UcPeersByServer.find(aNormalizedServer);
+	if(ItServer == m_UcPeersByServer.end())
+		return;
+
+	auto &Peers = ItServer->second;
+	for(auto It = Peers.begin(); It != Peers.end();)
+	{
+		const int ClientId = It->first;
+		const char *pCurrentName = PlayerNameForClient(ClientId);
+		if(pCurrentName[0] != '\0' && str_comp(pCurrentName, It->second.m_PlayerName.c_str()) != 0)
+		{
+			DebugLogF("uc peer prune stale client_id=%d cached='%s' current='%s' server=%s",
+				ClientId, It->second.m_PlayerName.c_str(), pCurrentName, aNormalizedServer);
+			It = Peers.erase(It);
+		}
+		else
+		{
+			++It;
+		}
+	}
+
+	if(Peers.empty())
+		m_UcPeersByServer.erase(ItServer);
+	InvalidateUcPeerLookupCache();
+}
+
 void CClientIndicator::ApplyUcPeerList(const UClientPresence::CPeerList &PeerList)
 {
 	char aNormalizedServer[NETADDR_MAXSTRSIZE];
@@ -1702,6 +1742,9 @@ void CClientIndicator::UpdatePresence()
 	if(BcPresence || UcPresence)
 		ProcessIncomingPackets(false);
 
+	if(UcPresence)
+		PruneStaleUcPeers();
+
 	const int64_t Now = time_get();
 	if(m_LastHeartbeatTick == 0 || Now - m_LastHeartbeatTick > time_freq() * 5)
 	{
@@ -1858,8 +1901,18 @@ bool CClientIndicator::IsPlayerUClient(int ClientId) const
 		}
 	}
 
-	if(pPeers && ClientId >= 0 && pPeers->find(ClientId) != pPeers->end())
-		return true;
+	if(pPeers && ClientId >= 0)
+	{
+		const auto ItPeer = pPeers->find(ClientId);
+		if(ItPeer != pPeers->end() && str_comp(ItPeer->second.m_PlayerName.c_str(), pPlayerName) == 0)
+			return true;
+	}
+
+	// When live UDP peer data exists, trust only client_id + name matches above.
+	// Name-only HTTP/browser fallbacks are too stale-prone on busy servers.
+	const bool HasLiveUdpPeers = pPeers && !pPeers->empty();
+	if(HasLiveUdpPeers)
+		return false;
 
 	const std::unordered_set<std::string> *pNames = m_pUcPresenceLookupNames;
 	if(str_comp(m_aUcPresenceLookupServer, aNormalizedServer) != 0)
