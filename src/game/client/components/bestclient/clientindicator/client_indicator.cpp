@@ -249,12 +249,67 @@ void CClientIndicator::OnInit()
 
 void CClientIndicator::OnReset()
 {
+	const int ClientState = Client()->State();
+	const bool MapReload = ClientState == IClient::STATE_ONLINE || ClientState == IClient::STATE_LOADING;
+
+	if(MapReload && (IsUcPresenceUdpEnabled() || g_Config.m_BcClientIndicator))
+	{
+		ResetPresenceStateForMapReload();
+		return;
+	}
+
 	ResetPresenceState();
 	ResetTokenState();
 	ResetUcPresenceTask();
 	m_UcPresenceByServer.clear();
 	m_UcPeersByServer.clear();
 	m_LastUcPresenceRefreshTick = 0;
+	InvalidateUcPresenceLookupCache();
+	InvalidateUcPeerLookupCache();
+}
+
+void CClientIndicator::OnMapLoad()
+{
+	NotifyUcPresenceMapReload();
+}
+
+void CClientIndicator::NotifyUcPresenceMapReload()
+{
+	if(!IsUcPresenceUdpEnabled())
+		return;
+
+	EnsurePresenceSocket();
+
+	const bool HadJoinedSlots = std::any_of(m_aUcLocalSlots.begin(), m_aUcLocalSlots.end(), [](const BestClientIndicatorClient::SUcLocalSlotState &Slot) {
+		return Slot.m_Joined && Slot.m_LastClientId >= 0;
+	});
+	if(HadJoinedSlots)
+	{
+		SendUcLeaveForAllLocalClients();
+		DebugLog("uc presence map reload: sent leave for previous client ids");
+	}
+
+	char aNormalizedServer[NETADDR_MAXSTRSIZE];
+	const char *pServer = m_aLastKnownPresenceServerAddr[0] != '\0' ? m_aLastKnownPresenceServerAddr : EffectivePresenceServerAddress();
+	if(pServer[0] != '\0' && NormalizePresenceServerAddress(pServer, aNormalizedServer, sizeof(aNormalizedServer)))
+		ClearUcPeersForServer(aNormalizedServer);
+
+	m_UcPresenceMapReloadPending = true;
+	m_LastHeartbeatTick = 0;
+}
+
+void CClientIndicator::ResetPresenceStateForMapReload()
+{
+	SendUcLeaveForAllLocalClients();
+
+	m_aUcLocalSlots = {};
+	m_RegisteredClientIds.clear();
+	m_DeveloperClientIds.clear();
+	m_ClientVersions.clear();
+	m_PresenceCache.Replace({});
+	m_LastHeartbeatTick = 0;
+	m_LastRegistrationSyncTick = 0;
+	m_UcPresenceMapReloadPending = true;
 	InvalidateUcPresenceLookupCache();
 	InvalidateUcPeerLookupCache();
 }
@@ -1745,6 +1800,26 @@ void CClientIndicator::UpdatePresence()
 	if(UcPresence)
 		PruneStaleUcPeers();
 
+	if(m_UcPresenceMapReloadPending && UcPresence)
+	{
+		bool HasLocalClientId = false;
+		for(const int LocalId : GameClient()->m_aLocalIds)
+		{
+			if(LocalId >= 0 && LocalId < MAX_CLIENTS)
+			{
+				HasLocalClientId = true;
+				break;
+			}
+		}
+		if(HasLocalClientId)
+		{
+			UpdateUcPresenceForLocalClients();
+			m_UcPresenceMapReloadPending = false;
+			m_LastHeartbeatTick = time_get();
+			DebugLog("uc presence map reload: re-joined with new client ids");
+		}
+	}
+
 	const int64_t Now = time_get();
 	if(m_LastHeartbeatTick == 0 || Now - m_LastHeartbeatTick > time_freq() * 5)
 	{
@@ -2028,6 +2103,7 @@ void CClientIndicator::ResetPresenceState()
 	m_NextPresenceBrowserRefreshTick = 0;
 	m_WasPresenceEnabled = false;
 	m_WasUcPresenceActive = false;
+	m_UcPresenceMapReloadPending = false;
 	m_RegisteredClientIds.clear();
 	m_aUcLocalSlots = {};
 	m_DeveloperClientIds.clear();

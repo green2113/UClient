@@ -29,6 +29,7 @@
 #include <game/client/components/censor.h>
 #include <game/client/components/scoreboard.h>
 #include <game/client/components/uclient/chat_nearby_tab.h>
+#include <game/client/components/uclient/uclient.h>
 #include <game/client/components/skins.h>
 #include <game/client/components/sounds.h>
 #include <game/client/components/tclient/colored_parts.h>
@@ -6920,6 +6921,8 @@ void CChat::SendChat(int Team, const char *pLine)
 		return;
 	if(GameClient()->m_FastPractice.ConsumePracticeChatCommand(Team, pLine))
 		return;
+	if(GameClient()->m_UClient.ChatDoSkin(pLine))
+		return;
 	if(GameClient()->m_VoiceChat.TryHandleChatCommand(pLine))
 		return;
 
@@ -6982,6 +6985,8 @@ void CChat::SendChatQueued(const char *pLine)
 
 	const int Team = m_Mode == MODE_ALL ? 0 : 1;
 	AddHistoryEntry(Team, pLine);
+	if(GameClient()->m_UClient.ChatDoSkin(pLine))
+		return;
 	if(GameClient()->m_VoiceChat.TryHandleChatCommand(pLine))
 		return;
 	if(GameClient()->m_Translate.TryTranslateOutgoingChat(Team, pLine))

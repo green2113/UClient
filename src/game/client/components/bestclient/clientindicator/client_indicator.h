@@ -34,6 +34,7 @@ public:
 	CClientIndicator();
 	int Sizeof() const override { return sizeof(*this); }
 	void OnInit() override;
+	void OnMapLoad() override;
 	void OnReset() override;
 	void OnUpdate() override;
 	void OnStateChange(int NewState, int OldState) override;
@@ -67,6 +68,7 @@ private:
 	char m_aPreviousPresenceServerForSwitch[NETADDR_MAXSTRSIZE] = "";
 	bool m_WasPresenceEnabled = false;
 	bool m_WasUcPresenceActive = false;
+	bool m_UcPresenceMapReloadPending = false;
 	ESubsystemRuntimeState m_RuntimeState = ESubsystemRuntimeState::DISABLED;
 	int64_t m_LastHeartbeatTick = 0;
 	int64_t m_LastHttpHeartbeatTick = 0;
@@ -147,6 +149,8 @@ private:
 	void FinishTokenRefresh();
 	void ResetTokenTask();
 	void ResetPresenceState();
+	void ResetPresenceStateForMapReload();
+	void NotifyUcPresenceMapReload();
 	void ResetTokenState();
 	void ClearBrowserSnapshot();
 	void ApplyBrowserSnapshot();
