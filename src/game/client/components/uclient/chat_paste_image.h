@@ -174,8 +174,23 @@ private:
 	static constexpr float HISTORY_SWATCH_GAP = 6.0f;
 
 	void PushPenColorToHistory(unsigned HslaColor);
+	void InvalidateEyedropperBaseCache();
+	bool EnsureEyedropperBaseCache(CChat *pChat);
+	bool SampleEyedropperBasePixel(const vec2 &CanvasPoint, ColorRGBA &OutColor) const;
 	bool TryPickColorAtCanvas(CChat *pChat, const vec2 &CanvasPoint, ColorRGBA &OutColor);
 	float ImageEditorToolbarHeight() const;
+
+	struct SEyedropperBaseCache
+	{
+		std::vector<ColorRGBA> m_vPixels;
+		int m_W = 0;
+		int m_H = 0;
+		bool m_Valid = false;
+	};
+
+	SEyedropperBaseCache m_EyedropperBaseCache;
+	ColorRGBA m_EyedropperPreviewColor = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
+	bool m_EyedropperPreviewValid = false;
 
 	SPendingUploadImage m_PendingUploadImage;
 	IInput::SClipboardImage m_WarningPendingClipboardImage;

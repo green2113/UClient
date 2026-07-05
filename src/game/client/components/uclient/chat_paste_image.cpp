@@ -253,6 +253,54 @@ void CUClientChatPasteImage::PushPenColorToHistory(unsigned HslaColor)
 	m_aPenColorHistory[0] = HslaColor;
 }
 
+void CUClientChatPasteImage::InvalidateEyedropperBaseCache()
+{
+	m_EyedropperBaseCache.m_Valid = false;
+	m_EyedropperBaseCache.m_vPixels.clear();
+	m_EyedropperBaseCache.m_W = 0;
+	m_EyedropperBaseCache.m_H = 0;
+}
+
+bool CUClientChatPasteImage::EnsureEyedropperBaseCache(CChat *pChat)
+{
+	if(m_EyedropperBaseCache.m_Valid)
+		return true;
+	if(m_PendingUploadImage.m_vOriginalPng.empty())
+		return false;
+
+	CImageInfo BaseImage;
+	if(!pChat->Graphics()->LoadPng(BaseImage, m_PendingUploadImage.m_vOriginalPng.data(), m_PendingUploadImage.m_vOriginalPng.size(), "chat-paste-eyedropper-cache"))
+		return false;
+
+	const int ImgW = maximum(1, (int)BaseImage.m_Width);
+	const int ImgH = maximum(1, (int)BaseImage.m_Height);
+	m_EyedropperBaseCache.m_vPixels.resize((size_t)ImgW * ImgH);
+	for(int Py = 0; Py < ImgH; ++Py)
+	{
+		for(int Px = 0; Px < ImgW; ++Px)
+			m_EyedropperBaseCache.m_vPixels[(size_t)Py * ImgW + Px] = BaseImage.PixelColor(Px, Py);
+	}
+	m_EyedropperBaseCache.m_W = ImgW;
+	m_EyedropperBaseCache.m_H = ImgH;
+	m_EyedropperBaseCache.m_Valid = true;
+	BaseImage.Free();
+	return true;
+}
+
+bool CUClientChatPasteImage::SampleEyedropperBasePixel(const vec2 &CanvasPoint, ColorRGBA &OutColor) const
+{
+	if(!m_EyedropperBaseCache.m_Valid || m_EyedropperBaseCache.m_vPixels.empty())
+		return false;
+
+	const vec2 Norm = CanvasToImageNorm(CanvasPoint);
+	const int ImgW = m_EyedropperBaseCache.m_W;
+	const int ImgH = m_EyedropperBaseCache.m_H;
+	const int Px = std::clamp((int)roundf(Norm.x * (float)(ImgW - 1)), 0, ImgW - 1);
+	const int Py = std::clamp((int)roundf(Norm.y * (float)(ImgH - 1)), 0, ImgH - 1);
+	OutColor = m_EyedropperBaseCache.m_vPixels[(size_t)Py * ImgW + Px];
+	return true;
+}
+
 bool CUClientChatPasteImage::TryPickColorAtCanvas(CChat *pChat, const vec2 &CanvasPoint, ColorRGBA &OutColor)
 {
 	if(!m_PendingUploadImage.HasImage() || m_PendingUploadImage.m_vOriginalPng.empty())
@@ -304,18 +352,10 @@ bool CUClientChatPasteImage::TryPickColorAtCanvas(CChat *pChat, const vec2 &Canv
 	if(StrokeHitsPoint(m_ImageEditor.m_CurrentStroke))
 		return true;
 
-	CImageInfo BaseImage;
-	if(!pChat->Graphics()->LoadPng(BaseImage, m_PendingUploadImage.m_vOriginalPng.data(), m_PendingUploadImage.m_vOriginalPng.size(), "chat-paste-eyedropper"))
+	if(!EnsureEyedropperBaseCache(pChat))
 		return false;
 
-	const vec2 Norm = CanvasToImageNorm(CanvasPoint);
-	const int ImgW = maximum(1, (int)BaseImage.m_Width);
-	const int ImgH = maximum(1, (int)BaseImage.m_Height);
-	const int Px = std::clamp((int)roundf(Norm.x * (float)(ImgW - 1)), 0, ImgW - 1);
-	const int Py = std::clamp((int)roundf(Norm.y * (float)(ImgH - 1)), 0, ImgH - 1);
-	OutColor = BaseImage.PixelColor(Px, Py);
-	BaseImage.Free();
-	return true;
+	return SampleEyedropperBasePixel(CanvasPoint, OutColor);
 }
 
 void CUClientChatPasteImage::ClampCropRect(SImageCropRect &Crop, int ImgW, int ImgH, ECropAspectPreset Aspect, ECropHandle ActiveHandle) const
@@ -748,6 +788,7 @@ bool CUClientChatPasteImage::ApplyImageCrop(CChat *pChat)
 	m_PendingUploadImage.m_Height = CropH;
 	m_PendingUploadImage.m_vOriginalPng.assign(Writer.Data(), Writer.Data() + Writer.Size());
 	m_PendingUploadImage.m_vPng = m_PendingUploadImage.m_vOriginalPng;
+	InvalidateEyedropperBaseCache();
 
 	const float ScreenW = maximum(1.0f, (float)pChat->Graphics()->WindowWidth());
 	const float ScreenH = maximum(1.0f, (float)pChat->Graphics()->WindowHeight());
@@ -993,6 +1034,8 @@ void CUClientChatPasteImage::ClearPendingUploadImage(CChat *pChat)
 	m_ImageEditor.m_CropDragging = false;
 	m_ImageEditor.m_CropActiveHandle = ECropHandle::NONE;
 	ResetCropRectToFull();
+	InvalidateEyedropperBaseCache();
+	m_EyedropperPreviewValid = false;
 }
 
 bool CUClientChatPasteImage::SetPendingUploadImage(CChat *pChat, const IInput::SClipboardImage &Image)
@@ -1325,6 +1368,8 @@ void CUClientChatPasteImage::OpenImageEditor(CChat *pChat)
 	if(!m_PendingUploadImage.HasImage())
 		return;
 
+	InvalidateEyedropperBaseCache();
+	m_EyedropperPreviewValid = false;
 	m_ImageEditor.m_vStrokeSnapshot = m_ImageEditor.m_vStrokes;
 	m_ImageEditor.m_CropSnapshot = m_ImageEditor.m_CropRect;
 	m_ImageEditor.m_Active = true;
@@ -1346,6 +1391,8 @@ void CUClientChatPasteImage::CloseImageEditor()
 	m_ImageEditor.m_CropDragging = false;
 	m_ImageEditor.m_CropActiveHandle = ECropHandle::NONE;
 	m_ImageEditor.m_EyedropperActive = false;
+	InvalidateEyedropperBaseCache();
+	m_EyedropperPreviewValid = false;
 }
 
 void CUClientChatPasteImage::CancelImageEditor(CChat *pChat)
@@ -1693,6 +1740,10 @@ void CUClientChatPasteImage::UpdateImageEditorInput(CChat *pChat)
 	const bool MouseOverCanvas = InRect(m_ImageEditorCanvasRect);
 	const SRenderRect CropSelectionCanvas = CropRectToCanvasRect(m_ImageEditor.m_CropRect);
 
+	m_EyedropperPreviewValid = false;
+	if(m_ImageEditor.m_EyedropperActive && MouseOverCanvas && m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
+		m_EyedropperPreviewValid = TryPickColorAtCanvas(pChat, MousePos, m_EyedropperPreviewColor);
+
 	if(m_ImageEditor.m_EyedropperActive && MouseClicked && MouseOverCanvas && m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
 	{
 		ColorRGBA PickedColor;
@@ -1995,7 +2046,8 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 
 	if(m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
 	{
-		DrawColorSwatch(m_ImageEditorColorSwatchRect, m_ImageEditor.m_PenColor, InRect(m_ImageEditorColorSwatchRect));
+		const ColorRGBA DisplayPenColor = m_ImageEditor.m_EyedropperActive && m_EyedropperPreviewValid ? m_EyedropperPreviewColor : m_ImageEditor.m_PenColor;
+		DrawColorSwatch(m_ImageEditorColorSwatchRect, DisplayPenColor, InRect(m_ImageEditorColorSwatchRect));
 
 		const bool EyedropperActive = m_ImageEditor.m_EyedropperActive;
 		const bool EyedropperHovered = InRect(m_ImageEditorEyedropperButtonRect);
@@ -2159,11 +2211,20 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 			pChat->Graphics()->DrawRect(MousePos.x - 1.0f, MousePos.y - CrosshairRadius, 2.0f, CrosshairRadius * 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
 			pChat->Graphics()->DrawRect(MousePos.x - CrosshairRadius + 1.0f, MousePos.y - 0.5f, CrosshairRadius * 2.0f - 2.0f, 1.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
 			pChat->Graphics()->DrawRect(MousePos.x - 0.5f, MousePos.y - CrosshairRadius + 1.0f, 1.0f, CrosshairRadius * 2.0f - 2.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
-			if(MouseInsideCanvas)
+			if(MouseInsideCanvas && m_EyedropperPreviewValid)
 			{
-				const float SampleRadius = 6.0f;
-				pChat->Graphics()->DrawRect(MousePos.x - SampleRadius, MousePos.y - SampleRadius, SampleRadius * 2.0f, SampleRadius * 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.80f), IGraphics::CORNER_ALL, SampleRadius);
-				pChat->Graphics()->DrawRect(MousePos.x - SampleRadius + 1.0f, MousePos.y - SampleRadius + 1.0f, SampleRadius * 2.0f - 2.0f, SampleRadius * 2.0f - 2.0f, m_ImageEditor.m_PenColor, IGraphics::CORNER_ALL, SampleRadius - 1.0f);
+				const ColorRGBA PreviewColor = m_EyedropperPreviewColor;
+				const float SampleRadius = 8.0f;
+				const float PreviewOffset = CrosshairRadius + SampleRadius + 6.0f;
+				const float PreviewX = MousePos.x + PreviewOffset;
+				const float PreviewY = MousePos.y - SampleRadius;
+
+				pChat->Graphics()->DrawRect(PreviewX - SampleRadius, PreviewY - SampleRadius, SampleRadius * 2.0f, SampleRadius * 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.88f), IGraphics::CORNER_ALL, SampleRadius);
+				pChat->Graphics()->DrawRect(PreviewX - SampleRadius + 1.0f, PreviewY - SampleRadius + 1.0f, SampleRadius * 2.0f - 2.0f, SampleRadius * 2.0f - 2.0f, PreviewColor, IGraphics::CORNER_ALL, SampleRadius - 1.0f);
+
+				const float CursorSampleRadius = 5.0f;
+				pChat->Graphics()->DrawRect(MousePos.x - CursorSampleRadius, MousePos.y - CursorSampleRadius, CursorSampleRadius * 2.0f, CursorSampleRadius * 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.80f), IGraphics::CORNER_ALL, CursorSampleRadius);
+				pChat->Graphics()->DrawRect(MousePos.x - CursorSampleRadius + 1.0f, MousePos.y - CursorSampleRadius + 1.0f, CursorSampleRadius * 2.0f - 2.0f, CursorSampleRadius * 2.0f - 2.0f, PreviewColor, IGraphics::CORNER_ALL, CursorSampleRadius - 1.0f);
 			}
 		}
 		else
