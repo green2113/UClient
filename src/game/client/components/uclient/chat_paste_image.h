@@ -116,6 +116,7 @@ class CUClientChatPasteImage
 		ECropHandle m_CropActiveHandle = ECropHandle::NONE;
 		vec2 m_CropDragAnchor = vec2(0.0f, 0.0f);
 		SImageCropRect m_CropDragStartRect;
+		bool m_EyedropperActive = false;
 	};
 
 public:
@@ -166,6 +167,14 @@ private:
 	void ResetCropRectToFull();
 	void UpdateCropDrag(const vec2 &MousePos, int ImgW, int ImgH);
 	void RenderCropOverlay(CChat *pChat, const SRenderRect &SelectionCanvas, const vec2 &MousePos) const;
+	static constexpr int PEN_COLOR_HISTORY_MAX = 5;
+	static constexpr float TOOL_BUTTON_SIZE = 40.0f;
+	static constexpr float COLOR_SWATCH_SIZE = 26.0f;
+	static constexpr float HISTORY_SWATCH_SIZE = 22.0f;
+	static constexpr float HISTORY_SWATCH_GAP = 6.0f;
+
+	void PushPenColorToHistory(unsigned HslaColor);
+	bool TryPickColorAtCanvas(CChat *pChat, const vec2 &CanvasPoint, ColorRGBA &OutColor);
 	float ImageEditorToolbarHeight() const;
 
 	SPendingUploadImage m_PendingUploadImage;
@@ -183,7 +192,11 @@ private:
 	SRenderRect m_ImageEditorCropResetRect;
 	SRenderRect m_ImageEditorCropApplyRect;
 	SRenderRect m_ImageEditorColorSwatchRect;
+	SRenderRect m_ImageEditorEyedropperButtonRect;
 	bool m_ImageEditorColorSwatchPressed = false;
+	std::array<SRenderRect, PEN_COLOR_HISTORY_MAX> m_aImageEditorColorHistoryRects;
+	std::array<unsigned, PEN_COLOR_HISTORY_MAX> m_aPenColorHistory{};
+	int m_PenColorHistoryCount = 0;
 	CUi::SColorPickerPopupContext m_PenColorPickerContext;
 	SRenderRect m_ImageEditorCanvasRect;
 	SRenderRect m_ImageEditorThicknessRect;

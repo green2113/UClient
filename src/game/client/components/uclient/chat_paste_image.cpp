@@ -1,7 +1,9 @@
 #include "chat_paste_image.h"
 
+#include <base/math.h>
 #include <base/system.h>
 
+#include <engine/font_icons.h>
 #include <engine/gfx/image_loader.h>
 #include <engine/graphics.h>
 #include <engine/keys.h>
@@ -18,6 +20,25 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+
+static constexpr int PEN_THICKNESS_MIN = 1;
+static constexpr int PEN_THICKNESS_MAX = 14;
+
+static int SnapPenThickness(float Value)
+{
+	return std::clamp(round_to_int(Value), PEN_THICKNESS_MIN, PEN_THICKNESS_MAX);
+}
+
+static int PenThicknessFromSliderT(float T)
+{
+	const float ClampedT = std::clamp(T, 0.0f, 1.0f);
+	return SnapPenThickness((float)PEN_THICKNESS_MIN + ClampedT * (float)(PEN_THICKNESS_MAX - PEN_THICKNESS_MIN));
+}
+
+static float PenThicknessSliderT(int Thickness)
+{
+	return (float)(SnapPenThickness((float)Thickness) - PEN_THICKNESS_MIN) / (float)(PEN_THICKNESS_MAX - PEN_THICKNESS_MIN);
+}
 
 static void UnloadPendingUploadTextures(IGraphics *pGraphics, IGraphics::CTextureHandle &Texture, IGraphics::CTextureHandle &OriginalTexture)
 {
@@ -201,7 +222,100 @@ float CUClientChatPasteImage::CropAspectRatio(ECropAspectPreset Preset) const
 
 float CUClientChatPasteImage::ImageEditorToolbarHeight() const
 {
-	return m_ImageEditor.m_CurrentTool == EImageEditorTool::CROP ? 128.0f : 88.0f;
+	return m_ImageEditor.m_CurrentTool == EImageEditorTool::CROP ? 136.0f : 100.0f;
+}
+
+void CUClientChatPasteImage::PushPenColorToHistory(unsigned HslaColor)
+{
+	for(int i = 0; i < m_PenColorHistoryCount; ++i)
+	{
+		if(m_aPenColorHistory[i] == HslaColor)
+		{
+			for(int j = i; j < m_PenColorHistoryCount - 1; ++j)
+				m_aPenColorHistory[j] = m_aPenColorHistory[j + 1];
+			--m_PenColorHistoryCount;
+			break;
+		}
+	}
+
+	if(m_PenColorHistoryCount >= PEN_COLOR_HISTORY_MAX)
+	{
+		for(int i = PEN_COLOR_HISTORY_MAX - 1; i > 0; --i)
+			m_aPenColorHistory[i] = m_aPenColorHistory[i - 1];
+	}
+	else
+	{
+		for(int i = m_PenColorHistoryCount; i > 0; --i)
+			m_aPenColorHistory[i] = m_aPenColorHistory[i - 1];
+		++m_PenColorHistoryCount;
+	}
+
+	m_aPenColorHistory[0] = HslaColor;
+}
+
+bool CUClientChatPasteImage::TryPickColorAtCanvas(CChat *pChat, const vec2 &CanvasPoint, ColorRGBA &OutColor)
+{
+	if(!m_PendingUploadImage.HasImage() || m_PendingUploadImage.m_vOriginalPng.empty())
+		return false;
+
+	auto StrokeHitsPoint = [&](const SImageEditorStroke &Stroke) -> bool {
+		if(Stroke.m_Tool != EImageEditorTool::PEN || Stroke.m_vPoints.empty())
+			return false;
+
+		const float HitRadius = maximum(6.0f, Stroke.m_Thickness * 1.1f);
+		const float RadiusSq = HitRadius * HitRadius;
+		for(size_t i = 0; i < Stroke.m_vPoints.size(); ++i)
+		{
+			const vec2 Point = Stroke.m_vPoints[i];
+			const vec2 Delta = Point - CanvasPoint;
+			if(Delta.x * Delta.x + Delta.y * Delta.y <= RadiusSq)
+			{
+				OutColor = Stroke.m_Color;
+				return true;
+			}
+
+			if(i == 0)
+				continue;
+
+			const vec2 Prev = Stroke.m_vPoints[i - 1];
+			const vec2 Seg = Point - Prev;
+			const float SegLenSq = Seg.x * Seg.x + Seg.y * Seg.y;
+			if(SegLenSq <= 0.001f)
+				continue;
+
+			const float T = std::clamp(((CanvasPoint.x - Prev.x) * Seg.x + (CanvasPoint.y - Prev.y) * Seg.y) / SegLenSq, 0.0f, 1.0f);
+			const vec2 Closest = Prev + Seg * T;
+			const vec2 ClosestDelta = Closest - CanvasPoint;
+			if(ClosestDelta.x * ClosestDelta.x + ClosestDelta.y * ClosestDelta.y <= RadiusSq)
+			{
+				OutColor = Stroke.m_Color;
+				return true;
+			}
+		}
+		return false;
+	};
+
+	for(auto It = m_ImageEditor.m_vStrokes.rbegin(); It != m_ImageEditor.m_vStrokes.rend(); ++It)
+	{
+		if(StrokeHitsPoint(*It))
+			return true;
+	}
+
+	if(StrokeHitsPoint(m_ImageEditor.m_CurrentStroke))
+		return true;
+
+	CImageInfo BaseImage;
+	if(!pChat->Graphics()->LoadPng(BaseImage, m_PendingUploadImage.m_vOriginalPng.data(), m_PendingUploadImage.m_vOriginalPng.size(), "chat-paste-eyedropper"))
+		return false;
+
+	const vec2 Norm = CanvasToImageNorm(CanvasPoint);
+	const int ImgW = maximum(1, (int)BaseImage.m_Width);
+	const int ImgH = maximum(1, (int)BaseImage.m_Height);
+	const int Px = std::clamp((int)roundf(Norm.x * (float)(ImgW - 1)), 0, ImgW - 1);
+	const int Py = std::clamp((int)roundf(Norm.y * (float)(ImgH - 1)), 0, ImgH - 1);
+	OutColor = BaseImage.PixelColor(Px, Py);
+	BaseImage.Free();
+	return true;
 }
 
 void CUClientChatPasteImage::ClampCropRect(SImageCropRect &Crop, int ImgW, int ImgH, ECropAspectPreset Aspect, ECropHandle ActiveHandle) const
@@ -1216,7 +1330,7 @@ void CUClientChatPasteImage::OpenImageEditor(CChat *pChat)
 	m_ImageEditor.m_Active = true;
 	m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
 	m_ImageEditor.m_CurrentTool = CUClientChatPasteImage::EImageEditorTool::PEN;
-	m_ImageEditor.m_PenThickness = maximum(1.0f, m_ImageEditor.m_PenThickness);
+	m_ImageEditor.m_PenThickness = (float)SnapPenThickness(m_ImageEditor.m_PenThickness);
 	m_ImageEditor.m_IsDrawing = false;
 	m_ImageEditor.m_MouseDownLastFrame = false;
 	m_ImageEditor.m_CropDragging = false;
@@ -1231,6 +1345,7 @@ void CUClientChatPasteImage::CloseImageEditor()
 	m_ImageEditor.m_MouseDownLastFrame = false;
 	m_ImageEditor.m_CropDragging = false;
 	m_ImageEditor.m_CropActiveHandle = ECropHandle::NONE;
+	m_ImageEditor.m_EyedropperActive = false;
 }
 
 void CUClientChatPasteImage::CancelImageEditor(CChat *pChat)
@@ -1466,14 +1581,21 @@ void CUClientChatPasteImage::UpdateImageEditorInput(CChat *pChat)
 	};
 
 	if(MouseClicked && InRect(m_ImageEditorPenButtonRect))
+	{
 		m_ImageEditor.m_CurrentTool = CUClientChatPasteImage::EImageEditorTool::PEN;
+		m_ImageEditor.m_EyedropperActive = false;
+	}
 
 	if(MouseClicked && InRect(m_ImageEditorEraserButtonRect))
+	{
 		m_ImageEditor.m_CurrentTool = CUClientChatPasteImage::EImageEditorTool::ERASER;
+		m_ImageEditor.m_EyedropperActive = false;
+	}
 
 	if(MouseClicked && InRect(m_ImageEditorCropButtonRect))
 	{
 		m_ImageEditor.m_CurrentTool = CUClientChatPasteImage::EImageEditorTool::CROP;
+		m_ImageEditor.m_EyedropperActive = false;
 		m_ImageEditor.m_IsDrawing = false;
 		m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
 	}
@@ -1542,22 +1664,47 @@ void CUClientChatPasteImage::UpdateImageEditorInput(CChat *pChat)
 
 		if(MouseReleased)
 			m_ImageEditorColorSwatchPressed = false;
+
+		if(MouseClicked && InRect(m_ImageEditorEyedropperButtonRect))
+			m_ImageEditor.m_EyedropperActive = !m_ImageEditor.m_EyedropperActive;
+
+		for(int i = 0; i < m_PenColorHistoryCount; ++i)
+		{
+			if(MouseClicked && InRect(m_aImageEditorColorHistoryRects[i]))
+			{
+				g_Config.m_UcChatImagePenColor = m_aPenColorHistory[i];
+				m_ImageEditor.m_PenColor = color_cast<ColorRGBA>(ColorHSLA(m_aPenColorHistory[i], false));
+			}
+		}
 	}
 
 	if(MouseClicked && InRect(m_ImageEditorThicknessMinusRect) && m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
-		m_ImageEditor.m_PenThickness = maximum(1.0f, m_ImageEditor.m_PenThickness - 1.0f);
+		m_ImageEditor.m_PenThickness = (float)maximum(PEN_THICKNESS_MIN, SnapPenThickness(m_ImageEditor.m_PenThickness) - 1);
 
 	if(MouseClicked && InRect(m_ImageEditorThicknessPlusRect) && m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
-		m_ImageEditor.m_PenThickness = minimum(14.0f, m_ImageEditor.m_PenThickness + 1.0f);
+		m_ImageEditor.m_PenThickness = (float)minimum(PEN_THICKNESS_MAX, SnapPenThickness(m_ImageEditor.m_PenThickness) + 1);
 
 	if(MouseDown && InRect(m_ImageEditorThicknessRect) && m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
 	{
-		const float T = std::clamp((MousePos.x - m_ImageEditorThicknessRect.m_X) / maximum(1.0f, m_ImageEditorThicknessRect.m_W), 0.0f, 1.0f);
-		m_ImageEditor.m_PenThickness = 1.0f + T * 13.0f;
+		const float T = (MousePos.x - m_ImageEditorThicknessRect.m_X) / maximum(1.0f, m_ImageEditorThicknessRect.m_W);
+		m_ImageEditor.m_PenThickness = (float)PenThicknessFromSliderT(T);
 	}
 
 	const bool MouseOverCanvas = InRect(m_ImageEditorCanvasRect);
 	const SRenderRect CropSelectionCanvas = CropRectToCanvasRect(m_ImageEditor.m_CropRect);
+
+	if(m_ImageEditor.m_EyedropperActive && MouseClicked && MouseOverCanvas && m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
+	{
+		ColorRGBA PickedColor;
+		if(TryPickColorAtCanvas(pChat, MousePos, PickedColor))
+		{
+			m_ImageEditor.m_PenColor = PickedColor;
+			g_Config.m_UcChatImagePenColor = color_cast<ColorHSLA>(PickedColor).Pack(false);
+		}
+		m_ImageEditor.m_EyedropperActive = false;
+		m_ImageEditor.m_MouseDownLastFrame = MouseDown;
+		return;
+	}
 
 	if(m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::CROP)
 	{
@@ -1600,7 +1747,7 @@ void CUClientChatPasteImage::UpdateImageEditorInput(CChat *pChat)
 			m_ImageEditor.m_CropActiveHandle = ECropHandle::NONE;
 		}
 	}
-	else if(m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::PEN)
+	else if(m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::PEN && !m_ImageEditor.m_EyedropperActive)
 	{
 		if(MouseDown && MouseOverCanvas)
 		{
@@ -1627,7 +1774,10 @@ void CUClientChatPasteImage::UpdateImageEditorInput(CChat *pChat)
 		else if(m_ImageEditor.m_IsDrawing && (MouseReleased || !MouseDown))
 		{
 			if(m_ImageEditor.m_CurrentStroke.m_vPoints.size() > 1)
+			{
 				m_ImageEditor.m_vStrokes.push_back(m_ImageEditor.m_CurrentStroke);
+				PushPenColorToHistory(color_cast<ColorHSLA>(m_ImageEditor.m_CurrentStroke.m_Color).Pack(false));
+			}
 
 			m_ImageEditor.m_CurrentStroke.m_vPoints.clear();
 			m_ImageEditor.m_IsDrawing = false;
@@ -1693,26 +1843,55 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 	const float WindowW = ScreenW - WindowMargin * 2.0f;
 	const float WindowH = ScreenH - WindowMargin * 2.0f;
 	const float ToolbarH = ImageEditorToolbarHeight();
-	const float ToolbarPad = 16.0f;
-	const float ButtonH = 56.0f;
 
-	m_ImageEditorPenButtonRect = {WindowX + 18.0f, WindowY + ToolbarPad, 84.0f, ButtonH};
-	m_ImageEditorEraserButtonRect = {m_ImageEditorPenButtonRect.m_X + m_ImageEditorPenButtonRect.m_W + 8.0f, WindowY + ToolbarPad, 96.0f, ButtonH};
-	m_ImageEditorCropButtonRect = {m_ImageEditorEraserButtonRect.m_X + m_ImageEditorEraserButtonRect.m_W + 8.0f, WindowY + ToolbarPad, 84.0f, ButtonH};
-	m_ImageEditorClearButtonRect = {m_ImageEditorCropButtonRect.m_X + m_ImageEditorCropButtonRect.m_W + 8.0f, WindowY + ToolbarPad, 84.0f, ButtonH};
-	m_ImageEditorCancelButtonRect = {WindowX + WindowW - 226.0f, WindowY + ToolbarPad, 96.0f, ButtonH};
-	m_ImageEditorSaveButtonRect = {WindowX + WindowW - 118.0f, WindowY + ToolbarPad, 100.0f, ButtonH};
+	const float ToolRowY = WindowY + 34.0f;
+	const float ToolGap = 6.0f;
+	float ToolX = WindowX + 18.0f;
+	m_ImageEditorPenButtonRect = {ToolX, ToolRowY, TOOL_BUTTON_SIZE, TOOL_BUTTON_SIZE};
+	ToolX += TOOL_BUTTON_SIZE + ToolGap;
+	m_ImageEditorEraserButtonRect = {ToolX, ToolRowY, TOOL_BUTTON_SIZE, TOOL_BUTTON_SIZE};
+	ToolX += TOOL_BUTTON_SIZE + ToolGap;
+	m_ImageEditorCropButtonRect = {ToolX, ToolRowY, TOOL_BUTTON_SIZE, TOOL_BUTTON_SIZE};
+	ToolX += TOOL_BUTTON_SIZE + ToolGap;
+	m_ImageEditorClearButtonRect = {ToolX, ToolRowY, TOOL_BUTTON_SIZE, TOOL_BUTTON_SIZE};
 
-	const float ColorStartX = m_ImageEditorClearButtonRect.m_X + m_ImageEditorClearButtonRect.m_W + 20.0f;
-	const float ColorLabelW = 40.0f;
-	const float ColorSize = 28.0f;
-	m_ImageEditorColorSwatchRect = {ColorStartX + ColorLabelW, WindowY + 16.0f, ColorSize, ColorSize};
+	// Main color picker sits on the tool row, spaced clearly after Clear.
+	const float PaletteGapAfterClear = 32.0f;
+	m_ImageEditorColorSwatchRect = {
+		m_ImageEditorClearButtonRect.m_X + m_ImageEditorClearButtonRect.m_W + PaletteGapAfterClear,
+		ToolRowY + (TOOL_BUTTON_SIZE - COLOR_SWATCH_SIZE) * 0.5f,
+		COLOR_SWATCH_SIZE,
+		COLOR_SWATCH_SIZE};
 
-	m_ImageEditorThicknessMinusRect = {ColorStartX, WindowY + 54.0f, 26.0f, 14.0f};
-	m_ImageEditorThicknessRect = {m_ImageEditorThicknessMinusRect.m_X + 32.0f, WindowY + 54.0f, 156.0f, 14.0f};
-	m_ImageEditorThicknessPlusRect = {m_ImageEditorThicknessRect.m_X + m_ImageEditorThicknessRect.m_W + 6.0f, WindowY + 54.0f, 26.0f, 14.0f};
+	const float EyedropperGap = 8.0f;
+	m_ImageEditorEyedropperButtonRect = {
+		m_ImageEditorColorSwatchRect.m_X + m_ImageEditorColorSwatchRect.m_W + EyedropperGap,
+		ToolRowY + (TOOL_BUTTON_SIZE - COLOR_SWATCH_SIZE) * 0.5f,
+		COLOR_SWATCH_SIZE,
+		COLOR_SWATCH_SIZE};
 
-	const float CropRowY = WindowY + 88.0f;
+	m_ImageEditorSaveButtonRect = {WindowX + WindowW - 74.0f, ToolRowY, 56.0f, TOOL_BUTTON_SIZE};
+	m_ImageEditorCancelButtonRect = {WindowX + WindowW - 136.0f, ToolRowY, 56.0f, TOOL_BUTTON_SIZE};
+
+	// Recent colors stay on the row below, starting from the left margin.
+	const float ColorRowY = ToolRowY + TOOL_BUTTON_SIZE + 14.0f;
+	const float HistoryStartX = WindowX + 18.0f;
+	for(int i = 0; i < PEN_COLOR_HISTORY_MAX; ++i)
+	{
+		m_aImageEditorColorHistoryRects[i] = {
+			HistoryStartX + (float)i * (HISTORY_SWATCH_SIZE + HISTORY_SWATCH_GAP),
+			ColorRowY + (COLOR_SWATCH_SIZE - HISTORY_SWATCH_SIZE) * 0.5f,
+			HISTORY_SWATCH_SIZE,
+			HISTORY_SWATCH_SIZE};
+	}
+
+	const float ThicknessCenterY = ColorRowY + COLOR_SWATCH_SIZE * 0.5f;
+	const float ThicknessBlockRight = WindowX + WindowW - 18.0f;
+	m_ImageEditorThicknessPlusRect = {ThicknessBlockRight - 28.0f, ThicknessCenterY - 14.0f, 28.0f, 28.0f};
+	m_ImageEditorThicknessRect = {ThicknessBlockRight - 168.0f, ThicknessCenterY - 5.0f, 132.0f, 10.0f};
+	m_ImageEditorThicknessMinusRect = {ThicknessBlockRight - 204.0f, ThicknessCenterY - 14.0f, 28.0f, 28.0f};
+
+	const float CropRowY = ColorRowY + COLOR_SWATCH_SIZE + 16.0f;
 	const char *apAspectLabels[4] = {"Free", "1:1", "4:3", "16:9"};
 	const float AspectChipW = 52.0f;
 	const float AspectChipH = 24.0f;
@@ -1748,32 +1927,98 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 	pChat->Graphics()->DrawRect(WindowX + 2.0f, WindowY + 2.0f, WindowW - 4.0f, ToolbarH, ColorRGBA(0.08f, 0.10f, 0.14f, 0.96f), IGraphics::CORNER_T, 9.0f);
 
 	CTextCursor Cursor;
-	Cursor.SetPosition(vec2(WindowX + 18.0f, WindowY + 8.0f));
-	Cursor.m_FontSize = 18.0f;
+	Cursor.SetPosition(vec2(WindowX + 18.0f, WindowY + 10.0f));
+	Cursor.m_FontSize = 16.0f;
 	pChat->TextRender()->TextColor(0.86f, 0.90f, 0.97f, 0.95f);
 	pChat->TextRender()->TextEx(&Cursor, "Image Editor");
 
-	auto DrawButton = [&](const CUClientChatPasteImage::SRenderRect &Rect, const char *pLabel, bool Active, const ColorRGBA &HoverColor) {
-		const bool Hovered = InRect(Rect);
-		const ColorRGBA Bg = Active ? ColorRGBA(0.20f, 0.36f, 0.62f, 0.96f) : (Hovered ? HoverColor : ColorRGBA(0.19f, 0.22f, 0.29f, 0.96f));
-		pChat->Graphics()->DrawRect(Rect.m_X, Rect.m_Y, Rect.m_W, Rect.m_H, Bg, IGraphics::CORNER_ALL, 4.0f);
-		pChat->Graphics()->DrawRect(Rect.m_X + 1.0f, Rect.m_Y + 1.0f, Rect.m_W - 2.0f, Rect.m_H - 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.06f), IGraphics::CORNER_ALL, 3.0f);
-
-		const float LabelSize = 12.0f;
-		const float LabelWidth = pChat->TextRender()->TextWidth(LabelSize, pLabel, -1, -1);
-		CTextCursor ButtonCursor;
-		ButtonCursor.SetPosition(vec2(Rect.m_X + maximum(4.0f, (Rect.m_W - LabelWidth) * 0.5f), Rect.m_Y + (Rect.m_H - LabelSize) * 0.5f));
-		ButtonCursor.m_FontSize = LabelSize;
-		pChat->TextRender()->TextColor(0.97f, 0.98f, 1.0f, 0.98f);
-		pChat->TextRender()->TextEx(&ButtonCursor, pLabel);
+	auto DrawIconInRect = [&](const SRenderRect &Rect, const char *pIcon, float IconSize, ColorRGBA IconColor) {
+		CUIRect IconRect(Rect.m_X, Rect.m_Y, Rect.m_W, Rect.m_H);
+		pChat->TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+		pChat->TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
+		pChat->TextRender()->TextColor(IconColor);
+		pChat->Ui()->DoLabel(&IconRect, pIcon, IconSize, TEXTALIGN_MC);
+		pChat->TextRender()->SetRenderFlags(0);
+		pChat->TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 	};
 
-	DrawButton(m_ImageEditorPenButtonRect, "Pen", m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::PEN, ColorRGBA(0.24f, 0.36f, 0.54f, 0.96f));
-	DrawButton(m_ImageEditorEraserButtonRect, "Eraser", m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::ERASER, ColorRGBA(0.30f, 0.26f, 0.24f, 0.96f));
-	DrawButton(m_ImageEditorCropButtonRect, "Crop", m_ImageEditor.m_CurrentTool == CUClientChatPasteImage::EImageEditorTool::CROP, ColorRGBA(0.22f, 0.40f, 0.34f, 0.96f));
-	DrawButton(m_ImageEditorClearButtonRect, "Clear", false, ColorRGBA(0.45f, 0.20f, 0.20f, 0.96f));
-	DrawButton(m_ImageEditorCancelButtonRect, "Cancel", false, ColorRGBA(0.30f, 0.24f, 0.24f, 0.96f));
-	DrawButton(m_ImageEditorSaveButtonRect, "Save", false, ColorRGBA(0.19f, 0.44f, 0.28f, 0.96f));
+	auto DrawEraserIcon = [&](const SRenderRect &Rect, ColorRGBA IconColor) {
+		DrawIconInRect(Rect, FontIcon::ERASER, 18.0f, IconColor);
+	};
+
+	auto DrawToolButton = [&](const SRenderRect &Rect, bool Active, const ColorRGBA &ActiveTint, auto &&DrawIcon) {
+		const bool Hovered = InRect(Rect);
+		const ColorRGBA Bg = Active ? ActiveTint : (Hovered ? ColorRGBA(0.24f, 0.28f, 0.36f, 0.98f) : ColorRGBA(0.14f, 0.16f, 0.21f, 0.96f));
+		const ColorRGBA Border = Active ? ColorRGBA(0.46f, 0.66f, 0.96f, 0.90f) : ColorRGBA(0.24f, 0.28f, 0.36f, 0.70f);
+		pChat->Graphics()->DrawRect(Rect.m_X - 1.0f, Rect.m_Y - 1.0f, Rect.m_W + 2.0f, Rect.m_H + 2.0f, Border, IGraphics::CORNER_ALL, 9.0f);
+		pChat->Graphics()->DrawRect(Rect.m_X, Rect.m_Y, Rect.m_W, Rect.m_H, Bg, IGraphics::CORNER_ALL, 8.0f);
+		DrawIcon();
+	};
+
+	auto DrawColorSwatch = [&](const SRenderRect &Rect, ColorRGBA Color, bool Hovered) {
+		const float Border = Hovered ? 2.0f : 1.0f;
+		pChat->Graphics()->DrawRect(Rect.m_X - Border, Rect.m_Y - Border, Rect.m_W + Border * 2.0f, Rect.m_H + Border * 2.0f, ColorRGBA(0.96f, 0.98f, 1.0f, Hovered ? 0.95f : 0.40f), IGraphics::CORNER_ALL, 5.0f);
+		pChat->Graphics()->DrawRect(Rect.m_X, Rect.m_Y, Rect.m_W, Rect.m_H, Color, IGraphics::CORNER_ALL, 4.0f);
+	};
+
+	const ColorRGBA ToolIconColor(0.95f, 0.97f, 1.0f, 0.96f);
+	const bool PenActive = m_ImageEditor.m_CurrentTool == EImageEditorTool::PEN;
+	const bool EraserActive = m_ImageEditor.m_CurrentTool == EImageEditorTool::ERASER;
+	const bool CropActive = m_ImageEditor.m_CurrentTool == EImageEditorTool::CROP;
+
+	DrawToolButton(m_ImageEditorPenButtonRect, PenActive, ColorRGBA(0.20f, 0.36f, 0.62f, 0.98f), [&]() {
+		DrawIconInRect(m_ImageEditorPenButtonRect, FontIcon::PENCIL, 20.0f, ToolIconColor);
+	});
+	DrawToolButton(m_ImageEditorEraserButtonRect, EraserActive, ColorRGBA(0.48f, 0.28f, 0.28f, 0.98f), [&]() {
+		DrawEraserIcon(m_ImageEditorEraserButtonRect, ColorRGBA(0.98f, 0.86f, 0.86f, 0.98f));
+	});
+	DrawToolButton(m_ImageEditorCropButtonRect, CropActive, ColorRGBA(0.20f, 0.44f, 0.36f, 0.98f), [&]() {
+		DrawIconInRect(m_ImageEditorCropButtonRect, FontIcon::UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER, 20.0f, ToolIconColor);
+	});
+	DrawToolButton(m_ImageEditorClearButtonRect, false, ColorRGBA(0.48f, 0.22f, 0.22f, 0.98f), [&]() {
+		DrawIconInRect(m_ImageEditorClearButtonRect, FontIcon::TRASH, 20.0f, ColorRGBA(0.98f, 0.72f, 0.72f, 0.96f));
+	});
+
+	DrawToolButton(m_ImageEditorCancelButtonRect, false, ColorRGBA(0.34f, 0.26f, 0.26f, 0.98f), [&]() {
+		DrawIconInRect(m_ImageEditorCancelButtonRect, FontIcon::XMARK, 16.0f, ColorRGBA(0.98f, 0.82f, 0.82f, 0.96f));
+	});
+	DrawToolButton(m_ImageEditorSaveButtonRect, false, ColorRGBA(0.18f, 0.44f, 0.30f, 0.98f), [&]() {
+		const float LabelSize = 11.0f;
+		const char *pLabel = "Save";
+		const float LabelWidth = pChat->TextRender()->TextWidth(LabelSize, pLabel, -1, -1);
+		CTextCursor SaveCursor;
+		SaveCursor.SetPosition(vec2(m_ImageEditorSaveButtonRect.m_X + (m_ImageEditorSaveButtonRect.m_W - LabelWidth) * 0.5f, m_ImageEditorSaveButtonRect.m_Y + (m_ImageEditorSaveButtonRect.m_H - LabelSize) * 0.5f));
+		SaveCursor.m_FontSize = LabelSize;
+		pChat->TextRender()->TextColor(0.88f, 0.98f, 0.90f, 0.98f);
+		pChat->TextRender()->TextEx(&SaveCursor, pLabel);
+	});
+
+	if(m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
+	{
+		DrawColorSwatch(m_ImageEditorColorSwatchRect, m_ImageEditor.m_PenColor, InRect(m_ImageEditorColorSwatchRect));
+
+		const bool EyedropperActive = m_ImageEditor.m_EyedropperActive;
+		const bool EyedropperHovered = InRect(m_ImageEditorEyedropperButtonRect);
+		const ColorRGBA EyedropperBg = EyedropperActive ? ColorRGBA(0.20f, 0.36f, 0.62f, 0.98f) : (EyedropperHovered ? ColorRGBA(0.24f, 0.28f, 0.36f, 0.98f) : ColorRGBA(0.14f, 0.16f, 0.21f, 0.96f));
+		const ColorRGBA EyedropperBorder = EyedropperActive ? ColorRGBA(0.46f, 0.66f, 0.96f, 0.90f) : ColorRGBA(0.24f, 0.28f, 0.36f, 0.70f);
+		const SRenderRect &DropRect = m_ImageEditorEyedropperButtonRect;
+		pChat->Graphics()->DrawRect(DropRect.m_X - 1.0f, DropRect.m_Y - 1.0f, DropRect.m_W + 2.0f, DropRect.m_H + 2.0f, EyedropperBorder, IGraphics::CORNER_ALL, 6.0f);
+		pChat->Graphics()->DrawRect(DropRect.m_X, DropRect.m_Y, DropRect.m_W, DropRect.m_H, EyedropperBg, IGraphics::CORNER_ALL, 5.0f);
+		DrawIconInRect(DropRect, FontIcon::EYE_DROPPER, 14.0f, ToolIconColor);
+	}
+
+	auto DrawChipButton = [&](const SRenderRect &Rect, const char *pLabel, bool Active) {
+		const bool Hovered = InRect(Rect);
+		const ColorRGBA Bg = Active ? ColorRGBA(0.20f, 0.36f, 0.62f, 0.96f) : (Hovered ? ColorRGBA(0.24f, 0.28f, 0.36f, 0.96f) : ColorRGBA(0.14f, 0.16f, 0.21f, 0.96f));
+		pChat->Graphics()->DrawRect(Rect.m_X, Rect.m_Y, Rect.m_W, Rect.m_H, Bg, IGraphics::CORNER_ALL, 5.0f);
+		const float LabelSize = 11.0f;
+		const float LabelWidth = pChat->TextRender()->TextWidth(LabelSize, pLabel, -1, -1);
+		CTextCursor ChipCursor;
+		ChipCursor.SetPosition(vec2(Rect.m_X + maximum(4.0f, (Rect.m_W - LabelWidth) * 0.5f), Rect.m_Y + (Rect.m_H - LabelSize) * 0.5f));
+		ChipCursor.m_FontSize = LabelSize;
+		pChat->TextRender()->TextColor(0.97f, 0.98f, 1.0f, 0.98f);
+		pChat->TextRender()->TextEx(&ChipCursor, pLabel);
+	};
 
 	if(m_ImageEditor.m_CurrentTool == EImageEditorTool::CROP)
 	{
@@ -1781,46 +2026,61 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 		for(size_t i = 0; i < std::size(m_aImageEditorAspectRects); ++i)
 		{
 			const bool Selected = (int)m_ImageEditor.m_CropAspect == (int)i;
-			DrawButton(m_aImageEditorAspectRects[i], apAspectLabels[i], Selected, ColorRGBA(0.24f, 0.36f, 0.54f, 0.96f));
+			DrawChipButton(m_aImageEditorAspectRects[i], apAspectLabels[i], Selected);
 		}
-		DrawButton(m_ImageEditorCropResetRect, "Reset", false, ColorRGBA(0.30f, 0.24f, 0.24f, 0.96f));
-		DrawButton(m_ImageEditorCropApplyRect, "Apply", false, ColorRGBA(0.19f, 0.44f, 0.28f, 0.96f));
+		DrawChipButton(m_ImageEditorCropResetRect, "Reset", false);
+		DrawChipButton(m_ImageEditorCropApplyRect, "Apply", false);
 	}
 
 	if(m_ImageEditor.m_CurrentTool != EImageEditorTool::CROP)
 	{
-		Cursor.SetPosition(vec2(ColorStartX, m_ImageEditorColorSwatchRect.m_Y + (ColorSize - 12.0f) * 0.5f));
-		Cursor.m_FontSize = 12.0f;
-		pChat->TextRender()->TextColor(0.89f, 0.92f, 0.97f, 0.95f);
-		pChat->TextRender()->TextEx(&Cursor, "Color");
+		if(m_PenColorHistoryCount > 0)
+		{
+			Cursor.SetPosition(vec2(HistoryStartX, ColorRowY - 12.0f));
+			Cursor.m_FontSize = 10.0f;
+			pChat->TextRender()->TextColor(0.70f, 0.74f, 0.82f, 0.90f);
+			pChat->TextRender()->TextEx(&Cursor, "Recent");
+		}
 
-		const CUClientChatPasteImage::SRenderRect &SwatchRect = m_ImageEditorColorSwatchRect;
-		const bool SwatchHovered = InRect(SwatchRect);
-		const float SwatchBorder = SwatchHovered ? 2.0f : 1.0f;
-		pChat->Graphics()->DrawRect(SwatchRect.m_X - SwatchBorder, SwatchRect.m_Y - SwatchBorder, SwatchRect.m_W + SwatchBorder * 2.0f, SwatchRect.m_H + SwatchBorder * 2.0f, ColorRGBA(0.96f, 0.98f, 1.0f, SwatchHovered ? 0.95f : 0.45f), IGraphics::CORNER_ALL, 3.0f);
-		pChat->Graphics()->DrawRect(SwatchRect.m_X, SwatchRect.m_Y, SwatchRect.m_W, SwatchRect.m_H, m_ImageEditor.m_PenColor, IGraphics::CORNER_ALL, 3.0f);
+		for(int i = 0; i < m_PenColorHistoryCount; ++i)
+		{
+			const ColorRGBA HistoryColor = color_cast<ColorRGBA>(ColorHSLA(m_aPenColorHistory[i], false));
+			DrawColorSwatch(m_aImageEditorColorHistoryRects[i], HistoryColor, InRect(m_aImageEditorColorHistoryRects[i]));
+		}
 
-		pChat->Graphics()->DrawRect(m_ImageEditorThicknessMinusRect.m_X, m_ImageEditorThicknessMinusRect.m_Y, m_ImageEditorThicknessMinusRect.m_W, m_ImageEditorThicknessMinusRect.m_H, ColorRGBA(0.17f, 0.20f, 0.27f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
-		pChat->Graphics()->DrawRect(m_ImageEditorThicknessPlusRect.m_X, m_ImageEditorThicknessPlusRect.m_Y, m_ImageEditorThicknessPlusRect.m_W, m_ImageEditorThicknessPlusRect.m_H, ColorRGBA(0.17f, 0.20f, 0.27f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
+		const auto DrawRoundIconButton = [&](const SRenderRect &Rect, const char *pIcon) {
+			const bool Hovered = InRect(Rect);
+			pChat->Graphics()->DrawRect(Rect.m_X, Rect.m_Y, Rect.m_W, Rect.m_H, Hovered ? ColorRGBA(0.24f, 0.28f, 0.36f, 0.98f) : ColorRGBA(0.14f, 0.16f, 0.21f, 0.96f), IGraphics::CORNER_ALL, 7.0f);
+			DrawIconInRect(Rect, pIcon, 13.0f, ToolIconColor);
+		};
 
-		pChat->Graphics()->DrawRect(m_ImageEditorThicknessRect.m_X, m_ImageEditorThicknessRect.m_Y, m_ImageEditorThicknessRect.m_W, m_ImageEditorThicknessRect.m_H, ColorRGBA(0.12f, 0.15f, 0.21f, 0.95f), IGraphics::CORNER_ALL, 2.0f);
-		const float ThicknessT = std::clamp((m_ImageEditor.m_PenThickness - 1.0f) / 13.0f, 0.0f, 1.0f);
-		const float KnobX = m_ImageEditorThicknessRect.m_X + m_ImageEditorThicknessRect.m_W * ThicknessT;
-		pChat->Graphics()->DrawRect(KnobX - 2.0f, m_ImageEditorThicknessRect.m_Y - 1.5f, 4.0f, m_ImageEditorThicknessRect.m_H + 3.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.95f), IGraphics::CORNER_ALL, 1.5f);
+		DrawRoundIconButton(m_ImageEditorThicknessMinusRect, FontIcon::MINUS);
+		DrawRoundIconButton(m_ImageEditorThicknessPlusRect, FontIcon::PLUS);
 
-		Cursor.SetPosition(vec2(m_ImageEditorThicknessRect.m_X - 16.0f, m_ImageEditorThicknessRect.m_Y - 2.0f));
-		Cursor.m_FontSize = 11.0f;
-		pChat->TextRender()->TextColor(0.89f, 0.92f, 0.97f, 0.95f);
-		pChat->TextRender()->TextEx(&Cursor, "-");
+		const int Thickness = SnapPenThickness(m_ImageEditor.m_PenThickness);
+		const float ThicknessT = PenThicknessSliderT(Thickness);
+		const SRenderRect &Track = m_ImageEditorThicknessRect;
+		pChat->Graphics()->DrawRect(Track.m_X, Track.m_Y, Track.m_W, Track.m_H, ColorRGBA(0.10f, 0.12f, 0.17f, 0.98f), IGraphics::CORNER_ALL, Track.m_H * 0.5f);
+		const float FillW = maximum(Track.m_H, Track.m_W * ThicknessT);
+		pChat->Graphics()->DrawRect(Track.m_X, Track.m_Y, FillW, Track.m_H, ColorRGBA(0.28f, 0.48f, 0.78f, 0.95f), IGraphics::CORNER_ALL, Track.m_H * 0.5f);
+		const float KnobRadius = 7.0f;
+		const float KnobX = Track.m_X + Track.m_W * ThicknessT;
+		const float KnobY = Track.m_Y + Track.m_H * 0.5f;
+		pChat->Graphics()->DrawRect(KnobX - KnobRadius, KnobY - KnobRadius, KnobRadius * 2.0f, KnobRadius * 2.0f, ColorRGBA(0.96f, 0.98f, 1.0f, 0.98f), IGraphics::CORNER_ALL, KnobRadius);
+		pChat->Graphics()->DrawRect(KnobX - KnobRadius + 1.5f, KnobY - KnobRadius + 1.5f, KnobRadius * 2.0f - 3.0f, KnobRadius * 2.0f - 3.0f, ColorRGBA(0.28f, 0.48f, 0.78f, 0.95f), IGraphics::CORNER_ALL, KnobRadius - 1.5f);
 
-		Cursor.SetPosition(vec2(m_ImageEditorThicknessPlusRect.m_X + 7.0f, m_ImageEditorThicknessPlusRect.m_Y - 2.0f));
-		Cursor.m_FontSize = 11.0f;
-		pChat->TextRender()->TextEx(&Cursor, "+");
+		const float PreviewRadius = maximum(3.0f, (float)Thickness * 0.55f);
+		const float PreviewX = m_ImageEditorThicknessMinusRect.m_X - 16.0f;
+		const float PreviewY = ThicknessCenterY;
+		pChat->Graphics()->DrawRect(PreviewX - PreviewRadius - 1.0f, PreviewY - PreviewRadius - 1.0f, (PreviewRadius + 1.0f) * 2.0f, (PreviewRadius + 1.0f) * 2.0f, ColorRGBA(0.96f, 0.98f, 1.0f, 0.35f), IGraphics::CORNER_ALL, PreviewRadius + 1.0f);
+		pChat->Graphics()->DrawRect(PreviewX - PreviewRadius, PreviewY - PreviewRadius, PreviewRadius * 2.0f, PreviewRadius * 2.0f, m_ImageEditor.m_PenColor, IGraphics::CORNER_ALL, PreviewRadius);
 
 		char aThickness[32];
-		str_format(aThickness, sizeof(aThickness), "%.1f px", m_ImageEditor.m_PenThickness);
-		Cursor.SetPosition(vec2(m_ImageEditorThicknessPlusRect.m_X + 36.0f, m_ImageEditorThicknessPlusRect.m_Y - 2.0f));
+		str_format(aThickness, sizeof(aThickness), "%d px", Thickness);
+		const float ValueWidth = pChat->TextRender()->TextWidth(11.0f, aThickness, -1, -1);
+		Cursor.SetPosition(vec2(PreviewX - PreviewRadius - 8.0f - ValueWidth, ThicknessCenterY - 6.0f));
 		Cursor.m_FontSize = 11.0f;
+		pChat->TextRender()->TextColor(0.89f, 0.92f, 0.97f, 0.95f);
 		pChat->TextRender()->TextEx(&Cursor, aThickness);
 	}
 
@@ -1891,6 +2151,20 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 			pChat->Graphics()->DrawRect(MousePos.x - 1.0f, MousePos.y - CrosshairRadius, 2.0f, CrosshairRadius * 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
 			pChat->Graphics()->DrawRect(MousePos.x - CrosshairRadius + 1.0f, MousePos.y - 0.5f, CrosshairRadius * 2.0f - 2.0f, 1.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
 			pChat->Graphics()->DrawRect(MousePos.x - 0.5f, MousePos.y - CrosshairRadius + 1.0f, 1.0f, CrosshairRadius * 2.0f - 2.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
+		}
+		else if(m_ImageEditor.m_EyedropperActive)
+		{
+			const float CrosshairRadius = 10.0f;
+			pChat->Graphics()->DrawRect(MousePos.x - CrosshairRadius, MousePos.y - 1.0f, CrosshairRadius * 2.0f, 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
+			pChat->Graphics()->DrawRect(MousePos.x - 1.0f, MousePos.y - CrosshairRadius, 2.0f, CrosshairRadius * 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
+			pChat->Graphics()->DrawRect(MousePos.x - CrosshairRadius + 1.0f, MousePos.y - 0.5f, CrosshairRadius * 2.0f - 2.0f, 1.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
+			pChat->Graphics()->DrawRect(MousePos.x - 0.5f, MousePos.y - CrosshairRadius + 1.0f, 1.0f, CrosshairRadius * 2.0f - 2.0f, ColorRGBA(0.95f, 0.97f, 1.0f, 0.95f), IGraphics::CORNER_ALL, 0.5f);
+			if(MouseInsideCanvas)
+			{
+				const float SampleRadius = 6.0f;
+				pChat->Graphics()->DrawRect(MousePos.x - SampleRadius, MousePos.y - SampleRadius, SampleRadius * 2.0f, SampleRadius * 2.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.80f), IGraphics::CORNER_ALL, SampleRadius);
+				pChat->Graphics()->DrawRect(MousePos.x - SampleRadius + 1.0f, MousePos.y - SampleRadius + 1.0f, SampleRadius * 2.0f - 2.0f, SampleRadius * 2.0f - 2.0f, m_ImageEditor.m_PenColor, IGraphics::CORNER_ALL, SampleRadius - 1.0f);
+			}
 		}
 		else
 		{

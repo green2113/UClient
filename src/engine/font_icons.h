@@ -41,6 +41,7 @@ namespace FontIcon
 	inline const char *const DICE_TWO = "\uF528";
 	inline const char *const EARTH_AMERICAS = "\uF57D";
 	inline const char *const ELLIPSIS = "\uF141";
+	inline const char *const ERASER = "\uF12D";
 	inline const char *const EYE = "\uF06E";
 	inline const char *const EYE_DROPPER = "\uF1FB";
 	inline const char *const EYE_SLASH = "\uF070";

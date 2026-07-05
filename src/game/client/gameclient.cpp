@@ -1263,7 +1263,9 @@ void CGameClient::OnReset()
 		m_aAutoTeamLockDeadlineTick[Dummy] = 0;
 		m_aAutoTeamLockPending[Dummy] = false;
 	}
-	m_AutoLoginJapanSent = false;
+	// Note: m_aAutoLoginJapanSentServer is intentionally NOT reset here.
+	// OnReset runs on every map change, but auto-login must only fire once per
+	// server connection. It is cleared on full disconnect in OnStateChange.
 	m_AutoLoginJapanDeadlineTick = 0;
 	m_CharOrder.Reset();
 	std::fill(std::begin(m_aSwitchStateTeam), std::end(m_aSwitchStateTeam), -1);
@@ -1889,6 +1891,11 @@ void CGameClient::OnStateChange(int NewState, int OldState)
 		OnReset();
 	}
 
+	// Only clear auto-login memory on a full disconnect, so that map changes
+	// (which drop to STATE_LOADING) do not re-trigger the login.
+	if(NewState == IClient::STATE_OFFLINE)
+		m_aAutoLoginJapanSentServer[0] = '\0';
+
 	// then change the state
 	for(auto &pComponent : m_vpAll)
 		pComponent->OnStateChange(NewState, OldState);
@@ -1952,12 +1959,15 @@ void CGameClient::UpdateAutoTeamLock()
 
 void CGameClient::UpdateAutoLoginJapan()
 {
-	if(Client()->State() != IClient::STATE_ONLINE)
+	if(Client()->State() == IClient::STATE_OFFLINE)
 	{
-		m_AutoLoginJapanSent = false;
+		m_aAutoLoginJapanSentServer[0] = '\0';
 		m_AutoLoginJapanDeadlineTick = 0;
 		return;
 	}
+
+	if(Client()->State() != IClient::STATE_ONLINE)
+		return;
 
 	if(!g_Config.m_UcAutoLoginJapan ||
 		m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_AUTO_LOGIN) ||
@@ -1967,9 +1977,6 @@ void CGameClient::UpdateAutoLoginJapan()
 		return;
 	}
 
-	if(m_AutoLoginJapanSent)
-		return;
-
 	char aAddr[NETADDR_MAXSTRSIZE];
 	net_addr_str(&Client()->ServerAddress(), aAddr, sizeof(aAddr), false);
 	if(str_comp(aAddr, "43.206.195.153") != 0)
@@ -1977,6 +1984,12 @@ void CGameClient::UpdateAutoLoginJapan()
 		m_AutoLoginJapanDeadlineTick = 0;
 		return;
 	}
+
+	// Auto-login only once per server connection. A map change keeps the same
+	// server address (and does not drop to STATE_OFFLINE), so it will not fire
+	// again until the client fully disconnects and reconnects.
+	if(str_comp(m_aAutoLoginJapanSentServer, aAddr) == 0)
+		return;
 
 	const int Dummy = g_Config.m_ClDummy;
 	if(m_AutoLoginJapanDeadlineTick == 0)
@@ -1991,7 +2004,7 @@ void CGameClient::UpdateAutoLoginJapan()
 	char aLogin[160];
 	str_format(aLogin, sizeof(aLogin), "/login %s", g_Config.m_UcAutoLoginJapanCode);
 	m_Chat.SendChat(0, aLogin);
-	m_AutoLoginJapanSent = true;
+	str_copy(m_aAutoLoginJapanSentServer, aAddr);
 	m_AutoLoginJapanDeadlineTick = 0;
 }
 
