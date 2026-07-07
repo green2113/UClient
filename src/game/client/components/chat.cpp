@@ -4878,7 +4878,8 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			m_CompletionUsed = false;
 		}
 
-		m_Input.ProcessInput(Event);
+		if(!Ui()->IsPopupOpen(&m_GiphyPopupId) && !Ui()->IsPopupOpen(&m_TranslateSettingsPopupId))
+			m_Input.ProcessInput(Event);
 	}
 
 	if(Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_UP)
@@ -6120,7 +6121,9 @@ void CChat::OnRender()
 			pMouseSelection->m_Offset.y = ScrollOffset;
 		}
 
-			m_Input.Activate(EInputPriority::CHAT); // Ensure that the input is active
+			const bool PopupInputActive = Ui()->IsPopupOpen(&m_GiphyPopupId) || Ui()->IsPopupOpen(&m_TranslateSettingsPopupId);
+			if(!PopupInputActive)
+				m_Input.Activate(EInputPriority::CHAT); // Ensure that the input is active
 			const CUIRect InputCursorRect = {InputCursor.m_X, InputCursor.m_Y - ScrollOffset, 0.0f, 0.0f};
 			const bool WasChanged = m_Input.WasChanged();
 			const bool WasCursorChanged = m_Input.WasCursorChanged();
@@ -7167,6 +7170,7 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 	Row.VSplitRight(86.0f, &SearchEdit, &SearchButton);
 	SearchEdit.VSplitRight(Spacing, &SearchEdit, nullptr);
 	pChat->m_GiphySearchInput.SetEmptyText(Localize("Search GIFs"));
+	pChat->m_GiphySearchInput.Activate(EInputPriority::CHAT);
 	pChat->Ui()->DoClearableEditBox(&pChat->m_GiphySearchInput, &SearchEdit, 12.0f);
 	const bool SearchPressed = pChat->GameClient()->m_Menus.DoButton_Menu(&pChat->m_GiphySearchButton, Localize("Search"), 0, &SearchButton) ||
 		(Active && pChat->Ui()->ConsumeHotkey(CUi::HOTKEY_ENTER));

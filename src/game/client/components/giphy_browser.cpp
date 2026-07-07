@@ -10,6 +10,7 @@
 #include <engine/external/json-parser/json.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <sstream>
 
@@ -17,6 +18,22 @@ const char *CGiphyBrowser::GIPHY_API_URL = "https://api.giphy.com/v1/gifs/search
 
 namespace
 {
+void UrlEncodeQuery(const std::string &Input, std::string &Out)
+{
+	Out.clear();
+	Out.reserve(Input.size() * 3);
+	for(unsigned char c : Input)
+	{
+		if(std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
+			Out.push_back((char)c);
+		else
+		{
+			char aEncoded[4];
+			str_format(aEncoded, sizeof(aEncoded), "%%%02X", c);
+			Out.append(aEncoded);
+		}
+	}
+}
 int JsonToInt(const json_value *pValue, int DefaultValue)
 {
 	if(pValue == nullptr)
@@ -65,14 +82,7 @@ void CGiphyBrowser::SetQuery(const char *pQuery)
 std::string CGiphyBrowser::BuildSearchUrl(int PageOffset) const
 {
 	std::string EncodedQuery;
-	EncodedQuery.reserve(m_CurrentQuery.size());
-	for(char c : m_CurrentQuery)
-	{
-		if(c == ' ')
-			EncodedQuery.push_back('+');
-		else
-			EncodedQuery.push_back(c);
-	}
+	UrlEncodeQuery(m_CurrentQuery, EncodedQuery);
 
 	std::ostringstream Url;
 	Url << GIPHY_API_URL << "?api_key=" << g_Config.m_UcChatGiphyApiKey;

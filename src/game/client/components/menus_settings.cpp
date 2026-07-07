@@ -2412,6 +2412,21 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		// TClient
 		DoLine_ColorPicker(&s_ClientMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, aBuf, &g_Config.m_ClMessageClientColor, ColorRGBA(0.5f, 0.78f, 1.0f), true, &g_Config.m_TcShowChatClient);
 
+		static CButtonContainer s_LinkMessageColor;
+		static bool s_LinkMessageColorInitialized = false;
+		static unsigned s_PrevLinkMessageColor = 0;
+		DoLine_ColorPicker(&s_LinkMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, Localize("Link message"), &g_Config.m_ClMessageLinkColor, color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::ClMessageLinkColor, true)));
+		if(!s_LinkMessageColorInitialized)
+		{
+			s_PrevLinkMessageColor = g_Config.m_ClMessageLinkColor;
+			s_LinkMessageColorInitialized = true;
+		}
+		else if(s_PrevLinkMessageColor != g_Config.m_ClMessageLinkColor)
+		{
+			s_PrevLinkMessageColor = g_Config.m_ClMessageLinkColor;
+			Chat.RebuildChat();
+		}
+
 		// ***** Chat Preview ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Preview"), HeadlineFontSize,
 			TEXTALIGN_ML, &PreviewView, HeadlineHeight);
