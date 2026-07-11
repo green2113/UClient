@@ -2427,6 +2427,38 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			Chat.RebuildChat();
 		}
 
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(DoButton_CheckBox(&g_Config.m_UcChatReply, Localize("UClient chat reply"), g_Config.m_UcChatReply, &Button))
+		{
+			g_Config.m_UcChatReply ^= 1;
+		}
+
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(DoButton_CheckBox(&g_Config.m_UcAiAssistant, Localize("UClient AI assistant"), g_Config.m_UcAiAssistant, &Button))
+		{
+			g_Config.m_UcAiAssistant ^= 1;
+		}
+
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(DoButton_CheckBox(&g_Config.m_UcAiAssistantOfflineFallback, Localize("AI assistant offline fallback"), g_Config.m_UcAiAssistantOfflineFallback, &Button))
+		{
+			g_Config.m_UcAiAssistantOfflineFallback ^= 1;
+		}
+
+		{
+			LeftView.HSplitTop(LineSize, &Button, &LeftView);
+			Ui()->DoLabel(&Button, Localize("AI assistant endpoint"), 12.0f, TEXTALIGN_ML);
+			LeftView.HSplitTop(LineSize, &Button, &LeftView);
+			static CLineInput s_AiEndpoint(g_Config.m_UcAiAssistantEndpoint, sizeof(g_Config.m_UcAiAssistantEndpoint));
+			Ui()->DoClearableEditBox(&s_AiEndpoint, &Button, 12.0f);
+
+			LeftView.HSplitTop(LineSize, &Button, &LeftView);
+			Ui()->DoLabel(&Button, Localize("AI assistant hotkey"), 12.0f, TEXTALIGN_ML);
+			LeftView.HSplitTop(LineSize, &Button, &LeftView);
+			static CLineInput s_AiHotkey(g_Config.m_UcAiAssistantHotkey, sizeof(g_Config.m_UcAiAssistantHotkey));
+			Ui()->DoClearableEditBox(&s_AiHotkey, &Button, 12.0f);
+		}
+
 		// ***** Chat Preview ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Preview"), HeadlineFontSize,
 			TEXTALIGN_ML, &PreviewView, HeadlineHeight);

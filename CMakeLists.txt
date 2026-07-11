@@ -2899,10 +2899,16 @@ if(CLIENT)
     components/bestclient/voice/soundboard_file_dialog.cpp
     components/bestclient/voice/voice.cpp
     components/bestclient/voice/voice.h
+    components/uclient/ai_assistant.cpp
+    components/uclient/ai_assistant.h
+    components/uclient/ai_catalog.cpp
+    components/uclient/ai_catalog.h
     components/uclient/chat_nearby_tab.cpp
     components/uclient/chat_nearby_tab.h
     components/uclient/chat_paste_image.cpp
     components/uclient/chat_paste_image.h
+    components/uclient/chat_reply.cpp
+    components/uclient/chat_reply.h
     components/uclient/menus_uclient.cpp
     components/uclient/uclient.cpp
     components/uclient/uclient.h

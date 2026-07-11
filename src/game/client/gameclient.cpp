@@ -667,6 +667,7 @@ void CGameClient::OnConsoleInit()
 					      &m_StatusBar, // TClient
 					      &m_InfoMessages,
 					      &m_Chat,
+					      &m_AiAssistant,
 					      &m_Broadcast,
 					      &m_ImportantAlert,
 					      &m_DebugHud,
@@ -691,6 +692,7 @@ void CGameClient::OnConsoleInit()
 						  &m_Binds.m_SpecialBinds,
 						  &m_GameConsole,
 						  &m_Chat, // chat has higher prio, due to that you can quit it by pressing esc
+						  &m_AiAssistant,
 						  &m_Scoreboard,
 						  &m_Motd, // for pressing esc to remove it
 						  &m_Spectator,
@@ -1261,10 +1263,11 @@ void CGameClient::OnReset()
 		m_aAutoTeamLockDeadlineTick[Dummy] = 0;
 		m_aAutoTeamLockPending[Dummy] = false;
 	}
-	// Note: m_aAutoLoginJapanSentServer is intentionally NOT reset here.
+	// Note: m_aAutoLoginJapanSentServer / m_aAutoLoginKogSentServer are intentionally NOT reset here.
 	// OnReset runs on every map change, but auto-login must only fire once per
 	// server connection. It is cleared on full disconnect in OnStateChange.
 	m_AutoLoginJapanDeadlineTick = 0;
+	m_AutoLoginKogDeadlineTick = 0;
 	m_CharOrder.Reset();
 	std::fill(std::begin(m_aSwitchStateTeam), std::end(m_aSwitchStateTeam), -1);
 
@@ -1892,7 +1895,10 @@ void CGameClient::OnStateChange(int NewState, int OldState)
 	// Only clear auto-login memory on a full disconnect, so that map changes
 	// (which drop to STATE_LOADING) do not re-trigger the login.
 	if(NewState == IClient::STATE_OFFLINE)
+	{
 		m_aAutoLoginJapanSentServer[0] = '\0';
+		m_aAutoLoginKogSentServer[0] = '\0';
+	}
 
 	// then change the state
 	for(auto &pComponent : m_vpAll)
@@ -2004,6 +2010,75 @@ void CGameClient::UpdateAutoLoginJapan()
 	m_Chat.SendChat(0, aLogin);
 	str_copy(m_aAutoLoginJapanSentServer, aAddr);
 	m_AutoLoginJapanDeadlineTick = 0;
+}
+
+static bool IsKogAutoLoginServer(const char *pAddr)
+{
+	static const char *const s_apKogAddrs[] = {
+		"74.91.114.169",
+		"152.89.255.12",
+		"45.141.57.199",
+		"74.91.116.114",
+		"45.141.57.45",
+		"172.233.25.72",
+	};
+	for(const char *pKogAddr : s_apKogAddrs)
+	{
+		if(str_comp(pAddr, pKogAddr) == 0)
+			return true;
+	}
+	return false;
+}
+
+void CGameClient::UpdateAutoLoginKog()
+{
+	if(Client()->State() == IClient::STATE_OFFLINE)
+	{
+		m_aAutoLoginKogSentServer[0] = '\0';
+		m_AutoLoginKogDeadlineTick = 0;
+		return;
+	}
+
+	if(Client()->State() != IClient::STATE_ONLINE)
+		return;
+
+	if(!g_Config.m_UcAutoLoginKog ||
+		m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_AUTO_LOGIN) ||
+		g_Config.m_UcAutoLoginKogCode[0] == '\0')
+	{
+		m_AutoLoginKogDeadlineTick = 0;
+		return;
+	}
+
+	char aAddr[NETADDR_MAXSTRSIZE];
+	net_addr_str(&Client()->ServerAddress(), aAddr, sizeof(aAddr), false);
+	if(!IsKogAutoLoginServer(aAddr))
+	{
+		m_AutoLoginKogDeadlineTick = 0;
+		return;
+	}
+
+	// Auto-login only once per server connection. A map change keeps the same
+	// server address (and does not drop to STATE_OFFLINE), so it will not fire
+	// again until the client fully disconnects and reconnects.
+	if(str_comp(m_aAutoLoginKogSentServer, aAddr) == 0)
+		return;
+
+	const int Dummy = g_Config.m_ClDummy;
+	if(m_AutoLoginKogDeadlineTick == 0)
+	{
+		m_AutoLoginKogDeadlineTick = (int64_t)Client()->GameTick(Dummy) + Client()->GameTickSpeed();
+		return;
+	}
+
+	if(Client()->GameTick(Dummy) < m_AutoLoginKogDeadlineTick)
+		return;
+
+	char aLogin[160];
+	str_format(aLogin, sizeof(aLogin), "/login %s", g_Config.m_UcAutoLoginKogCode);
+	m_Chat.SendChat(0, aLogin);
+	str_copy(m_aAutoLoginKogSentServer, aAddr);
+	m_AutoLoginKogDeadlineTick = 0;
 }
 
 void CGameClient::OnShutdown()
@@ -2941,6 +3016,7 @@ void CGameClient::OnNewSnapshot()
 
 	UpdateAutoTeamLock();
 	UpdateAutoLoginJapan();
+	UpdateAutoLoginKog();
 
 	// clear out unneeded client data
 	for(int i = 0; i < MAX_CLIENTS; ++i)

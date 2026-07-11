@@ -29,7 +29,9 @@
 #include <game/client/components/censor.h>
 #include <game/client/components/scoreboard.h>
 #include <game/client/components/uclient/chat_nearby_tab.h>
+#include <game/client/components/uclient/chat_reply.h>
 #include <game/client/components/uclient/uclient.h>
+#include <game/client/components/bestclient/clientindicator/client_indicator.h>
 #include <game/client/components/skins.h>
 #include <game/client/components/sounds.h>
 #include <game/client/components/tclient/colored_parts.h>
@@ -437,6 +439,20 @@ CChat::CLine::CLine()
 	m_vLinks.clear();
 	m_vLinkFontSizes.clear();
 	m_vLinkAlwaysConfirm.clear();
+	m_HasReply = false;
+	m_ReplyToClientId = -1;
+	m_ReplyMessageIndex = 0;
+	m_aReplyToName[0] = '\0';
+	m_aReplyPreview[0] = '\0';
+	m_aReplyQuoteText[0] = '\0';
+	m_aDisplayText[0] = '\0';
+	m_ReplyQuoteRectValid = false;
+	m_ReplyQuoteHeight = 0.0f;
+	m_LineRectValid = false;
+	m_ReplyButtonRectValid = false;
+	m_ReplyButtonAnchorX = 0.0f;
+	m_ReplyButtonAnchorY = 0.0f;
+	m_ReplyButtonAnchorValid = false;
 }
 
 void CChat::CLine::Reset(CChat &This)
@@ -461,6 +477,20 @@ void CChat::CLine::Reset(CChat &This)
 	m_TranslateLanguageRectValid = false;
 	m_MediaPreviewRectValid = false;
 	m_MediaRetryRectValid = false;
+	m_HasReply = false;
+	m_ReplyToClientId = -1;
+	m_ReplyMessageIndex = 0;
+	m_aReplyToName[0] = '\0';
+	m_aReplyPreview[0] = '\0';
+	m_aReplyQuoteText[0] = '\0';
+	m_aDisplayText[0] = '\0';
+	m_ReplyQuoteRectValid = false;
+	m_ReplyQuoteHeight = 0.0f;
+	m_LineRectValid = false;
+	m_ReplyButtonRectValid = false;
+	m_ReplyButtonAnchorX = 0.0f;
+	m_ReplyButtonAnchorY = 0.0f;
+	m_ReplyButtonAnchorValid = false;
 }
 
 CChat::CChat()
@@ -484,6 +514,20 @@ CChat::CChat()
 	m_TranslateButtonRectValid = false;
 	m_GiphyButtonPressed = false;
 	m_GiphyButtonRectValid = false;
+	m_PendingReplyActive = false;
+	m_PendingReplyClientId = -1;
+	m_PendingReplySourceLineIndex = -1;
+	m_aPendingReplyName[0] = '\0';
+	m_aPendingReplyPreview[0] = '\0';
+	m_ReplyCancelButtonRectValid = false;
+	m_HoveredReplyLineIndex = -1;
+	m_LastOutgoingReplyTime = 0;
+	m_aLastOutgoingReplyWire[0] = '\0';
+	m_LastOutgoingReplyToClientId = -1;
+	m_LastOutgoingReplyMessageIndex = 0;
+	m_aLastOutgoingReplyToName[0] = '\0';
+	m_aLastOutgoingReplyPreview[0] = '\0';
+	m_aLastOutgoingReplyBody[0] = '\0';
 	m_GiphySearching = false;
 	m_GiphyLoadingMore = false;
 	m_GiphyHasMoreResults = false;
@@ -2507,6 +2551,222 @@ static void AppendTextWithUrlColors(ITextRender *pTextRender, STextContainerInde
 		pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, pText + SegmentStart);
 }
 
+static ColorRGBA UClientReplyQuotePreviewColor(const ColorRGBA &BodyColor)
+{
+	return ColorRGBA(0.72f, 0.72f, 0.72f, BodyColor.a);
+}
+
+static ColorRGBA UClientReplyQuoteBarColor(float Blend)
+{
+	return ColorRGBA(0.64f, 0.64f, 0.64f, 0.48f * Blend);
+}
+
+static constexpr float REPLY_QUOTE_DASH_LENGTH_FACTOR = 1.35f;
+static constexpr float REPLY_QUOTE_TEXT_GAP_FACTOR = 0.18f;
+static constexpr float REPLY_QUOTE_BAR_THICKNESS_FACTOR = 0.05f;
+
+static float ReplyQuoteDashLength(float FontSize)
+{
+	return FontSize * REPLY_QUOTE_DASH_LENGTH_FACTOR;
+}
+
+static float ReplyQuoteBarThickness(float FontSize)
+{
+	return std::clamp(FontSize * REPLY_QUOTE_BAR_THICKNESS_FACTOR, 1.0f, 1.4f);
+}
+
+static float ReplyQuoteTextStartOffset(float TeeSize, float FontSize)
+{
+	return TeeSize * 0.5f + ReplyQuoteDashLength(FontSize) + FontSize * REPLY_QUOTE_TEXT_GAP_FACTOR;
+}
+
+static void RenderReplyQuoteConnector(IGraphics *pGraphics, float TeeCenterX, float QuoteY, float QuoteLineH, float FontSize, float Blend)
+{
+	const float DashLength = ReplyQuoteDashLength(FontSize);
+	const float Thickness = ReplyQuoteBarThickness(FontSize);
+	const float Radius = Thickness * 0.5f;
+	const float QuoteCenterY = QuoteY + QuoteLineH * 0.5f;
+	const float BarTopY = QuoteCenterY - Thickness * 0.5f;
+	const float LeftX = TeeCenterX - Thickness * 0.5f;
+	const float VerticalEndY = QuoteY + QuoteLineH * 0.88f;
+	const float StemHeight = maximum(0.0f, VerticalEndY - (BarTopY + Thickness));
+	const float HorizontalWidth = maximum(Thickness, DashLength - Thickness * 0.5f);
+	const ColorRGBA BarColor = UClientReplyQuoteBarColor(Blend);
+
+	// Three abutting pieces (no overlap) so semi-transparent alpha stays even:
+	//   [corner][======== horizontal ========]
+	//   [stem ]
+	pGraphics->TextureClear();
+	pGraphics->QuadsBegin();
+	pGraphics->SetColor(BarColor);
+	pGraphics->DrawRectExt(LeftX, BarTopY, Thickness, Thickness, Radius, IGraphics::CORNER_TL);
+	pGraphics->DrawRectExt(LeftX + Thickness, BarTopY, HorizontalWidth, Thickness, Radius, IGraphics::CORNER_R);
+	if(StemHeight > 0.0f)
+		pGraphics->DrawRectExt(LeftX, BarTopY + Thickness, Thickness, StemHeight, Radius, IGraphics::CORNER_B);
+	pGraphics->QuadsEnd();
+}
+
+static void BuildReplyQuoteLine(ITextRender *pTextRender, float QuoteFontSize, float MaxWidth, const char *pReplyToName, const char *pReplyPreview, char *pOut, int OutSize)
+{
+	if(!pOut || OutSize <= 0)
+		return;
+	pOut[0] = '\0';
+	if(!pReplyToName || pReplyToName[0] == '\0')
+		return;
+
+	const char *pPreview = (pReplyPreview && pReplyPreview[0] != '\0') ? pReplyPreview : "";
+
+	char aFull[256];
+	str_format(aFull, sizeof(aFull), "%s: %s", pReplyToName, pPreview);
+	if(MaxWidth <= 0.0f || pTextRender->TextWidth(QuoteFontSize, aFull, -1, MaxWidth) <= MaxWidth)
+	{
+		str_copy(pOut, aFull, OutSize);
+		return;
+	}
+
+	char aPrefix[128];
+	str_format(aPrefix, sizeof(aPrefix), "%s: ", pReplyToName);
+	const float PrefixWidth = pTextRender->TextWidth(QuoteFontSize, aPrefix, -1, -1.0f);
+	const char aEllipsis[] = "...";
+	const float EllipsisWidth = pTextRender->TextWidth(QuoteFontSize, aEllipsis, -1, -1.0f);
+	const float AvailableWidth = maximum(0.0f, MaxWidth - PrefixWidth - EllipsisWidth);
+
+	char aPreview[128];
+	str_copy(aPreview, pPreview, sizeof(aPreview));
+	while(aPreview[0] != '\0')
+	{
+		char aCandidate[256];
+		str_format(aCandidate, sizeof(aCandidate), "%s%s", aPrefix, aPreview);
+		if(pTextRender->TextWidth(QuoteFontSize, aCandidate, -1, -1.0f) <= PrefixWidth + AvailableWidth)
+			break;
+
+		const int PreviewLen = str_length(aPreview);
+		if(PreviewLen <= 0)
+			break;
+		aPreview[PreviewLen - 1] = '\0';
+		while(str_length(aPreview) > 0)
+		{
+			const int Len = str_length(aPreview);
+			const unsigned char Last = (unsigned char)aPreview[Len - 1];
+			if(Last < 0x80 || Last >= 0xC0)
+				break;
+			aPreview[Len - 1] = '\0';
+		}
+	}
+
+	str_format(pOut, OutSize, "%s%s%s", aPrefix, aPreview, aEllipsis);
+}
+
+static void AppendTextWithUrlAndMentionColors(ITextRender *pTextRender, STextContainerIndex &TextContainerIndex, CTextCursor &Cursor, const char *pText, const std::unordered_set<std::string> &vSafeDomains, std::vector<STextBoundingBox> *pLinkBounds, std::vector<std::string> *pLinks, std::vector<float> *pFontSizes, std::vector<bool> *pAlwaysConfirm)
+{
+	int SegmentStart = 0;
+
+	for(int i = SegmentStart; pText[i] != '\0';)
+	{
+		SMarkdownLinkMatch MarkdownMatch;
+		SUrlMatch UrlMatch;
+		const bool HasMarkdownLink = TryParseClickableMarkdownLinkAt(pText, i, vSafeDomains, MarkdownMatch);
+		const bool HasRawUrl = TryParseClickableUrlAt(pText, i, vSafeDomains, UrlMatch);
+		if(HasMarkdownLink || HasRawUrl)
+		{
+			if(i > SegmentStart)
+				pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, pText + SegmentStart, i - SegmentStart);
+
+			std::string DisplayText;
+			std::string TargetUrl;
+			if(HasMarkdownLink)
+			{
+				DisplayText = MarkdownMatch.m_DisplayText;
+				TargetUrl = MarkdownMatch.m_TargetUrl;
+				i += MarkdownMatch.m_ConsumedLength;
+			}
+			else
+			{
+				DisplayText.assign(pText + i, UrlMatch.m_Length);
+				TargetUrl = UrlMatch.m_TargetUrl;
+				i += UrlMatch.m_Length;
+			}
+
+			if(!DisplayText.empty())
+			{
+				if(pLinkBounds != nullptr && pLinks != nullptr && pFontSizes != nullptr && pAlwaysConfirm != nullptr)
+					MeasureLinkBounds(pTextRender, Cursor, DisplayText.c_str(), (int)DisplayText.size(), TargetUrl, HasMarkdownLink, *pLinkBounds, *pLinks, *pFontSizes, *pAlwaysConfirm);
+
+				const auto SavedColorSplits = Cursor.m_vColorSplits;
+				Cursor.m_vColorSplits.emplace_back(Cursor.m_CharCount, (int)DisplayText.size(), ChatLinkColor());
+				pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, DisplayText.c_str(), (int)DisplayText.size());
+				Cursor.m_vColorSplits = SavedColorSplits;
+			}
+
+			SegmentStart = i;
+			continue;
+		}
+
+		const char *pOld = pText + i;
+		str_utf8_decode(&pOld);
+		i = (int)(pOld - pText);
+	}
+
+	if(pText[SegmentStart] != '\0')
+		pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, pText + SegmentStart);
+}
+
+static float AppendReplyQuoteToMeasure(ITextRender *pTextRender, CTextCursor &Cursor, bool HasReply, const char *pReplyToName, const char *pReplyPreview, float FontSize, float QuoteTextStartOffset, float MaxWidth)
+{
+	if(!HasReply || !pReplyToName || pReplyToName[0] == '\0')
+		return 0.0f;
+
+	const float QuoteFontSize = FontSize * 0.85f;
+	const float SavedFontSize = Cursor.m_FontSize;
+	const float StartY = Cursor.m_Y;
+	Cursor.m_FontSize = QuoteFontSize;
+	Cursor.m_X += QuoteTextStartOffset;
+
+	char aQuoteLine[256];
+	BuildReplyQuoteLine(pTextRender, QuoteFontSize, MaxWidth - QuoteTextStartOffset, pReplyToName, pReplyPreview, aQuoteLine, sizeof(aQuoteLine));
+	pTextRender->TextEx(&Cursor, aQuoteLine);
+	pTextRender->TextEx(&Cursor, "\n");
+
+	Cursor.m_FontSize = SavedFontSize;
+	return maximum(0.0f, Cursor.m_Y - StartY + QuoteFontSize * 0.15f);
+}
+
+static void AppendReplyQuoteToContainer(ITextRender *pTextRender, STextContainerIndex &TextContainerIndex, CTextCursor &Cursor, bool HasReply, const char *pReplyToName, const char *pReplyPreview, float FontSize, const ColorRGBA &BodyColor, float QuoteTextStartOffset, float MaxWidth, float &QuoteRectX, float &QuoteRectY, float &QuoteRectW, float &QuoteRectH, bool &QuoteRectValid)
+{
+	if(!HasReply || !pReplyToName || pReplyToName[0] == '\0')
+		return;
+
+	const float QuoteFontSize = FontSize * 0.85f;
+	const float SavedFontSize = Cursor.m_FontSize;
+	const ColorRGBA PreviewColor = UClientReplyQuotePreviewColor(BodyColor);
+
+	Cursor.m_FontSize = QuoteFontSize;
+	Cursor.m_X += QuoteTextStartOffset;
+
+	QuoteRectX = Cursor.m_X;
+	QuoteRectY = Cursor.m_Y;
+	QuoteRectValid = true;
+
+	char aQuoteLine[256];
+	BuildReplyQuoteLine(pTextRender, QuoteFontSize, MaxWidth - QuoteTextStartOffset, pReplyToName, pReplyPreview, aQuoteLine, sizeof(aQuoteLine));
+
+	char aNamePart[72];
+	str_format(aNamePart, sizeof(aNamePart), "%s: ", pReplyToName);
+	const int NamePartLen = str_length(aNamePart);
+
+	pTextRender->TextColor(PreviewColor);
+	pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, aNamePart);
+	if(NamePartLen < str_length(aQuoteLine))
+		pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, aQuoteLine + NamePartLen);
+	pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, "\n");
+
+	QuoteRectW = maximum(1.0f, Cursor.m_LongestLineWidth);
+	QuoteRectH = QuoteFontSize;
+
+	Cursor.m_FontSize = SavedFontSize;
+	pTextRender->TextColor(BodyColor);
+}
+
 static bool ContainsCaseInsensitive(std::string_view Haystack, std::string_view Needle)
 {
 	if(Needle.empty())
@@ -3491,12 +3751,13 @@ std::string CChat::MediaPlaceholderText(const CLine &Line) const
 
 std::string CChat::BuildVisibleMessageText(const CLine &Line, bool UseMediaLabelWhenEmpty) const
 {
+	const char *pSource = GetLineDisplayText(Line);
 	if(!ShouldDisplayMediaSlot(Line))
-		return Line.m_aText;
+		return pSource;
 
 	std::string Result;
 	bool RemovedUrl = false;
-	for(const char *pCur = Line.m_aText; *pCur;)
+	for(const char *pCur = pSource; *pCur;)
 	{
 		if(IsUrlStart(pCur))
 		{
@@ -4167,6 +4428,42 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	{
 		HandleLinkActivation(m_HoveredLink, m_HoveredLinkAlwaysConfirm);
 		return true;
+	}
+
+	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && m_ReplyCancelButtonRectValid)
+	{
+		const vec2 MousePos = ChatMousePos();
+		const SRenderRect &Rect = m_ReplyCancelButtonRect;
+		if(MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
+			MousePos.y >= Rect.m_Y && MousePos.y <= Rect.m_Y + Rect.m_H)
+		{
+			ClearPendingReply();
+			return true;
+		}
+	}
+
+	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && m_HoveredReplyLineIndex >= 0)
+	{
+		CLine &Line = m_aLines[m_HoveredReplyLineIndex];
+		if(Line.m_ReplyButtonRectValid)
+		{
+			const vec2 MousePos = ChatMousePos();
+			const SRenderRect &Rect = Line.m_ReplyButtonRect;
+			if(MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
+				MousePos.y >= Rect.m_Y && MousePos.y <= Rect.m_Y + Rect.m_H)
+			{
+				const char *pReplyName = Line.m_aName;
+				char aSanitizedName[64];
+				if(Line.m_ClientId >= 0 && Line.m_ClientId < MAX_CLIENTS && GameClient()->m_aClients[Line.m_ClientId].m_Active)
+				{
+					GameClient()->m_BestClient.SanitizePlayerName(GameClient()->m_aClients[Line.m_ClientId].m_aName, aSanitizedName, sizeof(aSanitizedName), Line.m_ClientId);
+					pReplyName = aSanitizedName;
+				}
+				SetPendingReply(Line.m_ClientId, pReplyName, m_HoveredReplyLineIndex, GetLineDisplayText(Line));
+				m_Input.Activate(EInputPriority::CHAT);
+				return true;
+			}
+		}
 	}
 
 	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && !m_HoveredPlayerName.empty())
@@ -5014,6 +5311,7 @@ void CChat::DisableMode()
 		CloseMediaViewer();
 		Ui()->ClosePopupMenus();
 		m_UcChatPaste.Reset(this);
+		ClearPendingReply();
 		m_Mode = MODE_NONE;
 		m_BacklogCurLine = 0;
 		m_ScrollbarDragging = false;
@@ -5083,6 +5381,14 @@ void CChat::OnMessage(int MsgType, void *pRawMsg)
 
 bool CChat::LineShouldHighlight(const char *pLine, const char *pName)
 {
+	if(!pName || pName[0] == '\0')
+		return false;
+
+	char aReplyTag[MAX_NAME_LENGTH + 2];
+	str_format(aReplyTag, sizeof(aReplyTag), "%s:", pName);
+	if(str_startswith_nocase(pLine, aReplyTag))
+		return true;
+
 	const char *pHit = str_utf8_find_nocase(pLine, pName);
 
 	while(pHit)
@@ -5096,6 +5402,187 @@ bool CChat::LineShouldHighlight(const char *pLine, const char *pName)
 	}
 
 	return false;
+}
+
+const char *CChat::GetLineDisplayText(const CLine &Line) const
+{
+	return Line.m_aDisplayText[0] != '\0' ? Line.m_aDisplayText : Line.m_aText;
+}
+
+static bool ChatLineNameMatches(const char *pLineName, const char *pName)
+{
+	if(!pName || pName[0] == '\0' || !pLineName || pLineName[0] == '\0')
+		return false;
+
+	char aLineName[64];
+	str_copy(aLineName, pLineName, sizeof(aLineName));
+	const int NameLen = str_length(aLineName);
+	if(NameLen > 0 && aLineName[NameLen - 1] == ' ')
+		aLineName[NameLen - 1] = '\0';
+	return str_comp_nocase(aLineName, pName) == 0;
+}
+
+int CChat::ComputeSenderRecentIndex(int SourceLineIndex, const char *pName) const
+{
+	if(SourceLineIndex < 0 || !pName || pName[0] == '\0')
+		return 0;
+
+	int Count = 0;
+	for(int Step = 0; Step < MAX_LINES; ++Step)
+	{
+		const int Index = (m_CurrentLine - Step + MAX_LINES) % MAX_LINES;
+		const CLine &Candidate = m_aLines[Index];
+		if(!Candidate.m_Initialized)
+			break;
+		if(!ChatLineNameMatches(Candidate.m_aName, pName))
+			continue;
+		++Count;
+		if(Index == SourceLineIndex)
+			return Count;
+	}
+	return 0;
+}
+
+bool CChat::TryResolveReplyQuoteByIndex(int ReplyLineIndex, const char *pReplyToName, int MessageIndex, char *pOut, int OutSize) const
+{
+	if(!pOut || OutSize <= 0 || ReplyLineIndex < 0 || MessageIndex <= 0 || !pReplyToName || pReplyToName[0] == '\0')
+		return false;
+	pOut[0] = '\0';
+
+	int Count = 0;
+	for(int Step = 1; Step < MAX_LINES; ++Step)
+	{
+		const int Index = (ReplyLineIndex - Step + MAX_LINES) % MAX_LINES;
+		const CLine &Candidate = m_aLines[Index];
+		if(!Candidate.m_Initialized)
+			continue;
+		if(!ChatLineNameMatches(Candidate.m_aName, pReplyToName))
+			continue;
+		++Count;
+		if(Count == MessageIndex)
+		{
+			str_copy(pOut, GetLineDisplayText(Candidate), OutSize);
+			return true;
+		}
+	}
+	return false;
+}
+
+bool CChat::TryResolveReplyQuoteText(int ReplyClientId, const char *pReplyToName, const char *pWirePreview, char *pOut, int OutSize, int SkipLineIndex) const
+{
+	if(!pOut || OutSize <= 0 || !pWirePreview || pWirePreview[0] == '\0')
+		return false;
+	pOut[0] = '\0';
+
+	for(int i = 0; i < MAX_LINES; ++i)
+	{
+		const int Index = (m_CurrentLine - i + MAX_LINES) % MAX_LINES;
+		if(Index == SkipLineIndex)
+			continue;
+		const CLine &Candidate = m_aLines[Index];
+		if(!Candidate.m_Initialized)
+			continue;
+		if(ReplyClientId >= 0 && Candidate.m_ClientId != ReplyClientId)
+			continue;
+		if(pReplyToName && pReplyToName[0] != '\0' && !ChatLineNameMatches(Candidate.m_aName, pReplyToName))
+			continue;
+
+		const char *pDisplay = GetLineDisplayText(Candidate);
+		if(!CUClientChatReply::TextMatchesWirePreview(pWirePreview, pDisplay))
+			continue;
+
+		str_copy(pOut, pDisplay, OutSize);
+		return true;
+	}
+	return false;
+}
+
+const char *CChat::GetLineReplyQuoteText(const CLine &Line) const
+{
+	return Line.m_aReplyQuoteText;
+}
+
+void CChat::SetPendingReply(int ClientId, const char *pName, int SourceLineIndex, const char *pQuoteText)
+{
+	if(ClientId < 0 || SourceLineIndex < 0 || !pName || pName[0] == '\0')
+		return;
+	m_PendingReplyActive = true;
+	m_PendingReplyClientId = ClientId;
+	m_PendingReplySourceLineIndex = SourceLineIndex;
+	str_copy(m_aPendingReplyName, pName, sizeof(m_aPendingReplyName));
+	str_copy(m_aPendingReplyPreview, pQuoteText ? pQuoteText : "", sizeof(m_aPendingReplyPreview));
+}
+
+void CChat::ClearPendingReply()
+{
+	m_PendingReplyActive = false;
+	m_PendingReplyClientId = -1;
+	m_PendingReplySourceLineIndex = -1;
+	m_aPendingReplyName[0] = '\0';
+	m_aPendingReplyPreview[0] = '\0';
+	m_ReplyCancelButtonRectValid = false;
+}
+
+bool CChat::CanShowReplyButton(const CLine &Line) const
+{
+	return CUClientChatReply::IsReplyFeatureEnabled() &&
+		m_Mode != MODE_NONE &&
+		Line.m_ClientId >= 0 &&
+		Line.m_aName[0] != '\0' &&
+		!Line.m_Whisper;
+}
+
+float CChat::ReplyBannerHeight(float ScaledFontSize) const
+{
+	if(!m_PendingReplyActive)
+		return 0.0f;
+	return ScaledFontSize * 0.72f + 4.0f;
+}
+
+void CChat::RenderReplyBanner(float x, float InputY, float ScaledFontSize)
+{
+	if(!m_PendingReplyActive)
+		return;
+
+	const float LabelFontSize = ScaledFontSize * 0.72f;
+	const float LabelY = InputY - LabelFontSize - 3.0f;
+
+	char aBannerText[128];
+	str_format(aBannerText, sizeof(aBannerText), "%s님에게 답장하는 중", m_aPendingReplyName);
+
+	const float LabelW = TextRender()->TextWidth(LabelFontSize, aBannerText);
+	const float CancelSize = maximum(10.0f, LabelFontSize * 0.9f);
+	const float CancelX = x + LabelW + 5.0f;
+	const float CancelY = LabelY + maximum(0.0f, (LabelFontSize - CancelSize) * 0.5f);
+
+	TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.95f);
+	CTextCursor LabelCursor;
+	LabelCursor.SetPosition(vec2(x, LabelY));
+	LabelCursor.m_FontSize = LabelFontSize;
+	TextRender()->TextEx(&LabelCursor, aBannerText);
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+
+	const vec2 MousePos = ChatMousePos();
+	const bool HoveredCancel = MousePos.x >= CancelX && MousePos.x <= CancelX + CancelSize &&
+		MousePos.y >= CancelY && MousePos.y <= CancelY + CancelSize;
+
+	TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+	TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
+	TextRender()->TextColor(1.0f, 1.0f, 1.0f, HoveredCancel ? 1.0f : 0.85f);
+	CUIRect CancelButton(CancelX, CancelY, CancelSize, CancelSize);
+	Ui()->DoLabel(&CancelButton, FontIcon::XMARK, CancelSize * CUi::ms_FontmodHeight, TEXTALIGN_MC);
+	TextRender()->SetRenderFlags(0);
+	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+
+	m_ReplyCancelButtonRect.m_X = CancelX;
+	m_ReplyCancelButtonRect.m_Y = CancelY;
+	m_ReplyCancelButtonRect.m_W = CancelSize;
+	m_ReplyCancelButtonRect.m_H = CancelSize;
+	m_ReplyCancelButtonRectValid = true;
+
+	if(HoveredCancel)
+		Ui()->SetHotItem(&m_ReplyCancelButton);
 }
 
 static constexpr const char *SAVES_HEADER[] = {
@@ -5188,12 +5675,22 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	if(pEnd != nullptr)
 		*(const_cast<char *>(pEnd)) = '\0';
 
+	char aWireLine[CHAT_LINE_LENGTH];
+	str_copy(aWireLine, pLine, sizeof(aWireLine));
+
 	char aSanitizedText[1024];
 	GameClient()->m_BestClient.SanitizeText(pLine, aSanitizedText, sizeof(aSanitizedText));
 	pLine = aSanitizedText;
 
-	if(*pLine == 0)
+	if(*pLine == 0 && aWireLine[0] == '\0')
 		return;
+
+	const char *pParseSource = pLine;
+	if(CUClientChatReply::IsReplyFeatureEnabled())
+	{
+		if(str_startswith(aWireLine, "[UCR:") || aWireLine[0] == '\x1E' || str_startswith(aWireLine, "UCR "))
+			pParseSource = aWireLine;
+	}
 
 	bool Highlighted = false;
 
@@ -5285,6 +5782,42 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	CurrentLine.m_NameColor = -2;
 	CurrentLine.m_CustomColor = CustomColor;
 
+	const char *pHighlightText = pLine;
+	CUClientChatReply::SReplyMeta PreReplyMeta;
+	char aPreDisplayBody[CHAT_LINE_LENGTH];
+	aPreDisplayBody[0] = '\0';
+	bool UsedOutgoingReplyCache = false;
+	if(CUClientChatReply::IsReplyFeatureEnabled() &&
+		CUClientChatReply::TryParseReply(pParseSource, PreReplyMeta, aPreDisplayBody, sizeof(aPreDisplayBody)))
+	{
+		pHighlightText = aPreDisplayBody;
+	}
+
+	if(!PreReplyMeta.m_Valid && CUClientChatReply::IsReplyFeatureEnabled() && m_LastOutgoingReplyTime > 0 &&
+		time() <= m_LastOutgoingReplyTime + time_freq())
+	{
+		bool IsLocalSender = false;
+		for(int LocalId : GameClient()->m_aLocalIds)
+		{
+			if(ClientId == LocalId)
+			{
+				IsLocalSender = true;
+				break;
+			}
+		}
+		if(IsLocalSender && str_comp(aWireLine, m_aLastOutgoingReplyWire) == 0)
+		{
+			PreReplyMeta.m_Valid = true;
+			PreReplyMeta.m_ReplyToClientId = -1;
+			PreReplyMeta.m_ReplyMessageIndex = m_LastOutgoingReplyMessageIndex;
+			str_copy(PreReplyMeta.m_aReplyToName, m_aLastOutgoingReplyToName, sizeof(PreReplyMeta.m_aReplyToName));
+			PreReplyMeta.m_aReplyPreview[0] = '\0';
+			str_copy(aPreDisplayBody, m_aLastOutgoingReplyBody, sizeof(aPreDisplayBody));
+			pHighlightText = aPreDisplayBody;
+			UsedOutgoingReplyCache = true;
+		}
+	}
+
 	// check for highlighted name
 	if(Client()->State() != IClient::STATE_DEMOPLAYBACK)
 	{
@@ -5292,7 +5825,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 		{
 			for(int LocalId : GameClient()->m_aLocalIds)
 			{
-				Highlighted |= LocalId >= 0 && LineShouldHighlight(pLine, GameClient()->m_aClients[LocalId].m_aName);
+				Highlighted |= LocalId >= 0 && LineShouldHighlight(pHighlightText, GameClient()->m_aClients[LocalId].m_aName);
 			}
 		}
 	}
@@ -5300,11 +5833,45 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	{
 		// on demo playback use local id from snap directly,
 		// since m_aLocalIds isn't valid there
-		Highlighted |= GameClient()->m_Snap.m_LocalClientId >= 0 && LineShouldHighlight(pLine, GameClient()->m_aClients[GameClient()->m_Snap.m_LocalClientId].m_aName);
+		Highlighted |= GameClient()->m_Snap.m_LocalClientId >= 0 && LineShouldHighlight(pHighlightText, GameClient()->m_aClients[GameClient()->m_Snap.m_LocalClientId].m_aName);
+	}
+
+	if(PreReplyMeta.m_Valid)
+	{
+		for(int LocalId : GameClient()->m_aLocalIds)
+		{
+			if(LocalId >= 0 && str_comp(PreReplyMeta.m_aReplyToName, GameClient()->m_aClients[LocalId].m_aName) == 0)
+				Highlighted = true;
+		}
+		if(Client()->State() == IClient::STATE_DEMOPLAYBACK && GameClient()->m_Snap.m_LocalClientId >= 0 &&
+			str_comp(PreReplyMeta.m_aReplyToName, GameClient()->m_aClients[GameClient()->m_Snap.m_LocalClientId].m_aName) == 0)
+			Highlighted = true;
 	}
 	CurrentLine.m_Highlighted = Highlighted;
 
-	str_copy(CurrentLine.m_aText, pLine);
+	str_copy(CurrentLine.m_aText, aWireLine[0] != '\0' ? aWireLine : pLine);
+	CurrentLine.m_HasReply = false;
+	CurrentLine.m_aDisplayText[0] = '\0';
+	CurrentLine.m_aReplyToName[0] = '\0';
+	CurrentLine.m_aReplyPreview[0] = '\0';
+	CurrentLine.m_aReplyQuoteText[0] = '\0';
+	CurrentLine.m_ReplyToClientId = -1;
+	CurrentLine.m_ReplyMessageIndex = 0;
+	if(PreReplyMeta.m_Valid)
+	{
+		CurrentLine.m_HasReply = true;
+		CurrentLine.m_ReplyToClientId = PreReplyMeta.m_ReplyToClientId;
+		CurrentLine.m_ReplyMessageIndex = PreReplyMeta.m_ReplyMessageIndex;
+		str_copy(CurrentLine.m_aReplyToName, PreReplyMeta.m_aReplyToName, sizeof(CurrentLine.m_aReplyToName));
+		str_copy(CurrentLine.m_aReplyPreview, PreReplyMeta.m_aReplyPreview, sizeof(CurrentLine.m_aReplyPreview));
+		str_copy(CurrentLine.m_aDisplayText, aPreDisplayBody, sizeof(CurrentLine.m_aDisplayText));
+		if(UsedOutgoingReplyCache)
+			str_copy(CurrentLine.m_aReplyQuoteText, m_aLastOutgoingReplyPreview, sizeof(CurrentLine.m_aReplyQuoteText));
+		else if(CurrentLine.m_ReplyMessageIndex > 0)
+			TryResolveReplyQuoteByIndex(m_CurrentLine, CurrentLine.m_aReplyToName, CurrentLine.m_ReplyMessageIndex, CurrentLine.m_aReplyQuoteText, sizeof(CurrentLine.m_aReplyQuoteText));
+		else
+			TryResolveReplyQuoteText(CurrentLine.m_ReplyToClientId, CurrentLine.m_aReplyToName, CurrentLine.m_aReplyPreview, CurrentLine.m_aReplyQuoteText, sizeof(CurrentLine.m_aReplyQuoteText), m_CurrentLine);
+	}
 	if(g_Config.m_BcChatMediaPreview && AnyMediaAllowed())
 	{
 		std::vector<std::string> vMediaUrls;
@@ -5450,6 +6017,8 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 
 void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex)
 {
+	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+
 	const float Height = HudLayout::CANVAS_HEIGHT;
 	const float Width = Height * Graphics()->ScreenAspect();
 	const auto Layout = HudLayout::Get(HudLayout::MODULE_CHAT, Width, Height);
@@ -5538,6 +6107,11 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 		Line.m_vLinks.clear();
 		Line.m_vLinkFontSizes.clear();
 		Line.m_vLinkAlwaysConfirm.clear();
+		Line.m_aYOffset[OffsetType] = -1.0f;
+		Line.m_aTextHeight[OffsetType] = -1.0f;
+		Line.m_ReplyQuoteRectValid = false;
+		Line.m_ReplyQuoteHeight = 0.0f;
+		Line.m_ReplyButtonAnchorValid = false;
 
 		char aClientId[16] = "";
 		if(g_Config.m_ClShowIds && Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
@@ -5575,6 +6149,13 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 		else
 		{
 			VisibleTextStorage = BuildVisibleMessageText(Line, false);
+			if(Line.m_HasReply && Line.m_aReplyToName[0] != '\0')
+			{
+				char aReplyPrefix[72];
+				CUClientChatReply::BuildReplyBodyPrefix(Line.m_aReplyToName, aReplyPrefix, sizeof(aReplyPrefix));
+				if(aReplyPrefix[0] != '\0' && str_startswith_nocase(VisibleTextStorage.c_str(), aReplyPrefix))
+					VisibleTextStorage.erase(0, str_length(aReplyPrefix));
+			}
 			pText = VisibleTextStorage.c_str();
 		}
 
@@ -5582,6 +6163,8 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 		if(!ColoredParts.Colors().empty() && ColoredParts.Colors()[0].m_Index == 0)
 			Line.m_CustomColor = ColoredParts.Colors()[0].m_Color;
 		pText = ColoredParts.Text();
+
+		const char *pMessageText = pText;
 
 		const char *pTranslatedError = nullptr;
 		const char *pTranslatedText = nullptr;
@@ -5616,6 +6199,15 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 		Line.m_SelectionStart = -1;
 		Line.m_SelectionEnd = -1;
 
+		if(Line.m_HasReply && Line.m_aReplyQuoteText[0] == '\0')
+		{
+			if(Line.m_ReplyMessageIndex > 0)
+				TryResolveReplyQuoteByIndex(LineIndex, Line.m_aReplyToName, Line.m_ReplyMessageIndex, Line.m_aReplyQuoteText, sizeof(Line.m_aReplyQuoteText));
+			else
+				TryResolveReplyQuoteText(Line.m_ReplyToClientId, Line.m_aReplyToName, Line.m_aReplyPreview, Line.m_aReplyQuoteText, sizeof(Line.m_aReplyQuoteText), LineIndex);
+		}
+		const char *pReplyQuoteText = GetLineReplyQuoteText(Line);
+
 		// get the y offset (calculate it if we haven't done that yet)
 		if(Line.m_aYOffset[OffsetType] < 0.0f)
 		{
@@ -5624,6 +6216,11 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			MeasureCursor.m_FontSize = FontSize;
 			MeasureCursor.m_Flags = 0;
 			MeasureCursor.m_LineWidth = LineWidth;
+
+			const float QuoteTextStart = ReplyQuoteTextStartOffset(TeeSize, FontSize);
+			const float QuoteMaxWidth = LineWidth + RealMsgPaddingTee;
+			if(Line.m_HasReply && !pDisplayedTranslatedText && !pTranslatedError)
+				Line.m_ReplyQuoteHeight = AppendReplyQuoteToMeasure(TextRender(), MeasureCursor, true, Line.m_aReplyToName, pReplyQuoteText, FontSize, QuoteTextStart, QuoteMaxWidth);
 
 			if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
 			{
@@ -5665,7 +6262,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			}
 			else if(pTranslatedError)
 			{
-				TextRender()->TextEx(&MeasureCursor, pText);
+				TextRender()->TextEx(&MeasureCursor, pMessageText);
 				TextRender()->TextEx(&MeasureCursor, "\n");
 				MeasureCursor.m_FontSize *= 0.8f;
 				TextRender()->TextEx(&MeasureCursor, pTranslatedError);
@@ -5673,7 +6270,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			}
 			else
 			{
-				TextRender()->TextEx(&MeasureCursor, pText);
+				TextRender()->TextEx(&MeasureCursor, pMessageText);
 			}
 
 			Line.m_aTextHeight[OffsetType] = MeasureCursor.Height();
@@ -5758,6 +6355,27 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			LineCursor.m_ReleaseMouse = m_MouseRelease;
 		}
 
+		ColorRGBA Color;
+		if(Line.m_CustomColor)
+			Color = *Line.m_CustomColor;
+		else if(Line.m_ClientId == SERVER_MSG)
+			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageSystemColor));
+		else if(Line.m_ClientId == CLIENT_MSG)
+			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
+		else if(Line.m_Highlighted)
+			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageHighlightColor));
+		else if(Line.m_Team)
+			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageTeamColor));
+		else // regular message
+			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageColor));
+
+		const float QuoteTextStart = ReplyQuoteTextStartOffset(TeeSize, FontSize);
+		const float QuoteMaxWidth = LineWidth + RealMsgPaddingTee;
+		if(Line.m_HasReply && !pDisplayedTranslatedText && !pTranslatedError)
+		{
+			AppendReplyQuoteToContainer(TextRender(), Line.m_TextContainerIndex, LineCursor, true, Line.m_aReplyToName, pReplyQuoteText, FontSize, Color, QuoteTextStart, QuoteMaxWidth, Line.m_ReplyQuoteRect.m_X, Line.m_ReplyQuoteRect.m_Y, Line.m_ReplyQuoteRect.m_W, Line.m_ReplyQuoteRect.m_H, Line.m_ReplyQuoteRectValid);
+		}
+
 		// Message is from valid player
 		if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
 		{
@@ -5809,19 +6427,6 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &LineCursor, ": ");
 		}
 
-		ColorRGBA Color;
-		if(Line.m_CustomColor)
-			Color = *Line.m_CustomColor;
-		else if(Line.m_ClientId == SERVER_MSG)
-			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageSystemColor));
-		else if(Line.m_ClientId == CLIENT_MSG)
-			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
-		else if(Line.m_Highlighted)
-			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageHighlightColor));
-		else if(Line.m_Team)
-			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageTeamColor));
-		else // regular message
-			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageColor));
 		TextRender()->TextColor(Color);
 
 		const float PrefixWidth = LineCursor.m_LongestLineWidth;
@@ -5882,7 +6487,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 		{
 			Line.m_TranslateRectValid = false;
 			Line.m_TranslateLanguageRectValid = false;
-			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &LineCursor, pText);
+			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &LineCursor, pMessageText);
 			ColorRGBA ColorSub = Color;
 			ColorSub.r = 0.7f;
 			ColorSub.g = 0.6f;
@@ -5899,7 +6504,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			Line.m_TranslateRectValid = false;
 			Line.m_TranslateLanguageRectValid = false;
 			ColoredParts.AddSplitsToCursor(LineCursor);
-			AppendTextWithUrlColors(TextRender(), Line.m_TextContainerIndex, LineCursor, pText,
+			AppendTextWithUrlAndMentionColors(TextRender(), Line.m_TextContainerIndex, LineCursor, pMessageText,
 				m_LinkPolicyCache.m_vSafeDomains,
 				&Line.m_vLinkBounds, &Line.m_vLinks, &Line.m_vLinkFontSizes, &Line.m_vLinkAlwaysConfirm);
 			LineCursor.m_vColorSplits.clear();
@@ -5907,6 +6512,10 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 
 		Line.m_SelectionStart = LineCursor.m_SelectionStart;
 		Line.m_SelectionEnd = LineCursor.m_SelectionEnd;
+
+		Line.m_ReplyButtonAnchorX = LineCursor.m_X;
+		Line.m_ReplyButtonAnchorY = LineCursor.m_Y;
+		Line.m_ReplyButtonAnchorValid = CanShowReplyButton(Line);
 
 		if(!g_Config.m_ClChatOld && (Line.m_aText[0] != '\0' || Line.m_aName[0] != '\0'))
 		{
@@ -5918,6 +6527,12 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			else
 			{
 				FullWidth += maximum(PrefixWidth, LineCursor.m_LongestLineWidth);
+			}
+			if(Line.m_ReplyButtonAnchorValid)
+			{
+				const float ReplyBtnSize = maximum(6.5f, FontSize * 0.34f);
+				const float ReplyBtnGap = FontSize * 0.22f;
+				FullWidth = maximum(FullWidth, (Line.m_ReplyButtonAnchorX - Begin) + ReplyBtnGap + ReplyBtnSize + RealMsgPaddingX * 0.5f);
 			}
 			if(Line.m_aMediaPreviewWidth[OffsetType] > 0.0f)
 			{
@@ -5983,6 +6598,8 @@ void CChat::OnRender()
 	m_HoveredPlayerName.clear();
 	m_HoveredLink.clear();
 	m_HoveredLinkAlwaysConfirm = false;
+	m_HoveredReplyLineIndex = -1;
+	m_ReplyCancelButtonRectValid = false;
 	for(int LineIndex = 0; LineIndex < MAX_LINES; ++LineIndex)
 	{
 		const CLine &Line = m_aLines[LineIndex];
@@ -6005,6 +6622,8 @@ void CChat::OnRender()
 		Line.m_NameRectValid = false;
 		Line.m_MediaPreviewRectValid = false;
 		Line.m_MediaRetryRectValid = false;
+		Line.m_LineRectValid = false;
+		Line.m_ReplyButtonRectValid = false;
 	}
 	m_TranslateButtonRectValid = false;
 	m_GiphyButtonRectValid = false;
@@ -6061,14 +6680,24 @@ void CChat::OnRender()
 
 		if(m_Mode != MODE_NONE)
 		{
-			// uclient: chat paste image preview above input
 			const float InputAreaWidth = maximum(190.0f * LayoutScale, ChatWidth());
+			float StackAboveInput = 0.0f;
+
+			const float ReplyBannerReserve = ReplyBannerHeight(ScaledFontSize);
+			if(ReplyBannerReserve > 0.0f)
+			{
+				RenderReplyBanner(x + ChatOpenOffsetX, y, ScaledFontSize);
+				StackAboveInput += ReplyBannerReserve;
+			}
+
+			// uclient: chat paste image preview above input
 			const float PreviewH = m_UcChatPaste.PreviewHeight(this, InputAreaWidth, ScaledFontSize);
 			if(PreviewH > 0.0f)
 			{
-				PendingPreviewReserve = PreviewH + maximum(6.0f, FontSize() * 0.45f);
-				m_UcChatPaste.RenderPreview(this, x + ChatOpenOffsetX, y - PendingPreviewReserve, InputAreaWidth, Height, ScaledFontSize);
+				StackAboveInput += PreviewH + maximum(6.0f, FontSize() * 0.45f);
+				m_UcChatPaste.RenderPreview(this, x + ChatOpenOffsetX, y - StackAboveInput, InputAreaWidth, Height, ScaledFontSize);
 			}
+			PendingPreviewReserve = StackAboveInput;
 
 			// render chat input
 			CTextCursor InputCursor;
@@ -6474,39 +7103,55 @@ void CChat::OnRender()
 		const float LineRenderX = x + ChatOpenOffsetX + BcLineXOffset;
 		const float LineRenderY = y + BcLineYOffset;
 
+		const bool IsPendingReplyTarget = m_PendingReplyActive && LineIndex == m_PendingReplySourceLineIndex;
+		const float LineH = maximum(Line.m_aYOffset[OffsetType], FontSize() + RealMsgPaddingY);
+
 		// Draw backgrounds for messages in one batch
 		if(!g_Config.m_ClChatOld)
 		{
 			Graphics()->TextureClear();
-			if(Line.m_QuadContainerIndex != -1)
+			if(Line.m_QuadContainerIndex != -1 && !IsPendingReplyTarget)
 			{
 				Graphics()->SetColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClChatBackgroundColor, true)).WithMultipliedAlpha(Blend));
 				Graphics()->RenderQuadContainerEx(Line.m_QuadContainerIndex, 0, -1, ChatOpenOffsetX + BcLineXOffset, ((LineRenderY + RealMsgPaddingY / 2.0f) - Line.m_TextYOffset));
 			}
 		}
 
+		if(IsPendingReplyTarget)
+		{
+			float HighlightW = maximum(1.0f, ChatWidth());
+			if(Line.m_ReplyButtonAnchorValid)
+			{
+				const float TextEndX = Line.m_ReplyButtonAnchorX + ChatOpenOffsetX + BcLineXOffset;
+				HighlightW = maximum(1.0f, (TextEndX - LineRenderX) + FontSize() * 0.28f);
+			}
+			Graphics()->DrawRect(LineRenderX, LineRenderY, HighlightW, LineH, ColorRGBA(0.18f, 0.32f, 0.58f, 0.42f * Blend), IGraphics::CORNER_L, MessageRounding());
+
+			const float AccentW = maximum(1.5f, FontSize() * 0.12f);
+			Graphics()->DrawRect(LineRenderX, LineRenderY, AccentW, LineH, ColorRGBA(0.35f, 0.62f, 1.0f, 0.92f * Blend), IGraphics::CORNER_NONE, 0.0f);
+		}
+
 		if(Line.m_TextContainerIndex.Valid())
 		{
+			const ColorRGBA TextColor = TextRender()->DefaultTextColor().WithMultipliedAlpha(Blend);
+			const ColorRGBA TextOutlineColor = TextRender()->DefaultTextOutlineColor().WithMultipliedAlpha(Blend);
+			const float TextOffsetY = (LineRenderY + RealMsgPaddingY / 2.0f) - Line.m_TextYOffset;
+
 			if(!g_Config.m_ClChatOld && Line.m_pManagedTeeRenderInfo != nullptr)
 			{
 				CTeeRenderInfo &TeeRenderInfo = Line.m_pManagedTeeRenderInfo->TeeRenderInfo();
 				const int TeeSize = MessageTeeSize();
 				TeeRenderInfo.m_Size = TeeSize;
 
-				float RowHeight = FontSize() + RealMsgPaddingY;
-				float OffsetTeeY = TeeSize / 2.0f;
-				float FullHeightMinusTee = RowHeight - TeeSize;
-
 				const CAnimState *pIdleState = CAnimState::GetIdle();
 				vec2 OffsetToMid;
 				CRenderTools::GetRenderTeeOffsetToRenderedTee(pIdleState, &TeeRenderInfo, OffsetToMid);
-				vec2 TeeRenderPos(LineRenderX + (RealMsgPaddingX + TeeSize) / 2.0f, LineRenderY + OffsetTeeY + FullHeightMinusTee / 2.0f + OffsetToMid.y);
+				const float MainLineCenterY = Line.m_TextYOffset + TextOffsetY + Line.m_ReplyQuoteHeight + FontSize() * 0.5f;
+				vec2 TeeRenderPos(LineRenderX + (RealMsgPaddingX + TeeSize) / 2.0f, MainLineCenterY + OffsetToMid.y);
 				RenderTools()->RenderTee(pIdleState, &TeeRenderInfo, EMOTE_NORMAL, vec2(1, 0.1f), TeeRenderPos, Blend);
 			}
 
-			const ColorRGBA TextColor = TextRender()->DefaultTextColor().WithMultipliedAlpha(Blend);
-			const ColorRGBA TextOutlineColor = TextRender()->DefaultTextOutlineColor().WithMultipliedAlpha(Blend);
-			const float TextOffsetY = (LineRenderY + RealMsgPaddingY / 2.0f) - Line.m_TextYOffset;
+			bool HoveredName = false;
 			if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
 			{
 				char aClientId[16] = "";
@@ -6518,7 +7163,7 @@ void CChat::OnRender()
 					NameRectX += TextRender()->TextWidth(FontSize(), "♥ ");
 				NameRectX += TextRender()->TextWidth(FontSize(), aClientId);
 				Line.m_NameRect.m_X = NameRectX;
-				Line.m_NameRect.m_Y = Line.m_TextYOffset + TextOffsetY;
+				Line.m_NameRect.m_Y = Line.m_TextYOffset + TextOffsetY + Line.m_ReplyQuoteHeight;
 				Line.m_NameRect.m_W = maximum(1.0f, TextRender()->TextWidth(FontSize(), Line.m_aName));
 				Line.m_NameRect.m_H = FontSize();
 				Line.m_NameRectValid = true;
@@ -6526,7 +7171,7 @@ void CChat::OnRender()
 				if((m_Mode != MODE_NONE || m_Show) && Line.m_aName[0] != '\0')
 				{
 					const SRenderRect &Nr = Line.m_NameRect;
-					const bool HoveredName =
+					HoveredName =
 						MousePos.x >= Nr.m_X && MousePos.x <= Nr.m_X + Nr.m_W &&
 						MousePos.y >= Nr.m_Y && MousePos.y <= Nr.m_Y + Nr.m_H;
 					if(HoveredName)
@@ -6543,6 +7188,61 @@ void CChat::OnRender()
 				}
 			}
 			TextRender()->RenderTextContainer(Line.m_TextContainerIndex, TextColor, TextOutlineColor, ChatOpenOffsetX + BcLineXOffset, TextOffsetY);
+
+			if(Line.m_HasReply && Line.m_ReplyQuoteHeight > 0.0f && Blend > 0.0f)
+			{
+				const float QuoteLineH = FontSize() * 0.85f;
+				const int TeeSize = MessageTeeSize();
+				const float TeeCenterX = LineRenderX + (RealMsgPaddingX + TeeSize) / 2.0f;
+
+				float QuoteY = Line.m_TextYOffset + TextOffsetY;
+				if(Line.m_ReplyQuoteRectValid)
+					QuoteY = Line.m_ReplyQuoteRect.m_Y + TextOffsetY;
+
+				RenderReplyQuoteConnector(Graphics(), TeeCenterX, QuoteY, QuoteLineH, FontSize(), Blend);
+			}
+
+			if(CanShowReplyButton(Line) && Line.m_ReplyButtonAnchorValid && !IsPendingReplyTarget)
+			{
+				const float LineH = maximum(Line.m_aYOffset[OffsetType], FontSize() + RealMsgPaddingY);
+				Line.m_LineRect.m_X = LineRenderX;
+				Line.m_LineRect.m_Y = LineRenderY;
+				Line.m_LineRect.m_W = maximum(1.0f, ChatWidth());
+				Line.m_LineRect.m_H = LineH;
+				Line.m_LineRectValid = true;
+
+				const bool HoveredLine = MousePos.x >= Line.m_LineRect.m_X && MousePos.x <= Line.m_LineRect.m_X + Line.m_LineRect.m_W &&
+					MousePos.y >= Line.m_LineRect.m_Y && MousePos.y <= Line.m_LineRect.m_Y + Line.m_LineRect.m_H;
+				if(HoveredLine || HoveredName)
+				{
+					const float BtnSize = maximum(6.5f, FontSize() * 0.34f);
+					const float BtnGap = FontSize() * 0.22f;
+					const float BtnX = Line.m_ReplyButtonAnchorX + ChatOpenOffsetX + BcLineXOffset + BtnGap;
+					const float BtnY = Line.m_ReplyButtonAnchorY + TextOffsetY + maximum(0.0f, (FontSize() - BtnSize) * 0.5f) - FontSize() * 0.08f;
+					Line.m_ReplyButtonRect.m_X = BtnX;
+					Line.m_ReplyButtonRect.m_Y = BtnY;
+					Line.m_ReplyButtonRect.m_W = BtnSize;
+					Line.m_ReplyButtonRect.m_H = BtnSize;
+					Line.m_ReplyButtonRectValid = true;
+					m_HoveredReplyLineIndex = LineIndex;
+
+					const bool HoveredBtn = MousePos.x >= BtnX && MousePos.x <= BtnX + BtnSize &&
+						MousePos.y >= BtnY && MousePos.y <= BtnY + BtnSize;
+					const ColorRGBA BtnColor = HoveredBtn ? ColorRGBA(0.30f, 0.38f, 0.58f, 0.90f * Blend) : ColorRGBA(0.14f, 0.14f, 0.14f, 0.72f * Blend);
+					CUIRect BtnRect(BtnX, BtnY, BtnSize, BtnSize);
+					BtnRect.Draw(BtnColor, IGraphics::CORNER_ALL, maximum(2.0f, BtnSize * 0.24f));
+
+					CUIRect IconRect;
+					BtnRect.Margin(0.5f, &IconRect);
+					TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+					TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
+					TextRender()->TextColor(0.92f, 0.92f, 0.92f, Blend);
+					Ui()->DoLabel(&IconRect, FontIcon::REPLY, IconRect.h * CUi::ms_FontmodHeight, TEXTALIGN_MC);
+					TextRender()->SetRenderFlags(0);
+					TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+					TextRender()->TextColor(TextRender()->DefaultTextColor());
+				}
+			}
 
 			if((m_Mode != MODE_NONE || m_Show) && !Line.m_vLinks.empty())
 			{
@@ -6867,7 +7567,8 @@ CUIRect CChat::GetHudRect(float HudWidth, float HudHeight, bool ForcePreview) co
 		const float InputAndTranslateWidth = maximum(InputLineWidth, PrefixWidth + 40.0f + TranslateButtonGap + TranslateButtonSize);
 
 		VisibleWidth = maximum(VisibleWidth, InputAndTranslateWidth);
-		ExtraTop = ScaledFontSize;
+		float ReplyExtra = m_PendingReplyActive ? ReplyBannerHeight(ScaledFontSize) : 0.0f;
+		ExtraTop = ScaledFontSize + ReplyExtra;
 		ExtraBottom = maximum(2.25f * ScaledFontSize, maximum(ScaledFontSize + 4.0f, 16.0f));
 	}
 
@@ -6994,7 +7695,35 @@ void CChat::SendChatQueued(const char *pLine)
 		return;
 	if(GameClient()->m_Translate.TryTranslateOutgoingChat(Team, pLine))
 		return;
-	SendChatPayloadQueued(Team, pLine);
+
+	char aPayload[MAX_LINE_LENGTH];
+	const char *pPayload = pLine;
+	if(m_PendingReplyActive && CUClientChatReply::IsReplyFeatureEnabled())
+	{
+		const int ReplyIndex = ComputeSenderRecentIndex(m_PendingReplySourceLineIndex, m_aPendingReplyName);
+		if(ReplyIndex > 0 && CUClientChatReply::EncodeReply(m_aPendingReplyName, ReplyIndex, pLine, aPayload, sizeof(aPayload)))
+		{
+			pPayload = aPayload;
+			m_LastOutgoingReplyTime = time();
+			str_copy(m_aLastOutgoingReplyWire, aPayload, sizeof(m_aLastOutgoingReplyWire));
+			m_LastOutgoingReplyToClientId = m_PendingReplyClientId;
+			m_LastOutgoingReplyMessageIndex = ReplyIndex;
+			str_copy(m_aLastOutgoingReplyToName, m_aPendingReplyName, sizeof(m_aLastOutgoingReplyToName));
+			str_copy(m_aLastOutgoingReplyPreview, m_aPendingReplyPreview, sizeof(m_aLastOutgoingReplyPreview));
+			CUClientChatReply::SReplyMeta OutMeta;
+			if(CUClientChatReply::TryParseReply(aPayload, OutMeta, m_aLastOutgoingReplyBody, sizeof(m_aLastOutgoingReplyBody)))
+			{
+				str_copy(m_aLastOutgoingReplyToName, OutMeta.m_aReplyToName, sizeof(m_aLastOutgoingReplyToName));
+				m_LastOutgoingReplyMessageIndex = OutMeta.m_ReplyMessageIndex;
+			}
+			else
+			{
+				m_aLastOutgoingReplyBody[0] = '\0';
+			}
+		}
+		ClearPendingReply();
+	}
+	SendChatPayloadQueued(Team, pPayload);
 }
 
 void CChat::SendTranslatedChatQueued(int Team, const char *pLine)

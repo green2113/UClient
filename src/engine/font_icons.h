@@ -83,6 +83,7 @@ namespace FontIcon
 	inline const char *const POWER_OFF = "\uF011";
 	inline const char *const QUESTION = "?";
 	inline const char *const REDO = "\uF2F9";
+	inline const char *const REPLY = "\uF3E5";
 	inline const char *const RIGHT_FROM_BRACKET = "\uF2F5";
 	inline const char *const RIGHT_TO_BRACKET = "\uF2F6";
 	inline const char *const SLASH = "\uF715";

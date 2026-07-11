@@ -155,6 +155,24 @@ class CChat : public CComponent
 		bool m_MediaPreviewRectValid;
 		SRenderRect m_MediaRetryRect;
 		bool m_MediaRetryRectValid;
+
+		bool m_HasReply;
+		int m_ReplyToClientId;
+		int m_ReplyMessageIndex;
+		char m_aReplyToName[64];
+		char m_aReplyPreview[64];
+		char m_aReplyQuoteText[CHAT_LINE_LENGTH];
+		char m_aDisplayText[CHAT_LINE_LENGTH];
+		SRenderRect m_ReplyQuoteRect;
+		bool m_ReplyQuoteRectValid;
+		float m_ReplyQuoteHeight;
+		SRenderRect m_LineRect;
+		bool m_LineRectValid;
+		SRenderRect m_ReplyButtonRect;
+		bool m_ReplyButtonRectValid;
+		float m_ReplyButtonAnchorX;
+		float m_ReplyButtonAnchorY;
+		bool m_ReplyButtonAnchorValid;
 	};
 
 	bool m_PrevScoreBoardShowed;
@@ -283,6 +301,23 @@ class CChat : public CComponent
 	std::string m_HoveredPlayerName;
 	std::string m_HoveredLink;
 	bool m_HoveredLinkAlwaysConfirm = false;
+	int m_HoveredReplyLineIndex = -1;
+
+	bool m_PendingReplyActive;
+	int m_PendingReplyClientId;
+	int m_PendingReplySourceLineIndex;
+	char m_aPendingReplyName[64];
+	char m_aPendingReplyPreview[CHAT_LINE_LENGTH];
+	CButtonContainer m_ReplyCancelButton;
+	SRenderRect m_ReplyCancelButtonRect;
+	bool m_ReplyCancelButtonRectValid;
+	int64_t m_LastOutgoingReplyTime;
+	char m_aLastOutgoingReplyWire[CHAT_LINE_LENGTH];
+	int m_LastOutgoingReplyToClientId;
+	int m_LastOutgoingReplyMessageIndex;
+	char m_aLastOutgoingReplyToName[64];
+	char m_aLastOutgoingReplyPreview[CHAT_LINE_LENGTH];
+	char m_aLastOutgoingReplyBody[CHAT_LINE_LENGTH];
 
 	enum class ELinkSafety
 	{
@@ -392,6 +427,16 @@ class CChat : public CComponent
 	static void ConchainChatWidth(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 
 	bool LineShouldHighlight(const char *pLine, const char *pName);
+	const char *GetLineDisplayText(const CLine &Line) const;
+	const char *GetLineReplyQuoteText(const CLine &Line) const;
+	int ComputeSenderRecentIndex(int SourceLineIndex, const char *pName) const;
+	bool TryResolveReplyQuoteByIndex(int ReplyLineIndex, const char *pReplyToName, int MessageIndex, char *pOut, int OutSize) const;
+	bool TryResolveReplyQuoteText(int ReplyClientId, const char *pReplyToName, const char *pWirePreview, char *pOut, int OutSize, int SkipLineIndex = -1) const;
+	void SetPendingReply(int ClientId, const char *pName, int SourceLineIndex, const char *pQuoteText);
+	void ClearPendingReply();
+	bool CanShowReplyButton(const CLine &Line) const;
+	float ReplyBannerHeight(float ScaledFontSize) const;
+	void RenderReplyBanner(float x, float InputY, float ScaledFontSize);
 	void ResetTypingAnimation();
 	void SyncTypingAnimationBaseline();
 	void RefreshTypingAnimation();

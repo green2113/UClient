@@ -2423,13 +2423,16 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 		if(!GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_AUTO_LOGIN))
 		{
 			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
-			static float s_AutoLoginPhase = 0.0f;
-			const bool AutoLoginExpanded = g_Config.m_UcAutoLoginJapan != 0;
-			UpdateRevealPhase(s_AutoLoginPhase, AutoLoginExpanded);
+			static float s_AutoLoginJapanPhase = 0.0f;
+			static float s_AutoLoginKogPhase = 0.0f;
+			const bool JapanExpanded = g_Config.m_UcAutoLoginJapan != 0;
+			const bool KogExpanded = g_Config.m_UcAutoLoginKog != 0;
+			UpdateRevealPhase(s_AutoLoginJapanPhase, JapanExpanded);
+			UpdateRevealPhase(s_AutoLoginKogPhase, KogExpanded);
 
 			const float CodeBoxHeight = LineSize;
 			const float ExpandedTargetHeight = MarginSmall + CodeBoxHeight;
-			const float ContentHeight = LineSize + MarginSmall + LineSize + ExpandedTargetHeight * s_AutoLoginPhase;
+			const float ContentHeight = LineSize + MarginSmall + LineSize + ExpandedTargetHeight * s_AutoLoginJapanPhase + MarginSmall + LineSize + ExpandedTargetHeight * s_AutoLoginKogPhase;
 			CUIRect Content, Label, Visible, Row;
 			BeginBlock(Column, ContentHeight, Content);
 
@@ -2439,10 +2442,10 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcAutoLoginJapan, "Auto login to Japan server", &g_Config.m_UcAutoLoginJapan, &Content, LineSize);
 
-			const float CurHeight = ExpandedTargetHeight * s_AutoLoginPhase;
-			if(CurHeight > 0.0f)
+			const float JapanCurHeight = ExpandedTargetHeight * s_AutoLoginJapanPhase;
+			if(JapanCurHeight > 0.0f)
 			{
-				Content.HSplitTop(CurHeight, &Visible, &Content);
+				Content.HSplitTop(JapanCurHeight, &Visible, &Content);
 				Ui()->ClipEnable(&Visible);
 				struct SScopedClip
 				{
@@ -2456,6 +2459,28 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 				static CLineInput s_AutoLoginJapanCode(g_Config.m_UcAutoLoginJapanCode, sizeof(g_Config.m_UcAutoLoginJapanCode));
 				s_AutoLoginJapanCode.SetEmptyText("Enter Japan server login code");
 				Ui()->DoClearableEditBox(&s_AutoLoginJapanCode, &Row, 14.0f);
+			}
+
+			Content.HSplitTop(MarginSmall, nullptr, &Content);
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcAutoLoginKog, "Auto login to KoG server", &g_Config.m_UcAutoLoginKog, &Content, LineSize);
+
+			const float KogCurHeight = ExpandedTargetHeight * s_AutoLoginKogPhase;
+			if(KogCurHeight > 0.0f)
+			{
+				Content.HSplitTop(KogCurHeight, &Visible, &Content);
+				Ui()->ClipEnable(&Visible);
+				struct SScopedClip
+				{
+					CUi *m_pUi;
+					~SScopedClip() { m_pUi->ClipDisable(); }
+				} ClipGuard{Ui()};
+
+				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
+				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
+				Expand.HSplitTop(CodeBoxHeight, &Row, &Expand);
+				static CLineInput s_AutoLoginKogCode(g_Config.m_UcAutoLoginKogCode, sizeof(g_Config.m_UcAutoLoginKogCode));
+				s_AutoLoginKogCode.SetEmptyText("Enter KoG server login code");
+				Ui()->DoClearableEditBox(&s_AutoLoginKogCode, &Row, 14.0f);
 			}
 		}
 

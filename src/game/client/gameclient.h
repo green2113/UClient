@@ -38,6 +38,7 @@
 #include "components/bestclient/music_player.h"
 #include "components/bestclient/translate.h"
 #include "components/bestclient/voice/voice.h"
+#include "components/uclient/ai_assistant.h"
 #include "components/uclient/uclient.h"
 #include "components/binds.h"
 #include "components/broadcast.h"
@@ -293,6 +294,7 @@ private:
 	void UpdatePositions();
 	void UpdateAutoTeamLock();
 	void UpdateAutoLoginJapan();
+	void UpdateAutoLoginKog();
 	void OptimizerUpdateProcessPriorities();
 	void RenderOptimizerFpsFogRect();
 
@@ -1064,6 +1066,8 @@ private:
 	bool m_aAutoTeamLockPending[NUM_DUMMIES];
 	char m_aAutoLoginJapanSentServer[NETADDR_MAXSTRSIZE] = "";
 	int64_t m_AutoLoginJapanDeadlineTick = 0;
+	char m_aAutoLoginKogSentServer[NETADDR_MAXSTRSIZE] = "";
+	int64_t m_AutoLoginKogDeadlineTick = 0;
 	CCharOrder m_CharOrder;
 	int m_aSwitchStateTeam[NUM_DUMMIES];
 
@@ -1117,6 +1121,7 @@ public:
 	void SetConnectInfo(const NETADDR *pAddress) override;
 
 	CUClient m_UClient;
+	CAiAssistant m_AiAssistant;
 };
 
 ColorRGBA CalculateNameColor(ColorHSLA TextColorHSL);
