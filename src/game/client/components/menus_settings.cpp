@@ -11,6 +11,8 @@
 #include <engine/font_icons.h>
 #include <engine/graphics.h>
 #include <engine/shared/config.h>
+#include <engine/shared/http.h>
+#include <engine/shared/json.h>
 #include <engine/shared/localization.h>
 #include <engine/shared/protocol7.h>
 #include <engine/storage.h>
@@ -843,15 +845,18 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 	MainView.HSplitTop(5.0f, nullptr, &MainView);
 
 	// Layout bottom controls and use remainder for skin selector
-	CUIRect QuickSearch, DatabaseButton, DirectoryButton, RefreshButton;
+	CUIRect QuickSearch, DatabaseButton, DirectoryButton, RefreshButton, ShareButton, MiddleGap;
 	MainView.HSplitBottom(20.0f, &MainView, &QuickSearch);
 	MainView.HSplitBottom(5.0f, &MainView, nullptr);
 	QuickSearch.VSplitLeft(220.0f, &QuickSearch, &DatabaseButton);
 	DatabaseButton.VSplitLeft(10.0f, nullptr, &DatabaseButton);
-	DatabaseButton.VSplitLeft(150.0f, &DatabaseButton, &DirectoryButton);
-	DirectoryButton.VSplitRight(175.0f, nullptr, &DirectoryButton);
+	DatabaseButton.VSplitLeft(150.0f, &DatabaseButton, &MiddleGap);
+	MiddleGap.VSplitRight(175.0f, &MiddleGap, &DirectoryButton);
 	DirectoryButton.VSplitRight(25.0f, &DirectoryButton, &RefreshButton);
 	DirectoryButton.VSplitRight(10.0f, &DirectoryButton, nullptr);
+	// Share button placed in the gap, right-aligned next to the directory button
+	MiddleGap.VSplitRight(10.0f, &MiddleGap, nullptr);
+	MiddleGap.VSplitRight(80.0f, nullptr, &ShareButton);
 
 	// Skin selector
 	static CListBox s_ListBox;
@@ -973,6 +978,13 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 		Client()->ViewLink("https://ddnet.org/skins/");
 	}
 
+	static CButtonContainer s_ShareSkinButton;
+	if(DoButton_Menu(&s_ShareSkinButton, Localize("Share"), 0, &ShareButton))
+	{
+		OpenShareSkinPopup();
+	}
+	GameClient()->m_Tooltips.DoToolTip(&s_ShareSkinButton, &ShareButton, Localize("Share one of your skins with a player on this server"));
+
 	static CButtonContainer s_DirectoryButton;
 	if(DoButton_Menu(&s_DirectoryButton, Localize("Skins directory"), 0, &DirectoryButton))
 	{
@@ -996,6 +1008,376 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 	{
 		GameClient()->RefreshSkins(CSkinDescriptor::FLAG_SIX);
 	}
+}
+
+// UClient: share one of the user's own skins (from the writable skins folder) with a player
+void CMenus::OpenShareSkinPopup()
+{
+	m_aShareSkinName[0] = '\0';
+	m_aShareSkinTargetName[0] = '\0';
+	m_ShareSkinAgree = false;
+	m_ShareSkinState = EShareAssetState::NONE;
+	m_aShareSkinStatus[0] = '\0';
+	if(m_pShareSkinUploadRequest)
+	{
+		m_pShareSkinUploadRequest->Abort();
+		m_pShareSkinUploadRequest.reset();
+	}
+
+	// preselect the currently active skin if it is a user skin
+	std::vector<std::string> vNames;
+	GameClient()->m_Skins.GetSaveSkinNames(vNames);
+	const char *pCurrent = g_Config.m_ClPlayerSkin;
+	for(const auto &Name : vNames)
+	{
+		if(str_comp(Name.c_str(), pCurrent) == 0)
+		{
+			str_copy(m_aShareSkinName, pCurrent);
+			break;
+		}
+	}
+	if(m_aShareSkinName[0] == '\0' && !vNames.empty())
+		str_copy(m_aShareSkinName, vNames.front().c_str());
+
+	const float Width = 420.0f;
+	const float Height = 320.0f;
+	const float X = (Ui()->Screen()->w - Width) / 2.0f;
+	const float Y = (Ui()->Screen()->h - Height) / 2.0f;
+	Ui()->DoPopupMenu(&m_ShareSkinPopupId, X, Y, Width, Height, this, PopupShareSkin);
+}
+
+bool CMenus::ResolveSkinSharePng(const char *pName, void **ppData, unsigned *pLen) const
+{
+	*ppData = nullptr;
+	*pLen = 0;
+	if(pName == nullptr || pName[0] == '\0')
+		return false;
+
+	char aPath[IO_MAX_PATH_LENGTH];
+	str_format(aPath, sizeof(aPath), "skins/%s.png", pName);
+	if(Storage()->ReadFile(aPath, IStorage::TYPE_SAVE, ppData, pLen) && *ppData != nullptr && *pLen > 0)
+		return true;
+	if(*ppData != nullptr)
+	{
+		free(*ppData);
+		*ppData = nullptr;
+		*pLen = 0;
+	}
+	return false;
+}
+
+void CMenus::BeginShareSkinUpload()
+{
+	if(m_aShareSkinTargetName[0] == '\0')
+	{
+		m_ShareSkinState = EShareAssetState::FAILED;
+		str_copy(m_aShareSkinStatus, Localize("Select a player first."));
+		return;
+	}
+
+	void *pData = nullptr;
+	unsigned Len = 0;
+	if(!ResolveSkinSharePng(m_aShareSkinName, &pData, &Len))
+	{
+		m_ShareSkinState = EShareAssetState::FAILED;
+		str_copy(m_aShareSkinStatus, Localize("Could not find the skin image file."));
+		return;
+	}
+
+	if(g_Config.m_UcChatPasteUploadUrl[0] == '\0')
+	{
+		free(pData);
+		m_ShareSkinState = EShareAssetState::FAILED;
+		str_copy(m_aShareSkinStatus, Localize("Upload URL is not configured."));
+		return;
+	}
+
+	// Skins are matched by name between clients, so upload the file under the
+	// sharer's skin file name. The server puts this name at the end of the URL,
+	// letting the receiver save it under the same name.
+	char aEscapedName[128];
+	EscapeUrl(aEscapedName, sizeof(aEscapedName), m_aShareSkinName);
+	char aUploadUrl[512];
+	const char *pSep = str_find(g_Config.m_UcChatPasteUploadUrl, "?") != nullptr ? "&" : "?";
+	str_format(aUploadUrl, sizeof(aUploadUrl), "%s%sname=%s", g_Config.m_UcChatPasteUploadUrl, pSep, aEscapedName);
+
+	std::shared_ptr<CHttpRequest> pPost = HttpPost(aUploadUrl, (const unsigned char *)pData, Len);
+	pPost->Header("Content-Type: image/png");
+	pPost->Header("Accept: application/json");
+	pPost->FailOnErrorStatus(false);
+	pPost->MaxResponseSize(64 * 1024);
+	pPost->LogProgress(HTTPLOG::FAILURE);
+	free(pData);
+
+	m_pShareSkinUploadRequest = pPost;
+	m_ShareSkinState = EShareAssetState::UPLOADING;
+	str_copy(m_aShareSkinStatus, Localize("Uploading..."));
+	Http()->Run(pPost);
+}
+
+void CMenus::UpdateShareSkinUpload()
+{
+	if(!m_pShareSkinUploadRequest || !m_pShareSkinUploadRequest->Done())
+		return;
+
+	std::shared_ptr<CHttpRequest> pRequest = m_pShareSkinUploadRequest;
+	m_pShareSkinUploadRequest.reset();
+
+	char aUrl[512] = "";
+	if(pRequest->State() == EHttpState::DONE && pRequest->StatusCode() >= 200 && pRequest->StatusCode() < 400)
+	{
+		json_value *pRoot = pRequest->ResultJson();
+		if(pRoot != nullptr && pRoot->type == json_object)
+		{
+			const json_value &UrlValue = (*pRoot)["url"];
+			if(UrlValue.type == json_string)
+				str_copy(aUrl, UrlValue.u.string.ptr);
+			if(aUrl[0] == '\0')
+			{
+				const json_value &PublicUrlValue = (*pRoot)["publicUrl"];
+				if(PublicUrlValue.type == json_string)
+					str_copy(aUrl, PublicUrlValue.u.string.ptr);
+			}
+		}
+	}
+
+	if(aUrl[0] == '\0')
+	{
+		m_ShareSkinState = EShareAssetState::FAILED;
+		str_format(m_aShareSkinStatus, sizeof(m_aShareSkinStatus), Localize("Upload failed (HTTP %d)"), pRequest->StatusCode());
+		return;
+	}
+
+	char aMsg[600];
+	str_format(aMsg, sizeof(aMsg), "/w %s %s", m_aShareSkinTargetName, aUrl);
+	GameClient()->m_Chat.SendChat(0, aMsg);
+
+	m_ShareSkinState = EShareAssetState::SENT;
+	str_copy(m_aShareSkinStatus, Localize("Shared!"));
+	Ui()->ClosePopupMenu(&m_ShareSkinPopupId);
+}
+
+CUi::EPopupMenuFunctionResult CMenus::PopupShareSkin(void *pContext, CUIRect View, bool Active)
+{
+	CMenus *pThis = static_cast<CMenus *>(pContext);
+	pThis->UpdateShareSkinUpload();
+
+	const float FontSize = 14.0f;
+	const float SmallFontSize = 10.0f;
+	CUIRect Row;
+
+	// gather the players currently on this server (and whether they use UClient)
+	bool aUserUsesUClient[MAX_CLIENTS] = {false};
+	pThis->m_vShareSkinUserNames.clear();
+	for(int i = 0; i < MAX_CLIENTS; i++)
+	{
+		if(!pThis->GameClient()->m_aClients[i].m_Active)
+			continue;
+		if(pThis->GameClient()->m_aClients[i].m_aName[0] == '\0')
+			continue;
+		const size_t Slot = pThis->m_vShareSkinUserNames.size();
+		if(Slot < MAX_CLIENTS)
+			aUserUsesUClient[Slot] = pThis->GameClient()->m_ClientIndicator.IsPlayerUClient(i);
+		pThis->m_vShareSkinUserNames.emplace_back(pThis->GameClient()->m_aClients[i].m_aName);
+	}
+
+	std::vector<const char *> vpNames;
+	vpNames.reserve(pThis->m_vShareSkinUserNames.size());
+	for(const auto &Name : pThis->m_vShareSkinUserNames)
+		vpNames.push_back(Name.c_str());
+
+	int CurSelection = -1;
+	for(size_t i = 0; i < pThis->m_vShareSkinUserNames.size(); i++)
+	{
+		if(str_comp(pThis->m_vShareSkinUserNames[i].c_str(), pThis->m_aShareSkinTargetName) == 0)
+		{
+			CurSelection = (int)i;
+			break;
+		}
+	}
+	if(CurSelection < 0 && !pThis->m_vShareSkinUserNames.empty())
+	{
+		CurSelection = 0;
+		str_copy(pThis->m_aShareSkinTargetName, pThis->m_vShareSkinUserNames[0].c_str());
+	}
+
+	// gather the user's own skins (from the writable skins folder)
+	pThis->GameClient()->m_Skins.GetSaveSkinNames(pThis->m_vShareSkinNames);
+	if(pThis->m_aShareSkinName[0] != '\0')
+	{
+		bool Found = false;
+		for(const auto &Name : pThis->m_vShareSkinNames)
+		{
+			if(str_comp(Name.c_str(), pThis->m_aShareSkinName) == 0)
+			{
+				Found = true;
+				break;
+			}
+		}
+		if(!Found)
+			pThis->m_aShareSkinName[0] = '\0';
+	}
+	if(pThis->m_aShareSkinName[0] == '\0' && !pThis->m_vShareSkinNames.empty())
+		str_copy(pThis->m_aShareSkinName, pThis->m_vShareSkinNames.front().c_str());
+
+	// single line: Share [skin name] with [player v]
+	View.HSplitTop(22.0f, &Row, &View);
+	CUIRect ShareRect, R0, SkinNameRect, R1, WithRect, PlayerDropRect;
+	const float ShareW = pThis->TextRender()->TextWidth(FontSize, "Share ") + 4.0f;
+	const float WithW = pThis->TextRender()->TextWidth(FontSize, " with ") + 4.0f;
+	const float PlayerDropW = 110.0f;
+	Row.VSplitLeft(ShareW, &ShareRect, &R0);
+	R0.VSplitRight(PlayerDropW, &R1, &PlayerDropRect);
+	R1.VSplitRight(WithW, &SkinNameRect, &WithRect);
+
+	CUIRect PlayerDropSmall;
+	PlayerDropRect.HMargin((PlayerDropRect.h - 17.0f) / 2.0f, &PlayerDropSmall);
+
+	pThis->Ui()->DoLabel(&ShareRect, "Share", FontSize, TEXTALIGN_ML);
+	{
+		SLabelProperties Props;
+		Props.m_MaxWidth = SkinNameRect.w;
+		Props.m_EllipsisAtEnd = true;
+		pThis->TextRender()->TextColor(0.7f, 0.85f, 1.0f, 1.0f);
+		pThis->Ui()->DoLabel(&SkinNameRect, pThis->m_aShareSkinName[0] != '\0' ? pThis->m_aShareSkinName : "-", FontSize, TEXTALIGN_ML, Props);
+		pThis->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+	}
+	pThis->Ui()->DoLabel(&WithRect, "with", FontSize, TEXTALIGN_MC);
+
+	static CScrollRegion s_ShareSkinUserScrollRegion;
+	pThis->m_ShareSkinUserDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_ShareSkinUserScrollRegion;
+	if(!vpNames.empty())
+	{
+		const int NewSelection = pThis->Ui()->DoDropDown(&PlayerDropSmall, CurSelection, vpNames.data(), (int)vpNames.size(), pThis->m_ShareSkinUserDropDownState, aUserUsesUClient, pThis->m_UcLogoTexture);
+		if(NewSelection >= 0 && NewSelection < (int)pThis->m_vShareSkinUserNames.size())
+			str_copy(pThis->m_aShareSkinTargetName, pThis->m_vShareSkinUserNames[NewSelection].c_str());
+	}
+	else
+	{
+		pThis->m_aShareSkinTargetName[0] = '\0';
+		pThis->Ui()->DoLabel(&PlayerDropSmall, Localize("(no players)"), SmallFontSize, TEXTALIGN_ML);
+	}
+
+	// status line
+	View.HSplitTop(6.0f, nullptr, &View);
+	View.HSplitTop(14.0f, &Row, &View);
+	if(pThis->m_aShareSkinStatus[0] != '\0')
+	{
+		if(pThis->m_ShareSkinState == EShareAssetState::FAILED)
+			pThis->TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
+		else
+			pThis->TextRender()->TextColor(0.6f, 0.8f, 1.0f, 1.0f);
+		pThis->Ui()->DoLabel(&Row, pThis->m_aShareSkinStatus, SmallFontSize, TEXTALIGN_ML);
+		pThis->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+	}
+
+	// bottom-anchored block: [checkbox] / [disclaimer] / (gap) / [buttons]
+	CUIRect ButtonRow, CancelRect, ConfirmRect, DisclaimerRow, CheckRow;
+	View.HSplitBottom(20.0f, &View, &ButtonRow);
+	View.HSplitBottom(8.0f, &View, nullptr);
+	View.HSplitBottom(24.0f, &View, &DisclaimerRow);
+	View.HSplitBottom(4.0f, &View, nullptr);
+	View.HSplitBottom(20.0f, &View, &CheckRow);
+	View.HSplitTop(4.0f, nullptr, &View);
+
+	// remaining View = skin list with previews
+	{
+		if(pThis->m_vShareSkinNames.empty())
+		{
+			SLabelProperties Props;
+			Props.m_MaxWidth = View.w;
+			pThis->TextRender()->TextColor(0.7f, 0.7f, 0.7f, 1.0f);
+			pThis->Ui()->DoLabel(&View, Localize("No custom skins found. Add skins to the skins folder."), SmallFontSize, TEXTALIGN_MC, Props);
+			pThis->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+		}
+		else
+		{
+			static CScrollRegion s_SkinListScroll;
+			vec2 ScrollOffset(0.0f, 0.0f);
+			CScrollRegionParams ScrollParams;
+			ScrollParams.m_ScrollbarWidth = 8.0f;
+			ScrollParams.m_ScrollbarMargin = 2.0f;
+			ScrollParams.m_ScrollUnit = 3.0f * 28.0f;
+			s_SkinListScroll.Begin(&View, &ScrollOffset, &ScrollParams);
+			CUIRect ListView = View;
+			ListView.y += ScrollOffset.y;
+
+			for(const auto &SkinName : pThis->m_vShareSkinNames)
+			{
+				CUIRect ItemRow;
+				ListView.HSplitTop(2.0f, nullptr, &ListView);
+				ListView.HSplitTop(28.0f, &ItemRow, &ListView);
+				if(!s_SkinListScroll.AddRect(ItemRow))
+					continue;
+
+				const void *pItemId = pThis->GameClient()->m_Skins.FindContainerOrNullptr(SkinName.c_str());
+				const bool Selected = str_comp(SkinName.c_str(), pThis->m_aShareSkinName) == 0;
+				if(Selected)
+					ItemRow.Draw(ColorRGBA(0.4f, 0.6f, 1.0f, 0.25f), IGraphics::CORNER_ALL, 3.0f);
+				else if(pItemId != nullptr && pThis->Ui()->HotItem() == pItemId)
+					ItemRow.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.1f), IGraphics::CORNER_ALL, 3.0f);
+
+				if(pItemId != nullptr && pThis->Ui()->DoButtonLogic(pItemId, 0, &ItemRow, BUTTONFLAG_LEFT))
+					str_copy(pThis->m_aShareSkinName, SkinName.c_str());
+
+				CUIRect TeeRect, NameRect;
+				ItemRow.VSplitLeft(34.0f, &TeeRect, &NameRect);
+				NameRect.VSplitLeft(4.0f, nullptr, &NameRect);
+
+				const CSkin *pSkin = pThis->GameClient()->m_Skins.FindAndRequestLoad(SkinName.c_str());
+				if(pSkin != nullptr)
+				{
+					CTeeRenderInfo Info;
+					Info.Apply(pSkin);
+					Info.m_Size = 24.0f;
+					vec2 OffsetToMid;
+					CRenderTools::GetRenderTeeOffsetToRenderedTee(CAnimState::GetIdle(), &Info, OffsetToMid);
+					const vec2 TeeRenderPos = vec2(TeeRect.x + TeeRect.w / 2.0f, TeeRect.y + TeeRect.h / 2.0f + OffsetToMid.y);
+					pThis->RenderTools()->RenderTee(CAnimState::GetIdle(), &Info, EMOTE_NORMAL, vec2(1.0f, 0.0f), TeeRenderPos);
+				}
+
+				SLabelProperties Props;
+				Props.m_MaxWidth = NameRect.w;
+				Props.m_EllipsisAtEnd = true;
+				pThis->Ui()->DoLabel(&NameRect, SkinName.c_str(), 12.0f, TEXTALIGN_ML, Props);
+			}
+
+			s_SkinListScroll.End();
+		}
+	}
+
+	// agreement checkbox (above the disclaimer)
+	if(pThis->DoButton_CheckBox(&pThis->m_ShareSkinAgree, "I agree to upload this skin to media.under1111.com.", pThis->m_ShareSkinAgree ? 1 : 0, &CheckRow))
+		pThis->m_ShareSkinAgree = !pThis->m_ShareSkinAgree;
+
+	// disclaimer (small, dim) directly above the buttons
+	{
+		SLabelProperties Props;
+		Props.m_MaxWidth = DisclaimerRow.w;
+		pThis->TextRender()->TextColor(0.6f, 0.6f, 0.6f, 1.0f);
+		pThis->Ui()->DoLabel(&DisclaimerRow, "If the receiving player is not using UClient, the image may not be displayed.", SmallFontSize, TEXTALIGN_ML, Props);
+		pThis->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+	}
+
+	// buttons
+	ButtonRow.VSplitMid(&CancelRect, &ConfirmRect, 10.0f);
+	if(pThis->DoButton_Menu(&pThis->m_ShareSkinCancelButton, Localize("Cancel"), 0, &CancelRect))
+	{
+		if(pThis->m_pShareSkinUploadRequest)
+		{
+			pThis->m_pShareSkinUploadRequest->Abort();
+			pThis->m_pShareSkinUploadRequest.reset();
+		}
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	const bool Uploading = pThis->m_ShareSkinState == EShareAssetState::UPLOADING;
+	const bool CanConfirm = pThis->m_ShareSkinAgree && !Uploading && !pThis->m_vShareSkinUserNames.empty() && !pThis->m_vShareSkinNames.empty() && pThis->m_aShareSkinName[0] != '\0';
+	const char *pConfirmText = Uploading ? Localize("Uploading...") : Localize("Confirm");
+	if(pThis->DoButton_Menu(&pThis->m_ShareSkinConfirmButton, pConfirmText, 0, &ConfirmRect) && CanConfirm)
+		pThis->BeginShareSkinUpload();
+
+	return CUi::POPUP_KEEP_OPEN;
 }
 
 void CMenus::RenderSettingsGraphics(CUIRect MainView)

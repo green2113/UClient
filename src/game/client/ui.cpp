@@ -2096,6 +2096,9 @@ void CUi::SSelectionPopupContext::Reset()
 	m_AlignmentHeight = -1.0f;
 	m_TransparentButtons = false;
 	m_IsDropDown = false;
+	m_UsesEntryIcons = false;
+	m_EntryIconTexture = IGraphics::CTextureHandle();
+	m_vEntryIcons.clear();
 }
 
 CUi::EPopupMenuFunctionResult CUi::PopupSelection(void *pContext, CUIRect View, bool Active)
@@ -2138,10 +2141,29 @@ CUi::EPopupMenuFunctionResult CUi::PopupSelection(void *pContext, CUIRect View, 
 		View.HSplitTop(pSelectionPopup->m_EntryHeight, &Slot, &View);
 		if(pScrollRegion->AddRect(Slot))
 		{
-			if(pUI->DoButton_PopupMenu(&pSelectionPopup->m_vButtonContainers[Index], Entry.c_str(), &Slot, pSelectionPopup->m_FontSize, TEXTALIGN_ML, pSelectionPopup->m_EntryPadding, pSelectionPopup->m_TransparentButtons))
+			CUIRect ButtonRect = Slot;
+			CUIRect IconRect = {0.0f, 0.0f, 0.0f, 0.0f};
+			// Reserve a left icon column so entries stay aligned regardless of whether
+			// this particular entry actually has an icon.
+			if(pSelectionPopup->m_UsesEntryIcons)
+				ButtonRect.VSplitLeft(Slot.h, &IconRect, &ButtonRect);
+
+			if(pUI->DoButton_PopupMenu(&pSelectionPopup->m_vButtonContainers[Index], Entry.c_str(), &ButtonRect, pSelectionPopup->m_FontSize, TEXTALIGN_ML, pSelectionPopup->m_EntryPadding, pSelectionPopup->m_TransparentButtons))
 			{
 				pSelectionPopup->m_pSelection = &Entry;
 				pSelectionPopup->m_SelectionIndex = Index;
+			}
+
+			if(pSelectionPopup->m_UsesEntryIcons && Index < pSelectionPopup->m_vEntryIcons.size() && pSelectionPopup->m_vEntryIcons[Index] && pSelectionPopup->m_EntryIconTexture.IsValid())
+			{
+				CUIRect Icon;
+				IconRect.Margin(1.0f, &Icon);
+				pUI->Graphics()->TextureSet(pSelectionPopup->m_EntryIconTexture);
+				pUI->Graphics()->QuadsBegin();
+				pUI->Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+				IGraphics::CQuadItem QuadItem(Icon.x, Icon.y, Icon.w, Icon.h);
+				pUI->Graphics()->QuadsDrawTL(&QuadItem, 1);
+				pUI->Graphics()->QuadsEnd();
 			}
 		}
 		++Index;
@@ -2186,6 +2208,11 @@ void CUi::ShowPopupSelection(float X, float Y, SSelectionPopupContext *pContext)
 
 int CUi::DoDropDown(CUIRect *pRect, int CurSelection, const char **pStrs, int Num, SDropDownState &State)
 {
+	return DoDropDown(pRect, CurSelection, pStrs, Num, State, nullptr, IGraphics::CTextureHandle());
+}
+
+int CUi::DoDropDown(CUIRect *pRect, int CurSelection, const char **pStrs, int Num, SDropDownState &State, const bool *pEntryIcons, IGraphics::CTextureHandle EntryIconTexture)
+{
 	if(!State.m_Init)
 	{
 		State.m_UiElement.Init(this, -1);
@@ -2211,6 +2238,12 @@ int CUi::DoDropDown(CUIRect *pRect, int CurSelection, const char **pStrs, int Nu
 		State.m_SelectionPopupContext.m_Props.m_BackgroundColor = ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f);
 		for(int i = 0; i < Num; ++i)
 			State.m_SelectionPopupContext.m_vEntries.emplace_back(pStrs[i]);
+		if(pEntryIcons != nullptr)
+		{
+			State.m_SelectionPopupContext.m_UsesEntryIcons = true;
+			State.m_SelectionPopupContext.m_EntryIconTexture = EntryIconTexture;
+			State.m_SelectionPopupContext.m_vEntryIcons.assign(pEntryIcons, pEntryIcons + Num);
+		}
 		State.m_SelectionPopupContext.m_EntryHeight = pRect->h;
 		State.m_SelectionPopupContext.m_EntryPadding = pRect->h >= 20.0f ? 2.0f : 1.0f;
 		State.m_SelectionPopupContext.m_FontSize = (State.m_SelectionPopupContext.m_EntryHeight - 2 * State.m_SelectionPopupContext.m_EntryPadding) * CUi::ms_FontmodHeight;

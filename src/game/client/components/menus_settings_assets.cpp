@@ -1551,7 +1551,8 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 	const float SmallFontSize = 10.0f;
 	CUIRect Row;
 
-	// gather the players currently on this server
+	// gather the players currently on this server (and whether they use UClient)
+	bool aUserUsesUClient[MAX_CLIENTS] = {false};
 	pThis->m_vShareAssetUserNames.clear();
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
@@ -1559,6 +1560,9 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 			continue;
 		if(pThis->GameClient()->m_aClients[i].m_aName[0] == '\0')
 			continue;
+		const size_t Slot = pThis->m_vShareAssetUserNames.size();
+		if(Slot < MAX_CLIENTS)
+			aUserUsesUClient[Slot] = pThis->GameClient()->m_ClientIndicator.IsPlayerUClient(i);
 		pThis->m_vShareAssetUserNames.emplace_back(pThis->GameClient()->m_aClients[i].m_aName);
 	}
 
@@ -1667,7 +1671,7 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 	pThis->m_ShareAssetUserDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_ShareUserScrollRegion;
 	if(!vpNames.empty())
 	{
-		const int NewSelection = pThis->Ui()->DoDropDown(&PlayerDropSmall, CurSelection, vpNames.data(), (int)vpNames.size(), pThis->m_ShareAssetUserDropDownState);
+		const int NewSelection = pThis->Ui()->DoDropDown(&PlayerDropSmall, CurSelection, vpNames.data(), (int)vpNames.size(), pThis->m_ShareAssetUserDropDownState, aUserUsesUClient, pThis->m_UcLogoTexture);
 		if(NewSelection >= 0 && NewSelection < (int)pThis->m_vShareAssetUserNames.size())
 			str_copy(pThis->m_aShareAssetTargetName, pThis->m_vShareAssetUserNames[NewSelection].c_str());
 	}

@@ -5481,10 +5481,15 @@ static bool ChatLineNameMatches(const char *pLineName, const char *pName)
 	return str_comp_nocase(aLineName, pName) == 0;
 }
 
-int CChat::ComputeSenderRecentIndex(int SourceLineIndex, const char *pName) const
+int CChat::ComputeSenderRecentIndex(int SourceLineIndex, const char *pName, int ClientId) const
 {
 	if(SourceLineIndex < 0 || !pName || pName[0] == '\0')
 		return 0;
+
+	// When we know the sender's client id, count messages by client id so the
+	// index survives display-name spoofing (multiple players with the same name).
+	// The receiver counts the same way, keeping the index consistent.
+	const bool UseClientId = ClientId >= 0 && ClientId < MAX_CLIENTS;
 
 	int Count = 0;
 	for(int Step = 0; Step < MAX_LINES; ++Step)
@@ -5493,7 +5498,12 @@ int CChat::ComputeSenderRecentIndex(int SourceLineIndex, const char *pName) cons
 		const CLine &Candidate = m_aLines[Index];
 		if(!Candidate.m_Initialized)
 			break;
-		if(!ChatLineNameMatches(Candidate.m_aName, pName))
+		if(UseClientId)
+		{
+			if(Candidate.m_ClientId != ClientId)
+				continue;
+		}
+		else if(!ChatLineNameMatches(Candidate.m_aName, pName))
 			continue;
 		++Count;
 		if(Index == SourceLineIndex)
@@ -5502,11 +5512,16 @@ int CChat::ComputeSenderRecentIndex(int SourceLineIndex, const char *pName) cons
 	return 0;
 }
 
-bool CChat::TryResolveReplyQuoteByIndex(int ReplyLineIndex, const char *pReplyToName, int MessageIndex, char *pOut, int OutSize) const
+bool CChat::TryResolveReplyQuoteByIndex(int ReplyLineIndex, const char *pReplyToName, int MessageIndex, char *pOut, int OutSize, int ReplyToClientId) const
 {
 	if(!pOut || OutSize <= 0 || ReplyLineIndex < 0 || MessageIndex <= 0 || !pReplyToName || pReplyToName[0] == '\0')
 		return false;
 	pOut[0] = '\0';
+
+	// Prefer matching by the sender's client id when it was transmitted, so the
+	// quote resolves to the right player even if another player uses the same
+	// display name. The sender computed MessageIndex on the same basis.
+	const bool UseClientId = ReplyToClientId >= 0 && ReplyToClientId < MAX_CLIENTS;
 
 	int Count = 0;
 	for(int Step = 1; Step < MAX_LINES; ++Step)
@@ -5515,7 +5530,12 @@ bool CChat::TryResolveReplyQuoteByIndex(int ReplyLineIndex, const char *pReplyTo
 		const CLine &Candidate = m_aLines[Index];
 		if(!Candidate.m_Initialized)
 			continue;
-		if(!ChatLineNameMatches(Candidate.m_aName, pReplyToName))
+		if(UseClientId)
+		{
+			if(Candidate.m_ClientId != ReplyToClientId)
+				continue;
+		}
+		else if(!ChatLineNameMatches(Candidate.m_aName, pReplyToName))
 			continue;
 		++Count;
 		if(Count == MessageIndex)
@@ -5929,7 +5949,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 		if(UsedOutgoingReplyCache)
 			str_copy(CurrentLine.m_aReplyQuoteText, m_aLastOutgoingReplyPreview, sizeof(CurrentLine.m_aReplyQuoteText));
 		else if(CurrentLine.m_ReplyMessageIndex > 0)
-			TryResolveReplyQuoteByIndex(m_CurrentLine, CurrentLine.m_aReplyToName, CurrentLine.m_ReplyMessageIndex, CurrentLine.m_aReplyQuoteText, sizeof(CurrentLine.m_aReplyQuoteText));
+			TryResolveReplyQuoteByIndex(m_CurrentLine, CurrentLine.m_aReplyToName, CurrentLine.m_ReplyMessageIndex, CurrentLine.m_aReplyQuoteText, sizeof(CurrentLine.m_aReplyQuoteText), CurrentLine.m_ReplyToClientId);
 		else
 			TryResolveReplyQuoteText(CurrentLine.m_ReplyToClientId, CurrentLine.m_aReplyToName, CurrentLine.m_aReplyPreview, CurrentLine.m_aReplyQuoteText, sizeof(CurrentLine.m_aReplyQuoteText), m_CurrentLine);
 	}
@@ -6263,7 +6283,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 		if(Line.m_HasReply && Line.m_aReplyQuoteText[0] == '\0')
 		{
 			if(Line.m_ReplyMessageIndex > 0)
-				TryResolveReplyQuoteByIndex(LineIndex, Line.m_aReplyToName, Line.m_ReplyMessageIndex, Line.m_aReplyQuoteText, sizeof(Line.m_aReplyQuoteText));
+				TryResolveReplyQuoteByIndex(LineIndex, Line.m_aReplyToName, Line.m_ReplyMessageIndex, Line.m_aReplyQuoteText, sizeof(Line.m_aReplyQuoteText), Line.m_ReplyToClientId);
 			else
 				TryResolveReplyQuoteText(Line.m_ReplyToClientId, Line.m_aReplyToName, Line.m_aReplyPreview, Line.m_aReplyQuoteText, sizeof(Line.m_aReplyQuoteText), LineIndex);
 		}
@@ -7772,8 +7792,8 @@ void CChat::SendChatQueued(const char *pLine)
 	const char *pPayload = pLine;
 	if(m_PendingReplyActive && CUClientChatReply::IsReplyFeatureEnabled())
 	{
-		const int ReplyIndex = ComputeSenderRecentIndex(m_PendingReplySourceLineIndex, m_aPendingReplyName);
-		if(ReplyIndex > 0 && CUClientChatReply::EncodeReply(m_aPendingReplyName, ReplyIndex, pLine, aPayload, sizeof(aPayload)))
+		const int ReplyIndex = ComputeSenderRecentIndex(m_PendingReplySourceLineIndex, m_aPendingReplyName, m_PendingReplyClientId);
+		if(ReplyIndex > 0 && CUClientChatReply::EncodeReply(m_aPendingReplyName, ReplyIndex, pLine, aPayload, sizeof(aPayload), m_PendingReplyClientId))
 		{
 			pPayload = aPayload;
 			m_LastOutgoingReplyTime = time();

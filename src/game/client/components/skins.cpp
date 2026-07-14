@@ -828,6 +828,14 @@ const CSkin *CSkins::Find(const char *pName)
 	return pSkin;
 }
 
+const CSkin *CSkins::FindAndRequestLoad(const char *pName)
+{
+	const auto SkinIt = m_Skins.find(std::string_view(pName));
+	if(SkinIt != m_Skins.end() && SkinIt->second != nullptr)
+		SkinIt->second->RequestLoad();
+	return Find(pName);
+}
+
 const CSkins::CSkinContainer *CSkins::FindContainerOrNullptr(const char *pName)
 {
 	const char *pSkinPrefix = SkinPrefix();
@@ -956,6 +964,27 @@ void CSkins::RandomizeSkin(int Dummy)
 	const size_t SkinNameSize = Dummy ? sizeof(g_Config.m_ClDummySkin) : sizeof(g_Config.m_ClPlayerSkin);
 	str_copy(pSkinName, pRandomSkin, SkinNameSize);
 	m_SkinList.ForceRefresh();
+}
+
+void CSkins::GetSaveSkinNames(std::vector<std::string> &vOut) const
+{
+	vOut.clear();
+	for(const auto &[Name, pContainer] : m_Skins)
+	{
+		(void)Name;
+		if(pContainer == nullptr)
+			continue;
+		// Only local skins that live in the writable save directory (user-provided),
+		// not bundled data-dir skins or downloaded skins.
+		if(pContainer->Type() != CSkinContainer::EType::LOCAL)
+			continue;
+		if(pContainer->StorageType() != IStorage::TYPE_SAVE)
+			continue;
+		if(pContainer->IsSpecial())
+			continue;
+		vOut.emplace_back(pContainer->Name());
+	}
+	std::sort(vOut.begin(), vOut.end());
 }
 
 const char *CSkins::SkinPrefix() const

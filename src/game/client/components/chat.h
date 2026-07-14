@@ -430,8 +430,8 @@ class CChat : public CComponent
 	bool LineShouldHighlight(const char *pLine, const char *pName);
 	const char *GetLineDisplayText(const CLine &Line) const;
 	const char *GetLineReplyQuoteText(const CLine &Line) const;
-	int ComputeSenderRecentIndex(int SourceLineIndex, const char *pName) const;
-	bool TryResolveReplyQuoteByIndex(int ReplyLineIndex, const char *pReplyToName, int MessageIndex, char *pOut, int OutSize) const;
+	int ComputeSenderRecentIndex(int SourceLineIndex, const char *pName, int ClientId = -1) const;
+	bool TryResolveReplyQuoteByIndex(int ReplyLineIndex, const char *pReplyToName, int MessageIndex, char *pOut, int OutSize, int ReplyToClientId = -1) const;
 	bool TryResolveReplyQuoteText(int ReplyClientId, const char *pReplyToName, const char *pWirePreview, char *pOut, int OutSize, int SkipLineIndex = -1) const;
 	void SetPendingReply(int ClientId, const char *pName, int SourceLineIndex, const char *pQuoteText);
 	void ClearPendingReply();

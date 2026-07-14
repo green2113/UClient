@@ -16,14 +16,14 @@ void CUClientChatNearbyTab::BuildCompletionList(CGameClient *pGameClient, SEntry
 		return;
 
 	const int LocalId = pGameClient->m_Snap.m_LocalClientId;
-	if(LocalId < 0 || LocalId >= MAX_CLIENTS)
-		return;
 
-	// Use render positions so other DDRace teams are included.
-	// Prediction skips other teams, so m_Predicted.m_Pos is unreliable for them.
-	const vec2 Origin = pGameClient->m_aClients[LocalId].m_Active ?
-				    pGameClient->m_aClients[LocalId].m_RenderPos :
-				    pGameClient->m_Camera.m_Center;
+	// Always sort by proximity to the camera center (what the player is actually
+	// looking at), regardless of whether we are playing, spectating someone, or on
+	// another team. Using the local player's own position breaks ordering while
+	// spectating other players.
+	// Render positions are used for the targets so other DDRace teams are included
+	// (prediction skips other teams, so m_Predicted.m_Pos is unreliable for them).
+	const vec2 Origin = pGameClient->m_Camera.m_Center;
 
 	struct SPair
 	{

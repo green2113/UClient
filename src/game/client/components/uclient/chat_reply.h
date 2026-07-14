@@ -26,7 +26,7 @@ void SanitizeField(char *pBuffer, int Size);
 void BuildPreviewFromText(const char *pText, char *pPreview, int PreviewSize);
 void BuildWirePreviewFromText(const char *pText, char *pPreview, int PreviewSize);
 bool TextMatchesWirePreview(const char *pWirePreview, const char *pFullText);
-bool EncodeReply(const char *pName, int ReplyMessageIndex, const char *pBody, char *pOut, int OutSize);
+bool EncodeReply(const char *pName, int ReplyMessageIndex, const char *pBody, char *pOut, int OutSize, int ReplyToClientId = -1);
 bool TryParseReply(const char *pLine, SReplyMeta &OutMeta, char *pDisplayBody, int DisplayBodySize);
 void BuildReplyBodyPrefix(const char *pName, char *pOut, int OutSize);
 }

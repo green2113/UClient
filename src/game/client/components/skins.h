@@ -15,9 +15,11 @@
 #include <list>
 #include <optional>
 #include <set>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 class CHttpRequest;
 
@@ -242,12 +244,19 @@ public:
 	const CSkinContainer *FindContainerOrNullptr(const char *pName);
 	const CSkin *FindOrNullptr(const char *pName);
 	const CSkin *Find(const char *pName);
+	// UClient: request that a skin gets loaded (for previews) and return the best
+	// currently available skin (the loaded skin, or the default while it loads).
+	const CSkin *FindAndRequestLoad(const char *pName);
 
 	void AddFavorite(const char *pName);
 	void RemoveFavorite(const char *pName);
 	bool IsFavorite(const char *pName) const;
 
 	void RandomizeSkin(int Dummy);
+
+	// UClient: collect names of skins that the user placed in the writable
+	// "skins" folder (AppData). Excludes bundled/data-dir skins and downloaded skins.
+	void GetSaveSkinNames(std::vector<std::string> &vOut) const;
 
 	const char *SkinPrefix() const;
 

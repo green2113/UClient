@@ -349,6 +349,25 @@ protected:
 	void UpdateShareAssetUpload();
 	static CUi::EPopupMenuFunctionResult PopupShareAsset(void *pContext, CUIRect View, bool Active);
 
+	// UClient: share a user skin (from the writable skins folder) to a player on the current server
+	SPopupMenuId m_ShareSkinPopupId;
+	CUi::SDropDownState m_ShareSkinUserDropDownState;
+	CButtonContainer m_ShareSkinConfirmButton;
+	CButtonContainer m_ShareSkinCancelButton;
+	char m_aShareSkinName[64] = "";
+	char m_aShareSkinTargetName[64] = "";
+	bool m_ShareSkinAgree = false;
+	std::vector<std::string> m_vShareSkinUserNames;
+	std::vector<std::string> m_vShareSkinNames;
+	std::shared_ptr<CHttpRequest> m_pShareSkinUploadRequest;
+	EShareAssetState m_ShareSkinState = EShareAssetState::NONE;
+	char m_aShareSkinStatus[128] = "";
+	void OpenShareSkinPopup();
+	bool ResolveSkinSharePng(const char *pName, void **ppData, unsigned *pLen) const;
+	void BeginShareSkinUpload();
+	void UpdateShareSkinUpload();
+	static CUi::EPopupMenuFunctionResult PopupShareSkin(void *pContext, CUIRect View, bool Active);
+
 	int m_MenuPage;
 	int m_GamePage;
 	int m_Popup;

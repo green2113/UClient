@@ -6,6 +6,7 @@
 #include "lineinput.h"
 #include "ui_rect.h"
 
+#include <engine/graphics.h>
 #include <engine/input.h>
 #include <engine/textrender.h>
 
@@ -826,6 +827,11 @@ public:
 
 		bool m_SpecialFontRenderMode = false; // TClient
 
+		// UClient: optional per-entry left icon (e.g. UClient logo next to a player name)
+		bool m_UsesEntryIcons = false;
+		IGraphics::CTextureHandle m_EntryIconTexture;
+		std::vector<bool> m_vEntryIcons;
+
 		SSelectionPopupContext();
 		void Reset();
 	};
@@ -869,6 +875,8 @@ public:
 		bool m_CloseSoundSuppressed = false;
 	};
 	int DoDropDown(CUIRect *pRect, int CurSelection, const char **pStrs, int Num, SDropDownState &State);
+	// UClient: variant that shows an optional left icon per entry (pEntryIcons[i] == true draws EntryIconTexture)
+	int DoDropDown(CUIRect *pRect, int CurSelection, const char **pStrs, int Num, SDropDownState &State, const bool *pEntryIcons, IGraphics::CTextureHandle EntryIconTexture);
 };
 
 #endif

@@ -395,7 +395,7 @@ void BuildReplyBodyPrefix(const char *pName, char *pOut, int OutSize)
 	str_format(pOut, OutSize, "%s: ", pName);
 }
 
-bool EncodeReply(const char *pName, int ReplyMessageIndex, const char *pBody, char *pOut, int OutSize)
+bool EncodeReply(const char *pName, int ReplyMessageIndex, const char *pBody, char *pOut, int OutSize, int ReplyToClientId)
 {
 	if(!pOut || OutSize <= 0)
 		return false;
@@ -418,8 +418,16 @@ bool EncodeReply(const char *pName, int ReplyMessageIndex, const char *pBody, ch
 		str_copy(aBody, aCombined, sizeof(aBody));
 	}
 
+	// Client id field: send the real client id when known so receivers can
+	// disambiguate senders that share the same display name. "-" means unknown.
+	char aClientId[16];
+	if(ReplyToClientId >= 0 && ReplyToClientId < MAX_CLIENTS)
+		str_format(aClientId, sizeof(aClientId), "%d", ReplyToClientId);
+	else
+		str_copy(aClientId, "-", sizeof(aClientId));
+
 	char aEncoded[CHAT_LINE_LENGTH];
-	str_format(aEncoded, sizeof(aEncoded), "[UCR:-:%s:%d]%s", aName, ReplyMessageIndex, aBody);
+	str_format(aEncoded, sizeof(aEncoded), "[UCR:%s:%s:%d]%s", aClientId, aName, ReplyMessageIndex, aBody);
 
 	if(str_length(aEncoded) >= OutSize)
 		return false;
