@@ -5233,7 +5233,8 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			m_CompletionUsed = false;
 		}
 
-		if(!Ui()->IsPopupOpen(&m_GiphyPopupId) && !Ui()->IsPopupOpen(&m_TranslateSettingsPopupId))
+		if(!Ui()->IsPopupOpen(&m_GiphyPopupId) && !Ui()->IsPopupOpen(&m_TranslateSettingsPopupId) &&
+			!Ui()->IsPopupOpen(&m_MediaContextPopupId) && !Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) && !Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId))
 			m_Input.ProcessInput(Event);
 	}
 
@@ -6809,7 +6810,8 @@ void CChat::OnRender()
 			pMouseSelection->m_Offset.y = ScrollOffset;
 		}
 
-			const bool PopupInputActive = Ui()->IsPopupOpen(&m_GiphyPopupId) || Ui()->IsPopupOpen(&m_TranslateSettingsPopupId);
+			const bool PopupInputActive = Ui()->IsPopupOpen(&m_GiphyPopupId) || Ui()->IsPopupOpen(&m_TranslateSettingsPopupId) ||
+						      Ui()->IsPopupOpen(&m_MediaContextPopupId) || Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) || Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId);
 			if(!PopupInputActive)
 				m_Input.Activate(EInputPriority::CHAT); // Ensure that the input is active
 			const CUIRect InputCursorRect = {InputCursor.m_X, InputCursor.m_Y - ScrollOffset, 0.0f, 0.0f};
