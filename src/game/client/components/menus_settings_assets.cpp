@@ -1625,20 +1625,23 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 		str_copy(pThis->m_aShareAssetName, pThis->m_vShareAssetAssetNames[0].c_str());
 	}
 
-	// single line: [asset v] 을 [player v] 님에게 공유합니다.
+	// single line: Share [asset v] with [player v]
 	View.HSplitTop(22.0f, &Row, &View);
-	CUIRect AssetDropRect, R1, EulRect, R2, PlayerDropRect, RightRect;
+	CUIRect ShareRect, R0, AssetDropRect, R1, WithRect, PlayerDropRect;
 	const float AssetDropW = 100.0f;
 	const float PlayerDropW = 100.0f;
-	const float EulW = pThis->TextRender()->TextWidth(FontSize, " 을 ") + 6.0f;
-	Row.VSplitLeft(AssetDropW, &AssetDropRect, &R1);
-	R1.VSplitLeft(EulW, &EulRect, &R2);
-	R2.VSplitLeft(PlayerDropW, &PlayerDropRect, &RightRect);
-	RightRect.VSplitLeft(4.0f, nullptr, &RightRect);
+	const float ShareW = pThis->TextRender()->TextWidth(FontSize, "Share ") + 4.0f;
+	const float WithW = pThis->TextRender()->TextWidth(FontSize, " with ") + 4.0f;
+	Row.VSplitLeft(ShareW, &ShareRect, &R0);
+	R0.VSplitLeft(AssetDropW, &AssetDropRect, &R1);
+	R1.VSplitLeft(WithW, &WithRect, &PlayerDropRect);
+	PlayerDropRect.VSplitLeft(PlayerDropW, &PlayerDropRect, nullptr);
 
 	CUIRect AssetDropSmall, PlayerDropSmall;
 	AssetDropRect.HMargin((AssetDropRect.h - 17.0f) / 2.0f, &AssetDropSmall);
 	PlayerDropRect.HMargin((PlayerDropRect.h - 17.0f) / 2.0f, &PlayerDropSmall);
+
+	pThis->Ui()->DoLabel(&ShareRect, "Share", FontSize, TEXTALIGN_ML);
 
 	// asset selector
 	static CScrollRegion s_ShareAssetScrollRegion;
@@ -1657,7 +1660,7 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 		pThis->Ui()->DoLabel(&AssetDropSmall, pThis->m_aShareAssetName, SmallFontSize, TEXTALIGN_ML, AssetProps);
 	}
 
-	pThis->Ui()->DoLabel(&EulRect, "을", FontSize, TEXTALIGN_MC);
+	pThis->Ui()->DoLabel(&WithRect, "with", FontSize, TEXTALIGN_MC);
 
 	// player selector
 	static CScrollRegion s_ShareUserScrollRegion;
@@ -1673,8 +1676,6 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 		pThis->m_aShareAssetTargetName[0] = '\0';
 		pThis->Ui()->DoLabel(&PlayerDropSmall, Localize("(no players)"), SmallFontSize, TEXTALIGN_ML);
 	}
-
-	pThis->Ui()->DoLabel(&RightRect, "님에게 공유합니다.", FontSize, TEXTALIGN_ML);
 
 	// status line (errors / progress) just below the sentence
 	View.HSplitTop(6.0f, nullptr, &View);
