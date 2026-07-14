@@ -2595,7 +2595,7 @@ static float ReplyQuoteTextStartOffset(float TeeSize, float FontSize)
 	return TeeSize * 0.5f + ReplyQuoteDashLength(FontSize) + FontSize * REPLY_QUOTE_TEXT_GAP_FACTOR;
 }
 
-static void RenderReplyQuoteConnector(IGraphics *pGraphics, float TeeCenterX, float QuoteY, float QuoteLineH, float FontSize, float Blend)
+static void RenderReplyQuoteConnector(IGraphics *pGraphics, float TeeCenterX, float QuoteY, float QuoteLineH, float QuoteBlockH, float FontSize, float Blend)
 {
 	const float DashLength = ReplyQuoteDashLength(FontSize);
 	const float Thickness = ReplyQuoteBarThickness(FontSize);
@@ -2603,7 +2603,12 @@ static void RenderReplyQuoteConnector(IGraphics *pGraphics, float TeeCenterX, fl
 	const float QuoteCenterY = QuoteY + QuoteLineH * 0.5f;
 	const float BarTopY = QuoteCenterY - Thickness * 0.5f;
 	const float LeftX = TeeCenterX - Thickness * 0.5f;
-	const float VerticalEndY = QuoteY + QuoteLineH * 0.88f;
+	// The horizontal arm points at the first quote line; the vertical stem must
+	// reach down past every wrapped quote line so it does not look like it is
+	// floating above a multi-line quote.
+	const float SingleLineEndY = QuoteY + QuoteLineH * 0.88f;
+	const float MultiLineEndY = QuoteY + QuoteBlockH - Thickness;
+	const float VerticalEndY = maximum(SingleLineEndY, MultiLineEndY);
 	const float StemHeight = maximum(0.0f, VerticalEndY - (BarTopY + Thickness));
 	const float HorizontalWidth = maximum(Thickness, DashLength - Thickness * 0.5f);
 	const ColorRGBA BarColor = UClientReplyQuoteBarColor(Blend);
@@ -2733,16 +2738,40 @@ static float AppendReplyQuoteToMeasure(ITextRender *pTextRender, CTextCursor &Cu
 
 	const float QuoteFontSize = FontSize * 0.85f;
 	const float SavedFontSize = Cursor.m_FontSize;
+	const float SavedStartX = Cursor.m_StartX;
+	const float SavedLineWidth = Cursor.m_LineWidth;
+	const float SavedLongestLineWidth = Cursor.m_LongestLineWidth;
 	const float StartY = Cursor.m_Y;
 	Cursor.m_FontSize = QuoteFontSize;
 	Cursor.m_X += QuoteTextStartOffset;
 
 	char aQuoteLine[256];
 	BuildReplyQuoteLine(pTextRender, QuoteFontSize, MaxWidth - QuoteTextStartOffset, pReplyToName, pReplyPreview, aQuoteLine, sizeof(aQuoteLine));
-	pTextRender->TextEx(&Cursor, aQuoteLine);
+
+	char aNamePart[72];
+	str_format(aNamePart, sizeof(aNamePart), "%s: ", pReplyToName);
+	const int NamePartLen = str_length(aNamePart);
+
+	// Render the "name: " prefix, then hang-indent the wrapped preview so that
+	// continuation lines line up under the first character after "name: ".
+	pTextRender->TextEx(&Cursor, aNamePart);
+	if(Cursor.m_LineWidth > 0.0f)
+	{
+		const float ConsumedFromStart = Cursor.m_X - SavedStartX;
+		Cursor.m_StartX = Cursor.m_X;
+		Cursor.m_LineWidth = maximum(QuoteFontSize * 4.0f, SavedLineWidth - ConsumedFromStart);
+	}
+	if(NamePartLen < str_length(aQuoteLine))
+		pTextRender->TextEx(&Cursor, aQuoteLine + NamePartLen);
+
+	// Restore the wrap margins BEFORE the terminating newline, so the following
+	// body line starts at the normal left column instead of the hang-indent X.
+	Cursor.m_StartX = SavedStartX;
+	Cursor.m_LineWidth = SavedLineWidth;
 	pTextRender->TextEx(&Cursor, "\n");
 
 	Cursor.m_FontSize = SavedFontSize;
+	Cursor.m_LongestLineWidth = SavedLongestLineWidth;
 	return maximum(0.0f, Cursor.m_Y - StartY + QuoteFontSize * 0.15f);
 }
 
@@ -2753,6 +2782,9 @@ static void AppendReplyQuoteToContainer(ITextRender *pTextRender, STextContainer
 
 	const float QuoteFontSize = FontSize * 0.85f;
 	const float SavedFontSize = Cursor.m_FontSize;
+	const float SavedStartX = Cursor.m_StartX;
+	const float SavedLineWidth = Cursor.m_LineWidth;
+	const float SavedLongestLineWidth = Cursor.m_LongestLineWidth;
 	const bool MissingQuote = !pReplyPreview || pReplyPreview[0] == '\0';
 	const char *pEffectivePreview = MissingQuote ? ReplyQuoteMissingText() : pReplyPreview;
 	const ColorRGBA NameColor = UClientReplyQuotePreviewColor(BodyColor);
@@ -2774,17 +2806,39 @@ static void AppendReplyQuoteToContainer(ITextRender *pTextRender, STextContainer
 
 	pTextRender->TextColor(NameColor);
 	pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, aNamePart);
+
+	// Hang-indent the wrapped preview lines so continuation lines line up under
+	// the first character after "name: " instead of the far-left tee column.
+	if(Cursor.m_LineWidth > 0.0f)
+	{
+		const float ConsumedFromStart = Cursor.m_X - SavedStartX;
+		Cursor.m_StartX = Cursor.m_X;
+		Cursor.m_LineWidth = maximum(QuoteFontSize * 4.0f, SavedLineWidth - ConsumedFromStart);
+	}
+
 	if(NamePartLen < str_length(aQuoteLine))
 	{
 		pTextRender->TextColor(PreviewColor);
 		pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, aQuoteLine + NamePartLen);
 	}
-	pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, "\n");
 
-	QuoteRectW = maximum(1.0f, Cursor.m_LongestLineWidth);
+	// Quote extent measured from the message start (QuoteRectX == SavedStartX + offset).
+	// When the quote wraps it fills the whole line, so cap the width at the wrap edge.
+	const float FullQuoteTextWidth = pTextRender->TextWidth(QuoteFontSize, aQuoteLine, -1, -1.0f);
+	const float QuoteWidthFromStart = QuoteTextStartOffset + FullQuoteTextWidth;
+	QuoteRectW = maximum(1.0f, SavedLineWidth > 0.0f ? minimum(QuoteWidthFromStart, SavedLineWidth) : QuoteWidthFromStart);
 	QuoteRectH = QuoteFontSize;
 
+	// Restore the wrap margins BEFORE the terminating newline, so the following
+	// body line starts at the normal left column instead of the hang-indent X.
+	Cursor.m_StartX = SavedStartX;
+	Cursor.m_LineWidth = SavedLineWidth;
+	pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, "\n");
+
 	Cursor.m_FontSize = SavedFontSize;
+	// Do not let the quote's accumulated width leak into the body's hanging-indent
+	// calculation (which reads m_LongestLineWidth right after this returns).
+	Cursor.m_LongestLineWidth = SavedLongestLineWidth;
 	pTextRender->TextColor(BodyColor);
 }
 
@@ -6617,6 +6671,13 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 				const float PreviewWidth = Line.m_aMediaPreviewWidth[OffsetType] + (TextBegin - Begin) + RealMsgPaddingX;
 				FullWidth = maximum(FullWidth, PreviewWidth);
 			}
+			// A reply quote can be wider than the body (e.g. a long URL that wraps),
+			// so make sure the message background box still covers it.
+			if(Line.m_HasReply && Line.m_ReplyQuoteRectValid)
+			{
+				const float QuoteWidth = Line.m_ReplyQuoteRect.m_W + (TextBegin - Begin) + RealMsgPaddingX;
+				FullWidth = maximum(FullWidth, QuoteWidth);
+			}
 			Graphics()->SetColor(1, 1, 1, 1);
 			Line.m_QuadContainerIndex = Graphics()->CreateRectQuadContainer(Begin, y, FullWidth, Line.m_aYOffset[OffsetType], MessageRounding(), IGraphics::CORNER_ALL);
 			Line.m_MessageFullWidth = FullWidth;
@@ -7286,7 +7347,7 @@ void CChat::OnRender()
 				if(Line.m_ReplyQuoteRectValid)
 					QuoteY = Line.m_ReplyQuoteRect.m_Y + TextOffsetY;
 
-				RenderReplyQuoteConnector(Graphics(), TeeCenterX, QuoteY, QuoteLineH, FontSize(), Blend);
+				RenderReplyQuoteConnector(Graphics(), TeeCenterX, QuoteY, QuoteLineH, Line.m_ReplyQuoteHeight, FontSize(), Blend);
 			}
 
 			if(CanShowReplyButton(Line) && Line.m_ReplyButtonAnchorValid && !IsPendingReplyTarget)

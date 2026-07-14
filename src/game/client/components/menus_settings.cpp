@@ -844,19 +844,22 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 	}
 	MainView.HSplitTop(5.0f, nullptr, &MainView);
 
-	// Layout bottom controls and use remainder for skin selector
-	CUIRect QuickSearch, DatabaseButton, DirectoryButton, RefreshButton, ShareButton, MiddleGap;
+	// Layout bottom controls and use remainder for skin selector.
+	// Order left->right: [Search] [Skin Database] ...gap... [Share] [Skins directory] [Refresh]
+	// The Share button sits directly to the left of the "Skins directory" button,
+	// mirroring the asset settings tab.
+	CUIRect QuickSearch, DatabaseButton, DirectoryButton, RefreshButton, ShareButton, RightControls;
 	MainView.HSplitBottom(20.0f, &MainView, &QuickSearch);
 	MainView.HSplitBottom(5.0f, &MainView, nullptr);
 	QuickSearch.VSplitLeft(220.0f, &QuickSearch, &DatabaseButton);
 	DatabaseButton.VSplitLeft(10.0f, nullptr, &DatabaseButton);
-	DatabaseButton.VSplitLeft(150.0f, &DatabaseButton, &MiddleGap);
-	MiddleGap.VSplitRight(175.0f, &MiddleGap, &DirectoryButton);
-	DirectoryButton.VSplitRight(25.0f, &DirectoryButton, &RefreshButton);
-	DirectoryButton.VSplitRight(10.0f, &DirectoryButton, nullptr);
-	// Share button placed in the gap, right-aligned next to the directory button
-	MiddleGap.VSplitRight(10.0f, &MiddleGap, nullptr);
-	MiddleGap.VSplitRight(80.0f, nullptr, &ShareButton);
+	DatabaseButton.VSplitLeft(150.0f, &DatabaseButton, &RightControls);
+	// Right-anchored controls: [Share] [Skins directory] [Refresh]
+	RightControls.VSplitRight(25.0f, &RightControls, &RefreshButton);
+	RightControls.VSplitRight(10.0f, &RightControls, nullptr);
+	RightControls.VSplitRight(130.0f, &RightControls, &DirectoryButton);
+	RightControls.VSplitRight(10.0f, &RightControls, nullptr);
+	RightControls.VSplitRight(70.0f, &RightControls, &ShareButton);
 
 	// Skin selector
 	static CListBox s_ListBox;
@@ -1015,7 +1018,8 @@ void CMenus::OpenShareSkinPopup()
 {
 	m_aShareSkinName[0] = '\0';
 	m_aShareSkinTargetName[0] = '\0';
-	m_ShareSkinAgree = false;
+	m_ShareSkinToAll = true;
+	m_ShareSkinAgree = g_Config.m_UcShareAgreed != 0;
 	m_ShareSkinState = EShareAssetState::NONE;
 	m_aShareSkinStatus[0] = '\0';
 	if(m_pShareSkinUploadRequest)
@@ -1040,7 +1044,7 @@ void CMenus::OpenShareSkinPopup()
 		str_copy(m_aShareSkinName, vNames.front().c_str());
 
 	const float Width = 420.0f;
-	const float Height = 320.0f;
+	const float Height = 165.0f;
 	const float X = (Ui()->Screen()->w - Width) / 2.0f;
 	const float Y = (Ui()->Screen()->h - Height) / 2.0f;
 	Ui()->DoPopupMenu(&m_ShareSkinPopupId, X, Y, Width, Height, this, PopupShareSkin);
@@ -1068,12 +1072,15 @@ bool CMenus::ResolveSkinSharePng(const char *pName, void **ppData, unsigned *pLe
 
 void CMenus::BeginShareSkinUpload()
 {
-	if(m_aShareSkinTargetName[0] == '\0')
+	if(!m_ShareSkinToAll && m_aShareSkinTargetName[0] == '\0')
 	{
 		m_ShareSkinState = EShareAssetState::FAILED;
 		str_copy(m_aShareSkinStatus, Localize("Select a player first."));
 		return;
 	}
+
+	// Remember the agreement so future shares default to checked.
+	g_Config.m_UcShareAgreed = 1;
 
 	void *pData = nullptr;
 	unsigned Len = 0;
@@ -1148,9 +1155,17 @@ void CMenus::UpdateShareSkinUpload()
 		return;
 	}
 
-	char aMsg[600];
-	str_format(aMsg, sizeof(aMsg), "/w %s %s", m_aShareSkinTargetName, aUrl);
-	GameClient()->m_Chat.SendChat(0, aMsg);
+	if(m_ShareSkinToAll)
+	{
+		// Broadcast the link to everyone via public chat.
+		GameClient()->m_Chat.SendChat(0, aUrl);
+	}
+	else
+	{
+		char aMsg[600];
+		str_format(aMsg, sizeof(aMsg), "/w %s %s", m_aShareSkinTargetName, aUrl);
+		GameClient()->m_Chat.SendChat(0, aMsg);
+	}
 
 	m_ShareSkinState = EShareAssetState::SENT;
 	str_copy(m_aShareSkinStatus, Localize("Shared!"));
@@ -1166,39 +1181,42 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareSkin(void *pContext, CUIRect Vie
 	const float SmallFontSize = 10.0f;
 	CUIRect Row;
 
-	// gather the players currently on this server (and whether they use UClient)
-	bool aUserUsesUClient[MAX_CLIENTS] = {false};
+	// gather the players currently on this server (excluding ourselves), and whether they use UClient.
+	// Display index 0 is a special "All" entry that broadcasts to public chat instead of whispering.
+	bool aUserUsesUClient[MAX_CLIENTS + 1] = {false};
 	pThis->m_vShareSkinUserNames.clear();
+	const int LocalId = pThis->GameClient()->m_Snap.m_LocalClientId;
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
+		if(i == LocalId)
+			continue;
 		if(!pThis->GameClient()->m_aClients[i].m_Active)
 			continue;
 		if(pThis->GameClient()->m_aClients[i].m_aName[0] == '\0')
 			continue;
 		const size_t Slot = pThis->m_vShareSkinUserNames.size();
-		if(Slot < MAX_CLIENTS)
-			aUserUsesUClient[Slot] = pThis->GameClient()->m_ClientIndicator.IsPlayerUClient(i);
+		if(Slot + 1 <= MAX_CLIENTS)
+			aUserUsesUClient[Slot + 1] = pThis->GameClient()->m_ClientIndicator.IsPlayerUClient(i);
 		pThis->m_vShareSkinUserNames.emplace_back(pThis->GameClient()->m_aClients[i].m_aName);
 	}
 
 	std::vector<const char *> vpNames;
-	vpNames.reserve(pThis->m_vShareSkinUserNames.size());
+	vpNames.reserve(pThis->m_vShareSkinUserNames.size() + 1);
+	vpNames.push_back("All");
 	for(const auto &Name : pThis->m_vShareSkinUserNames)
 		vpNames.push_back(Name.c_str());
 
-	int CurSelection = -1;
-	for(size_t i = 0; i < pThis->m_vShareSkinUserNames.size(); i++)
+	int CurSelection = 0; // default: "All" (broadcast)
+	if(!pThis->m_ShareSkinToAll)
 	{
-		if(str_comp(pThis->m_vShareSkinUserNames[i].c_str(), pThis->m_aShareSkinTargetName) == 0)
+		for(size_t i = 0; i < pThis->m_vShareSkinUserNames.size(); i++)
 		{
-			CurSelection = (int)i;
-			break;
+			if(str_comp(pThis->m_vShareSkinUserNames[i].c_str(), pThis->m_aShareSkinTargetName) == 0)
+			{
+				CurSelection = (int)i + 1;
+				break;
+			}
 		}
-	}
-	if(CurSelection < 0 && !pThis->m_vShareSkinUserNames.empty())
-	{
-		CurSelection = 0;
-		str_copy(pThis->m_aShareSkinTargetName, pThis->m_vShareSkinUserNames[0].c_str());
 	}
 
 	// gather the user's own skins (from the writable skins folder)
@@ -1220,42 +1238,57 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareSkin(void *pContext, CUIRect Vie
 	if(pThis->m_aShareSkinName[0] == '\0' && !pThis->m_vShareSkinNames.empty())
 		str_copy(pThis->m_aShareSkinName, pThis->m_vShareSkinNames.front().c_str());
 
-	// single line: Share [skin name] with [player v]
+	// single line: Share [skin v] with [player v]
 	View.HSplitTop(22.0f, &Row, &View);
-	CUIRect ShareRect, R0, SkinNameRect, R1, WithRect, PlayerDropRect;
+	CUIRect ShareRect, R0, SkinDropRect, R1, WithRect, PlayerDropRect;
 	const float ShareW = pThis->TextRender()->TextWidth(FontSize, "Share ") + 4.0f;
 	const float WithW = pThis->TextRender()->TextWidth(FontSize, " with ") + 4.0f;
 	const float PlayerDropW = 110.0f;
+	const float SkinDropW = 150.0f;
 	Row.VSplitLeft(ShareW, &ShareRect, &R0);
-	R0.VSplitRight(PlayerDropW, &R1, &PlayerDropRect);
-	R1.VSplitRight(WithW, &SkinNameRect, &WithRect);
+	R0.VSplitLeft(SkinDropW, &SkinDropRect, &R1);
+	R1.VSplitLeft(WithW, &WithRect, &PlayerDropRect);
+	PlayerDropRect.VSplitLeft(PlayerDropW, &PlayerDropRect, nullptr);
 
-	CUIRect PlayerDropSmall;
+	CUIRect SkinDropSmall, PlayerDropSmall;
+	SkinDropRect.HMargin((SkinDropRect.h - 17.0f) / 2.0f, &SkinDropSmall);
 	PlayerDropRect.HMargin((PlayerDropRect.h - 17.0f) / 2.0f, &PlayerDropSmall);
 
 	pThis->Ui()->DoLabel(&ShareRect, "Share", FontSize, TEXTALIGN_ML);
+
+	// skin selector: click to open a scrollable list with previews
 	{
+		const bool HasSkins = !pThis->m_vShareSkinNames.empty();
+		if(pThis->DoButton_Menu(&pThis->m_ShareSkinSelectButton, "", 0, &SkinDropSmall) && HasSkins)
+			pThis->Ui()->DoPopupMenu(&pThis->m_ShareSkinListPopupId, SkinDropSmall.x, SkinDropSmall.y + SkinDropSmall.h, 220.0f, 240.0f, pThis, PopupShareSkinList);
+
+		CUIRect SkinLabelRect, ArrowRect;
+		SkinDropSmall.VSplitRight(12.0f, &SkinLabelRect, &ArrowRect);
+		SkinLabelRect.VSplitLeft(3.0f, nullptr, &SkinLabelRect);
 		SLabelProperties Props;
-		Props.m_MaxWidth = SkinNameRect.w;
+		Props.m_MaxWidth = SkinLabelRect.w;
 		Props.m_EllipsisAtEnd = true;
-		pThis->TextRender()->TextColor(0.7f, 0.85f, 1.0f, 1.0f);
-		pThis->Ui()->DoLabel(&SkinNameRect, pThis->m_aShareSkinName[0] != '\0' ? pThis->m_aShareSkinName : "-", FontSize, TEXTALIGN_ML, Props);
-		pThis->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+		const char *pSkinText = HasSkins ? (pThis->m_aShareSkinName[0] != '\0' ? pThis->m_aShareSkinName : "-") : Localize("(no skins)");
+		pThis->Ui()->DoLabel(&SkinLabelRect, pSkinText, 10.0f, TEXTALIGN_ML, Props);
+		pThis->Ui()->DoLabel(&ArrowRect, "\xE2\x96\xBE", 10.0f, TEXTALIGN_MC); // small down triangle
 	}
+
 	pThis->Ui()->DoLabel(&WithRect, "with", FontSize, TEXTALIGN_MC);
 
 	static CScrollRegion s_ShareSkinUserScrollRegion;
 	pThis->m_ShareSkinUserDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_ShareSkinUserScrollRegion;
-	if(!vpNames.empty())
 	{
 		const int NewSelection = pThis->Ui()->DoDropDown(&PlayerDropSmall, CurSelection, vpNames.data(), (int)vpNames.size(), pThis->m_ShareSkinUserDropDownState, aUserUsesUClient, pThis->m_UcLogoTexture);
-		if(NewSelection >= 0 && NewSelection < (int)pThis->m_vShareSkinUserNames.size())
-			str_copy(pThis->m_aShareSkinTargetName, pThis->m_vShareSkinUserNames[NewSelection].c_str());
-	}
-	else
-	{
-		pThis->m_aShareSkinTargetName[0] = '\0';
-		pThis->Ui()->DoLabel(&PlayerDropSmall, Localize("(no players)"), SmallFontSize, TEXTALIGN_ML);
+		if(NewSelection == 0)
+		{
+			pThis->m_ShareSkinToAll = true;
+			pThis->m_aShareSkinTargetName[0] = '\0';
+		}
+		else if(NewSelection > 0 && NewSelection - 1 < (int)pThis->m_vShareSkinUserNames.size())
+		{
+			pThis->m_ShareSkinToAll = false;
+			str_copy(pThis->m_aShareSkinTargetName, pThis->m_vShareSkinUserNames[NewSelection - 1].c_str());
+		}
 	}
 
 	// status line
@@ -1278,73 +1311,6 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareSkin(void *pContext, CUIRect Vie
 	View.HSplitBottom(24.0f, &View, &DisclaimerRow);
 	View.HSplitBottom(4.0f, &View, nullptr);
 	View.HSplitBottom(20.0f, &View, &CheckRow);
-	View.HSplitTop(4.0f, nullptr, &View);
-
-	// remaining View = skin list with previews
-	{
-		if(pThis->m_vShareSkinNames.empty())
-		{
-			SLabelProperties Props;
-			Props.m_MaxWidth = View.w;
-			pThis->TextRender()->TextColor(0.7f, 0.7f, 0.7f, 1.0f);
-			pThis->Ui()->DoLabel(&View, Localize("No custom skins found. Add skins to the skins folder."), SmallFontSize, TEXTALIGN_MC, Props);
-			pThis->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
-		}
-		else
-		{
-			static CScrollRegion s_SkinListScroll;
-			vec2 ScrollOffset(0.0f, 0.0f);
-			CScrollRegionParams ScrollParams;
-			ScrollParams.m_ScrollbarWidth = 8.0f;
-			ScrollParams.m_ScrollbarMargin = 2.0f;
-			ScrollParams.m_ScrollUnit = 3.0f * 28.0f;
-			s_SkinListScroll.Begin(&View, &ScrollOffset, &ScrollParams);
-			CUIRect ListView = View;
-			ListView.y += ScrollOffset.y;
-
-			for(const auto &SkinName : pThis->m_vShareSkinNames)
-			{
-				CUIRect ItemRow;
-				ListView.HSplitTop(2.0f, nullptr, &ListView);
-				ListView.HSplitTop(28.0f, &ItemRow, &ListView);
-				if(!s_SkinListScroll.AddRect(ItemRow))
-					continue;
-
-				const void *pItemId = pThis->GameClient()->m_Skins.FindContainerOrNullptr(SkinName.c_str());
-				const bool Selected = str_comp(SkinName.c_str(), pThis->m_aShareSkinName) == 0;
-				if(Selected)
-					ItemRow.Draw(ColorRGBA(0.4f, 0.6f, 1.0f, 0.25f), IGraphics::CORNER_ALL, 3.0f);
-				else if(pItemId != nullptr && pThis->Ui()->HotItem() == pItemId)
-					ItemRow.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.1f), IGraphics::CORNER_ALL, 3.0f);
-
-				if(pItemId != nullptr && pThis->Ui()->DoButtonLogic(pItemId, 0, &ItemRow, BUTTONFLAG_LEFT))
-					str_copy(pThis->m_aShareSkinName, SkinName.c_str());
-
-				CUIRect TeeRect, NameRect;
-				ItemRow.VSplitLeft(34.0f, &TeeRect, &NameRect);
-				NameRect.VSplitLeft(4.0f, nullptr, &NameRect);
-
-				const CSkin *pSkin = pThis->GameClient()->m_Skins.FindAndRequestLoad(SkinName.c_str());
-				if(pSkin != nullptr)
-				{
-					CTeeRenderInfo Info;
-					Info.Apply(pSkin);
-					Info.m_Size = 24.0f;
-					vec2 OffsetToMid;
-					CRenderTools::GetRenderTeeOffsetToRenderedTee(CAnimState::GetIdle(), &Info, OffsetToMid);
-					const vec2 TeeRenderPos = vec2(TeeRect.x + TeeRect.w / 2.0f, TeeRect.y + TeeRect.h / 2.0f + OffsetToMid.y);
-					pThis->RenderTools()->RenderTee(CAnimState::GetIdle(), &Info, EMOTE_NORMAL, vec2(1.0f, 0.0f), TeeRenderPos);
-				}
-
-				SLabelProperties Props;
-				Props.m_MaxWidth = NameRect.w;
-				Props.m_EllipsisAtEnd = true;
-				pThis->Ui()->DoLabel(&NameRect, SkinName.c_str(), 12.0f, TEXTALIGN_ML, Props);
-			}
-
-			s_SkinListScroll.End();
-		}
-	}
 
 	// agreement checkbox (above the disclaimer)
 	if(pThis->DoButton_CheckBox(&pThis->m_ShareSkinAgree, "I agree to upload this skin to media.under1111.com.", pThis->m_ShareSkinAgree ? 1 : 0, &CheckRow))
@@ -1372,11 +1338,91 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareSkin(void *pContext, CUIRect Vie
 	}
 
 	const bool Uploading = pThis->m_ShareSkinState == EShareAssetState::UPLOADING;
-	const bool CanConfirm = pThis->m_ShareSkinAgree && !Uploading && !pThis->m_vShareSkinUserNames.empty() && !pThis->m_vShareSkinNames.empty() && pThis->m_aShareSkinName[0] != '\0';
+	const bool HasTarget = pThis->m_ShareSkinToAll || pThis->m_aShareSkinTargetName[0] != '\0';
+	const bool CanConfirm = pThis->m_ShareSkinAgree && !Uploading && HasTarget && !pThis->m_vShareSkinNames.empty() && pThis->m_aShareSkinName[0] != '\0';
 	const char *pConfirmText = Uploading ? Localize("Uploading...") : Localize("Confirm");
 	if(pThis->DoButton_Menu(&pThis->m_ShareSkinConfirmButton, pConfirmText, 0, &ConfirmRect) && CanConfirm)
 		pThis->BeginShareSkinUpload();
 
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+// UClient: scrollable list of the user's own skins (with tee previews) for the share-skin popup
+CUi::EPopupMenuFunctionResult CMenus::PopupShareSkinList(void *pContext, CUIRect View, bool Active)
+{
+	CMenus *pThis = static_cast<CMenus *>(pContext);
+
+	// keep the list fresh in case skins change while the popup is open
+	pThis->GameClient()->m_Skins.GetSaveSkinNames(pThis->m_vShareSkinNames);
+
+	if(pThis->m_vShareSkinNames.empty())
+	{
+		SLabelProperties Props;
+		Props.m_MaxWidth = View.w;
+		pThis->TextRender()->TextColor(0.7f, 0.7f, 0.7f, 1.0f);
+		pThis->Ui()->DoLabel(&View, Localize("No custom skins found. Add skins to the skins folder."), 10.0f, TEXTALIGN_MC, Props);
+		pThis->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+		return CUi::POPUP_KEEP_OPEN;
+	}
+
+	static CScrollRegion s_SkinListScroll;
+	vec2 ScrollOffset(0.0f, 0.0f);
+	CScrollRegionParams ScrollParams;
+	ScrollParams.m_ScrollbarWidth = 8.0f;
+	ScrollParams.m_ScrollbarMargin = 2.0f;
+	ScrollParams.m_ScrollUnit = 3.0f * 28.0f;
+	s_SkinListScroll.Begin(&View, &ScrollOffset, &ScrollParams);
+	CUIRect ListView = View;
+	ListView.y += ScrollOffset.y;
+
+	bool Selected = false;
+	for(const auto &SkinName : pThis->m_vShareSkinNames)
+	{
+		CUIRect ItemRow;
+		ListView.HSplitTop(2.0f, nullptr, &ListView);
+		ListView.HSplitTop(28.0f, &ItemRow, &ListView);
+		if(!s_SkinListScroll.AddRect(ItemRow))
+			continue;
+
+		const void *pItemId = pThis->GameClient()->m_Skins.FindContainerOrNullptr(SkinName.c_str());
+		const bool IsCurrent = str_comp(SkinName.c_str(), pThis->m_aShareSkinName) == 0;
+		if(IsCurrent)
+			ItemRow.Draw(ColorRGBA(0.4f, 0.6f, 1.0f, 0.25f), IGraphics::CORNER_ALL, 3.0f);
+		else if(pItemId != nullptr && pThis->Ui()->HotItem() == pItemId)
+			ItemRow.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.1f), IGraphics::CORNER_ALL, 3.0f);
+
+		if(pItemId != nullptr && pThis->Ui()->DoButtonLogic(pItemId, 0, &ItemRow, BUTTONFLAG_LEFT))
+		{
+			str_copy(pThis->m_aShareSkinName, SkinName.c_str());
+			Selected = true;
+		}
+
+		CUIRect TeeRect, NameRect;
+		ItemRow.VSplitLeft(34.0f, &TeeRect, &NameRect);
+		NameRect.VSplitLeft(4.0f, nullptr, &NameRect);
+
+		const CSkin *pSkin = pThis->GameClient()->m_Skins.FindAndRequestLoad(SkinName.c_str());
+		if(pSkin != nullptr)
+		{
+			CTeeRenderInfo Info;
+			Info.Apply(pSkin);
+			Info.m_Size = 24.0f;
+			vec2 OffsetToMid;
+			CRenderTools::GetRenderTeeOffsetToRenderedTee(CAnimState::GetIdle(), &Info, OffsetToMid);
+			const vec2 TeeRenderPos = vec2(TeeRect.x + TeeRect.w / 2.0f, TeeRect.y + TeeRect.h / 2.0f + OffsetToMid.y);
+			pThis->RenderTools()->RenderTee(CAnimState::GetIdle(), &Info, EMOTE_NORMAL, vec2(1.0f, 0.0f), TeeRenderPos);
+		}
+
+		SLabelProperties Props;
+		Props.m_MaxWidth = NameRect.w;
+		Props.m_EllipsisAtEnd = true;
+		pThis->Ui()->DoLabel(&NameRect, SkinName.c_str(), 12.0f, TEXTALIGN_ML, Props);
+	}
+
+	s_SkinListScroll.End();
+
+	if(Selected)
+		return CUi::POPUP_CLOSE_CURRENT;
 	return CUi::POPUP_KEEP_OPEN;
 }
 

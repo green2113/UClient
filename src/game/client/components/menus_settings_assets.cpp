@@ -1394,10 +1394,11 @@ void CMenus::OpenShareAssetPopup(int Tab)
 
 	m_ShareAssetTab = Tab;
 	str_copy(m_aShareAssetName, pName);
-	m_ShareAssetAgree = false;
+	m_ShareAssetAgree = g_Config.m_UcShareAgreed != 0;
 	m_ShareAssetState = EShareAssetState::NONE;
 	m_aShareAssetStatus[0] = '\0';
 	m_aShareAssetTargetName[0] = '\0';
+	m_ShareAssetToAll = true;
 	if(m_pShareAssetUploadRequest)
 	{
 		m_pShareAssetUploadRequest->Abort();
@@ -1462,12 +1463,15 @@ bool CMenus::ResolveAssetSharePng(int Tab, const char *pName, void **ppData, uns
 
 void CMenus::BeginShareAssetUpload()
 {
-	if(m_aShareAssetTargetName[0] == '\0')
+	if(!m_ShareAssetToAll && m_aShareAssetTargetName[0] == '\0')
 	{
 		m_ShareAssetState = EShareAssetState::FAILED;
 		str_copy(m_aShareAssetStatus, Localize("Select a player first."));
 		return;
 	}
+
+	// Remember the agreement so future shares default to checked.
+	g_Config.m_UcShareAgreed = 1;
 
 	void *pData = nullptr;
 	unsigned Len = 0;
@@ -1533,9 +1537,17 @@ void CMenus::UpdateShareAssetUpload()
 		return;
 	}
 
-	char aMsg[600];
-	str_format(aMsg, sizeof(aMsg), "/w %s %s", m_aShareAssetTargetName, aUrl);
-	GameClient()->m_Chat.SendChat(0, aMsg);
+	if(m_ShareAssetToAll)
+	{
+		// Broadcast the link to everyone via public chat.
+		GameClient()->m_Chat.SendChat(0, aUrl);
+	}
+	else
+	{
+		char aMsg[600];
+		str_format(aMsg, sizeof(aMsg), "/w %s %s", m_aShareAssetTargetName, aUrl);
+		GameClient()->m_Chat.SendChat(0, aMsg);
+	}
 
 	m_ShareAssetState = EShareAssetState::SENT;
 	str_copy(m_aShareAssetStatus, Localize("Shared!"));
@@ -1551,39 +1563,42 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 	const float SmallFontSize = 10.0f;
 	CUIRect Row;
 
-	// gather the players currently on this server (and whether they use UClient)
-	bool aUserUsesUClient[MAX_CLIENTS] = {false};
+	// gather the players currently on this server (excluding ourselves), and whether they use UClient.
+	// Display index 0 is a special "All" entry that broadcasts to public chat instead of whispering.
+	bool aUserUsesUClient[MAX_CLIENTS + 1] = {false};
 	pThis->m_vShareAssetUserNames.clear();
+	const int LocalId = pThis->GameClient()->m_Snap.m_LocalClientId;
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
+		if(i == LocalId)
+			continue;
 		if(!pThis->GameClient()->m_aClients[i].m_Active)
 			continue;
 		if(pThis->GameClient()->m_aClients[i].m_aName[0] == '\0')
 			continue;
 		const size_t Slot = pThis->m_vShareAssetUserNames.size();
-		if(Slot < MAX_CLIENTS)
-			aUserUsesUClient[Slot] = pThis->GameClient()->m_ClientIndicator.IsPlayerUClient(i);
+		if(Slot + 1 <= MAX_CLIENTS)
+			aUserUsesUClient[Slot + 1] = pThis->GameClient()->m_ClientIndicator.IsPlayerUClient(i);
 		pThis->m_vShareAssetUserNames.emplace_back(pThis->GameClient()->m_aClients[i].m_aName);
 	}
 
 	std::vector<const char *> vpNames;
-	vpNames.reserve(pThis->m_vShareAssetUserNames.size());
+	vpNames.reserve(pThis->m_vShareAssetUserNames.size() + 1);
+	vpNames.push_back("All");
 	for(const auto &Name : pThis->m_vShareAssetUserNames)
 		vpNames.push_back(Name.c_str());
 
-	int CurSelection = -1;
-	for(size_t i = 0; i < pThis->m_vShareAssetUserNames.size(); i++)
+	int CurSelection = 0; // default: "All" (broadcast)
+	if(!pThis->m_ShareAssetToAll)
 	{
-		if(str_comp(pThis->m_vShareAssetUserNames[i].c_str(), pThis->m_aShareAssetTargetName) == 0)
+		for(size_t i = 0; i < pThis->m_vShareAssetUserNames.size(); i++)
 		{
-			CurSelection = (int)i;
-			break;
+			if(str_comp(pThis->m_vShareAssetUserNames[i].c_str(), pThis->m_aShareAssetTargetName) == 0)
+			{
+				CurSelection = (int)i + 1;
+				break;
+			}
 		}
-	}
-	if(CurSelection < 0 && !pThis->m_vShareAssetUserNames.empty())
-	{
-		CurSelection = 0;
-		str_copy(pThis->m_aShareAssetTargetName, pThis->m_vShareAssetUserNames[0].c_str());
 	}
 
 	// gather the shareable assets in the current tab (skip the built-in "default")
@@ -1666,19 +1681,21 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 
 	pThis->Ui()->DoLabel(&WithRect, "with", FontSize, TEXTALIGN_MC);
 
-	// player selector
+	// player selector (index 0 = "All" -> broadcast to public chat)
 	static CScrollRegion s_ShareUserScrollRegion;
 	pThis->m_ShareAssetUserDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_ShareUserScrollRegion;
-	if(!vpNames.empty())
 	{
 		const int NewSelection = pThis->Ui()->DoDropDown(&PlayerDropSmall, CurSelection, vpNames.data(), (int)vpNames.size(), pThis->m_ShareAssetUserDropDownState, aUserUsesUClient, pThis->m_UcLogoTexture);
-		if(NewSelection >= 0 && NewSelection < (int)pThis->m_vShareAssetUserNames.size())
-			str_copy(pThis->m_aShareAssetTargetName, pThis->m_vShareAssetUserNames[NewSelection].c_str());
-	}
-	else
-	{
-		pThis->m_aShareAssetTargetName[0] = '\0';
-		pThis->Ui()->DoLabel(&PlayerDropSmall, Localize("(no players)"), SmallFontSize, TEXTALIGN_ML);
+		if(NewSelection == 0)
+		{
+			pThis->m_ShareAssetToAll = true;
+			pThis->m_aShareAssetTargetName[0] = '\0';
+		}
+		else if(NewSelection > 0 && NewSelection - 1 < (int)pThis->m_vShareAssetUserNames.size())
+		{
+			pThis->m_ShareAssetToAll = false;
+			str_copy(pThis->m_aShareAssetTargetName, pThis->m_vShareAssetUserNames[NewSelection - 1].c_str());
+		}
 	}
 
 	// status line (errors / progress) just below the sentence
@@ -1728,7 +1745,8 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 	}
 
 	const bool Uploading = pThis->m_ShareAssetState == EShareAssetState::UPLOADING;
-	const bool CanConfirm = pThis->m_ShareAssetAgree && !Uploading && !pThis->m_vShareAssetUserNames.empty() && !pThis->m_vShareAssetAssetNames.empty();
+	const bool HasTarget = pThis->m_ShareAssetToAll || pThis->m_aShareAssetTargetName[0] != '\0';
+	const bool CanConfirm = pThis->m_ShareAssetAgree && !Uploading && HasTarget && !pThis->m_vShareAssetAssetNames.empty();
 	const char *pConfirmText = Uploading ? Localize("Uploading...") : Localize("Confirm");
 	if(pThis->DoButton_Menu(&pThis->m_ShareAssetConfirmButton, pConfirmText, 0, &ConfirmRect) && CanConfirm)
 		pThis->BeginShareAssetUpload();
