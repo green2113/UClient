@@ -25,7 +25,6 @@ MACRO_CONFIG_INT(UcClientIndicatorInNamePlateSize, uc_client_indicator_in_name_p
 MACRO_CONFIG_INT(UcClientIndicatorInScoreboard, uc_client_indicator_in_scoreboard, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show UClient logo in scoreboard for UC players")
 MACRO_CONFIG_INT(UcClientIndicatorInScoreboardSize, uc_client_indicator_in_scoreboard_size, 100, -50, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient logo size in scoreboard")
 MACRO_CONFIG_INT(UcChatPlayerSearchEngine, uc_chat_player_search_engine, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Search engine used when clicking player names in chat (0=DDNet, 1=DDStats)")
-MACRO_CONFIG_INT(UcChatReply, uc_chat_reply, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable Discord-style chat replies between UClient users")
 MACRO_CONFIG_COL(UcChatReplyQuoteColor, uc_chat_reply_quote_color, 65471, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Reply quote name color")
 #if defined(CONF_DEBUG) || defined(CONF_UCLIENT_DEV_BUILD)
 MACRO_CONFIG_INT(UcVoiceTeam, uc_voice_team, -1, -1, 63, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Voice target team override (-1=off, 0..63=force that team, dev only)")

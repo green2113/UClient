@@ -223,7 +223,8 @@ bool TryParseWireReply(const char *pLine, SReplyMeta &OutMeta, char *pDisplayBod
 
 bool IsReplyFeatureEnabled()
 {
-	return g_Config.m_UcChatReply != 0 && g_Config.m_UcInstallUuid[0] != '\0';
+	// Chat reply is always enabled for UClient users; it can no longer be turned off.
+	return g_Config.m_UcInstallUuid[0] != '\0';
 }
 
 void SanitizeField(char *pBuffer, int Size)

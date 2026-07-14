@@ -2809,12 +2809,6 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 			Chat.RebuildChat();
 		}
 
-		LeftView.HSplitTop(LineSize, &Button, &LeftView);
-		if(DoButton_CheckBox(&g_Config.m_UcChatReply, Localize("UClient chat reply"), g_Config.m_UcChatReply, &Button))
-		{
-			g_Config.m_UcChatReply ^= 1;
-		}
-
 		// ***** Chat Preview ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Preview"), HeadlineFontSize,
 			TEXTALIGN_ML, &PreviewView, HeadlineHeight);
