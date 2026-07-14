@@ -5,6 +5,8 @@
 
 #include <engine/font_icons.h>
 #include <engine/shared/config.h>
+#include <engine/shared/http.h>
+#include <engine/shared/json.h>
 #include <engine/storage.h>
 #include <engine/textrender.h>
 
@@ -12,10 +14,12 @@
 
 #include <game/client/gameclient.h>
 #include <game/client/ui_listbox.h>
+#include <game/client/ui_scrollregion.h>
 #include <game/localization.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 
 using namespace std::chrono_literals;
 
@@ -1180,9 +1184,23 @@ void CMenus::RenderSettingsCustom(CUIRect MainView)
 	}
 
 	DirectoryButton.HSplitTop(5.0f, nullptr, &DirectoryButton);
-	DirectoryButton.VSplitRight(175.0f, nullptr, &DirectoryButton);
+	DirectoryButton.VSplitRight(255.0f, nullptr, &DirectoryButton);
 	DirectoryButton.VSplitRight(25.0f, &DirectoryButton, &ReloadButton);
 	DirectoryButton.VSplitRight(10.0f, &DirectoryButton, nullptr);
+
+	CUIRect ShareButton;
+	DirectoryButton.VSplitLeft(70.0f, &ShareButton, &DirectoryButton);
+	DirectoryButton.VSplitLeft(10.0f, nullptr, &DirectoryButton);
+	static CButtonContainer s_ShareAssetId;
+	if(DoButton_Menu(&s_ShareAssetId, Localize("Share"), 0, &ShareButton))
+	{
+		if(s_CurCustomTab == ASSETS_TAB_AUDIO)
+			GameClient()->m_Chat.Echo(Localize("Audio packs cannot be shared."));
+		else
+			OpenShareAssetPopup(s_CurCustomTab);
+	}
+	GameClient()->m_Tooltips.DoToolTip(&s_ShareAssetId, &ShareButton, Localize("Share the selected asset with a player on this server"));
+
 	static CButtonContainer s_AssetsDirId;
 	if(DoButton_Menu(&s_AssetsDirId, Localize("Assets directory"), 0, &DirectoryButton))
 	{
@@ -1355,4 +1373,360 @@ void CMenus::ConchainSndPack(IConsole::IResult *pResult, void *pUserData, IConso
 		if(str_comp(aOldSndPack, g_Config.m_SndPack) != 0)
 			pThis->GameClient()->m_Sounds.Clear();
 	}
+}
+
+// UClient: share the selected asset to a player on the current server
+void CMenus::OpenShareAssetPopup(int Tab)
+{
+	const char *pName = "";
+	switch(Tab)
+	{
+	case ASSETS_TAB_ENTITIES: pName = g_Config.m_ClAssetsEntities; break;
+	case ASSETS_TAB_GAME: pName = g_Config.m_ClAssetGame; break;
+	case ASSETS_TAB_EMOTICONS: pName = g_Config.m_ClAssetEmoticons; break;
+	case ASSETS_TAB_PARTICLES: pName = g_Config.m_ClAssetParticles; break;
+	case ASSETS_TAB_HUD: pName = g_Config.m_ClAssetHud; break;
+	case ASSETS_TAB_EXTRAS: pName = g_Config.m_ClAssetExtras; break;
+	case ASSETS_TAB_CURSOR: pName = g_Config.m_ClAssetCursor; break;
+	case ASSETS_TAB_ARROW: pName = g_Config.m_ClAssetArrow; break;
+	default: return;
+	}
+
+	m_ShareAssetTab = Tab;
+	str_copy(m_aShareAssetName, pName);
+	m_ShareAssetAgree = false;
+	m_ShareAssetState = EShareAssetState::NONE;
+	m_aShareAssetStatus[0] = '\0';
+	m_aShareAssetTargetName[0] = '\0';
+	if(m_pShareAssetUploadRequest)
+	{
+		m_pShareAssetUploadRequest->Abort();
+		m_pShareAssetUploadRequest.reset();
+	}
+
+	const float Width = 420.0f;
+	const float Height = 150.0f;
+	const float X = (Ui()->Screen()->w - Width) / 2.0f;
+	const float Y = (Ui()->Screen()->h - Height) / 2.0f;
+	Ui()->DoPopupMenu(&m_ShareAssetPopupId, X, Y, Width, Height, this, PopupShareAsset);
+}
+
+bool CMenus::ResolveAssetSharePng(int Tab, const char *pName, void **ppData, unsigned *pLen) const
+{
+	*ppData = nullptr;
+	*pLen = 0;
+	if(pName[0] == '\0' || str_comp(pName, "default") == 0)
+		return false;
+
+	const char *pDir = "";
+	switch(Tab)
+	{
+	case ASSETS_TAB_ENTITIES: pDir = "entities"; break;
+	case ASSETS_TAB_GAME: pDir = "game"; break;
+	case ASSETS_TAB_EMOTICONS: pDir = "emoticons"; break;
+	case ASSETS_TAB_PARTICLES: pDir = "particles"; break;
+	case ASSETS_TAB_HUD: pDir = "hud"; break;
+	case ASSETS_TAB_EXTRAS: pDir = "extras"; break;
+	case ASSETS_TAB_CURSOR: pDir = "cursor"; break;
+	case ASSETS_TAB_ARROW: pDir = "arrow"; break;
+	default: return false;
+	}
+
+	char aaCandidates[5][IO_MAX_PATH_LENGTH];
+	int NumCandidates = 0;
+	str_format(aaCandidates[NumCandidates++], IO_MAX_PATH_LENGTH, "assets/%s/%s.png", pDir, pName);
+	str_format(aaCandidates[NumCandidates++], IO_MAX_PATH_LENGTH, "assets/%s/%s/%s.png", pDir, pName, pDir);
+	if(Tab == ASSETS_TAB_CURSOR)
+	{
+		str_format(aaCandidates[NumCandidates++], IO_MAX_PATH_LENGTH, "assets/cursor/%s/gui_cursor.png", pName);
+		str_format(aaCandidates[NumCandidates++], IO_MAX_PATH_LENGTH, "assets/cursor/%s/cursor.png", pName);
+	}
+	else if(Tab == ASSETS_TAB_ENTITIES)
+	{
+		str_format(aaCandidates[NumCandidates++], IO_MAX_PATH_LENGTH, "assets/entities/%s/%s.png", pName, gs_apModEntitiesNames[0]);
+	}
+
+	for(int i = 0; i < NumCandidates; i++)
+	{
+		if(Storage()->ReadFile(aaCandidates[i], IStorage::TYPE_ALL, ppData, pLen) && *ppData != nullptr && *pLen > 0)
+			return true;
+		if(*ppData != nullptr)
+		{
+			free(*ppData);
+			*ppData = nullptr;
+			*pLen = 0;
+		}
+	}
+	return false;
+}
+
+void CMenus::BeginShareAssetUpload()
+{
+	if(m_aShareAssetTargetName[0] == '\0')
+	{
+		m_ShareAssetState = EShareAssetState::FAILED;
+		str_copy(m_aShareAssetStatus, Localize("Select a player first."));
+		return;
+	}
+
+	void *pData = nullptr;
+	unsigned Len = 0;
+	if(!ResolveAssetSharePng(m_ShareAssetTab, m_aShareAssetName, &pData, &Len))
+	{
+		m_ShareAssetState = EShareAssetState::FAILED;
+		str_copy(m_aShareAssetStatus, Localize("Could not find the asset image file."));
+		return;
+	}
+
+	if(g_Config.m_UcChatPasteUploadUrl[0] == '\0')
+	{
+		free(pData);
+		m_ShareAssetState = EShareAssetState::FAILED;
+		str_copy(m_aShareAssetStatus, Localize("Upload URL is not configured."));
+		return;
+	}
+
+	std::shared_ptr<CHttpRequest> pPost = HttpPost(g_Config.m_UcChatPasteUploadUrl, (const unsigned char *)pData, Len);
+	pPost->Header("Content-Type: image/png");
+	pPost->Header("Accept: application/json");
+	pPost->FailOnErrorStatus(false);
+	pPost->MaxResponseSize(64 * 1024);
+	pPost->LogProgress(HTTPLOG::FAILURE);
+	free(pData);
+
+	m_pShareAssetUploadRequest = pPost;
+	m_ShareAssetState = EShareAssetState::UPLOADING;
+	str_copy(m_aShareAssetStatus, Localize("Uploading..."));
+	Http()->Run(pPost);
+}
+
+void CMenus::UpdateShareAssetUpload()
+{
+	if(!m_pShareAssetUploadRequest || !m_pShareAssetUploadRequest->Done())
+		return;
+
+	std::shared_ptr<CHttpRequest> pRequest = m_pShareAssetUploadRequest;
+	m_pShareAssetUploadRequest.reset();
+
+	char aUrl[512] = "";
+	if(pRequest->State() == EHttpState::DONE && pRequest->StatusCode() >= 200 && pRequest->StatusCode() < 400)
+	{
+		json_value *pRoot = pRequest->ResultJson();
+		if(pRoot != nullptr && pRoot->type == json_object)
+		{
+			const json_value &UrlValue = (*pRoot)["url"];
+			if(UrlValue.type == json_string)
+				str_copy(aUrl, UrlValue.u.string.ptr);
+			if(aUrl[0] == '\0')
+			{
+				const json_value &PublicUrlValue = (*pRoot)["publicUrl"];
+				if(PublicUrlValue.type == json_string)
+					str_copy(aUrl, PublicUrlValue.u.string.ptr);
+			}
+		}
+	}
+
+	if(aUrl[0] == '\0')
+	{
+		m_ShareAssetState = EShareAssetState::FAILED;
+		str_format(m_aShareAssetStatus, sizeof(m_aShareAssetStatus), Localize("Upload failed (HTTP %d)"), pRequest->StatusCode());
+		return;
+	}
+
+	char aMsg[600];
+	str_format(aMsg, sizeof(aMsg), "/w %s %s", m_aShareAssetTargetName, aUrl);
+	GameClient()->m_Chat.SendChat(0, aMsg);
+
+	m_ShareAssetState = EShareAssetState::SENT;
+	str_copy(m_aShareAssetStatus, Localize("Shared!"));
+	Ui()->ClosePopupMenu(&m_ShareAssetPopupId);
+}
+
+CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect View, bool Active)
+{
+	CMenus *pThis = static_cast<CMenus *>(pContext);
+	pThis->UpdateShareAssetUpload();
+
+	const float FontSize = 14.0f;
+	const float SmallFontSize = 10.0f;
+	CUIRect Row;
+
+	// gather the players currently on this server
+	pThis->m_vShareAssetUserNames.clear();
+	for(int i = 0; i < MAX_CLIENTS; i++)
+	{
+		if(!pThis->GameClient()->m_aClients[i].m_Active)
+			continue;
+		if(pThis->GameClient()->m_aClients[i].m_aName[0] == '\0')
+			continue;
+		pThis->m_vShareAssetUserNames.emplace_back(pThis->GameClient()->m_aClients[i].m_aName);
+	}
+
+	std::vector<const char *> vpNames;
+	vpNames.reserve(pThis->m_vShareAssetUserNames.size());
+	for(const auto &Name : pThis->m_vShareAssetUserNames)
+		vpNames.push_back(Name.c_str());
+
+	int CurSelection = -1;
+	for(size_t i = 0; i < pThis->m_vShareAssetUserNames.size(); i++)
+	{
+		if(str_comp(pThis->m_vShareAssetUserNames[i].c_str(), pThis->m_aShareAssetTargetName) == 0)
+		{
+			CurSelection = (int)i;
+			break;
+		}
+	}
+	if(CurSelection < 0 && !pThis->m_vShareAssetUserNames.empty())
+	{
+		CurSelection = 0;
+		str_copy(pThis->m_aShareAssetTargetName, pThis->m_vShareAssetUserNames[0].c_str());
+	}
+
+	// gather the shareable assets in the current tab (skip the built-in "default")
+	pThis->m_vShareAssetAssetNames.clear();
+	const auto AddAssetNames = [&](const auto &vList) {
+		for(const auto &It : vList)
+		{
+			if(str_comp(It.m_aName, "default") == 0)
+				continue;
+			pThis->m_vShareAssetAssetNames.emplace_back(It.m_aName);
+		}
+	};
+	switch(pThis->m_ShareAssetTab)
+	{
+	case ASSETS_TAB_ENTITIES: AddAssetNames(pThis->m_vEntitiesList); break;
+	case ASSETS_TAB_GAME: AddAssetNames(pThis->m_vGameList); break;
+	case ASSETS_TAB_EMOTICONS: AddAssetNames(pThis->m_vEmoticonList); break;
+	case ASSETS_TAB_PARTICLES: AddAssetNames(pThis->m_vParticlesList); break;
+	case ASSETS_TAB_HUD: AddAssetNames(pThis->m_vHudList); break;
+	case ASSETS_TAB_EXTRAS: AddAssetNames(pThis->m_vExtrasList); break;
+	case ASSETS_TAB_CURSOR: AddAssetNames(pThis->m_vCursorList); break;
+	case ASSETS_TAB_ARROW: AddAssetNames(pThis->m_vArrowList); break;
+	default: break;
+	}
+
+	std::vector<const char *> vpAssetNames;
+	vpAssetNames.reserve(pThis->m_vShareAssetAssetNames.size());
+	for(const auto &Name : pThis->m_vShareAssetAssetNames)
+		vpAssetNames.push_back(Name.c_str());
+
+	int AssetSelection = -1;
+	for(size_t i = 0; i < pThis->m_vShareAssetAssetNames.size(); i++)
+	{
+		if(str_comp(pThis->m_vShareAssetAssetNames[i].c_str(), pThis->m_aShareAssetName) == 0)
+		{
+			AssetSelection = (int)i;
+			break;
+		}
+	}
+	if(AssetSelection < 0 && !pThis->m_vShareAssetAssetNames.empty())
+	{
+		AssetSelection = 0;
+		str_copy(pThis->m_aShareAssetName, pThis->m_vShareAssetAssetNames[0].c_str());
+	}
+
+	// single line: [asset v] 을 [player v] 님에게 공유합니다.
+	View.HSplitTop(22.0f, &Row, &View);
+	CUIRect AssetDropRect, R1, EulRect, R2, PlayerDropRect, RightRect;
+	const float AssetDropW = 100.0f;
+	const float PlayerDropW = 100.0f;
+	const float EulW = pThis->TextRender()->TextWidth(FontSize, " 을 ") + 6.0f;
+	Row.VSplitLeft(AssetDropW, &AssetDropRect, &R1);
+	R1.VSplitLeft(EulW, &EulRect, &R2);
+	R2.VSplitLeft(PlayerDropW, &PlayerDropRect, &RightRect);
+	RightRect.VSplitLeft(4.0f, nullptr, &RightRect);
+
+	CUIRect AssetDropSmall, PlayerDropSmall;
+	AssetDropRect.HMargin((AssetDropRect.h - 17.0f) / 2.0f, &AssetDropSmall);
+	PlayerDropRect.HMargin((PlayerDropRect.h - 17.0f) / 2.0f, &PlayerDropSmall);
+
+	// asset selector
+	static CScrollRegion s_ShareAssetScrollRegion;
+	pThis->m_ShareAssetNameDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_ShareAssetScrollRegion;
+	if(!vpAssetNames.empty())
+	{
+		const int NewAsset = pThis->Ui()->DoDropDown(&AssetDropSmall, AssetSelection, vpAssetNames.data(), (int)vpAssetNames.size(), pThis->m_ShareAssetNameDropDownState);
+		if(NewAsset >= 0 && NewAsset < (int)pThis->m_vShareAssetAssetNames.size())
+			str_copy(pThis->m_aShareAssetName, pThis->m_vShareAssetAssetNames[NewAsset].c_str());
+	}
+	else
+	{
+		SLabelProperties AssetProps;
+		AssetProps.m_MaxWidth = AssetDropSmall.w;
+		AssetProps.m_EllipsisAtEnd = true;
+		pThis->Ui()->DoLabel(&AssetDropSmall, pThis->m_aShareAssetName, SmallFontSize, TEXTALIGN_ML, AssetProps);
+	}
+
+	pThis->Ui()->DoLabel(&EulRect, "을", FontSize, TEXTALIGN_MC);
+
+	// player selector
+	static CScrollRegion s_ShareUserScrollRegion;
+	pThis->m_ShareAssetUserDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_ShareUserScrollRegion;
+	if(!vpNames.empty())
+	{
+		const int NewSelection = pThis->Ui()->DoDropDown(&PlayerDropSmall, CurSelection, vpNames.data(), (int)vpNames.size(), pThis->m_ShareAssetUserDropDownState);
+		if(NewSelection >= 0 && NewSelection < (int)pThis->m_vShareAssetUserNames.size())
+			str_copy(pThis->m_aShareAssetTargetName, pThis->m_vShareAssetUserNames[NewSelection].c_str());
+	}
+	else
+	{
+		pThis->m_aShareAssetTargetName[0] = '\0';
+		pThis->Ui()->DoLabel(&PlayerDropSmall, Localize("(no players)"), SmallFontSize, TEXTALIGN_ML);
+	}
+
+	pThis->Ui()->DoLabel(&RightRect, "님에게 공유합니다.", FontSize, TEXTALIGN_ML);
+
+	// status line (errors / progress) just below the sentence
+	View.HSplitTop(6.0f, nullptr, &View);
+	View.HSplitTop(14.0f, &Row, &View);
+	if(pThis->m_aShareAssetStatus[0] != '\0')
+	{
+		if(pThis->m_ShareAssetState == EShareAssetState::FAILED)
+			pThis->TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
+		else
+			pThis->TextRender()->TextColor(0.6f, 0.8f, 1.0f, 1.0f);
+		pThis->Ui()->DoLabel(&Row, pThis->m_aShareAssetStatus, SmallFontSize, TEXTALIGN_ML);
+		pThis->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+	}
+
+	// bottom-anchored block: [checkbox] / [disclaimer] / (gap) / [buttons]
+	CUIRect ButtonRow, CancelRect, ConfirmRect, DisclaimerRow, CheckRow;
+	View.HSplitBottom(20.0f, &View, &ButtonRow);
+	View.HSplitBottom(8.0f, &View, nullptr);
+	View.HSplitBottom(24.0f, &View, &DisclaimerRow);
+	View.HSplitBottom(4.0f, &View, nullptr);
+	View.HSplitBottom(20.0f, &View, &CheckRow);
+
+	// agreement checkbox (above the disclaimer)
+	if(pThis->DoButton_CheckBox(&pThis->m_ShareAssetAgree, "I agree to upload this asset to media.under1111.com.", pThis->m_ShareAssetAgree ? 1 : 0, &CheckRow))
+		pThis->m_ShareAssetAgree = !pThis->m_ShareAssetAgree;
+
+	// disclaimer (small, dim) directly above the buttons
+	{
+		SLabelProperties Props;
+		Props.m_MaxWidth = DisclaimerRow.w;
+		pThis->TextRender()->TextColor(0.6f, 0.6f, 0.6f, 1.0f);
+		pThis->Ui()->DoLabel(&DisclaimerRow, "If the receiving player is not using UClient, the image may not be displayed.", SmallFontSize, TEXTALIGN_ML, Props);
+		pThis->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+	}
+
+	// buttons
+	ButtonRow.VSplitMid(&CancelRect, &ConfirmRect, 10.0f);
+	if(pThis->DoButton_Menu(&pThis->m_ShareAssetCancelButton, Localize("Cancel"), 0, &CancelRect))
+	{
+		if(pThis->m_pShareAssetUploadRequest)
+		{
+			pThis->m_pShareAssetUploadRequest->Abort();
+			pThis->m_pShareAssetUploadRequest.reset();
+		}
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	const bool Uploading = pThis->m_ShareAssetState == EShareAssetState::UPLOADING;
+	const bool CanConfirm = pThis->m_ShareAssetAgree && !Uploading && !pThis->m_vShareAssetUserNames.empty() && !pThis->m_vShareAssetAssetNames.empty();
+	const char *pConfirmText = Uploading ? Localize("Uploading...") : Localize("Confirm");
+	if(pThis->DoButton_Menu(&pThis->m_ShareAssetConfirmButton, pConfirmText, 0, &ConfirmRect) && CanConfirm)
+		pThis->BeginShareAssetUpload();
+
+	return CUi::POPUP_KEEP_OPEN;
 }

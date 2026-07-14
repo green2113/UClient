@@ -89,6 +89,25 @@ int os_open_file(const char *path);
 #endif // !defined(CONF_PLATFORM_ANDROID)
 
 /**
+ * Opens a native "Save As" file dialog so the user can choose where to save a file.
+ *
+ * @ingroup OS
+ *
+ * @param pTitle Dialog window title (may be null).
+ * @param pDefaultName Suggested default file name (may be null).
+ * @param pFilterName Human-readable name for the file type filter, e.g. "PNG Image" (may be null).
+ * @param pFilterPattern File type filter pattern, e.g. "*.png" (may be null).
+ * @param pBuf Buffer that receives the chosen absolute path as a null-terminated UTF-8 string.
+ * @param BufSize Size of the output buffer.
+ *
+ * @return `0` on success (path written to `pBuf`), `1` when cancelled or failed, `2` when unsupported on this platform.
+ *
+ * @remark Only implemented on Windows. Returns `2` on other platforms.
+ * @remark The strings are treated as null-terminated strings.
+ */
+int os_save_file_dialog(const char *pTitle, const char *pDefaultName, const char *pFilterName, const char *pFilterPattern, char *pBuf, int BufSize);
+
+/**
  * Returns a human-readable version string of the operating system.
  *
  * @ingroup OS

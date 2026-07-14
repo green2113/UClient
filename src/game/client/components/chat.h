@@ -498,6 +498,49 @@ class CChat : public CComponent
 	static CUi::EPopupMenuFunctionResult PopupGiphyBrowser(void *pContext, CUIRect View, bool Active);
 	void RenderGiphyButton(const CUIRect &ButtonRect);
 
+	// Media context menu (right-click on inline chat image)
+	SPopupMenuId m_MediaContextPopupId;
+	SPopupMenuId m_MediaSaveAssetPopupId;
+	SPopupMenuId m_MediaSaveSkinPopupId;
+	int m_MediaContextLineIndex = -1;
+	char m_aMediaContextUrl[512] = "";
+	EMediaKind m_MediaContextKind = EMediaKind::UNKNOWN;
+	int m_MediaAssetCategory = 0;
+	bool m_MediaAssetApply = true;
+	CLineInputBuffered<64> m_MediaAssetNameInput;
+	bool m_MediaSkinApply = true;
+	CLineInputBuffered<64> m_MediaSkinNameInput;
+	CButtonContainer m_aMediaContextButtons[3];
+	CButtonContainer m_aMediaAssetCategoryButtons[8];
+	CButtonContainer m_MediaAssetApplyButton;
+	CButtonContainer m_MediaAssetConfirmButton;
+	CButtonContainer m_MediaAssetCancelButton;
+	CButtonContainer m_MediaSkinApplyButton;
+	CButtonContainer m_MediaSkinConfirmButton;
+	CButtonContainer m_MediaSkinCancelButton;
+
+	enum class EMediaSaveTarget
+	{
+		COMPUTER = 0,
+		ASSET,
+		SKIN,
+	};
+	std::shared_ptr<class CHttpRequest> m_pMediaSaveRequest;
+	EMediaSaveTarget m_MediaSaveTarget = EMediaSaveTarget::COMPUTER;
+	char m_aMediaSaveComputerPath[512] = "";
+	int m_MediaSaveAssetCategory = 0;
+	char m_aMediaSaveName[64] = "";
+	bool m_MediaSaveApply = false;
+
+	void OpenMediaContextMenu(int LineIndex, float X, float Y);
+	void BeginSaveToComputer();
+	void BeginSaveToAsset();
+	void BeginSaveToSkin();
+	void UpdateMediaSave();
+	static CUi::EPopupMenuFunctionResult PopupMediaContext(void *pContext, CUIRect View, bool Active);
+	static CUi::EPopupMenuFunctionResult PopupMediaSaveAsset(void *pContext, CUIRect View, bool Active);
+	static CUi::EPopupMenuFunctionResult PopupMediaSaveSkin(void *pContext, CUIRect View, bool Active);
+
 	friend class CBindChat;
 	friend class CTranslate;
 	friend class CBestClient;

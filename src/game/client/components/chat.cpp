@@ -4541,6 +4541,20 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	if(ChatInputActive && Ui()->IsPopupOpen(&m_GiphyPopupId) && Ui()->OnInput(Event))
 		return true;
 
+	const bool MediaSavePopupOpen = Ui()->IsPopupOpen(&m_MediaContextPopupId) || Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) || Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId);
+	if(ChatInputActive && MediaSavePopupOpen)
+	{
+		// Let the popup handle text input / active items first.
+		if(Ui()->OnInput(Event))
+			return true;
+		// Consume remaining mouse events so the chat behind the popup does not react.
+		// Popup buttons and click-outside-to-close are handled by RenderPopupMenus using
+		// the polled mouse state, so this does not break the popup itself.
+		if(Event.m_Key == KEY_MOUSE_1 || Event.m_Key == KEY_MOUSE_2 || Event.m_Key == KEY_MOUSE_3 ||
+			Event.m_Key == KEY_MOUSE_WHEEL_UP || Event.m_Key == KEY_MOUSE_WHEEL_DOWN)
+			return true;
+	}
+
 	if(ChatInputActive && Event.m_Key == KEY_MOUSE_1 && m_GiphyButtonRectValid)
 	{
 		const vec2 MousePos = ChatMousePos();
@@ -4724,6 +4738,29 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		{
 			m_MediaViewerDragging = false;
 			return true;
+		}
+	}
+
+	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_2 && g_Config.m_BcChatMediaPreview && !m_MediaViewerOpen && !m_pMediaSaveRequest)
+	{
+		const vec2 MousePos = ChatMousePos();
+		for(int i = m_BacklogCurLine; i < MAX_LINES; i++)
+		{
+			const int LineIndex = ((m_CurrentLine - i) + MAX_LINES) % MAX_LINES;
+			CLine &Line = m_aLines[LineIndex];
+			if(!Line.m_Initialized)
+				break;
+			if(!Line.m_MediaPreviewRectValid || Line.m_MediaState != EMediaState::READY)
+				continue;
+			const SRenderRect &Rect = Line.m_MediaPreviewRect;
+			if(MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
+				MousePos.y >= Rect.m_Y && MousePos.y <= Rect.m_Y + Rect.m_H)
+			{
+				const vec2 WindowSize(maximum(1.0f, (float)Graphics()->WindowWidth()), maximum(1.0f, (float)Graphics()->WindowHeight()));
+				const vec2 UiPos = Ui()->UpdatedMousePos() * vec2(Ui()->Screen()->w, Ui()->Screen()->h) / WindowSize;
+				OpenMediaContextMenu(LineIndex, UiPos.x, UiPos.y);
+				return true;
+			}
 		}
 	}
 
@@ -6589,6 +6626,7 @@ void CChat::OnRender()
 	}
 
 	UpdateMediaDownloads();
+	UpdateMediaSave();
 	UpdateGiphySearch();
 	UpdateGiphyPreviewCache();
 	m_UcChatPaste.OnUpdate(this);
@@ -8378,5 +8416,466 @@ bool CChat::GetGiphyPreviewTexture(const SGifResult &Result, IGraphics::CTexture
 	Width = It->second.m_Width;
 	Height = It->second.m_Height;
 	return MediaDecoder::GetCurrentFrameTexture(It->second.m_vFrames, It->second.m_Animated, It->second.m_AnimationStart, Texture);
+}
+
+// ---------------------------------------------------------------------------
+// Right-click "save image" context menu for inline chat media
+// ---------------------------------------------------------------------------
+
+static const char *const gs_apMediaAssetCategoryNames[] = {
+	"Entities", "Game", "Emoticons", "Particles", "HUD", "Extras", "Cursor", "Arrow"};
+static const char *const gs_apMediaAssetCategoryDirs[] = {
+	"assets/entities", "assets/game", "assets/emoticons", "assets/particles", "assets/hud", "assets/extras", "assets/cursor", "assets/arrow"};
+
+static void MediaExtractUrlFileName(const char *pUrl, char *pOut, int OutSize)
+{
+	if(OutSize <= 0)
+		return;
+	pOut[0] = '\0';
+	if(pUrl == nullptr || pUrl[0] == '\0')
+		return;
+
+	const char *pName = pUrl;
+	for(const char *p = pUrl; *p != '\0'; ++p)
+	{
+		if(*p == '/')
+			pName = p + 1;
+		else if(*p == '?' || *p == '#')
+			break;
+	}
+
+	int i = 0;
+	for(const char *p = pName; *p != '\0' && *p != '?' && *p != '#' && i < OutSize - 1; ++p)
+		pOut[i++] = *p;
+	pOut[i] = '\0';
+}
+
+static void MediaSanitizeAssetName(const char *pIn, char *pOut, int OutSize)
+{
+	if(OutSize <= 0)
+		return;
+	pOut[0] = '\0';
+
+	char aTmp[128];
+	str_copy(aTmp, pIn != nullptr ? pIn : "", sizeof(aTmp));
+
+	// Strip a trailing file extension (last dot, but keep leading-dot names).
+	char *pLastDot = nullptr;
+	for(char *p = aTmp; *p != '\0'; ++p)
+	{
+		if(*p == '.')
+			pLastDot = p;
+	}
+	if(pLastDot != nullptr && pLastDot != aTmp)
+		*pLastDot = '\0';
+
+	// Keep only characters that are safe in file names.
+	int o = 0;
+	for(const char *p = aTmp; *p != '\0' && o < OutSize - 1; ++p)
+	{
+		const unsigned char c = (unsigned char)*p;
+		if(c < 32 || *p == '/' || *p == '\\' || *p == ':' || *p == '*' || *p == '?' || *p == '"' || *p == '<' || *p == '>' || *p == '|')
+			continue;
+		pOut[o++] = *p;
+	}
+	pOut[o] = '\0';
+
+	// Trim leading and trailing spaces.
+	int Start = 0;
+	while(pOut[Start] == ' ')
+		++Start;
+	if(Start > 0)
+	{
+		int k = 0;
+		while(pOut[Start + k] != '\0')
+		{
+			pOut[k] = pOut[Start + k];
+			++k;
+		}
+		pOut[k] = '\0';
+	}
+	int End = str_length(pOut);
+	while(End > 0 && pOut[End - 1] == ' ')
+		pOut[--End] = '\0';
+}
+
+void CChat::OpenMediaContextMenu(int LineIndex, float X, float Y)
+{
+	if(LineIndex < 0 || LineIndex >= MAX_LINES)
+		return;
+	CLine &Line = m_aLines[LineIndex];
+	if(!Line.m_Initialized || Line.m_MediaState != EMediaState::READY || Line.m_aMediaUrl[0] == '\0')
+		return;
+
+	m_MediaContextLineIndex = LineIndex;
+	str_copy(m_aMediaContextUrl, Line.m_aMediaUrl, sizeof(m_aMediaContextUrl));
+	m_MediaContextKind = Line.m_MediaKind;
+
+	const bool AllowAsset = m_MediaContextKind == EMediaKind::PHOTO;
+	const int ButtonCount = AllowAsset ? 3 : 1;
+	const float RowHeight = 18.0f;
+	const float Spacing = 2.0f;
+	const float PopupW = 160.0f;
+	// Popup border (1) + margin (4) on each side => 10px total vertical overhead.
+	const float PopupH = ButtonCount * RowHeight + (ButtonCount - 1) * Spacing + 10.0f;
+
+	Ui()->DoPopupMenu(&m_MediaContextPopupId, X, Y, PopupW, PopupH, this, PopupMediaContext, {}, CUi::EButtonSoundType::DEFAULT);
+}
+
+CUi::EPopupMenuFunctionResult CChat::PopupMediaContext(void *pContext, CUIRect View, bool Active)
+{
+	CChat *pChat = static_cast<CChat *>(pContext);
+	(void)Active;
+	CMenus &Menus = pChat->GameClient()->m_Menus;
+	const bool AllowAsset = pChat->m_MediaContextKind == EMediaKind::PHOTO;
+	const float RowHeight = 18.0f;
+	const float Spacing = 2.0f;
+	CUIRect Row;
+
+	View.HSplitTop(RowHeight, &Row, &View);
+	if(Menus.DoButton_Menu(&pChat->m_aMediaContextButtons[0], Localize("Save to Computer"), 0, &Row))
+	{
+		pChat->BeginSaveToComputer();
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	if(AllowAsset)
+	{
+		View.HSplitTop(Spacing, nullptr, &View);
+		View.HSplitTop(RowHeight, &Row, &View);
+		if(Menus.DoButton_Menu(&pChat->m_aMediaContextButtons[1], Localize("Save to Assets"), 0, &Row))
+		{
+			char aName[128], aClean[64];
+			MediaExtractUrlFileName(pChat->m_aMediaContextUrl, aName, sizeof(aName));
+			MediaSanitizeAssetName(aName, aClean, sizeof(aClean));
+			pChat->m_MediaAssetNameInput.Set(aClean);
+			pChat->m_MediaAssetApply = true;
+			pChat->Ui()->DoPopupMenu(&pChat->m_MediaSaveAssetPopupId, View.x, Row.y, 200.0f, 206.0f, pChat, PopupMediaSaveAsset, {}, CUi::EButtonSoundType::DEFAULT);
+			return CUi::POPUP_CLOSE_CURRENT;
+		}
+
+		View.HSplitTop(Spacing, nullptr, &View);
+		View.HSplitTop(RowHeight, &Row, &View);
+		if(Menus.DoButton_Menu(&pChat->m_aMediaContextButtons[2], Localize("Save to Skin"), 0, &Row))
+		{
+			char aName[128], aClean[64];
+			MediaExtractUrlFileName(pChat->m_aMediaContextUrl, aName, sizeof(aName));
+			MediaSanitizeAssetName(aName, aClean, sizeof(aClean));
+			pChat->m_MediaSkinNameInput.Set(aClean);
+			pChat->m_MediaSkinApply = true;
+			pChat->Ui()->DoPopupMenu(&pChat->m_MediaSaveSkinPopupId, View.x, Row.y, 200.0f, 98.0f, pChat, PopupMediaSaveSkin, {}, CUi::EButtonSoundType::DEFAULT);
+			return CUi::POPUP_CLOSE_CURRENT;
+		}
+	}
+
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+CUi::EPopupMenuFunctionResult CChat::PopupMediaSaveAsset(void *pContext, CUIRect View, bool Active)
+{
+	CChat *pChat = static_cast<CChat *>(pContext);
+	(void)Active;
+	CMenus &Menus = pChat->GameClient()->m_Menus;
+	const float FontSize = 11.0f;
+	const float Spacing = 4.0f;
+	CUIRect Row;
+
+	View.HSplitTop(14.0f, &Row, &View);
+	pChat->Ui()->DoLabel(&Row, Localize("Save to asset"), 12.0f, TEXTALIGN_ML);
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(12.0f, &Row, &View);
+	pChat->Ui()->DoLabel(&Row, Localize("Category"), FontSize, TEXTALIGN_ML);
+
+	for(int r = 0; r < 4; ++r)
+	{
+		View.HSplitTop(2.0f, nullptr, &View);
+		View.HSplitTop(18.0f, &Row, &View);
+		CUIRect Left, Right;
+		Row.VSplitMid(&Left, &Right, 4.0f);
+		for(int c = 0; c < 2; ++c)
+		{
+			const int Index = r * 2 + c;
+			const CUIRect &Cell = c == 0 ? Left : Right;
+			if(Menus.DoButton_Menu(&pChat->m_aMediaAssetCategoryButtons[Index], Localize(gs_apMediaAssetCategoryNames[Index]), pChat->m_MediaAssetCategory == Index ? 1 : 0, &Cell))
+				pChat->m_MediaAssetCategory = Index;
+		}
+	}
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(20.0f, &Row, &View);
+	CUIRect NameLabel, NameBox;
+	Row.VSplitLeft(45.0f, &NameLabel, &NameBox);
+	pChat->Ui()->DoLabel(&NameLabel, Localize("Name"), FontSize, TEXTALIGN_ML);
+	pChat->m_MediaAssetNameInput.SetEmptyText(Localize("asset name"));
+	pChat->Ui()->DoClearableEditBox(&pChat->m_MediaAssetNameInput, &NameBox, 12.0f);
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(18.0f, &Row, &View);
+	if(Menus.DoButton_CheckBox(&pChat->m_MediaAssetApplyButton, Localize("Apply immediately?"), pChat->m_MediaAssetApply ? 1 : 0, &Row))
+		pChat->m_MediaAssetApply = !pChat->m_MediaAssetApply;
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(20.0f, &Row, &View);
+	CUIRect CancelRect, ConfirmRect;
+	Row.VSplitMid(&CancelRect, &ConfirmRect, 4.0f);
+	if(Menus.DoButton_Menu(&pChat->m_MediaAssetCancelButton, Localize("Cancel"), 0, &CancelRect))
+		return CUi::POPUP_CLOSE_CURRENT;
+	if(Menus.DoButton_Menu(&pChat->m_MediaAssetConfirmButton, Localize("Confirm"), 0, &ConfirmRect))
+	{
+		pChat->BeginSaveToAsset();
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+CUi::EPopupMenuFunctionResult CChat::PopupMediaSaveSkin(void *pContext, CUIRect View, bool Active)
+{
+	CChat *pChat = static_cast<CChat *>(pContext);
+	(void)Active;
+	CMenus &Menus = pChat->GameClient()->m_Menus;
+	const float FontSize = 11.0f;
+	const float Spacing = 4.0f;
+	CUIRect Row;
+
+	View.HSplitTop(14.0f, &Row, &View);
+	pChat->Ui()->DoLabel(&Row, Localize("Save to skin"), 12.0f, TEXTALIGN_ML);
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(20.0f, &Row, &View);
+	CUIRect NameLabel, NameBox;
+	Row.VSplitLeft(45.0f, &NameLabel, &NameBox);
+	pChat->Ui()->DoLabel(&NameLabel, Localize("Name"), FontSize, TEXTALIGN_ML);
+	pChat->m_MediaSkinNameInput.SetEmptyText(Localize("skin name"));
+	pChat->Ui()->DoClearableEditBox(&pChat->m_MediaSkinNameInput, &NameBox, 12.0f);
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(18.0f, &Row, &View);
+	if(Menus.DoButton_CheckBox(&pChat->m_MediaSkinApplyButton, Localize("Use immediately?"), pChat->m_MediaSkinApply ? 1 : 0, &Row))
+		pChat->m_MediaSkinApply = !pChat->m_MediaSkinApply;
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(20.0f, &Row, &View);
+	CUIRect CancelRect, ConfirmRect;
+	Row.VSplitMid(&CancelRect, &ConfirmRect, 4.0f);
+	if(Menus.DoButton_Menu(&pChat->m_MediaSkinCancelButton, Localize("Cancel"), 0, &CancelRect))
+		return CUi::POPUP_CLOSE_CURRENT;
+	if(Menus.DoButton_Menu(&pChat->m_MediaSkinConfirmButton, Localize("Confirm"), 0, &ConfirmRect))
+	{
+		pChat->BeginSaveToSkin();
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+void CChat::BeginSaveToComputer()
+{
+	if(m_aMediaContextUrl[0] == '\0' || m_pMediaSaveRequest)
+		return;
+
+	char aDefaultName[128];
+	MediaExtractUrlFileName(m_aMediaContextUrl, aDefaultName, sizeof(aDefaultName));
+	if(aDefaultName[0] == '\0')
+		str_copy(aDefaultName, "image.png");
+
+	char aPath[512] = "";
+	const int DialogResult = os_save_file_dialog(Localize("Save image"), aDefaultName, "PNG Image", "*.png", aPath, sizeof(aPath));
+	if(DialogResult == 0 && aPath[0] != '\0')
+	{
+		str_copy(m_aMediaSaveComputerPath, aPath, sizeof(m_aMediaSaveComputerPath));
+	}
+	else if(DialogResult == 2)
+	{
+		// Native dialog unsupported on this platform: fall back to a downloads folder.
+		Storage()->CreateFolder("downloads", IStorage::TYPE_SAVE);
+		char aRel[192];
+		str_format(aRel, sizeof(aRel), "downloads/%s", aDefaultName);
+		char aAbs[512];
+		Storage()->GetCompletePath(IStorage::TYPE_SAVE, aRel, aAbs, sizeof(aAbs));
+		str_copy(m_aMediaSaveComputerPath, aAbs, sizeof(m_aMediaSaveComputerPath));
+	}
+	else
+	{
+		// Cancelled or failed.
+		return;
+	}
+
+	m_MediaSaveTarget = EMediaSaveTarget::COMPUTER;
+
+	std::shared_ptr<CHttpRequest> pGet = HttpGet(m_aMediaContextUrl);
+	pGet->Timeout(CTimeout{8000, 0, 4096, 8});
+	pGet->MaxResponseSize(CHAT_MEDIA_MAX_RESPONSE_SIZE);
+	pGet->FailOnErrorStatus(true);
+	pGet->LogProgress(HTTPLOG::NONE);
+	m_pMediaSaveRequest = pGet;
+	Http()->Run(pGet);
+}
+
+void CChat::BeginSaveToAsset()
+{
+	if(m_aMediaContextUrl[0] == '\0' || m_pMediaSaveRequest)
+		return;
+
+	char aName[64];
+	MediaSanitizeAssetName(m_MediaAssetNameInput.GetString(), aName, sizeof(aName));
+	if(aName[0] == '\0')
+	{
+		Echo(Localize("Please enter a valid name."));
+		return;
+	}
+
+	m_MediaSaveTarget = EMediaSaveTarget::ASSET;
+	m_MediaSaveAssetCategory = std::clamp(m_MediaAssetCategory, 0, (int)std::size(gs_apMediaAssetCategoryDirs) - 1);
+	str_copy(m_aMediaSaveName, aName, sizeof(m_aMediaSaveName));
+	m_MediaSaveApply = m_MediaAssetApply;
+
+	std::shared_ptr<CHttpRequest> pGet = HttpGet(m_aMediaContextUrl);
+	pGet->Timeout(CTimeout{8000, 0, 4096, 8});
+	pGet->MaxResponseSize(CHAT_MEDIA_MAX_RESPONSE_SIZE);
+	pGet->FailOnErrorStatus(true);
+	pGet->LogProgress(HTTPLOG::NONE);
+	m_pMediaSaveRequest = pGet;
+	Http()->Run(pGet);
+}
+
+void CChat::BeginSaveToSkin()
+{
+	if(m_aMediaContextUrl[0] == '\0' || m_pMediaSaveRequest)
+		return;
+
+	char aName[64];
+	MediaSanitizeAssetName(m_MediaSkinNameInput.GetString(), aName, sizeof(aName));
+	if(aName[0] == '\0')
+	{
+		Echo(Localize("Please enter a valid name."));
+		return;
+	}
+
+	m_MediaSaveTarget = EMediaSaveTarget::SKIN;
+	str_copy(m_aMediaSaveName, aName, sizeof(m_aMediaSaveName));
+	m_MediaSaveApply = m_MediaSkinApply;
+
+	std::shared_ptr<CHttpRequest> pGet = HttpGet(m_aMediaContextUrl);
+	pGet->Timeout(CTimeout{8000, 0, 4096, 8});
+	pGet->MaxResponseSize(CHAT_MEDIA_MAX_RESPONSE_SIZE);
+	pGet->FailOnErrorStatus(true);
+	pGet->LogProgress(HTTPLOG::NONE);
+	m_pMediaSaveRequest = pGet;
+	Http()->Run(pGet);
+}
+
+void CChat::UpdateMediaSave()
+{
+	if(!m_pMediaSaveRequest || !m_pMediaSaveRequest->Done())
+		return;
+
+	std::shared_ptr<CHttpRequest> pRequest = m_pMediaSaveRequest;
+	m_pMediaSaveRequest = nullptr;
+
+	if(pRequest->State() != EHttpState::DONE)
+	{
+		Echo(Localize("Failed to download the image."));
+		return;
+	}
+
+	unsigned char *pResult = nullptr;
+	size_t ResultSize = 0;
+	pRequest->Result(&pResult, &ResultSize);
+	if(pResult == nullptr || ResultSize == 0)
+	{
+		Echo(Localize("Failed to download the image."));
+		return;
+	}
+
+	if(m_MediaSaveTarget == EMediaSaveTarget::COMPUTER)
+	{
+		IOHANDLE File = io_open(m_aMediaSaveComputerPath, IOFLAG_WRITE);
+		if(!File)
+		{
+			Echo(Localize("Failed to save the image."));
+			return;
+		}
+		io_write(File, pResult, ResultSize);
+		io_close(File);
+		Echo(Localize("Image saved."));
+		return;
+	}
+
+	char aPath[192];
+	if(m_MediaSaveTarget == EMediaSaveTarget::SKIN)
+	{
+		Storage()->CreateFolder("skins", IStorage::TYPE_SAVE);
+		str_format(aPath, sizeof(aPath), "skins/%s.png", m_aMediaSaveName);
+	}
+	else
+	{
+		const int Category = std::clamp(m_MediaSaveAssetCategory, 0, (int)std::size(gs_apMediaAssetCategoryDirs) - 1);
+		Storage()->CreateFolder("assets", IStorage::TYPE_SAVE);
+		Storage()->CreateFolder(gs_apMediaAssetCategoryDirs[Category], IStorage::TYPE_SAVE);
+		str_format(aPath, sizeof(aPath), "%s/%s.png", gs_apMediaAssetCategoryDirs[Category], m_aMediaSaveName);
+	}
+
+	IOHANDLE File = Storage()->OpenFile(aPath, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+	if(!File)
+	{
+		Echo(Localize("Failed to save the file."));
+		return;
+	}
+	io_write(File, pResult, ResultSize);
+	io_close(File);
+
+	if(m_MediaSaveTarget == EMediaSaveTarget::SKIN)
+	{
+		if(m_MediaSaveApply)
+		{
+			GameClient()->RefreshSkins(CSkinDescriptor::FLAG_SIX);
+			str_copy(g_Config.m_ClPlayerSkin, m_aMediaSaveName, sizeof(g_Config.m_ClPlayerSkin));
+		}
+		Echo(Localize("Skin saved."));
+		return;
+	}
+
+	if(m_MediaSaveApply)
+	{
+		const int Category = std::clamp(m_MediaSaveAssetCategory, 0, (int)std::size(gs_apMediaAssetCategoryDirs) - 1);
+		switch(Category)
+		{
+		case 0: // Entities
+			str_copy(g_Config.m_ClAssetsEntities, m_aMediaSaveName, sizeof(g_Config.m_ClAssetsEntities));
+			GameClient()->m_MapImages.ChangeEntitiesPath(m_aMediaSaveName);
+			break;
+		case 1: // Game
+			str_copy(g_Config.m_ClAssetGame, m_aMediaSaveName, sizeof(g_Config.m_ClAssetGame));
+			GameClient()->LoadGameSkin(m_aMediaSaveName);
+			break;
+		case 2: // Emoticons
+			str_copy(g_Config.m_ClAssetEmoticons, m_aMediaSaveName, sizeof(g_Config.m_ClAssetEmoticons));
+			GameClient()->LoadEmoticonsSkin(m_aMediaSaveName);
+			break;
+		case 3: // Particles
+			str_copy(g_Config.m_ClAssetParticles, m_aMediaSaveName, sizeof(g_Config.m_ClAssetParticles));
+			GameClient()->LoadParticlesSkin(m_aMediaSaveName);
+			break;
+		case 4: // HUD
+			str_copy(g_Config.m_ClAssetHud, m_aMediaSaveName, sizeof(g_Config.m_ClAssetHud));
+			GameClient()->LoadHudSkin(m_aMediaSaveName);
+			break;
+		case 5: // Extras
+			str_copy(g_Config.m_ClAssetExtras, m_aMediaSaveName, sizeof(g_Config.m_ClAssetExtras));
+			GameClient()->LoadExtrasSkin(m_aMediaSaveName);
+			break;
+		case 6: // Cursor
+			str_copy(g_Config.m_ClAssetCursor, m_aMediaSaveName, sizeof(g_Config.m_ClAssetCursor));
+			GameClient()->LoadCursorAsset(m_aMediaSaveName);
+			break;
+		case 7: // Arrow
+			str_copy(g_Config.m_ClAssetArrow, m_aMediaSaveName, sizeof(g_Config.m_ClAssetArrow));
+			GameClient()->LoadArrowAsset(m_aMediaSaveName);
+			break;
+		}
+	}
+	Echo(Localize("Asset saved."));
 }
 

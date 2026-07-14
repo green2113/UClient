@@ -23,6 +23,7 @@
 
 #include <objbase.h> // required for shellapi.h
 #include <shellapi.h> // ShellExecuteExW
+#include <shobjidl.h> // IFileSaveDialog
 #include <windows.h>
 
 #include <cfenv> // fesetenv
@@ -140,6 +141,80 @@ int os_open_file(const char *path)
 #endif
 }
 #endif // !defined(CONF_PLATFORM_ANDROID)
+
+int os_save_file_dialog(const char *pTitle, const char *pDefaultName, const char *pFilterName, const char *pFilterPattern, char *pBuf, int BufSize)
+{
+	if(BufSize <= 0)
+		return 1;
+	pBuf[0] = '\0';
+#if defined(CONF_FAMILY_WINDOWS)
+	const HRESULT InitResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+	// RPC_E_CHANGED_MODE means COM was already initialized with a different mode, in which
+	// case we must not call CoUninitialize ourselves.
+	const bool NeedUninitialize = SUCCEEDED(InitResult);
+
+	int Result = 1;
+	IFileSaveDialog *pDialog = nullptr;
+	if(SUCCEEDED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_IFileSaveDialog, (void **)&pDialog)) && pDialog != nullptr)
+	{
+		if(pTitle != nullptr && pTitle[0] != '\0')
+		{
+			const std::wstring Title = windows_utf8_to_wide(pTitle);
+			pDialog->SetTitle(Title.c_str());
+		}
+		if(pDefaultName != nullptr && pDefaultName[0] != '\0')
+		{
+			const std::wstring DefaultName = windows_utf8_to_wide(pDefaultName);
+			pDialog->SetFileName(DefaultName.c_str());
+		}
+		std::wstring FilterName, FilterPattern;
+		if(pFilterName != nullptr && pFilterPattern != nullptr && pFilterName[0] != '\0' && pFilterPattern[0] != '\0')
+		{
+			FilterName = windows_utf8_to_wide(pFilterName);
+			FilterPattern = windows_utf8_to_wide(pFilterPattern);
+			COMDLG_FILTERSPEC Filter;
+			Filter.pszName = FilterName.c_str();
+			Filter.pszSpec = FilterPattern.c_str();
+			pDialog->SetFileTypes(1, &Filter);
+			// Use the extension from a "*.ext" pattern as the default extension.
+			const wchar_t *pDot = wcsrchr(FilterPattern.c_str(), L'.');
+			if(pDot != nullptr && pDot[1] != L'\0')
+				pDialog->SetDefaultExtension(pDot + 1);
+		}
+
+		if(SUCCEEDED(pDialog->Show(nullptr)))
+		{
+			IShellItem *pItem = nullptr;
+			if(SUCCEEDED(pDialog->GetResult(&pItem)) && pItem != nullptr)
+			{
+				PWSTR pszPath = nullptr;
+				if(SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszPath)) && pszPath != nullptr)
+				{
+					const std::optional<std::string> Utf8Path = windows_wide_to_utf8(pszPath);
+					if(Utf8Path.has_value())
+					{
+						str_copy(pBuf, Utf8Path.value().c_str(), BufSize);
+						Result = 0;
+					}
+					CoTaskMemFree(pszPath);
+				}
+				pItem->Release();
+			}
+		}
+		pDialog->Release();
+	}
+
+	if(NeedUninitialize)
+		CoUninitialize();
+	return Result;
+#else
+	(void)pTitle;
+	(void)pDefaultName;
+	(void)pFilterName;
+	(void)pFilterPattern;
+	return 2; // unsupported on this platform
+#endif
+}
 
 bool os_version_str(char *version, size_t length)
 {

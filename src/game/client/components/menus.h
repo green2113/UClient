@@ -30,12 +30,14 @@
 #include <array>
 #include <chrono>
 #include <deque>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
 class CImageInfo;
+class CHttpRequest;
 struct CDataSprite;
 
 class CMenus : public CComponent
@@ -318,6 +320,34 @@ protected:
 	void AddFavoriteAsset(int Tab, const char *pName);
 	void RemoveFavoriteAsset(int Tab, const char *pName);
 	bool IsFavoriteAsset(int Tab, const char *pName) const;
+
+	// UClient: share the selected asset to a player on the current server
+	enum class EShareAssetState
+	{
+		NONE = 0,
+		UPLOADING,
+		SENT,
+		FAILED,
+	};
+	SPopupMenuId m_ShareAssetPopupId;
+	CUi::SDropDownState m_ShareAssetUserDropDownState;
+	CUi::SDropDownState m_ShareAssetNameDropDownState;
+	CButtonContainer m_ShareAssetConfirmButton;
+	CButtonContainer m_ShareAssetCancelButton;
+	int m_ShareAssetTab = -1;
+	char m_aShareAssetName[64] = "";
+	char m_aShareAssetTargetName[64] = "";
+	bool m_ShareAssetAgree = false;
+	std::vector<std::string> m_vShareAssetUserNames;
+	std::vector<std::string> m_vShareAssetAssetNames;
+	std::shared_ptr<CHttpRequest> m_pShareAssetUploadRequest;
+	EShareAssetState m_ShareAssetState = EShareAssetState::NONE;
+	char m_aShareAssetStatus[128] = "";
+	void OpenShareAssetPopup(int Tab);
+	bool ResolveAssetSharePng(int Tab, const char *pName, void **ppData, unsigned *pLen) const;
+	void BeginShareAssetUpload();
+	void UpdateShareAssetUpload();
+	static CUi::EPopupMenuFunctionResult PopupShareAsset(void *pContext, CUIRect View, bool Active);
 
 	int m_MenuPage;
 	int m_GamePage;
