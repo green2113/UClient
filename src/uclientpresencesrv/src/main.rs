@@ -1,23 +1,33 @@
 use constant_time_eq::constant_time_eq;
 use hmac::{Hmac, Mac};
+use hyper::server::conn::Http;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::env;
 use std::fs;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::net::UdpSocket;
+use tokio::net::{TcpListener, UdpSocket};
 use tokio::time;
+use tokio_rustls::{rustls::ServerConfig, TlsAcceptor};
+use warp::Filter;
 
 const PROTOCOL_MAGIC: [u8; 4] = [0x55, 0x43, 0x50, 0x31]; // UCP1
 const PROTOCOL_VERSION_V1: u8 = 1;
 const PROTOCOL_VERSION_V2: u8 = 2;
 const DEFAULT_UDP_BIND: &str = "0.0.0.0:8778";
+const DEFAULT_WEB_HOST: &str = "0.0.0.0";
+const DEFAULT_WEB_PORT: u16 = 8780;
 const DEFAULT_SYNC_URL: &str = "https://ddnet.under1111.com/api/presence/sync";
 const MAX_UDP_PACKET_SIZE: usize = 2048;
+const DEFAULT_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_HTTP_HEADER_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_HTTPS_CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
 const PROOF_SIZE: usize = 32;
 const NONCE_RETENTION: Duration = Duration::from_secs(60);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -37,7 +47,15 @@ const PACKET_PEER_LIST: u8 = 7;
 #[derive(Clone)]
 struct Config {
     udp_bind: SocketAddr,
+    web_bind: SocketAddr,
     shared_token: String,
+    json_path: PathBuf,
+    tls_cert_file: Option<PathBuf>,
+    tls_key_file: Option<PathBuf>,
+    tls_handshake_timeout: Duration,
+    http_header_timeout: Duration,
+    https_connection_timeout: Duration,
+    sync_enabled: bool,
     sync_url: String,
     sync_secret: String,
     heartbeat_sync_debounce: Duration,
@@ -75,9 +93,20 @@ struct PresenceEntry {
     return_addr: SocketAddr,
 }
 
+impl PresenceEntry {
+    fn last_seen_unix(&self) -> u64 {
+        if self.last_seen_ms > 0 {
+            self.last_seen_ms / 1000
+        } else {
+            unix_timestamp()
+        }
+    }
+}
+
 struct UdpOutcome {
     sync_jobs: Vec<SyncJob>,
     outbound: Vec<(SocketAddr, Vec<u8>)>,
+    dirty: bool,
 }
 
 #[derive(Serialize)]
@@ -106,15 +135,17 @@ struct ServerState {
     recent_nonces: HashMap<([u8; 16], [u8; 16]), Instant>,
     last_heartbeat_sync: HashMap<SessionKey, Instant>,
     invalid_rate_by_ip: HashMap<IpAddr, Instant>,
+    json_path: PathBuf,
 }
 
 impl ServerState {
-    fn new() -> Self {
+    fn new(json_path: PathBuf) -> Self {
         Self {
             entries: HashMap::new(),
             recent_nonces: HashMap::new(),
             last_heartbeat_sync: HashMap::new(),
             invalid_rate_by_ip: HashMap::new(),
+            json_path,
         }
     }
 
@@ -186,6 +217,45 @@ impl ServerState {
         removed
     }
 
+    /// A single running client (same player_id + same session instance uuid) can
+    /// only be on one game server at a time. When it appears on `keep_server`,
+    /// drop any leftover entries it still has on other servers (e.g. after a
+    /// server switch where the server-assigned client id changed), notifying the
+    /// peers that remain on those old servers. Returns true if anything changed.
+    fn purge_sessions_on_other_servers(
+        &mut self,
+        player_id: &str,
+        session_id: &str,
+        keep_server: &str,
+        outbound: &mut Vec<(SocketAddr, Vec<u8>)>,
+    ) -> bool {
+        let instance = session_instance_of(session_id);
+        let stale_keys: Vec<SessionKey> = self
+            .entries
+            .iter()
+            .filter(|(candidate, entry)| {
+                candidate.player_id == player_id
+                    && entry.server_address != keep_server
+                    && session_instance_of(&candidate.session_id) == instance
+            })
+            .map(|(candidate, _)| candidate.clone())
+            .collect();
+        if stale_keys.is_empty() {
+            return false;
+        }
+        let mut removed_entries = Vec::with_capacity(stale_keys.len());
+        for key in &stale_keys {
+            if let Some(entry) = self.entries.remove(key) {
+                self.last_heartbeat_sync.remove(key);
+                removed_entries.push(entry);
+            }
+        }
+        for entry in &removed_entries {
+            append_peer_remove_notifications(self, entry, outbound);
+        }
+        !removed_entries.is_empty()
+    }
+
     fn peers_on_server<'a>(
         &'a self,
         server_address: &str,
@@ -232,6 +302,60 @@ impl ServerState {
             }
         }
     }
+
+    fn snapshot_json(&self) -> String {
+        let mut servers: HashMap<&str, Vec<&PresenceEntry>> = HashMap::new();
+        for entry in self.entries.values() {
+            servers.entry(entry.server_address.as_str()).or_default().push(entry);
+        }
+
+        let mut server_addresses: Vec<&str> = servers.keys().copied().collect();
+        server_addresses.sort_unstable();
+
+        let mut snapshot = Vec::with_capacity(server_addresses.len());
+        for server_address in server_addresses {
+            let mut players = servers.remove(server_address).unwrap_or_default();
+            players.sort_by(|left, right| {
+                left.player_name
+                    .cmp(&right.player_name)
+                    .then(left.client_id.cmp(&right.client_id))
+            });
+            let player_snapshots: Vec<PlayerSnapshot<'_>> = players
+                .into_iter()
+                .map(|entry| PlayerSnapshot {
+                    name: entry.player_name.as_str(),
+                    client_id: entry.client_id,
+                    last_seen: entry.last_seen_unix(),
+                    version: if entry.client_version.is_empty() {
+                        None
+                    } else {
+                        Some(entry.client_version.as_str())
+                    },
+                })
+                .collect();
+            let mut server_object = serde_json::Map::new();
+            server_object.insert(
+                server_address.to_string(),
+                serde_json::json!({ "players": player_snapshots }),
+            );
+            snapshot.push(serde_json::Value::Object(server_object));
+        }
+        serde_json::to_string(&snapshot).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    fn write_snapshot(&self) -> io::Result<()> {
+        write_file_atomically(&self.json_path, &self.snapshot_json())
+    }
+}
+
+#[derive(Serialize)]
+struct PlayerSnapshot<'a> {
+    name: &'a str,
+    #[serde(rename = "client_id")]
+    client_id: i16,
+    last_seen: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<&'a str>,
 }
 
 #[tokio::main]
@@ -239,14 +363,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let _ = dotenvy::from_filename("src/uclientpresencesrv/.env");
     let _ = dotenvy::dotenv();
     let config = Arc::new(Config::load()?);
-    let state = Arc::new(Mutex::new(ServerState::new()));
+    let state = Arc::new(Mutex::new(ServerState::new(config.json_path.clone())));
+    {
+        let state = state.lock().unwrap();
+        let _ = state.write_snapshot();
+    }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()?;
 
     let udp_socket = Arc::new(UdpSocket::bind(config.udp_bind).await?);
     eprintln!("uclient presence UDP listening on {}", config.udp_bind);
-    eprintln!("uclient presence sync target {}", config.sync_url);
+    let web_scheme = if config.tls_cert_file.is_some() && config.tls_key_file.is_some() {
+        "https"
+    } else {
+        "http"
+    };
+    eprintln!(
+        "uclient presence web listening on {}://{}",
+        web_scheme, config.web_bind
+    );
+    eprintln!("uclient presence JSON path {}", config.json_path.display());
+    if config.sync_enabled {
+        eprintln!("uclient presence legacy KV sync enabled: {}", config.sync_url);
+    } else {
+        eprintln!("uclient presence legacy KV sync disabled (JSON snapshot mode)");
+    }
 
     let udp_task = tokio::spawn(udp_loop(
         Arc::clone(&udp_socket),
@@ -258,12 +400,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Arc::clone(&udp_socket),
         Arc::clone(&state),
         Arc::clone(&config),
-        client,
+        client.clone(),
     ));
+    let web_task = tokio::spawn(web_loop(Arc::clone(&state), Arc::clone(&config)));
 
     tokio::select! {
         result = udp_task => result??,
         result = cleanup_task => result??,
+        result = web_task => result??,
         _ = tokio::signal::ctrl_c() => {},
     }
     Ok(())
@@ -283,21 +427,50 @@ impl Config {
             return Err("UC_PRESENCE_UDP_SHARED_TOKEN or TOKEN_PATH must provide a non-empty shared token".into());
         }
 
+        let sync_url = env::var("PRESENCE_SYNC_URL")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         let sync_secret = env::var("PRESENCE_UDP_SYNC_SECRET")
             .unwrap_or_default()
             .trim()
             .to_string();
-        if sync_secret.is_empty() {
-            return Err("PRESENCE_UDP_SYNC_SECRET must be set".into());
+        let sync_enabled = !sync_url.is_empty() && !sync_secret.is_empty();
+        if !sync_url.is_empty() && sync_secret.is_empty() {
+            return Err("PRESENCE_UDP_SYNC_SECRET must be set when PRESENCE_SYNC_URL is configured".into());
         }
 
-        let sync_url = env::var("PRESENCE_SYNC_URL")
-            .unwrap_or_else(|_| DEFAULT_SYNC_URL.to_string())
-            .trim()
-            .to_string();
         let udp_bind = env::var("UDP_BIND")
             .unwrap_or_else(|_| DEFAULT_UDP_BIND.to_string())
             .parse()?;
+        let web_host = env::var("WEB_HOST").unwrap_or_else(|_| DEFAULT_WEB_HOST.to_string());
+        let web_port: u16 = env::var("WEB_PORT")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_WEB_PORT);
+        let web_bind = format!("{web_host}:{web_port}").parse()?;
+        let json_path = env::var("JSON_PATH")
+            .unwrap_or_else(|_| format!("{state_dir}/presence.json"))
+            .into();
+        // TLS is optional: when both cert and key are provided the web server
+        // serves HTTPS, otherwise it falls back to plain HTTP (e.g. behind a
+        // Cloudflare Tunnel that terminates TLS at the edge).
+        let tls_cert_file = env::var("TLS_CERT_FILE")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let tls_key_file = env::var("TLS_KEY_FILE")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let tls_handshake_timeout =
+            env_duration_ms("WEB_TLS_HANDSHAKE_TIMEOUT_MS", DEFAULT_TLS_HANDSHAKE_TIMEOUT);
+        let http_header_timeout =
+            env_duration_ms("WEB_HTTP_HEADER_TIMEOUT_MS", DEFAULT_HTTP_HEADER_TIMEOUT);
+        let https_connection_timeout =
+            env_duration_ms("WEB_HTTPS_CONNECTION_TIMEOUT_MS", DEFAULT_HTTPS_CONNECTION_TIMEOUT);
         let heartbeat_sync_debounce = env::var("HEARTBEAT_SYNC_DEBOUNCE_SEC")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
@@ -306,12 +479,28 @@ impl Config {
 
         Ok(Self {
             udp_bind,
+            web_bind,
             shared_token,
+            json_path,
+            tls_cert_file,
+            tls_key_file,
+            tls_handshake_timeout,
+            http_header_timeout,
+            https_connection_timeout,
+            sync_enabled,
             sync_url,
             sync_secret,
             heartbeat_sync_debounce,
         })
     }
+}
+
+fn env_duration_ms(name: &str, default: Duration) -> Duration {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(default)
 }
 
 async fn udp_loop(
@@ -326,18 +515,27 @@ async fn udp_loop(
         let data = &buf[..size];
         let outcome = {
             let mut state = state.lock().unwrap();
-            handle_udp_packet(
+            let outcome = handle_udp_packet(
                 &mut state,
                 &config.shared_token,
                 from.ip(),
                 from,
                 data,
                 config.heartbeat_sync_debounce,
-            )
+                config.sync_enabled,
+            );
+            if outcome.dirty {
+                if let Err(err) = state.write_snapshot() {
+                    eprintln!("presence snapshot write failed: {err}");
+                }
+            }
+            outcome
         };
-        for job in outcome.sync_jobs {
-            if let Err(err) = post_sync(&client, &config, job).await {
-                eprintln!("presence sync failed: {err}");
+        if config.sync_enabled {
+            for job in outcome.sync_jobs {
+                if let Err(err) = post_sync(&client, &config, job).await {
+                    eprintln!("presence sync failed: {err}");
+                }
             }
         }
         for (addr, packet) in outcome.outbound {
@@ -351,29 +549,52 @@ async fn udp_loop(
 async fn cleanup_loop(
     socket: Arc<UdpSocket>,
     state: Arc<Mutex<ServerState>>,
-    _config: Arc<Config>,
-    _client: reqwest::Client,
+    config: Arc<Config>,
+    client: reqwest::Client,
 ) -> io::Result<()> {
     let mut interval = time::interval(CLEANUP_INTERVAL);
     loop {
         interval.tick().await;
-        let outbound = {
+        let (removed_count, outbound, sync_jobs) = {
             let mut state = state.lock().unwrap();
             let removed = state.cleanup(Instant::now());
             let removed_count = removed.len();
             let mut packets = Vec::new();
+            let sync_jobs: Vec<SyncJob> = removed
+                .iter()
+                .map(|entry| {
+                    let timestamp_ms = if entry.last_seen_ms > 0 {
+                        entry.last_seen_ms
+                    } else {
+                        entry.last_seen_unix().saturating_mul(1000)
+                    };
+                    SyncJob::leave(entry.clone(), timestamp_ms)
+                })
+                .collect();
             for entry in removed {
                 append_peer_remove_notifications(&state, &entry, &mut packets);
             }
-            (removed_count, packets)
+            if removed_count > 0 {
+                if let Err(err) = state.write_snapshot() {
+                    eprintln!("presence snapshot write failed during cleanup: {err}");
+                }
+            }
+            (removed_count, packets, sync_jobs)
         };
-        if outbound.0 > 0 {
+        if removed_count > 0 {
             eprintln!(
-                "presence cleanup evicted {} stale udp entries (kv left unchanged)",
-                outbound.0
+                "presence cleanup evicted {} stale udp entries and refreshed presence.json",
+                removed_count
             );
         }
-        for (addr, packet) in outbound.1 {
+        if config.sync_enabled {
+            for job in sync_jobs {
+                if let Err(err) = post_sync(&client, &config, job).await {
+                    eprintln!("presence leave sync failed: {err}");
+                }
+            }
+        }
+        for (addr, packet) in outbound {
             if let Err(err) = socket.send_to(&packet, addr).await {
                 eprintln!("presence cleanup notify failed for {addr}: {err}");
             }
@@ -464,10 +685,12 @@ fn handle_udp_packet(
     from: SocketAddr,
     data: &[u8],
     _heartbeat_sync_debounce: Duration,
+    sync_enabled: bool,
 ) -> UdpOutcome {
     let mut outcome = UdpOutcome {
         sync_jobs: Vec::new(),
         outbound: Vec::new(),
+        dirty: false,
     };
     let now = Instant::now();
     if data.len() > MAX_UDP_PACKET_SIZE {
@@ -508,7 +731,7 @@ fn handle_udp_packet(
     if packet.packet_type == PACKET_HEARTBEAT {
         job.force = true;
     }
-    if job.force {
+    if sync_enabled && job.force {
         outcome.sync_jobs.push(job);
     }
 
@@ -516,6 +739,7 @@ fn handle_udp_packet(
         PACKET_LEAVE => {
             if let Some(entry) = state.remove_entry(&key) {
                 append_peer_remove_notifications(state, &entry, &mut outcome.outbound);
+                outcome.dirty = true;
             }
         }
         PACKET_SWITCH => {
@@ -525,12 +749,26 @@ fn handle_udp_packet(
                 }
             }
             if let Some(entry) = state.upsert_entry(&packet, from, now, &key) {
+                state.purge_sessions_on_other_servers(
+                    &packet.player_id,
+                    &key.session_id,
+                    &entry.server_address,
+                    &mut outcome.outbound,
+                );
                 append_join_notifications(state, &entry, from, &key, &mut outcome.outbound);
+                outcome.dirty = true;
             }
         }
         PACKET_JOIN | PACKET_HEARTBEAT => {
             let was_new = previous.is_none();
             if let Some(entry) = state.upsert_entry(&packet, from, now, &key) {
+                outcome.dirty = true;
+                state.purge_sessions_on_other_servers(
+                    &packet.player_id,
+                    &key.session_id,
+                    &entry.server_address,
+                    &mut outcome.outbound,
+                );
                 if packet.packet_type == PACKET_JOIN || was_new {
                     // Tell the joiner about every UC peer already on this game server,
                     // and tell those peers about the joiner.
@@ -722,6 +960,9 @@ fn write_string(out: &mut Vec<u8>, value: &str) {
 }
 
 async fn post_sync(client: &reqwest::Client, config: &Config, job: SyncJob) -> Result<(), reqwest::Error> {
+    if !config.sync_enabled {
+        return Ok(());
+    }
     let client_id = job.client_id.map(|value| value.to_string());
     let payload = SyncPayload {
         event: job.event,
@@ -889,11 +1130,186 @@ fn session_id_for_packet(packet: &PresencePacket) -> String {
     format!("{}:{}", format_uuid(packet.session_id), packet.client_id)
 }
 
+/// The session id is formatted as `<instance-uuid>:<client_id>`. The instance
+/// uuid identifies one running client, while the trailing client id changes per
+/// game server. Strip the client id so we can match all entries that belong to
+/// the same running client regardless of which server-assigned id they carry.
+fn session_instance_of(session_id: &str) -> &str {
+    match session_id.rsplit_once(':') {
+        Some((instance, _client_id)) => instance,
+        None => session_id,
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn write_file_atomically(path: &Path, contents: &str) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("tmp");
+    fs::write(&tmp, contents)?;
+    fs::rename(tmp, path)
+}
+
+async fn web_loop(
+    state: Arc<Mutex<ServerState>>,
+    config: Arc<Config>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let healthz = warp::path("healthz")
+        .and(warp::get())
+        .map(|| warp::reply::json(&serde_json::json!({ "ok": true })));
+
+    let presence_state_api = Arc::clone(&state);
+    let api_presence = warp::path!("api" / "presence")
+        .and(warp::get())
+        .and_then(move || {
+            let presence_state = Arc::clone(&presence_state_api);
+            async move {
+                let body = presence_state.lock().unwrap().snapshot_json();
+                Ok::<_, Infallible>(warp::reply::with_header(
+                    body,
+                    "content-type",
+                    "application/json; charset=utf-8",
+                ))
+            }
+        });
+
+    let presence_state_file = Arc::clone(&state);
+    let presence_file = warp::path("presence.json")
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(move || {
+            let presence_state = Arc::clone(&presence_state_file);
+            async move {
+                let body = presence_state.lock().unwrap().snapshot_json();
+                Ok::<_, Infallible>(warp::reply::with_header(
+                    body,
+                    "content-type",
+                    "application/json; charset=utf-8",
+                ))
+            }
+        });
+
+    let routes = healthz
+        .or(api_presence)
+        .or(presence_file)
+        .with(warp::reply::with::header("cache-control", "no-store"))
+        .with(warp::reply::with::header("connection", "close"));
+
+    let listener = TcpListener::bind(config.web_bind).await?;
+    let http_header_timeout = config.http_header_timeout;
+    let https_connection_timeout = config.https_connection_timeout;
+
+    let tls_acceptor = match (&config.tls_cert_file, &config.tls_key_file) {
+        (Some(_), Some(_)) => Some(load_tls_acceptor(&config)?),
+        _ => None,
+    };
+
+    if tls_acceptor.is_none() {
+        eprintln!(
+            "uclient presence web server listening on http://{} (plain HTTP, no TLS configured)",
+            config.web_bind
+        );
+    }
+
+    let tls_handshake_timeout = config.tls_handshake_timeout;
+
+    loop {
+        let (stream, peer_addr) = listener.accept().await?;
+        let acceptor = tls_acceptor.clone();
+        let routes = routes.clone();
+        tokio::spawn(async move {
+            let service = warp::service(routes);
+            match acceptor {
+                Some(acceptor) => {
+                    let handshake =
+                        tokio::time::timeout(tls_handshake_timeout, acceptor.accept(stream)).await;
+                    let Ok(Ok(tls_stream)) = handshake else {
+                        eprintln!("uclient presence HTTPS handshake failed from {peer_addr}");
+                        return;
+                    };
+                    let connection = tokio::time::timeout(
+                        https_connection_timeout,
+                        Http::new()
+                            .http1_header_read_timeout(http_header_timeout)
+                            .serve_connection(tls_stream, service),
+                    )
+                    .await;
+                    match connection {
+                        Ok(Ok(())) => {}
+                        Ok(Err(err)) => {
+                            eprintln!("uclient presence HTTPS request failed from {peer_addr}: {err}")
+                        }
+                        Err(_) => {
+                            eprintln!("uclient presence HTTPS request timeout from {peer_addr}")
+                        }
+                    }
+                }
+                None => {
+                    let connection = tokio::time::timeout(
+                        https_connection_timeout,
+                        Http::new()
+                            .http1_header_read_timeout(http_header_timeout)
+                            .serve_connection(stream, service),
+                    )
+                    .await;
+                    match connection {
+                        Ok(Ok(())) => {}
+                        Ok(Err(err)) => {
+                            eprintln!("uclient presence HTTP request failed from {peer_addr}: {err}")
+                        }
+                        Err(_) => {
+                            eprintln!("uclient presence HTTP request timeout from {peer_addr}")
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+fn load_tls_acceptor(
+    config: &Config,
+) -> Result<TlsAcceptor, Box<dyn std::error::Error + Send + Sync>> {
+    let cert_path = config
+        .tls_cert_file
+        .as_ref()
+        .ok_or("TLS_CERT_FILE is not configured")?;
+    let key_path = config
+        .tls_key_file
+        .as_ref()
+        .ok_or("TLS_KEY_FILE is not configured")?;
+
+    let cert_file = fs::File::open(cert_path)?;
+    let mut cert_reader = io::BufReader::new(cert_file);
+    let certs = rustls_pemfile::certs(&mut cert_reader).collect::<Result<Vec<_>, _>>()?;
+    if certs.is_empty() {
+        return Err(format!("no certificates found in {}", cert_path.display()).into());
+    }
+
+    let key_file = fs::File::open(key_path)?;
+    let mut key_reader = io::BufReader::new(key_file);
+    let Some(key) = rustls_pemfile::private_key(&mut key_reader)? else {
+        return Err(format!("no private key found in {}", key_path.display()).into());
+    };
+
+    let tls_config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)?;
+    Ok(TlsAcceptor::from(Arc::new(tls_config)))
 }
 
 #[cfg(test)]

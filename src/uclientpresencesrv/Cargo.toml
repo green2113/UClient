@@ -12,8 +12,12 @@ constant_time_eq = "0.4.2"
 dotenvy = "0.15.7"
 hex = "0.4.3"
 hmac = "0.12.1"
+hyper = { version = "0.14.32", features = ["http1", "runtime", "server"] }
 reqwest = { version = "0.12.12", default-features = false, features = ["json", "rustls-tls"] }
+rustls-pemfile = "2.2.0"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.114"
 sha2 = "0.10.8"
-tokio = { version = "1.36.0", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+tokio = { version = "1.36.0", features = ["fs", "macros", "net", "rt-multi-thread", "signal", "time"] }
+tokio-rustls = "0.25.0"
+warp = { version = "0.3.7", features = ["tls"] }

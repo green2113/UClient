@@ -1112,6 +1112,18 @@ public:
 		FPopupButtonCallback pfnCancelButtonCallback = &CMenus::DefaultButtonCallback, int CancelNextPopup = POPUP_NONE);
 	void PopupConfirmPasteImageFromChat();
 	void PopupCancelPasteImageFromChat();
+	void OfferAutoLoginFromChat(int Kind, const char *pCode);
+	void PopupConfirmAutoLoginOffer();
+	void PopupCancelAutoLoginOffer();
+
+	enum
+	{
+		AUTO_LOGIN_OFFER_NONE = 0,
+		AUTO_LOGIN_OFFER_JAPAN = 1,
+		AUTO_LOGIN_OFFER_KOG = 2,
+	};
+	int m_AutoLoginOfferKind = AUTO_LOGIN_OFFER_NONE;
+	char m_aAutoLoginOfferCode[128] = "";
 
 	std::chrono::nanoseconds m_PopupWarningLastTime;
 	std::chrono::nanoseconds m_PopupWarningDuration;
@@ -1171,7 +1183,6 @@ private:
 	void RenderSettingsDDNet(CUIRect MainView);
 	void RenderSettingsBestClient(CUIRect MainView);
 	void RenderSettingsBestClientInfo(CUIRect MainView);
-	void RenderSettingsBestClientFun(CUIRect MainView);
 	void RenderSettingsAppearance(CUIRect MainView);
 
 	// found in menus_tclient.cpp

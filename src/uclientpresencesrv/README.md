@@ -1,12 +1,15 @@
 # UClient Presence UDP Server
 
-UDP relay for UClient presence packets (`UCP1`). Validated packets are forwarded to the
-Cloudflare Pages `/api/presence/sync` endpoint over HTTPS with an HMAC-authenticated body.
+UDP relay for UClient presence packets (`UCP1`). Validated packets update an in-memory
+presence map, export a live JSON snapshot, and serve it over HTTPS.
 
 Data flow:
 
-`UClient -> UDP :8778 -> Rust relay -> HTTPS /api/presence/sync -> PRESENCE_KV`
-`Rust relay -> UDP peer notify -> other UClients on the same game server`
+`UClient -> UDP :8778 -> Rust relay -> presence.json + GET /api/presence`
+
+Optional legacy flow (disabled by default):
+
+`Rust relay -> HTTPS /api/presence/sync -> Cloudflare KV`
 
 When a client joins, leaves, or changes name/client id on a game server, the relay
 notifies the other UC clients on that server in real time (`PEER_STATE`,
@@ -20,10 +23,10 @@ Copy `.env.example` to `.env` for local deployment.
 Important variables:
 
 - `UC_PRESENCE_UDP_SHARED_TOKEN`: client UDP proof secret. If empty, `TOKEN_PATH` is used.
-- `PRESENCE_SYNC_URL`: Worker sync endpoint (default `https://ddnet.under1111.com/api/presence/sync`).
-- `PRESENCE_UDP_SYNC_SECRET`: HMAC secret for the sync request header `X-UClient-Presence-Sync`.
-- `UDP_BIND`: UDP bind address (default `0.0.0.0:8778`).
-- `HEARTBEAT_SYNC_DEBOUNCE_SEC`: minimum interval between heartbeat sync posts per player/session (default `60`).
+- `JSON_PATH`: exported live presence JSON (default `run/uclientpresencesrv/presence.json`).
+- `UDP_BIND`, `WEB_HOST`, `WEB_PORT`: UDP and HTTPS bind addresses (default web port `8780`).
+- `TLS_CERT_FILE`, `TLS_KEY_FILE`: HTTPS certificate files.
+- `PRESENCE_SYNC_URL` / `PRESENCE_UDP_SYNC_SECRET`: optional legacy KV sync. Leave empty for JSON-only mode.
 
 ## Run
 
@@ -31,6 +34,8 @@ Important variables:
 cd ~/BestClient
 ./src/uclientpresencesrv/run.sh start
 ./src/uclientpresencesrv/run.sh status
+curl -k https://127.0.0.1:8780/healthz
+curl -k https://127.0.0.1:8780/api/presence
 ```
 
 Stop:
@@ -39,9 +44,16 @@ Stop:
 ./src/uclientpresencesrv/run.sh stop
 ```
 
-## Client Config
+## Deployment
+
+Point your public presence API at this service, for example:
+
+- reverse-proxy `https://ddnet.under1111.com/api/presence` -> `https://127.0.0.1:8780/api/presence`
+
+Or change the client config:
 
 ```txt
+uc_presence_api_base_url https://presence-udp.ddnet.under1111.com:8780/api/presence
 uc_presence_udp_server_address presence-udp.ddnet.under1111.com:8778
 uc_presence_udp_shared_token <same value as UC_PRESENCE_UDP_SHARED_TOKEN>
 uc_install_uuid <generated install uuid>

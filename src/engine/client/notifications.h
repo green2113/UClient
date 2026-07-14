@@ -5,6 +5,9 @@
 
 class CNotifications : public INotifications
 {
+	bool m_Initialized = false;
+	char m_aAppName[64] = "";
+
 public:
 	void Init(const char *pAppname) override;
 	void Shutdown() override;

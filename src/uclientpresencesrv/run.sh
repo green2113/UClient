@@ -54,7 +54,13 @@ ensure_setup() {
 print_config() {
 	echo "UClient presence UDP server"
 	echo "  UDP:   ${UDP_BIND:-0.0.0.0:8778}"
-	echo "  Sync:  ${PRESENCE_SYNC_URL:-https://ddnet.under1111.com/api/presence/sync}"
+	echo "  HTTPS: ${WEB_HOST:-0.0.0.0}:${WEB_PORT:-8780}"
+	echo "  JSON:  ${JSON_PATH:-$STATE_DIR/presence.json}"
+	if [[ -n "${PRESENCE_SYNC_URL:-}" && -n "${PRESENCE_UDP_SYNC_SECRET:-}" ]]; then
+		echo "  Sync:  ${PRESENCE_SYNC_URL} (legacy KV)"
+	else
+		echo "  Sync:  disabled (JSON snapshot mode)"
+	fi
 	echo "  Token: ${TOKEN_PATH}"
 	echo "  PID:   ${PID_PATH}"
 	echo "  LOG:   ${LOG_PATH}"

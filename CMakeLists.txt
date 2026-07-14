@@ -2899,10 +2899,6 @@ if(CLIENT)
     components/bestclient/voice/soundboard_file_dialog.cpp
     components/bestclient/voice/voice.cpp
     components/bestclient/voice/voice.h
-    components/uclient/ai_assistant.cpp
-    components/uclient/ai_assistant.h
-    components/uclient/ai_catalog.cpp
-    components/uclient/ai_catalog.h
     components/uclient/chat_nearby_tab.cpp
     components/uclient/chat_nearby_tab.h
     components/uclient/chat_paste_image.cpp
@@ -2978,7 +2974,6 @@ if(CLIENT)
     components/menus.h
     components/menus_browser.cpp
     components/menus_demo.cpp
-    components/menus_games.cpp
     components/menus_ingame.cpp
     components/menus_ingame_touch_controls.cpp
     components/menus_ingame_touch_controls.h

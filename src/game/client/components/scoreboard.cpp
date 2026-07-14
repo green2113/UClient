@@ -40,12 +40,48 @@ namespace
 	constexpr int MAX_TAB_PLAYER_POINTS_REQUESTS = 4;
 	constexpr int64_t TAB_PLAYER_POINTS_RETRY_SECONDS = 30;
 	constexpr const char *TAB_PLAYER_POINTS_URL = "https://ddnet.org/players/?json2=";
+	constexpr const char *TAB_PLAYER_POINTS_GORES_URL = "https://gdwtgores.com/leaderboard?q=";
 
 	bool IsDdnetCommunityServer(IClient *pClient)
 	{
 		CServerInfo ServerInfo;
 		pClient->GetServerInfo(&ServerInfo);
 		return str_comp(ServerInfo.m_aCommunityId, IServerBrowser::COMMUNITY_DDNET) == 0;
+	}
+
+	// Parses the "Total Points" value out of a gdwtgores.com leaderboard search
+	// result page. The search result table lists the exact-matched player as a
+	// single row: name, total rank, total points, fixed rank, fixed points,
+	// repeat rank, repeat points. We take the first "search-cell-points" cell
+	// (Total Points). Returns false when the player has no leaderboard entry.
+	bool ParseGoresTotalPoints(const char *pHtml, size_t HtmlLength, int *pPoints)
+	{
+		if(!pHtml || HtmlLength == 0)
+			return false;
+
+		const std::string Html(pHtml, HtmlLength);
+		const char *pEmpty = "leaderboard__search-cell-empty";
+		const char *pCell = "leaderboard__search-cell-points";
+
+		const size_t EmptyPos = Html.find(pEmpty);
+		const size_t CellPos = Html.find(pCell);
+		if(CellPos == std::string::npos)
+			return false;
+		// "No player found with this name." row present before any points cell.
+		if(EmptyPos != std::string::npos && EmptyPos < CellPos)
+			return false;
+
+		size_t Pos = Html.find('>', CellPos);
+		if(Pos == std::string::npos)
+			return false;
+		++Pos;
+		while(Pos < Html.size() && std::isspace((unsigned char)Html[Pos]))
+			++Pos;
+		if(Pos >= Html.size() || Html[Pos] < '0' || Html[Pos] > '9')
+			return false;
+
+		*pPoints = str_toint(Html.c_str() + Pos);
+		return true;
 	}
 
 	void RenderBestClientIcon(IGraphics *pGraphics, const CUIRect &Rect, bool Developer = false)
@@ -244,11 +280,14 @@ void CScoreboard::StartTabPlayerPointsRequest(int ClientId, const char *pName)
 	if(aEscapedName[0] == '\0')
 		return;
 
+	const bool Gores = GameClient()->IsAutoLoginJapanServer();
+	Entry.m_Gores = Gores;
+
 	char aUrl[512];
-	str_format(aUrl, sizeof(aUrl), "%s%s", TAB_PLAYER_POINTS_URL, aEscapedName);
+	str_format(aUrl, sizeof(aUrl), "%s%s", Gores ? TAB_PLAYER_POINTS_GORES_URL : TAB_PLAYER_POINTS_URL, aEscapedName);
 
 	Entry.m_pTask = HttpGet(aUrl);
-	Entry.m_pTask->HeaderString("Accept", "application/json");
+	Entry.m_pTask->HeaderString("Accept", Gores ? "text/html" : "application/json");
 	Entry.m_pTask->HeaderString("User-Agent", CLIENT_NAME);
 	Entry.m_pTask->Timeout(CTimeout{5000, 0, 500, 10});
 	Entry.m_pTask->IpResolve(IPRESOLVE::V4);
@@ -270,17 +309,32 @@ void CScoreboard::UpdateTabPlayerPoints()
 			{
 				Entry.m_HasResult = true;
 				Entry.m_HasPoints = false;
-				json_value *pJson = Entry.m_pTask->ResultJson();
-				if(pJson)
+				if(Entry.m_Gores)
 				{
-					const json_value *pPointsObject = json_object_get(pJson, "points");
-					const json_value *pPointsValue = json_object_get(pPointsObject, "points");
-					if(pPointsValue != nullptr)
+					unsigned char *pResult;
+					size_t ResultLength;
+					Entry.m_pTask->Result(&pResult, &ResultLength);
+					int Points = 0;
+					if(ParseGoresTotalPoints((const char *)pResult, ResultLength, &Points))
 					{
-						Entry.m_Points = json_int_get(pPointsValue);
+						Entry.m_Points = Points;
 						Entry.m_HasPoints = true;
 					}
-					json_value_free(pJson);
+				}
+				else
+				{
+					json_value *pJson = Entry.m_pTask->ResultJson();
+					if(pJson)
+					{
+						const json_value *pPointsObject = json_object_get(pJson, "points");
+						const json_value *pPointsValue = json_object_get(pPointsObject, "points");
+						if(pPointsValue != nullptr)
+						{
+							Entry.m_Points = json_int_get(pPointsValue);
+							Entry.m_HasPoints = true;
+						}
+						json_value_free(pJson);
+					}
 				}
 				Entry.m_pTask = nullptr;
 			}
@@ -344,7 +398,7 @@ void CScoreboard::UpdateTabPlayerPoints()
 
 bool CScoreboard::TryGetTabPlayerPointsText(int ClientId, const char *pName, char *pBuf, int BufSize)
 {
-	if(!g_Config.m_BcShowPointsInTab || !IsDdnetCommunityServer(Client()) || ClientId < 0 || ClientId >= MAX_CLIENTS || !pBuf || BufSize <= 0)
+	if(!g_Config.m_BcShowPointsInTab || (!IsDdnetCommunityServer(Client()) && !GameClient()->IsAutoLoginJapanServer()) || ClientId < 0 || ClientId >= MAX_CLIENTS || !pBuf || BufSize <= 0)
 		return false;
 
 	pBuf[0] = '\0';
@@ -1408,7 +1462,7 @@ void CScoreboard::OnRender()
 		Ui()->Update();
 	}
 
-	if(g_Config.m_BcShowPointsInTab && IsDdnetCommunityServer(Client()))
+	if(g_Config.m_BcShowPointsInTab && (IsDdnetCommunityServer(Client()) || GameClient()->IsAutoLoginJapanServer()))
 		UpdateTabPlayerPoints();
 	else
 		ResetTabPlayerPoints();

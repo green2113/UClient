@@ -667,7 +667,6 @@ void CGameClient::OnConsoleInit()
 					      &m_StatusBar, // TClient
 					      &m_InfoMessages,
 					      &m_Chat,
-					      &m_AiAssistant,
 					      &m_Broadcast,
 					      &m_ImportantAlert,
 					      &m_DebugHud,
@@ -692,7 +691,6 @@ void CGameClient::OnConsoleInit()
 						  &m_Binds.m_SpecialBinds,
 						  &m_GameConsole,
 						  &m_Chat, // chat has higher prio, due to that you can quit it by pressing esc
-						  &m_AiAssistant,
 						  &m_Scoreboard,
 						  &m_Motd, // for pressing esc to remove it
 						  &m_Spectator,
@@ -1983,7 +1981,7 @@ void CGameClient::UpdateAutoLoginJapan()
 
 	char aAddr[NETADDR_MAXSTRSIZE];
 	net_addr_str(&Client()->ServerAddress(), aAddr, sizeof(aAddr), false);
-	if(str_comp(aAddr, "43.206.195.153") != 0)
+	if(!IsAutoLoginJapanServer())
 	{
 		m_AutoLoginJapanDeadlineTick = 0;
 		return;
@@ -2012,8 +2010,17 @@ void CGameClient::UpdateAutoLoginJapan()
 	m_AutoLoginJapanDeadlineTick = 0;
 }
 
-static bool IsKogAutoLoginServer(const char *pAddr)
+bool CGameClient::IsAutoLoginJapanServer() const
 {
+	char aAddr[NETADDR_MAXSTRSIZE];
+	net_addr_str(&Client()->ServerAddress(), aAddr, sizeof(aAddr), false);
+	return str_comp(aAddr, "43.206.195.153") == 0;
+}
+
+bool CGameClient::IsAutoLoginKogServer() const
+{
+	char aAddr[NETADDR_MAXSTRSIZE];
+	net_addr_str(&Client()->ServerAddress(), aAddr, sizeof(aAddr), false);
 	static const char *const s_apKogAddrs[] = {
 		"74.91.114.169",
 		"152.89.255.12",
@@ -2024,7 +2031,7 @@ static bool IsKogAutoLoginServer(const char *pAddr)
 	};
 	for(const char *pKogAddr : s_apKogAddrs)
 	{
-		if(str_comp(pAddr, pKogAddr) == 0)
+		if(str_comp(aAddr, pKogAddr) == 0)
 			return true;
 	}
 	return false;
@@ -2052,7 +2059,7 @@ void CGameClient::UpdateAutoLoginKog()
 
 	char aAddr[NETADDR_MAXSTRSIZE];
 	net_addr_str(&Client()->ServerAddress(), aAddr, sizeof(aAddr), false);
-	if(!IsKogAutoLoginServer(aAddr))
+	if(!IsAutoLoginKogServer())
 	{
 		m_AutoLoginKogDeadlineTick = 0;
 		return;

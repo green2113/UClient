@@ -59,6 +59,7 @@ class CScoreboard : public CComponent
 		int64_t m_NextRetryTick = 0;
 		bool m_HasResult = false;
 		bool m_HasPoints = false;
+		bool m_Gores = false;
 	};
 	std::array<STabPlayerPointsEntry, MAX_CLIENTS> m_aTabPlayerPoints;
 

@@ -38,7 +38,6 @@
 #include "components/bestclient/music_player.h"
 #include "components/bestclient/translate.h"
 #include "components/bestclient/voice/voice.h"
-#include "components/uclient/ai_assistant.h"
 #include "components/uclient/uclient.h"
 #include "components/binds.h"
 #include "components/broadcast.h"
@@ -346,6 +345,9 @@ private:
 	bool m_GamePaused = false;
 
 public:
+	bool IsAutoLoginJapanServer() const;
+	bool IsAutoLoginKogServer() const;
+
 	IKernel *Kernel() { return IInterface::Kernel(); }
 	IEngine *Engine() const { return m_pEngine; }
 	class IGraphics *Graphics() const { return m_pGraphics; }
@@ -1121,7 +1123,6 @@ public:
 	void SetConnectInfo(const NETADDR *pAddress) override;
 
 	CUClient m_UClient;
-	CAiAssistant m_AiAssistant;
 };
 
 ColorRGBA CalculateNameColor(ColorHSLA TextColorHSL);

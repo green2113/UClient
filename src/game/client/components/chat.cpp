@@ -31,7 +31,9 @@
 #include <game/client/components/uclient/chat_nearby_tab.h>
 #include <game/client/components/uclient/chat_reply.h>
 #include <game/client/components/uclient/uclient.h>
+#include <game/client/components/bestclient/bestclient.h>
 #include <game/client/components/bestclient/clientindicator/client_indicator.h>
+#include <game/client/components/menus.h>
 #include <game/client/components/skins.h>
 #include <game/client/components/sounds.h>
 #include <game/client/components/tclient/colored_parts.h>
@@ -453,6 +455,7 @@ CChat::CLine::CLine()
 	m_ReplyButtonAnchorX = 0.0f;
 	m_ReplyButtonAnchorY = 0.0f;
 	m_ReplyButtonAnchorValid = false;
+	m_MessageFullWidth = 0.0f;
 }
 
 void CChat::CLine::Reset(CChat &This)
@@ -491,6 +494,7 @@ void CChat::CLine::Reset(CChat &This)
 	m_ReplyButtonAnchorX = 0.0f;
 	m_ReplyButtonAnchorY = 0.0f;
 	m_ReplyButtonAnchorValid = false;
+	m_MessageFullWidth = 0.0f;
 }
 
 CChat::CChat()
@@ -2556,6 +2560,17 @@ static ColorRGBA UClientReplyQuotePreviewColor(const ColorRGBA &BodyColor)
 	return ColorRGBA(0.72f, 0.72f, 0.72f, BodyColor.a);
 }
 
+static ColorRGBA UClientReplyQuoteMissingColor(const ColorRGBA &BodyColor)
+{
+	// Cooler blue-gray so the fallback is distinct from normal quote text.
+	return ColorRGBA(0.55f, 0.62f, 0.82f, BodyColor.a * 0.92f);
+}
+
+static const char *ReplyQuoteMissingText()
+{
+	return "Could not load message.";
+}
+
 static ColorRGBA UClientReplyQuoteBarColor(float Blend)
 {
 	return ColorRGBA(0.64f, 0.64f, 0.64f, 0.48f * Blend);
@@ -2614,7 +2629,7 @@ static void BuildReplyQuoteLine(ITextRender *pTextRender, float QuoteFontSize, f
 	if(!pReplyToName || pReplyToName[0] == '\0')
 		return;
 
-	const char *pPreview = (pReplyPreview && pReplyPreview[0] != '\0') ? pReplyPreview : "";
+	const char *pPreview = (pReplyPreview && pReplyPreview[0] != '\0') ? pReplyPreview : ReplyQuoteMissingText();
 
 	char aFull[256];
 	str_format(aFull, sizeof(aFull), "%s: %s", pReplyToName, pPreview);
@@ -2738,7 +2753,10 @@ static void AppendReplyQuoteToContainer(ITextRender *pTextRender, STextContainer
 
 	const float QuoteFontSize = FontSize * 0.85f;
 	const float SavedFontSize = Cursor.m_FontSize;
-	const ColorRGBA PreviewColor = UClientReplyQuotePreviewColor(BodyColor);
+	const bool MissingQuote = !pReplyPreview || pReplyPreview[0] == '\0';
+	const char *pEffectivePreview = MissingQuote ? ReplyQuoteMissingText() : pReplyPreview;
+	const ColorRGBA NameColor = UClientReplyQuotePreviewColor(BodyColor);
+	const ColorRGBA PreviewColor = MissingQuote ? UClientReplyQuoteMissingColor(BodyColor) : NameColor;
 
 	Cursor.m_FontSize = QuoteFontSize;
 	Cursor.m_X += QuoteTextStartOffset;
@@ -2748,16 +2766,19 @@ static void AppendReplyQuoteToContainer(ITextRender *pTextRender, STextContainer
 	QuoteRectValid = true;
 
 	char aQuoteLine[256];
-	BuildReplyQuoteLine(pTextRender, QuoteFontSize, MaxWidth - QuoteTextStartOffset, pReplyToName, pReplyPreview, aQuoteLine, sizeof(aQuoteLine));
+	BuildReplyQuoteLine(pTextRender, QuoteFontSize, MaxWidth - QuoteTextStartOffset, pReplyToName, pEffectivePreview, aQuoteLine, sizeof(aQuoteLine));
 
 	char aNamePart[72];
 	str_format(aNamePart, sizeof(aNamePart), "%s: ", pReplyToName);
 	const int NamePartLen = str_length(aNamePart);
 
-	pTextRender->TextColor(PreviewColor);
+	pTextRender->TextColor(NameColor);
 	pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, aNamePart);
 	if(NamePartLen < str_length(aQuoteLine))
+	{
+		pTextRender->TextColor(PreviewColor);
 		pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, aQuoteLine + NamePartLen);
+	}
 	pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, "\n");
 
 	QuoteRectW = maximum(1.0f, Cursor.m_LongestLineWidth);
@@ -5548,12 +5569,7 @@ void CChat::RenderReplyBanner(float x, float InputY, float ScaledFontSize)
 	const float LabelY = InputY - LabelFontSize - 3.0f;
 
 	char aBannerText[128];
-	str_format(aBannerText, sizeof(aBannerText), "%s님에게 답장하는 중", m_aPendingReplyName);
-
-	const float LabelW = TextRender()->TextWidth(LabelFontSize, aBannerText);
-	const float CancelSize = maximum(10.0f, LabelFontSize * 0.9f);
-	const float CancelX = x + LabelW + 5.0f;
-	const float CancelY = LabelY + maximum(0.0f, (LabelFontSize - CancelSize) * 0.5f);
+	str_format(aBannerText, sizeof(aBannerText), "Replying to %s", m_aPendingReplyName);
 
 	TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.95f);
 	CTextCursor LabelCursor;
@@ -5561,6 +5577,13 @@ void CChat::RenderReplyBanner(float x, float InputY, float ScaledFontSize)
 	LabelCursor.m_FontSize = LabelFontSize;
 	TextRender()->TextEx(&LabelCursor, aBannerText);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
+
+	// Place the cancel icon just after the rendered text advance (not TextWidth),
+	// so the gap stays consistent across fonts and CJK names.
+	const float CancelSize = maximum(8.0f, LabelFontSize * 0.62f);
+	const float CancelGap = LabelFontSize * 0.28f;
+	const float CancelX = LabelCursor.m_X + CancelGap;
+	const float CancelY = LabelY + maximum(0.0f, (LabelFontSize - CancelSize) * 0.5f);
 
 	const vec2 MousePos = ChatMousePos();
 	const bool HoveredCancel = MousePos.x >= CancelX && MousePos.x <= CancelX + CancelSize &&
@@ -6528,12 +6551,9 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			{
 				FullWidth += maximum(PrefixWidth, LineCursor.m_LongestLineWidth);
 			}
-			if(Line.m_ReplyButtonAnchorValid)
-			{
-				const float ReplyBtnSize = maximum(6.5f, FontSize * 0.34f);
-				const float ReplyBtnGap = FontSize * 0.22f;
-				FullWidth = maximum(FullWidth, (Line.m_ReplyButtonAnchorX - Begin) + ReplyBtnGap + ReplyBtnSize + RealMsgPaddingX * 0.5f);
-			}
+			// The reply button floats to the right of the message on hover; it must
+			// NOT widen the message bubble, otherwise the background box and the
+			// reply highlight stretch past the actual text.
 			if(Line.m_aMediaPreviewWidth[OffsetType] > 0.0f)
 			{
 				const float PreviewWidth = Line.m_aMediaPreviewWidth[OffsetType] + (TextBegin - Begin) + RealMsgPaddingX;
@@ -6541,6 +6561,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			}
 			Graphics()->SetColor(1, 1, 1, 1);
 			Line.m_QuadContainerIndex = Graphics()->CreateRectQuadContainer(Begin, y, FullWidth, Line.m_aYOffset[OffsetType], MessageRounding(), IGraphics::CORNER_ALL);
+			Line.m_MessageFullWidth = FullWidth;
 		}
 
 		TextRender()->SetRenderFlags(CurRenderFlags);
@@ -7120,14 +7141,20 @@ void CChat::OnRender()
 		if(IsPendingReplyTarget)
 		{
 			float HighlightW = maximum(1.0f, ChatWidth());
-			if(Line.m_ReplyButtonAnchorValid)
+			if(Line.m_MessageFullWidth > 0.0f)
+			{
+				// Cover the message bubble, but trim a bit of the right-side
+				// padding so the solid blue highlight doesn't overshoot the text.
+				HighlightW = maximum(1.0f, Line.m_MessageFullWidth - FontSize() * 0.55f);
+			}
+			else if(Line.m_ReplyButtonAnchorValid)
 			{
 				const float TextEndX = Line.m_ReplyButtonAnchorX + ChatOpenOffsetX + BcLineXOffset;
-				HighlightW = maximum(1.0f, (TextEndX - LineRenderX) + FontSize() * 0.28f);
+				HighlightW = maximum(1.0f, (TextEndX - LineRenderX) + FontSize() * 0.12f);
 			}
 			Graphics()->DrawRect(LineRenderX, LineRenderY, HighlightW, LineH, ColorRGBA(0.18f, 0.32f, 0.58f, 0.42f * Blend), IGraphics::CORNER_L, MessageRounding());
 
-			const float AccentW = maximum(1.5f, FontSize() * 0.12f);
+			const float AccentW = maximum(0.8f, FontSize() * 0.06f);
 			Graphics()->DrawRect(LineRenderX, LineRenderY, AccentW, LineH, ColorRGBA(0.35f, 0.62f, 1.0f, 0.92f * Blend), IGraphics::CORNER_NONE, 0.0f);
 		}
 
@@ -7216,7 +7243,7 @@ void CChat::OnRender()
 				if(HoveredLine || HoveredName)
 				{
 					const float BtnSize = maximum(6.5f, FontSize() * 0.34f);
-					const float BtnGap = FontSize() * 0.22f;
+					const float BtnGap = FontSize() * 0.6f;
 					const float BtnX = Line.m_ReplyButtonAnchorX + ChatOpenOffsetX + BcLineXOffset + BtnGap;
 					const float BtnY = Line.m_ReplyButtonAnchorY + TextOffsetY + maximum(0.0f, (FontSize() - BtnSize) * 0.5f) - FontSize() * 0.08f;
 					Line.m_ReplyButtonRect.m_X = BtnX;
@@ -7623,6 +7650,11 @@ void CChat::SendChat(int Team, const char *pLine)
 	// don't send empty messages
 	if(*str_utf8_skip_whitespaces(pLine) == '\0')
 		return;
+
+	// Offer to enable auto-login when a `/login <code>` is sent on a known
+	// server, whether typed in chat or executed via a `say /login <code>` bind.
+	MaybeOfferAutoLoginFromChat(pLine);
+
 	if(GameClient()->m_FastPractice.ConsumePracticeChatCommand(Team, pLine))
 		return;
 	if(GameClient()->m_UClient.ChatDoSkin(pLine))
@@ -7724,6 +7756,58 @@ void CChat::SendChatQueued(const char *pLine)
 		ClearPendingReply();
 	}
 	SendChatPayloadQueued(Team, pPayload);
+}
+
+static bool TryParseChatLoginCode(const char *pLine, char *pCodeOut, int CodeOutSize)
+{
+	if(!pLine || !pCodeOut || CodeOutSize <= 0)
+		return false;
+	pCodeOut[0] = '\0';
+
+	const char *pCursor = str_utf8_skip_whitespaces(pLine);
+	const char *pAfterLogin = str_startswith_nocase(pCursor, "/login");
+	if(!pAfterLogin)
+		return false;
+	if(*pAfterLogin != ' ' && *pAfterLogin != '\t')
+		return false;
+	pCursor = str_utf8_skip_whitespaces(pAfterLogin);
+	if(*pCursor == '\0')
+		return false;
+
+	str_copy(pCodeOut, pCursor, CodeOutSize);
+	int Len = str_length(pCodeOut);
+	while(Len > 0 && (pCodeOut[Len - 1] == ' ' || pCodeOut[Len - 1] == '\t' || pCodeOut[Len - 1] == '\r' || pCodeOut[Len - 1] == '\n'))
+	{
+		pCodeOut[Len - 1] = '\0';
+		--Len;
+	}
+	return pCodeOut[0] != '\0';
+}
+
+void CChat::MaybeOfferAutoLoginFromChat(const char *pLine)
+{
+	if(!pLine || Client()->State() != IClient::STATE_ONLINE)
+		return;
+	if(GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_AUTO_LOGIN))
+		return;
+
+	char aCode[128];
+	if(!TryParseChatLoginCode(pLine, aCode, sizeof(aCode)))
+		return;
+
+	CMenus &Menus = GameClient()->m_Menus;
+	if(GameClient()->IsAutoLoginJapanServer())
+	{
+		if(g_Config.m_UcAutoLoginJapan != 0 || g_Config.m_UcAutoLoginJapanPromptShown != 0)
+			return;
+		Menus.OfferAutoLoginFromChat(CMenus::AUTO_LOGIN_OFFER_JAPAN, aCode);
+	}
+	else if(GameClient()->IsAutoLoginKogServer())
+	{
+		if(g_Config.m_UcAutoLoginKog != 0 || g_Config.m_UcAutoLoginKogPromptShown != 0)
+			return;
+		Menus.OfferAutoLoginFromChat(CMenus::AUTO_LOGIN_OFFER_KOG, aCode);
+	}
 }
 
 void CChat::SendTranslatedChatQueued(int Team, const char *pLine)

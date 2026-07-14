@@ -173,6 +173,7 @@ class CChat : public CComponent
 		float m_ReplyButtonAnchorX;
 		float m_ReplyButtonAnchorY;
 		bool m_ReplyButtonAnchorValid;
+		float m_MessageFullWidth;
 	};
 
 	bool m_PrevScoreBoardShowed;
@@ -561,6 +562,7 @@ public:
 	//
 	// It uses team or public chat depending on m_Mode.
 	void SendChatQueued(const char *pLine);
+	void MaybeOfferAutoLoginFromChat(const char *pLine);
 	void SendTranslatedChatQueued(int Team, const char *pLine);
 	void AddHistoryEntry(int Team, const char *pLine);
 	void SendChatPayloadQueued(int Team, const char *pLine);

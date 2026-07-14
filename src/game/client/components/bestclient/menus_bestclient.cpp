@@ -55,9 +55,19 @@ static void SetBestClientTabFlag(int32_t &Flags, int Tab, bool Hidden)
 		Flags &= ~(1 << Tab);
 }
 
+static int32_t NormalizeBestClientSettingsTabFlags(int32_t Flags)
+{
+	// Fun tab (bit 3) was removed; Info moved from index 4 to 3.
+	const bool InfoHidden = (Flags & (1 << 4)) != 0;
+	Flags &= ~((1 << 3) | (1 << 4));
+	if(InfoHidden)
+		Flags |= (1 << 3);
+	return Flags;
+}
+
 static bool IsBestClientTabFlagSet(int32_t Flags, int Tab)
 {
-	return (Flags & (1 << Tab)) != 0;
+	return (NormalizeBestClientSettingsTabFlags(Flags) & (1 << Tab)) != 0;
 }
 
 static int MusicPlayerVisualizerRoundingPreset(int RoundingPercent)
@@ -178,7 +188,6 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 		BESTCLIENT_TAB_VISUALS = 0,
 		BESTCLIENT_TAB_GAMEPLAY,
 		BESTCLIENT_TAB_OTHERS,
-		BESTCLIENT_TAB_FUN,
 		BESTCLIENT_TAB_INFO,
 		NUM_BESTCLIENT_TABS,
 	};
@@ -205,14 +214,12 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 		BCLocalize("Visuals"),
 		BCLocalize("Gameplay"),
 		BCLocalize("Others"),
-		BCLocalize("Fun"),
 		BCLocalize("Info"),
 	};
 	const int aTabOrder[NUM_BESTCLIENT_TABS] = {
 		BESTCLIENT_TAB_VISUALS,
 		BESTCLIENT_TAB_GAMEPLAY,
 		BESTCLIENT_TAB_OTHERS,
-		BESTCLIENT_TAB_FUN,
 		BESTCLIENT_TAB_INFO,
 	};
 
@@ -2057,6 +2064,70 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 			}
 		}
 
+		if(!GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_AUTO_LOGIN))
+		{
+			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+			static float s_AutoLoginJapanPhase = 0.0f;
+			static float s_AutoLoginKogPhase = 0.0f;
+			const bool JapanExpanded = g_Config.m_UcAutoLoginJapan != 0;
+			const bool KogExpanded = g_Config.m_UcAutoLoginKog != 0;
+			UpdateRevealPhase(s_AutoLoginJapanPhase, JapanExpanded);
+			UpdateRevealPhase(s_AutoLoginKogPhase, KogExpanded);
+
+			const float CodeBoxHeight = LineSize;
+			const float ExpandedTargetHeight = MarginSmall + CodeBoxHeight;
+			const float ContentHeight = LineSize + MarginSmall + LineSize + ExpandedTargetHeight * s_AutoLoginJapanPhase + MarginSmall + LineSize + ExpandedTargetHeight * s_AutoLoginKogPhase;
+			CUIRect Content, Label, Visible, Row;
+			BeginBlock(Column, ContentHeight, Content);
+
+			Content.HSplitTop(LineSize, &Label, &Content);
+			Ui()->DoLabel(&Label, BCLocalize("Auto Login"), HeadlineFontSize, TEXTALIGN_ML);
+			Content.HSplitTop(MarginSmall, nullptr, &Content);
+
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcAutoLoginJapan, "Auto login to Japan server", &g_Config.m_UcAutoLoginJapan, &Content, LineSize);
+
+			const float JapanCurHeight = ExpandedTargetHeight * s_AutoLoginJapanPhase;
+			if(JapanCurHeight > 0.0f)
+			{
+				Content.HSplitTop(JapanCurHeight, &Visible, &Content);
+				Ui()->ClipEnable(&Visible);
+				struct SScopedClip
+				{
+					CUi *m_pUi;
+					~SScopedClip() { m_pUi->ClipDisable(); }
+				} ClipGuard{Ui()};
+
+				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
+				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
+				Expand.HSplitTop(CodeBoxHeight, &Row, &Expand);
+				static CLineInput s_AutoLoginJapanCode(g_Config.m_UcAutoLoginJapanCode, sizeof(g_Config.m_UcAutoLoginJapanCode));
+				s_AutoLoginJapanCode.SetEmptyText("Enter Japan server login code");
+				Ui()->DoClearableEditBox(&s_AutoLoginJapanCode, &Row, 14.0f);
+			}
+
+			Content.HSplitTop(MarginSmall, nullptr, &Content);
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcAutoLoginKog, "Auto login to KoG server", &g_Config.m_UcAutoLoginKog, &Content, LineSize);
+
+			const float KogCurHeight = ExpandedTargetHeight * s_AutoLoginKogPhase;
+			if(KogCurHeight > 0.0f)
+			{
+				Content.HSplitTop(KogCurHeight, &Visible, &Content);
+				Ui()->ClipEnable(&Visible);
+				struct SScopedClip
+				{
+					CUi *m_pUi;
+					~SScopedClip() { m_pUi->ClipDisable(); }
+				} ClipGuard{Ui()};
+
+				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
+				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
+				Expand.HSplitTop(CodeBoxHeight, &Row, &Expand);
+				static CLineInput s_AutoLoginKogCode(g_Config.m_UcAutoLoginKogCode, sizeof(g_Config.m_UcAutoLoginKogCode));
+				s_AutoLoginKogCode.SetEmptyText("Enter KoG server login code");
+				Ui()->DoClearableEditBox(&s_AutoLoginKogCode, &Row, 14.0f);
+			}
+		}
+
 		const float LeftColumnEndY = Column.y;
 		Column = RightView;
 		Column.HSplitTop(10.0f, nullptr, &Column);
@@ -2417,70 +2488,6 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClFocusModeHideChat, BCLocalize("Hide Chat"), &g_Config.m_ClFocusModeHideChat, &Expand, LineSize);
 				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClFocusModeHideScoreboard, BCLocalize("Hide Scoreboard"), &g_Config.m_ClFocusModeHideScoreboard, &Expand, LineSize);
 				DoLine_KeyReader(Expand, s_FocusModeBindReader, s_FocusModeBindClear, BCLocalize("Focus mode bind"), "toggle p_focus_mode 0 1");
-			}
-		}
-
-		if(!GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_AUTO_LOGIN))
-		{
-			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
-			static float s_AutoLoginJapanPhase = 0.0f;
-			static float s_AutoLoginKogPhase = 0.0f;
-			const bool JapanExpanded = g_Config.m_UcAutoLoginJapan != 0;
-			const bool KogExpanded = g_Config.m_UcAutoLoginKog != 0;
-			UpdateRevealPhase(s_AutoLoginJapanPhase, JapanExpanded);
-			UpdateRevealPhase(s_AutoLoginKogPhase, KogExpanded);
-
-			const float CodeBoxHeight = LineSize;
-			const float ExpandedTargetHeight = MarginSmall + CodeBoxHeight;
-			const float ContentHeight = LineSize + MarginSmall + LineSize + ExpandedTargetHeight * s_AutoLoginJapanPhase + MarginSmall + LineSize + ExpandedTargetHeight * s_AutoLoginKogPhase;
-			CUIRect Content, Label, Visible, Row;
-			BeginBlock(Column, ContentHeight, Content);
-
-			Content.HSplitTop(LineSize, &Label, &Content);
-			Ui()->DoLabel(&Label, BCLocalize("Auto Login"), HeadlineFontSize, TEXTALIGN_ML);
-			Content.HSplitTop(MarginSmall, nullptr, &Content);
-
-			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcAutoLoginJapan, "Auto login to Japan server", &g_Config.m_UcAutoLoginJapan, &Content, LineSize);
-
-			const float JapanCurHeight = ExpandedTargetHeight * s_AutoLoginJapanPhase;
-			if(JapanCurHeight > 0.0f)
-			{
-				Content.HSplitTop(JapanCurHeight, &Visible, &Content);
-				Ui()->ClipEnable(&Visible);
-				struct SScopedClip
-				{
-					CUi *m_pUi;
-					~SScopedClip() { m_pUi->ClipDisable(); }
-				} ClipGuard{Ui()};
-
-				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
-				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
-				Expand.HSplitTop(CodeBoxHeight, &Row, &Expand);
-				static CLineInput s_AutoLoginJapanCode(g_Config.m_UcAutoLoginJapanCode, sizeof(g_Config.m_UcAutoLoginJapanCode));
-				s_AutoLoginJapanCode.SetEmptyText("Enter Japan server login code");
-				Ui()->DoClearableEditBox(&s_AutoLoginJapanCode, &Row, 14.0f);
-			}
-
-			Content.HSplitTop(MarginSmall, nullptr, &Content);
-			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcAutoLoginKog, "Auto login to KoG server", &g_Config.m_UcAutoLoginKog, &Content, LineSize);
-
-			const float KogCurHeight = ExpandedTargetHeight * s_AutoLoginKogPhase;
-			if(KogCurHeight > 0.0f)
-			{
-				Content.HSplitTop(KogCurHeight, &Visible, &Content);
-				Ui()->ClipEnable(&Visible);
-				struct SScopedClip
-				{
-					CUi *m_pUi;
-					~SScopedClip() { m_pUi->ClipDisable(); }
-				} ClipGuard{Ui()};
-
-				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
-				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
-				Expand.HSplitTop(CodeBoxHeight, &Row, &Expand);
-				static CLineInput s_AutoLoginKogCode(g_Config.m_UcAutoLoginKogCode, sizeof(g_Config.m_UcAutoLoginKogCode));
-				s_AutoLoginKogCode.SetEmptyText("Enter KoG server login code");
-				Ui()->DoClearableEditBox(&s_AutoLoginKogCode, &Row, 14.0f);
 			}
 		}
 
@@ -2914,10 +2921,6 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 		s_BestClientOthersScrollRegion.AddRect(ScrollRegion);
 		s_BestClientOthersScrollRegion.End();
 	}
-	else if(s_CurTab == BESTCLIENT_TAB_FUN)
-	{
-		RenderSettingsBestClientFun(MainView);
-	}
 	else if(s_CurTab == BESTCLIENT_TAB_INFO)
 	{
 		RenderSettingsBestClientInfo(MainView);
@@ -3207,7 +3210,6 @@ void CMenus::RenderSettingsBestClientInfo(CUIRect MainView)
 		BESTCLIENT_TAB_VISUALS = 0,
 		BESTCLIENT_TAB_GAMEPLAY,
 		BESTCLIENT_TAB_OTHERS,
-		BESTCLIENT_TAB_FUN,
 		BESTCLIENT_TAB_INFO,
 		NUM_BESTCLIENT_TABS,
 	};
@@ -3416,14 +3418,12 @@ void CMenus::RenderSettingsBestClientInfo(CUIRect MainView)
 		BCLocalize("Visuals"),
 		BCLocalize("Gameplay"),
 		BCLocalize("Others"),
-		BCLocalize("Fun"),
 		BCLocalize("Info"),
 	};
 	const int aTabOrder[NUM_BESTCLIENT_TABS] = {
 		BESTCLIENT_TAB_VISUALS,
 		BESTCLIENT_TAB_GAMEPLAY,
 		BESTCLIENT_TAB_OTHERS,
-		BESTCLIENT_TAB_FUN,
 		BESTCLIENT_TAB_INFO,
 	};
 
