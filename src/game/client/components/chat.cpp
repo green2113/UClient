@@ -2772,7 +2772,10 @@ static float AppendReplyQuoteToMeasure(ITextRender *pTextRender, CTextCursor &Cu
 
 	Cursor.m_FontSize = SavedFontSize;
 	Cursor.m_LongestLineWidth = SavedLongestLineWidth;
-	return maximum(0.0f, Cursor.m_Y - StartY + QuoteFontSize * 0.15f);
+	// Return the exact vertical advance of the quote block. The body text flows
+	// from this same advance, so the tee/name (placed using this height) stay
+	// vertically aligned with the body instead of sitting slightly lower.
+	return maximum(0.0f, Cursor.m_Y - StartY);
 }
 
 static void AppendReplyQuoteToContainer(ITextRender *pTextRender, STextContainerIndex &TextContainerIndex, CTextCursor &Cursor, bool HasReply, const char *pReplyToName, const char *pReplyPreview, float FontSize, const ColorRGBA &BodyColor, float QuoteTextStartOffset, float MaxWidth, float &QuoteRectX, float &QuoteRectY, float &QuoteRectW, float &QuoteRectH, bool &QuoteRectValid)
