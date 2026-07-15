@@ -4501,6 +4501,26 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	const bool ChatInputActive = m_Mode != MODE_NONE;
 	const bool ChatInteractionActive = ChatInputActive || m_Show;
 
+	// UClient: when a chat-owned modal popup (media context / save-as / reaction picker) is open,
+	// route input to the popup and consume mouse events so the chat behind it is not interacted
+	// with (reply buttons, player-name links, text selection, etc.). This must run before the
+	// reply/link handlers below, otherwise clicks "pass through" the popup to the chat behind.
+	const bool ChatModalPopupOpen = Ui()->IsPopupOpen(&m_MediaContextPopupId) || Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) ||
+		Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId) || Ui()->IsPopupOpen(&m_ReactionPickerPopupId);
+	if(ChatInteractionActive && ChatModalPopupOpen)
+	{
+		// Let the popup handle text input / active items first.
+		if(Ui()->OnInput(Event))
+			return true;
+		// Consume remaining mouse events so the chat behind the popup does not react. Popup
+		// buttons and click-outside-to-close are handled by RenderPopupMenus using the polled
+		// mouse state, so this does not break the popup itself. Keyboard events fall through so
+		// escape-to-close still works.
+		if(Event.m_Key == KEY_MOUSE_1 || Event.m_Key == KEY_MOUSE_2 || Event.m_Key == KEY_MOUSE_3 ||
+			Event.m_Key == KEY_MOUSE_WHEEL_UP || Event.m_Key == KEY_MOUSE_WHEEL_DOWN)
+			return true;
+	}
+
 	if(ChatInputActive && Input()->ModifierIsPressed())
 	{
 		const bool PasteKey = (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_V;
@@ -4607,20 +4627,6 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 
 	if(ChatInputActive && Ui()->IsPopupOpen(&m_GiphyPopupId) && Ui()->OnInput(Event))
 		return true;
-
-	const bool MediaSavePopupOpen = Ui()->IsPopupOpen(&m_MediaContextPopupId) || Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) || Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId) || Ui()->IsPopupOpen(&m_ReactionPickerPopupId);
-	if(ChatInputActive && MediaSavePopupOpen)
-	{
-		// Let the popup handle text input / active items first.
-		if(Ui()->OnInput(Event))
-			return true;
-		// Consume remaining mouse events so the chat behind the popup does not react.
-		// Popup buttons and click-outside-to-close are handled by RenderPopupMenus using
-		// the polled mouse state, so this does not break the popup itself.
-		if(Event.m_Key == KEY_MOUSE_1 || Event.m_Key == KEY_MOUSE_2 || Event.m_Key == KEY_MOUSE_3 ||
-			Event.m_Key == KEY_MOUSE_WHEEL_UP || Event.m_Key == KEY_MOUSE_WHEEL_DOWN)
-			return true;
-	}
 
 	if(ChatInputActive && Event.m_Key == KEY_MOUSE_1 && m_GiphyButtonRectValid)
 	{
@@ -6804,7 +6810,11 @@ void CChat::OnRender()
 	const vec2 UiMousePos = Ui()->UpdatedMousePos() * vec2(Ui()->Screen()->w, Ui()->Screen()->h) / WindowSize;
 	const vec2 UiToChatScale(Width / Ui()->Screen()->w, Height / Ui()->Screen()->h);
 	const vec2 MousePos = UiMousePos * UiToChatScale;
-	const bool MouseDown = Input()->KeyIsPressed(KEY_MOUSE_1);
+	// When a chat-owned modal popup is open, do not let the polled mouse state start a text
+	// selection / drag on the chat behind the popup.
+	const bool ChatModalPopupOpen = Ui()->IsPopupOpen(&m_MediaContextPopupId) || Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) ||
+		Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId) || Ui()->IsPopupOpen(&m_ReactionPickerPopupId);
+	const bool MouseDown = Input()->KeyIsPressed(KEY_MOUSE_1) && !ChatModalPopupOpen;
 	int HoveredTranslateLineIndex = -1;
 	m_HoveredPlayerName.clear();
 	m_HoveredLink.clear();
