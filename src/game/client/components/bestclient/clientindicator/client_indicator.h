@@ -68,6 +68,7 @@ private:
 	// Live cursor sharing: while +live_cursor is held, the local aim cursor world position is
 	// broadcast to UClient peers on the same server and rendered as their own gun-cursor sprite.
 	static void ConLiveCursor(IConsole::IResult *pResult, void *pUserData);
+	vec2 LocalCursorWorldPos() const;
 	void SendLiveCursor(bool Active, vec2 WorldPos);
 	void UpdateLiveCursorSend(bool UcPresence);
 	void ApplyUcCursorBroadcast(const UClientPresence::CCursorBroadcast &Cursor);

@@ -1168,8 +1168,7 @@ void CClientIndicator::UpdateLiveCursorSend(bool UcPresence)
 		const int64_t Interval = time_freq() / 25; // ~25Hz
 		if(m_LastLiveCursorSendTick == 0 || Now - m_LastLiveCursorSendTick >= Interval)
 		{
-			const vec2 WorldPos = GameClient()->m_Controls.m_aTargetPos[g_Config.m_ClDummy];
-			SendLiveCursor(true, WorldPos);
+			SendLiveCursor(true, LocalCursorWorldPos());
 			m_LastLiveCursorSendTick = Now;
 		}
 		m_LiveCursorWasActive = true;
@@ -1177,10 +1176,21 @@ void CClientIndicator::UpdateLiveCursorSend(bool UcPresence)
 	else if(m_LiveCursorWasActive)
 	{
 		// Transition to inactive: tell peers to hide the cursor immediately.
-		SendLiveCursor(false, GameClient()->m_Controls.m_aTargetPos[g_Config.m_ClDummy]);
+		SendLiveCursor(false, LocalCursorWorldPos());
 		m_LiveCursorWasActive = false;
 		m_LastLiveCursorSendTick = 0;
 	}
+}
+
+vec2 CClientIndicator::LocalCursorWorldPos() const
+{
+	// The crosshair is drawn by CHud::RenderCursor() in a zoom-1.0 screen mapping centered at
+	// the camera, so the world point the crosshair actually overlays at the current zoom is
+	// Center + (aim - Center) * zoom. We broadcast that absolute world point so every peer,
+	// regardless of their own zoom, renders the cursor at the same map location.
+	const vec2 Center = GameClient()->m_Camera.m_Center;
+	const vec2 Aim = GameClient()->m_Controls.m_aTargetPos[g_Config.m_ClDummy];
+	return Center + (Aim - Center) * GameClient()->m_Camera.m_Zoom;
 }
 
 void CClientIndicator::ApplyUcCursorBroadcast(const UClientPresence::CCursorBroadcast &Cursor)
