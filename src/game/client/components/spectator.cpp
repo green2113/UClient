@@ -7,6 +7,7 @@
 
 #include <engine/graphics.h>
 #include <engine/shared/config.h>
+#include <engine/storage.h>
 #include <engine/textrender.h>
 
 #include <generated/client_data.h>
@@ -23,6 +24,19 @@ namespace
 void RenderBestClientIcon(IGraphics *pGraphics, const CUIRect &Rect, bool Developer = false)
 {
 	pGraphics->TextureSet(g_pData->m_aImages[Developer ? IMAGE_BCDEVICON : IMAGE_BCICON].m_Id);
+	pGraphics->QuadsBegin();
+	pGraphics->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+	pGraphics->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
+	const IGraphics::CQuadItem Quad(Rect.x, Rect.y, Rect.w, Rect.h);
+	pGraphics->QuadsDrawTL(&Quad, 1);
+	pGraphics->QuadsEnd();
+}
+
+void RenderUcClientIcon(IGraphics *pGraphics, const IGraphics::CTextureHandle &Texture, const CUIRect &Rect)
+{
+	if(!Texture.IsValid())
+		return;
+	pGraphics->TextureSet(Texture);
 	pGraphics->QuadsBegin();
 	pGraphics->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
 	pGraphics->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
@@ -168,6 +182,11 @@ void CSpectator::OnConsoleInit()
 	Console()->Register("spectate_previous", "", CFGFLAG_CLIENT, ConSpectatePrevious, this, "Spectate the previous player");
 	Console()->Register("spectate_closest", "", CFGFLAG_CLIENT, ConSpectateClosest, this, "Spectate the closest player");
 	Console()->Register("spectate_multiview", "i[id]", CFGFLAG_CLIENT, ConMultiView, this, "Add/remove Client-IDs to spectate them exclusively (-1 to reset)");
+}
+
+void CSpectator::OnInit()
+{
+	m_UcLogoTexture = Graphics()->LoadTexture("uclient/logo/uclient.png", IStorage::TYPE_ALL);
 }
 
 bool CSpectator::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
@@ -534,29 +553,38 @@ void CSpectator::OnRender()
 			TeeAlpha = 1.0f;
 		}
 		CTextCursor NameCursor;
+		const CClientIndicator &Indicator = GameClient()->m_ClientIndicator;
+		const bool IsUcPlayer = pInfo->m_ClientId >= 0 && Indicator.IsPlayerUClient(pInfo->m_ClientId);
+		// Prefer the UClient logo for UClient users, otherwise fall back to the BestClient icon.
+		const bool ShowUcIndicator = g_Config.m_UcClientIndicatorInScoreboard && IsUcPlayer;
 		const bool ShowBestClientIndicator = g_Config.m_BcClientIndicatorInScoreboard &&
-						     pInfo->m_ClientId >= 0 &&
-						     GameClient()->m_ClientIndicator.IsPlayerBestClient(pInfo->m_ClientId);
-		const float BestClientIconSize = FontSize * (0.8f + 0.3f * g_Config.m_BcClientIndicatorInSoreboardSize / 100.0f);
-		const float BestClientIconSpacing = 4.0f;
-		const float BestClientIconReserve = ShowBestClientIndicator ? BestClientIconSize + BestClientIconSpacing : 0.0f;
-		const float NameX = Width / 2.0f + x + 50.0f + BestClientIconReserve;
+						     pInfo->m_ClientId >= 0 && !IsUcPlayer &&
+						     Indicator.IsPlayerBestClient(pInfo->m_ClientId);
+		const bool ShowIndicator = ShowUcIndicator || ShowBestClientIndicator;
+		const int IndicatorSizePercent = ShowUcIndicator ? g_Config.m_UcClientIndicatorInScoreboardSize : g_Config.m_BcClientIndicatorInSoreboardSize;
+		const float IndicatorIconSize = FontSize * (0.8f + 0.3f * IndicatorSizePercent / 100.0f);
+		const float IndicatorIconSpacing = 4.0f;
+		const float IndicatorIconReserve = ShowIndicator ? IndicatorIconSize + IndicatorIconSpacing : 0.0f;
+		const float NameX = Width / 2.0f + x + 50.0f + IndicatorIconReserve;
 		const float NameY = Height / 2.0f + y + BoxMove + (LineHeight - FontSize) / 2.f;
 		NameCursor.SetPosition(vec2(NameX, NameY));
 		NameCursor.m_FontSize = FontSize;
 		NameCursor.m_Flags |= TEXTFLAG_ELLIPSIS_AT_END;
-		NameCursor.m_LineWidth = 180.0f - BestClientIconReserve;
+		NameCursor.m_LineWidth = 180.0f - IndicatorIconReserve;
 		if(NameCursor.m_LineWidth < 0.0f)
 			NameCursor.m_LineWidth = 0.0f;
 
-		if(ShowBestClientIndicator)
+		if(ShowIndicator)
 		{
 			const CUIRect IconRect = {
-				NameX - BestClientIconReserve,
-				Height / 2.0f + y + BoxMove + (LineHeight - BestClientIconSize) / 2.0f,
-				BestClientIconSize,
-				BestClientIconSize};
-			RenderBestClientIcon(Graphics(), IconRect, GameClient()->m_ClientIndicator.IsPlayerDeveloper(pInfo->m_ClientId));
+				NameX - IndicatorIconReserve,
+				Height / 2.0f + y + BoxMove + (LineHeight - IndicatorIconSize) / 2.0f,
+				IndicatorIconSize,
+				IndicatorIconSize};
+			if(ShowUcIndicator)
+				RenderUcClientIcon(Graphics(), m_UcLogoTexture, IconRect);
+			else
+				RenderBestClientIcon(Graphics(), IconRect, Indicator.IsPlayerDeveloper(pInfo->m_ClientId));
 		}
 		if(g_Config.m_ClShowIds)
 		{

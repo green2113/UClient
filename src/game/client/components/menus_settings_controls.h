@@ -82,6 +82,50 @@ private:
 	float MeasureSettingsBindsHeight(EBindOptionGroup Group) const;
 	void RenderSettingsBinds(EBindOptionGroup Group, CUIRect View);
 
+	// UClient: visual (on-screen keyboard) bind editor
+	bool m_VisualBindMode = false;
+	int m_VisualModifierMask = 0; // KeyModifier combination bitmask, built from the modifier toggles
+	CButtonContainer m_ViewListButton;
+	CButtonContainer m_ViewKeyboardButton;
+	CButtonContainer m_VisualResetButton;
+	CButtonContainer m_aVisualModifierToggles[4]; // Ctrl / Alt / Shift / Gui
+	CButtonContainer m_aBindPresetButtons[3]; // preset (loadout) switcher
+
+	void SwitchBindPreset(int Index);
+	CButtonContainer m_aKeyCapButtons[256];
+	CButtonContainer m_aMouseButtons[8];
+
+	SPopupMenuId m_BindEditPopupId;
+	int m_BindEditKey = 0;
+	int m_BindEditModifier = 0;
+	CScrollRegion m_BindEditScrollRegion;
+	std::vector<CButtonContainer> m_vBindEditPresetButtons;
+	CLineInputBuffered<128> m_BindEditCustomInput;
+	CButtonContainer m_BindEditClearButton;
+	CButtonContainer m_BindEditSetButton;
+	CButtonContainer m_BindEditCloseButton;
+
+	// UClient: console-style command autocomplete for the custom command input
+	CUIRect m_BindEditInputRect;
+	std::vector<const char *> m_vBindEditSuggestions;
+	std::vector<CButtonContainer> m_vBindEditSuggestionButtons;
+	int m_BindEditSuggestionSel = -1;
+	int m_BindEditTokenStart = 0;
+	bool m_BindEditTokenHasArgs = false;
+	char m_aBindEditCompletionToken[128] = "";
+	char m_aBindEditLastApplied[128] = "";
+	void UpdateBindEditSuggestions();
+	void ApplyBindEditSuggestion(int Index, bool Accept);
+	void RenderBindEditSuggestions();
+
+	void RenderVisualBinds(CUIRect View);
+	void RenderKeyboardLayout(CUIRect View);
+	void RenderMouse(CUIRect Area);
+	void DoVisualKey(CUIRect Cell, int Key, const char *pLabel, CButtonContainer *pId, int Corners, float Rounding);
+	const char *BindDisplayName(const char *pCommand) const;
+	void SetEditedBind(const char *pCommand);
+	static CUi::EPopupMenuFunctionResult PopupBindEdit(void *pContext, CUIRect View, bool Active);
+
 	float MeasureSettingsMouseHeight() const;
 	CLineInputNumber m_IngameMouseSensInput;
 	CLineInputNumber m_UiMouseSensInput;

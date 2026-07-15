@@ -89,6 +89,7 @@ struct CClientVersionPacket
 void WriteU8(std::vector<uint8_t> &vOut, uint8_t Value);
 void WriteU16(std::vector<uint8_t> &vOut, uint16_t Value);
 void WriteS16(std::vector<uint8_t> &vOut, int16_t Value);
+void WriteI32(std::vector<uint8_t> &vOut, int32_t Value);
 void WriteU64(std::vector<uint8_t> &vOut, uint64_t Value);
 void WriteString(std::vector<uint8_t> &vOut, const char *pValue);
 void WriteRaw(std::vector<uint8_t> &vOut, const void *pData, int DataSize);
@@ -98,6 +99,7 @@ void WriteHeader(std::vector<uint8_t> &vOut, EPacketType Type);
 bool ReadU8(const uint8_t *pData, int DataSize, int &Offset, uint8_t &Out);
 bool ReadU16(const uint8_t *pData, int DataSize, int &Offset, uint16_t &Out);
 bool ReadS16(const uint8_t *pData, int DataSize, int &Offset, int16_t &Out);
+bool ReadI32(const uint8_t *pData, int DataSize, int &Offset, int32_t &Out);
 bool ReadU64(const uint8_t *pData, int DataSize, int &Offset, uint64_t &Out);
 bool ReadString(const uint8_t *pData, int DataSize, int &Offset, std::string &Out);
 bool ReadUuid(const uint8_t *pData, int DataSize, int &Offset, CUuid &Out);

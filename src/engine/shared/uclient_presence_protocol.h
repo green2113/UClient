@@ -28,6 +28,18 @@ enum EPacketType : uint8_t
 	PACKET_PEER_STATE = 5,
 	PACKET_PEER_REMOVE = 6,
 	PACKET_PEER_LIST = 7,
+	// Chat reactions (Discord-like emoji reactions on chat messages).
+	PACKET_REACTION = 8, // Client -> Server (proof protected)
+	PACKET_REACTION_BROADCAST = 9, // Server -> Client (relayed to peers on the same game server)
+	// Live cursor sharing (broadcast the local aim cursor while a key is held).
+	PACKET_CURSOR = 10, // Client -> Server (proof protected, no nonce replay tracking)
+	PACKET_CURSOR_BROADCAST = 11, // Server -> Client (relayed to peers on the same game server)
+};
+
+enum EReactionAction : uint8_t
+{
+	REACTION_REMOVE = 0,
+	REACTION_ADD = 1,
 };
 
 struct CClientPresencePacket
@@ -63,19 +75,46 @@ struct CPeerList
 	std::vector<CPeerListEntry> m_vPeers;
 };
 
+// Reaction as received by peers (server -> client broadcast).
+struct CReactionBroadcast
+{
+	std::string m_ServerAddress;
+	std::string m_ReactorName;
+	int m_ReactorClientId = -1;
+	int m_TargetClientId = -1; // client id of the message author
+	uint64_t m_MessageHash = 0; // hash of the reacted-to message text
+	std::string m_Emoji;
+	uint8_t m_Action = REACTION_ADD;
+};
+
+// Live cursor as received by peers (server -> client broadcast).
+struct CCursorBroadcast
+{
+	std::string m_ServerAddress;
+	std::string m_SenderName;
+	int m_SenderClientId = -1;
+	uint8_t m_Active = 1; // 1 = show cursor, 0 = hide (key released)
+	int32_t m_WorldX = 0; // world pixel coordinates of the aim cursor
+	int32_t m_WorldY = 0;
+};
+
 using BestClientIndicator::AppendProof;
 using BestClientIndicator::ComputeProof;
 using BestClientIndicator::ParseAddress;
+using BestClientIndicator::ReadI32;
 using BestClientIndicator::ReadS16;
 using BestClientIndicator::ReadString;
 using BestClientIndicator::ReadU16;
 using BestClientIndicator::ReadU64;
+using BestClientIndicator::ReadU8;
 using BestClientIndicator::ReadUuid;
 using BestClientIndicator::ValidateProof;
+using BestClientIndicator::WriteI32;
 using BestClientIndicator::WriteS16;
 using BestClientIndicator::WriteString;
 using BestClientIndicator::WriteU16;
 using BestClientIndicator::WriteU64;
+using BestClientIndicator::WriteU8;
 using BestClientIndicator::WriteUuid;
 
 void WriteHeader(std::vector<uint8_t> &vOut, EPacketType Type);
@@ -88,6 +127,25 @@ bool ReadPeerListPacket(const uint8_t *pData, int DataSize, CPeerList &Out);
 
 void WritePeerStatePacket(std::vector<uint8_t> &vOut, EPacketType Type, const char *pServerAddress, const char *pPlayerName, int ClientId);
 void WritePeerListPacket(std::vector<uint8_t> &vOut, const char *pServerAddress, const std::vector<CPeerListEntry> &vPeers);
+
+// Reaction packets. The client->server body (everything the proof covers) is written by
+// WriteReactionClientBody; the caller appends the proof afterwards. The server->client
+// broadcast is written by WriteReactionBroadcast and parsed with ReadReactionBroadcast.
+void WriteReactionClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pServerAddress, const char *pReactorName, int ReactorClientId, int TargetClientId, uint64_t MessageHash,
+	const char *pEmoji, uint8_t Action);
+void WriteReactionBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pReactorName, int ReactorClientId,
+	int TargetClientId, uint64_t MessageHash, const char *pEmoji, uint8_t Action);
+bool ReadReactionBroadcast(const uint8_t *pData, int DataSize, CReactionBroadcast &Out);
+
+// Live cursor packets. The client->server body (everything the proof covers) is written by
+// WriteCursorClientBody; the caller appends the proof afterwards. The server->client
+// broadcast is written by WriteCursorBroadcast and parsed with ReadCursorBroadcast.
+void WriteCursorClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pServerAddress, const char *pSenderName, int SenderClientId, uint8_t Active, int32_t WorldX, int32_t WorldY);
+void WriteCursorBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pSenderName, int SenderClientId,
+	uint8_t Active, int32_t WorldX, int32_t WorldY);
+bool ReadCursorBroadcast(const uint8_t *pData, int DataSize, CCursorBroadcast &Out);
 }
 
 #endif

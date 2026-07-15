@@ -456,6 +456,11 @@ CChat::CLine::CLine()
 	m_ReplyButtonAnchorY = 0.0f;
 	m_ReplyButtonAnchorValid = false;
 	m_MessageFullWidth = 0.0f;
+	m_vReactions.clear();
+	m_vReactionRects.clear();
+	m_ReactionRectsValid = false;
+	m_aReactionRowHeight[0] = 0.0f;
+	m_aReactionRowHeight[1] = 0.0f;
 }
 
 void CChat::CLine::Reset(CChat &This)
@@ -495,6 +500,11 @@ void CChat::CLine::Reset(CChat &This)
 	m_ReplyButtonAnchorY = 0.0f;
 	m_ReplyButtonAnchorValid = false;
 	m_MessageFullWidth = 0.0f;
+	m_vReactions.clear();
+	m_vReactionRects.clear();
+	m_ReactionRectsValid = false;
+	m_aReactionRowHeight[0] = 0.0f;
+	m_aReactionRowHeight[1] = 0.0f;
 }
 
 CChat::CChat()
@@ -4598,7 +4608,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	if(ChatInputActive && Ui()->IsPopupOpen(&m_GiphyPopupId) && Ui()->OnInput(Event))
 		return true;
 
-	const bool MediaSavePopupOpen = Ui()->IsPopupOpen(&m_MediaContextPopupId) || Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) || Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId);
+	const bool MediaSavePopupOpen = Ui()->IsPopupOpen(&m_MediaContextPopupId) || Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) || Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId) || Ui()->IsPopupOpen(&m_ReactionPickerPopupId);
 	if(ChatInputActive && MediaSavePopupOpen)
 	{
 		// Let the popup handle text input / active items first.
@@ -4817,6 +4827,58 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 				const vec2 UiPos = Ui()->UpdatedMousePos() * vec2(Ui()->Screen()->w, Ui()->Screen()->h) / WindowSize;
 				OpenMediaContextMenu(LineIndex, UiPos.x, UiPos.y);
 				return true;
+			}
+		}
+	}
+
+	// UClient: right-click a player message (not over a media preview) to open the reaction picker.
+	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_2 && !m_MediaViewerOpen && !m_pMediaSaveRequest)
+	{
+		const vec2 MousePos = ChatMousePos();
+		for(int i = m_BacklogCurLine; i < MAX_LINES; i++)
+		{
+			const int LineIndex = ((m_CurrentLine - i) + MAX_LINES) % MAX_LINES;
+			CLine &Line = m_aLines[LineIndex];
+			if(!Line.m_Initialized)
+				break;
+			if(!Line.m_LineRectValid || Line.m_ClientId < 0)
+				continue;
+			const SRenderRect &Rect = Line.m_LineRect;
+			if(MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
+				MousePos.y >= Rect.m_Y && MousePos.y <= Rect.m_Y + Rect.m_H)
+			{
+				const vec2 WindowSize(maximum(1.0f, (float)Graphics()->WindowWidth()), maximum(1.0f, (float)Graphics()->WindowHeight()));
+				const vec2 UiPos = Ui()->UpdatedMousePos() * vec2(Ui()->Screen()->w, Ui()->Screen()->h) / WindowSize;
+				OpenReactionPicker(LineIndex, UiPos.x, UiPos.y);
+				return true;
+			}
+		}
+	}
+
+	// UClient: left-click an existing reaction pill to toggle your own reaction.
+	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && !m_MediaViewerOpen)
+	{
+		const vec2 MousePos = ChatMousePos();
+		for(int i = m_BacklogCurLine; i < MAX_LINES; i++)
+		{
+			const int LineIndex = ((m_CurrentLine - i) + MAX_LINES) % MAX_LINES;
+			CLine &Line = m_aLines[LineIndex];
+			if(!Line.m_Initialized)
+				break;
+			if(!Line.m_ReactionRectsValid)
+				continue;
+			const size_t Count = minimum(Line.m_vReactionRects.size(), Line.m_vReactions.size());
+			for(size_t r = 0; r < Count; ++r)
+			{
+				const SRenderRect &Rect = Line.m_vReactionRects[r];
+				if(MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
+					MousePos.y >= Rect.m_Y && MousePos.y <= Rect.m_Y + Rect.m_H)
+				{
+					char aEmoji[16];
+					str_copy(aEmoji, Line.m_vReactions[r].m_aEmoji);
+					ToggleLocalReaction(LineIndex, aEmoji);
+					return true;
+				}
 			}
 		}
 	}
@@ -5291,7 +5353,8 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		}
 
 		if(!Ui()->IsPopupOpen(&m_GiphyPopupId) && !Ui()->IsPopupOpen(&m_TranslateSettingsPopupId) &&
-			!Ui()->IsPopupOpen(&m_MediaContextPopupId) && !Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) && !Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId))
+			!Ui()->IsPopupOpen(&m_MediaContextPopupId) && !Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) && !Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId) &&
+			!Ui()->IsPopupOpen(&m_ReactionPickerPopupId))
 			m_Input.ProcessInput(Event);
 	}
 
@@ -6466,6 +6529,10 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 				TotalHeight += FontSize * 0.4f + Line.m_aMediaPreviewHeight[OffsetType];
 			}
 
+			// UClient: reserve space for the emoji reaction row below the message/media.
+			Line.m_aReactionRowHeight[OffsetType] = LayoutReactionRow(Line, FontSize, LineWidth, 0.0f, 0.0f, nullptr);
+			TotalHeight += Line.m_aReactionRowHeight[OffsetType];
+
 			Line.m_aYOffset[OffsetType] = TotalHeight;
 		}
 
@@ -6768,6 +6835,7 @@ void CChat::OnRender()
 		Line.m_MediaRetryRectValid = false;
 		Line.m_LineRectValid = false;
 		Line.m_ReplyButtonRectValid = false;
+		Line.m_ReactionRectsValid = false;
 	}
 	m_TranslateButtonRectValid = false;
 	m_GiphyButtonRectValid = false;
@@ -6895,7 +6963,8 @@ void CChat::OnRender()
 		}
 
 			const bool PopupInputActive = Ui()->IsPopupOpen(&m_GiphyPopupId) || Ui()->IsPopupOpen(&m_TranslateSettingsPopupId) ||
-						      Ui()->IsPopupOpen(&m_MediaContextPopupId) || Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) || Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId);
+						      Ui()->IsPopupOpen(&m_MediaContextPopupId) || Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) || Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId) ||
+						      Ui()->IsPopupOpen(&m_ReactionPickerPopupId);
 			if(!PopupInputActive)
 				m_Input.Activate(EInputPriority::CHAT); // Ensure that the input is active
 			const CUIRect InputCursorRect = {InputCursor.m_X, InputCursor.m_Y - ScrollOffset, 0.0f, 0.0f};
@@ -7102,6 +7171,9 @@ void CChat::OnRender()
 		RealMsgPaddingY = 0;
 		RealMsgPaddingTee = 0;
 	}
+
+	// Same message content width as OnPrepareLines, used to lay out the reaction row.
+	const float ReactionAvailWidth = (IsScoreBoardOpen ? maximum(85.0f * LayoutScale, (FontSize() * 85.0f / 6.0f)) : ChatWidth()) - (RealMsgPaddingX * 1.5f) - RealMsgPaddingTee;
 
 	int TotalLines = 0;
 	for(int i = 0; i < MAX_LINES; i++)
@@ -7480,6 +7552,62 @@ void CChat::OnRender()
 					SelectionString.insert(0, PlainText.substr(OffUTF8Start, OffUTF8End - OffUTF8Start) + (HasNewLine ? "\n" : ""));
 				}
 			}
+
+				// UClient: draw emoji reaction pills below the message (and any media preview).
+				if(!Line.m_vReactions.empty())
+				{
+					TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+					const bool HasReactionMedia = ShouldDisplayMediaSlot(Line) && Line.m_aMediaPreviewWidth[OffsetType] > 0.0f && Line.m_aMediaPreviewHeight[OffsetType] > 0.0f;
+					float ReactionOriginY = Line.m_TextYOffset + TextOffsetY + Line.m_aTextHeight[OffsetType];
+					if(HasReactionMedia)
+						ReactionOriginY += FontSize() * 0.4f + Line.m_aMediaPreviewHeight[OffsetType];
+					const float ReactionOriginX = LineRenderX + RealMsgPaddingX / 2.0f + RealMsgPaddingTee;
+
+					Line.m_vReactionRects.clear();
+					LayoutReactionRow(Line, FontSize(), ReactionAvailWidth, ReactionOriginX, ReactionOriginY, &Line.m_vReactionRects);
+					Line.m_ReactionRectsValid = ChatInteractionActive;
+
+					const int LocalId = GameClient()->m_Snap.m_LocalClientId;
+					const float PillFont = FontSize() * 0.85f;
+					const float PadX = FontSize() * 0.34f;
+					const size_t ReactionCount = minimum(Line.m_vReactionRects.size(), Line.m_vReactions.size());
+					for(size_t r = 0; r < ReactionCount; ++r)
+					{
+						const CLine::SReaction &Reaction = Line.m_vReactions[r];
+						const SRenderRect &PillR = Line.m_vReactionRects[r];
+						bool Mine = false;
+						for(int Id : Reaction.m_vReactorClientIds)
+						{
+							if(Id == LocalId)
+							{
+								Mine = true;
+								break;
+							}
+						}
+						const bool HoveredPill = ChatInteractionActive &&
+							MousePos.x >= PillR.m_X && MousePos.x <= PillR.m_X + PillR.m_W &&
+							MousePos.y >= PillR.m_Y && MousePos.y <= PillR.m_Y + PillR.m_H;
+						ColorRGBA Fill;
+						if(Mine)
+							Fill = HoveredPill ? ColorRGBA(0.30f, 0.46f, 0.74f, 0.95f * Blend) : ColorRGBA(0.22f, 0.36f, 0.62f, 0.88f * Blend);
+						else
+							Fill = HoveredPill ? ColorRGBA(0.24f, 0.24f, 0.28f, 0.9f * Blend) : ColorRGBA(0.16f, 0.16f, 0.18f, 0.8f * Blend);
+
+						CUIRect PillRect(PillR.m_X, PillR.m_Y, PillR.m_W, PillR.m_H);
+						PillRect.Draw(Fill, IGraphics::CORNER_ALL, PillR.m_H * 0.35f);
+
+						char aReactionCount[12];
+						str_format(aReactionCount, sizeof(aReactionCount), "%d", (int)Reaction.m_vReactorClientIds.size());
+						CTextCursor PillCursor;
+						PillCursor.SetPosition(vec2(PillR.m_X + PadX, PillR.m_Y + (PillR.m_H - PillFont) / 2.0f));
+						PillCursor.m_FontSize = PillFont;
+						TextRender()->TextColor(1.0f, 1.0f, 1.0f, Blend);
+						TextRender()->TextEx(&PillCursor, Reaction.m_aEmoji);
+						PillCursor.m_X += FontSize() * 0.22f;
+						TextRender()->TextEx(&PillCursor, aReactionCount);
+						TextRender()->TextColor(TextRender()->DefaultTextColor());
+					}
+				}
 
 				const bool ShowMediaSlot = ShouldDisplayMediaSlot(Line);
 				const bool HideMediaPreview = ShouldHideMediaPreview(Line);
@@ -8583,6 +8711,267 @@ static void MediaSanitizeAssetName(const char *pIn, char *pOut, int OutSize)
 	int End = str_length(pOut);
 	while(End > 0 && pOut[End - 1] == ' ')
 		pOut[--End] = '\0';
+}
+
+// UClient: chat emoji reactions
+static const char *const gs_apReactionEmojis[] = {
+	"\xF0\x9F\x91\x8D", // thumbs up
+	"\xF0\x9F\x91\x8E", // thumbs down
+	"\xE2\x9D\xA4", // heart
+	"\xF0\x9F\x98\x82", // joy
+	"\xF0\x9F\x98\xAE", // open mouth
+	"\xF0\x9F\x98\xA2", // cry
+	"\xF0\x9F\x98\xA1", // angry
+	"\xF0\x9F\x8E\x89", // party
+	"\xF0\x9F\x94\xA5", // fire
+	"\xF0\x9F\x91\x80", // eyes
+	"\xF0\x9F\x99\x8F", // pray
+	"\xF0\x9F\x92\xAF", // 100
+	"\xF0\x9F\x98\xAD", // loud cry
+	"\xF0\x9F\x98\x8D", // heart eyes
+	"\xF0\x9F\xA4\x94", // thinking
+	"\xF0\x9F\x98\x85", // sweat smile
+	"\xF0\x9F\xA5\xB3", // partying face
+	"\xF0\x9F\x98\x8E", // sunglasses
+	"\xF0\x9F\x91\x8F", // clap
+	"\xF0\x9F\x99\x8C", // raised hands
+	"\xF0\x9F\x92\x80", // skull
+	"\xE2\x9C\x85", // check
+	"\xE2\x9D\x8C", // cross
+	"\xE2\xAD\x90", // star
+};
+static constexpr int gs_NumReactionEmojis = (int)(sizeof(gs_apReactionEmojis) / sizeof(gs_apReactionEmojis[0]));
+static constexpr int REACTION_PICKER_COLUMNS = 8;
+
+uint64_t CChat::ComputeMessageHash(const char *pText)
+{
+	// FNV-1a 64-bit over the raw server-delivered message text. Both the reactor and
+	// the message author compute this from the identical broadcast text, so the hash
+	// lets peers agree on which message a reaction targets.
+	uint64_t Hash = 1469598103934665603ull;
+	for(const unsigned char *p = (const unsigned char *)pText; *p != '\0'; ++p)
+	{
+		Hash ^= (uint64_t)*p;
+		Hash *= 1099511628211ull;
+	}
+	return Hash;
+}
+
+bool CChat::IsLocalClientId(int ClientId) const
+{
+	if(ClientId < 0)
+		return false;
+	for(int i = 0; i < NUM_DUMMIES; ++i)
+	{
+		if(GameClient()->m_aLocalIds[i] == ClientId)
+			return true;
+	}
+	return false;
+}
+
+int CChat::FindLineForReaction(int TargetClientId, uint64_t MessageHash) const
+{
+	for(int i = 0; i < MAX_LINES; ++i)
+	{
+		const int LineIndex = ((m_CurrentLine - i) + MAX_LINES) % MAX_LINES;
+		const CLine &Line = m_aLines[LineIndex];
+		if(!Line.m_Initialized || Line.m_ClientId != TargetClientId)
+			continue;
+		if(ComputeMessageHash(Line.m_aText) == MessageHash)
+			return LineIndex;
+	}
+	return -1;
+}
+
+void CChat::ApplyReactionToLineData(CLine &Line, const char *pEmoji, int ReactorClientId, bool Add)
+{
+	if(!pEmoji || pEmoji[0] == '\0')
+		return;
+
+	int Idx = -1;
+	for(size_t i = 0; i < Line.m_vReactions.size(); ++i)
+	{
+		if(str_comp(Line.m_vReactions[i].m_aEmoji, pEmoji) == 0)
+		{
+			Idx = (int)i;
+			break;
+		}
+	}
+
+	if(Add)
+	{
+		if(Idx < 0)
+		{
+			CLine::SReaction Reaction;
+			str_copy(Reaction.m_aEmoji, pEmoji);
+			Line.m_vReactions.push_back(Reaction);
+			Idx = (int)Line.m_vReactions.size() - 1;
+		}
+		auto &vIds = Line.m_vReactions[Idx].m_vReactorClientIds;
+		bool Found = false;
+		for(int Id : vIds)
+		{
+			if(Id == ReactorClientId)
+			{
+				Found = true;
+				break;
+			}
+		}
+		if(!Found)
+			vIds.push_back(ReactorClientId);
+	}
+	else if(Idx >= 0)
+	{
+		auto &vIds = Line.m_vReactions[Idx].m_vReactorClientIds;
+		for(size_t i = 0; i < vIds.size(); ++i)
+		{
+			if(vIds[i] == ReactorClientId)
+			{
+				vIds.erase(vIds.begin() + i);
+				break;
+			}
+		}
+		if(vIds.empty())
+			Line.m_vReactions.erase(Line.m_vReactions.begin() + Idx);
+	}
+
+	// Force the line height/layout to be recomputed so the reaction row is (un)reserved.
+	Line.m_aYOffset[0] = -1.0f;
+	Line.m_aYOffset[1] = -1.0f;
+}
+
+void CChat::ToggleLocalReaction(int LineIndex, const char *pEmoji)
+{
+	if(LineIndex < 0 || LineIndex >= MAX_LINES)
+		return;
+	CLine &Line = m_aLines[LineIndex];
+	if(!Line.m_Initialized || Line.m_ClientId < 0)
+		return;
+	const int LocalId = GameClient()->m_Snap.m_LocalClientId;
+	if(LocalId < 0)
+		return;
+
+	bool Mine = false;
+	for(const auto &Reaction : Line.m_vReactions)
+	{
+		if(str_comp(Reaction.m_aEmoji, pEmoji) != 0)
+			continue;
+		for(int Id : Reaction.m_vReactorClientIds)
+		{
+			if(Id == LocalId)
+			{
+				Mine = true;
+				break;
+			}
+		}
+		break;
+	}
+
+	const bool Add = !Mine;
+	ApplyReactionToLineData(Line, pEmoji, LocalId, Add);
+	GameClient()->m_ClientIndicator.SendChatReaction(Line.m_ClientId, ComputeMessageHash(Line.m_aText), pEmoji, Add);
+}
+
+float CChat::LayoutReactionRow(const CLine &Line, float FontSize, float AvailWidth, float OriginX, float OriginY, std::vector<SRenderRect> *pOutRects)
+{
+	if(pOutRects)
+		pOutRects->clear();
+	if(Line.m_vReactions.empty())
+		return 0.0f;
+
+	const float PillFont = FontSize * 0.85f;
+	const float PillH = FontSize * 1.15f;
+	const float PadX = FontSize * 0.34f;
+	const float Gap = FontSize * 0.28f; // horizontal gap between pills
+	const float RowGap = FontSize * 0.18f; // vertical gap between wrapped rows
+	const float TopGap = FontSize * 0.32f; // gap above the row
+	const float Space = FontSize * 0.22f; // emoji <-> count spacing
+	const float Avail = maximum(PillH, AvailWidth);
+
+	float x = 0.0f;
+	int Row = 0;
+	for(const CLine::SReaction &Reaction : Line.m_vReactions)
+	{
+		char aCount[12];
+		str_format(aCount, sizeof(aCount), "%d", (int)Reaction.m_vReactorClientIds.size());
+		const float EmojiW = TextRender()->TextWidth(PillFont, Reaction.m_aEmoji);
+		const float CountW = TextRender()->TextWidth(PillFont, aCount);
+		const float PillW = PadX + EmojiW + Space + CountW + PadX;
+		if(x > 0.0f && x + PillW > Avail)
+		{
+			x = 0.0f;
+			Row++;
+		}
+		if(pOutRects)
+		{
+			SRenderRect Rect;
+			Rect.m_X = OriginX + x;
+			Rect.m_Y = OriginY + TopGap + Row * (PillH + RowGap);
+			Rect.m_W = PillW;
+			Rect.m_H = PillH;
+			pOutRects->push_back(Rect);
+		}
+		x += PillW + Gap;
+	}
+	const int Rows = Row + 1;
+	return TopGap + Rows * PillH + (Rows - 1) * RowGap;
+}
+
+void CChat::OnChatReactionReceived(int TargetClientId, uint64_t MessageHash, const char *pEmoji, int ReactorClientId, const char *pReactorName, bool Add)
+{
+	(void)pReactorName;
+	// The server excludes the sender's own session, but our dummy is a separate session
+	// on the same socket and would echo our reaction back to us. Ignore anything from a
+	// local client id since we already applied it optimistically.
+	if(IsLocalClientId(ReactorClientId))
+		return;
+	const int LineIndex = FindLineForReaction(TargetClientId, MessageHash);
+	if(LineIndex < 0)
+		return;
+	ApplyReactionToLineData(m_aLines[LineIndex], pEmoji, ReactorClientId, Add);
+}
+
+void CChat::OpenReactionPicker(int LineIndex, float X, float Y)
+{
+	if(LineIndex < 0 || LineIndex >= MAX_LINES)
+		return;
+	CLine &Line = m_aLines[LineIndex];
+	if(!Line.m_Initialized || Line.m_ClientId < 0)
+		return;
+
+	m_ReactionPickerLineIndex = LineIndex;
+	const int Rows = (gs_NumReactionEmojis + REACTION_PICKER_COLUMNS - 1) / REACTION_PICKER_COLUMNS;
+	const float Cell = 20.0f;
+	const float PopupW = REACTION_PICKER_COLUMNS * Cell + 10.0f;
+	const float PopupH = Rows * Cell + 10.0f;
+	Ui()->DoPopupMenu(&m_ReactionPickerPopupId, X, Y, PopupW, PopupH, this, PopupReactionPicker, {}, CUi::EButtonSoundType::DEFAULT);
+}
+
+CUi::EPopupMenuFunctionResult CChat::PopupReactionPicker(void *pContext, CUIRect View, bool Active)
+{
+	CChat *pChat = static_cast<CChat *>(pContext);
+	(void)Active;
+	CMenus &Menus = pChat->GameClient()->m_Menus;
+	const float Cell = 20.0f;
+	pChat->m_vReactionPickerButtons.resize(gs_NumReactionEmojis);
+
+	int i = 0;
+	while(i < gs_NumReactionEmojis)
+	{
+		CUIRect Row;
+		View.HSplitTop(Cell, &Row, &View);
+		for(int c = 0; c < REACTION_PICKER_COLUMNS && i < gs_NumReactionEmojis; ++c, ++i)
+		{
+			CUIRect CellRect;
+			Row.VSplitLeft(Cell, &CellRect, &Row);
+			if(Menus.DoButton_Menu(&pChat->m_vReactionPickerButtons[i], gs_apReactionEmojis[i], 0, &CellRect))
+			{
+				pChat->ToggleLocalReaction(pChat->m_ReactionPickerLineIndex, gs_apReactionEmojis[i]);
+				return CUi::POPUP_CLOSE_CURRENT;
+			}
+		}
+	}
+	return CUi::POPUP_KEEP_OPEN;
 }
 
 void CChat::OpenMediaContextMenu(int LineIndex, float X, float Y)

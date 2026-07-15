@@ -8,8 +8,11 @@
 #include "presence_cache.h"
 
 #include <base/net.h>
+#include <base/vmath.h>
 
 #include <engine/client/enums.h>
+#include <engine/console.h>
+#include <engine/shared/protocol.h>
 
 #include <game/client/component.h>
 
@@ -26,6 +29,8 @@ namespace UClientPresence
 {
 struct CPeerState;
 struct CPeerList;
+struct CReactionBroadcast;
+struct CCursorBroadcast;
 }
 
 class CClientIndicator : public CComponent
@@ -34,9 +39,11 @@ public:
 	CClientIndicator();
 	int Sizeof() const override { return sizeof(*this); }
 	void OnInit() override;
+	void OnConsoleInit() override;
 	void OnMapLoad() override;
 	void OnReset() override;
 	void OnUpdate() override;
+	void OnRender() override;
 	void OnStateChange(int NewState, int OldState) override;
 	void OnShutdown() override;
 
@@ -53,7 +60,33 @@ public:
 	void RefreshUcPresenceList(bool Force);
 	void ReapplyBrowserSnapshot();
 
+	// Chat reactions: send a reaction add/remove for a message authored by TargetClientId,
+	// identified across clients by MessageHash. Relayed via the UClient presence UDP server.
+	void SendChatReaction(int TargetClientId, uint64_t MessageHash, const char *pEmoji, bool Add);
+
 private:
+	// Live cursor sharing: while +live_cursor is held, the local aim cursor world position is
+	// broadcast to UClient peers on the same server and rendered as their own gun-cursor sprite.
+	static void ConLiveCursor(IConsole::IResult *pResult, void *pUserData);
+	void SendLiveCursor(bool Active, vec2 WorldPos);
+	void UpdateLiveCursorSend(bool UcPresence);
+	void ApplyUcCursorBroadcast(const UClientPresence::CCursorBroadcast &Cursor);
+	void PruneStaleRemoteCursors();
+
+	bool m_LiveCursorActive = false;
+	bool m_LiveCursorWasActive = false;
+	int64_t m_LastLiveCursorSendTick = 0;
+
+	struct SRemoteCursor
+	{
+		vec2 m_TargetPos = vec2(0.0f, 0.0f);
+		vec2 m_RenderPos = vec2(0.0f, 0.0f);
+		bool m_HasRenderPos = false;
+		char m_aName[MAX_NAME_LENGTH] = "";
+		int64_t m_LastUpdateTick = 0;
+	};
+	std::unordered_map<int, SRemoteCursor> m_RemoteCursors;
+
 	NETSOCKET m_Socket = nullptr;
 	NETADDR m_ServerAddr{};
 	bool m_HasServerAddr = false;
@@ -120,6 +153,7 @@ private:
 	void ApplyUcPeerState(const UClientPresence::CPeerState &State);
 	void ApplyUcPeerRemove(const UClientPresence::CPeerState &State);
 	void ApplyUcPeerList(const UClientPresence::CPeerList &PeerList);
+	void ApplyUcReactionBroadcast(const UClientPresence::CReactionBroadcast &Reaction);
 	void ClearUcPeersForServer(const char *pNormalizedServer);
 	bool UcPeerAppliesToCurrentServer(const char *pServerAddress) const;
 	void PruneStaleUcPeers();

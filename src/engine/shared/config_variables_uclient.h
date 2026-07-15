@@ -27,6 +27,7 @@ MACRO_CONFIG_INT(UcClientIndicatorInScoreboardSize, uc_client_indicator_in_score
 MACRO_CONFIG_INT(UcChatPlayerSearchEngine, uc_chat_player_search_engine, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Search engine used when clicking player names in chat (0=DDNet, 1=DDStats)")
 MACRO_CONFIG_COL(UcChatReplyQuoteColor, uc_chat_reply_quote_color, 65471, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Reply quote name color")
 MACRO_CONFIG_INT(UcShareAgreed, uc_share_agreed, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Remember that the user agreed to upload shared assets/skins to media.under1111.com")
+MACRO_CONFIG_INT(UcBindPresetActive, uc_bind_preset_active, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Currently active bind preset slot (0-2)")
 #if defined(CONF_DEBUG) || defined(CONF_UCLIENT_DEV_BUILD)
 MACRO_CONFIG_INT(UcVoiceTeam, uc_voice_team, -1, -1, 63, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Voice target team override (-1=off, 0..63=force that team, dev only)")
 MACRO_CONFIG_INT(UcVoiceId, uc_voice_id, -1, -1, 63, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Voice client id override (-1=off, dev only)")

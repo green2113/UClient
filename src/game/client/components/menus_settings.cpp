@@ -1260,7 +1260,14 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareSkin(void *pContext, CUIRect Vie
 	{
 		const bool HasSkins = !pThis->m_vShareSkinNames.empty();
 		if(pThis->DoButton_Menu(&pThis->m_ShareSkinSelectButton, "", 0, &SkinDropSmall) && HasSkins)
-			pThis->Ui()->DoPopupMenu(&pThis->m_ShareSkinListPopupId, SkinDropSmall.x, SkinDropSmall.y + SkinDropSmall.h, 220.0f, 240.0f, pThis, PopupShareSkinList);
+		{
+			// Match the look of the player-selection dropdown: light border and a
+			// light, mostly-transparent background instead of the default dark box.
+			SPopupMenuProperties Props;
+			Props.m_BorderColor = ColorRGBA(0.7f, 0.7f, 0.7f, 0.9f);
+			Props.m_BackgroundColor = ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f);
+			pThis->Ui()->DoPopupMenu(&pThis->m_ShareSkinListPopupId, SkinDropSmall.x, SkinDropSmall.y + SkinDropSmall.h, 220.0f, 240.0f, pThis, PopupShareSkinList, Props);
+		}
 
 		CUIRect SkinLabelRect, ArrowRect;
 		SkinDropSmall.VSplitRight(12.0f, &SkinLabelRect, &ArrowRect);
@@ -1386,10 +1393,12 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareSkinList(void *pContext, CUIRect
 
 		const void *pItemId = pThis->GameClient()->m_Skins.FindContainerOrNullptr(SkinName.c_str());
 		const bool IsCurrent = str_comp(SkinName.c_str(), pThis->m_aShareSkinName) == 0;
-		if(IsCurrent)
-			ItemRow.Draw(ColorRGBA(0.4f, 0.6f, 1.0f, 0.25f), IGraphics::CORNER_ALL, 3.0f);
-		else if(pItemId != nullptr && pThis->Ui()->HotItem() == pItemId)
-			ItemRow.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.1f), IGraphics::CORNER_ALL, 3.0f);
+		const bool IsHot = pItemId != nullptr && pThis->Ui()->HotItem() == pItemId;
+		// Same highlight style as the player-selection dropdown entries (white, ~0.5 alpha on hover).
+		if(IsHot)
+			ItemRow.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.5f), IGraphics::CORNER_ALL, 3.0f);
+		else if(IsCurrent)
+			ItemRow.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.25f), IGraphics::CORNER_ALL, 3.0f);
 
 		if(pItemId != nullptr && pThis->Ui()->DoButtonLogic(pItemId, 0, &ItemRow, BUTTONFLAG_LEFT))
 		{

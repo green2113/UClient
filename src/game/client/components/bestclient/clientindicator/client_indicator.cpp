@@ -18,6 +18,8 @@
 #include <game/client/gameclient.h>
 #include <game/version.h>
 
+#include <generated/client_data.h>
+
 #include <algorithm>
 #include <cstdarg>
 
@@ -247,6 +249,17 @@ void CClientIndicator::OnInit()
 	DebugLogF("init server=%s token_url=%s browser_url=%s", g_Config.m_BcClientIndicatorServerAddress, g_Config.m_BcClientIndicatorTokenUrl, g_Config.m_BcClientIndicatorBrowserUrl);
 }
 
+void CClientIndicator::OnConsoleInit()
+{
+	Console()->Register("+live_cursor", "", CFGFLAG_CLIENT, ConLiveCursor, this, "Share your aim cursor with UClient players on the same server while held");
+}
+
+void CClientIndicator::ConLiveCursor(IConsole::IResult *pResult, void *pUserData)
+{
+	CClientIndicator *pSelf = static_cast<CClientIndicator *>(pUserData);
+	pSelf->m_LiveCursorActive = pResult->GetInteger(0) != 0;
+}
+
 void CClientIndicator::OnReset()
 {
 	if(!GameClient())
@@ -254,6 +267,9 @@ void CClientIndicator::OnReset()
 		ResetPresenceState();
 		return;
 	}
+
+	m_RemoteCursors.clear();
+	m_LiveCursorWasActive = false;
 
 	const int ClientState = Client()->State();
 	const bool MapReload = ClientState == IClient::STATE_ONLINE || ClientState == IClient::STATE_LOADING;
@@ -1070,6 +1086,216 @@ void CClientIndicator::SendUcPresenceUdpPacket(int ClientId, int PacketType, con
 		UcPacketTypeName(PacketType), ClientId, PlayerNameForClient(ClientId), pServerAddress, aServerAddr, (int)vPacket.size(), Sent);
 }
 
+void CClientIndicator::SendChatReaction(int TargetClientId, uint64_t MessageHash, const char *pEmoji, bool Add)
+{
+	if(!IsUcPresenceUdpEnabled() || !m_Socket || !m_HasUcServerAddr)
+		return;
+	if(!pEmoji || pEmoji[0] == '\0')
+		return;
+
+	const int ReactorClientId = GameClient()->m_Snap.m_LocalClientId;
+	if(ReactorClientId < 0 || ReactorClientId >= MAX_CLIENTS)
+		return;
+
+	const char *pServerAddress = EffectivePresenceServerAddress();
+	if(pServerAddress[0] == '\0')
+		return;
+
+	std::vector<uint8_t> vPacket;
+	vPacket.reserve(128);
+	UClientPresence::WriteReactionClientBody(vPacket,
+		g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
+		pServerAddress, PlayerNameForClient(ReactorClientId), ReactorClientId, TargetClientId, MessageHash, pEmoji,
+		Add ? (uint8_t)UClientPresence::REACTION_ADD : (uint8_t)UClientPresence::REACTION_REMOVE);
+	UClientPresence::AppendProof(vPacket, g_Config.m_UcPresenceUdpSharedToken);
+
+	net_udp_send(m_Socket, &m_UcServerAddr, vPacket.data(), (int)vPacket.size());
+}
+
+void CClientIndicator::ApplyUcReactionBroadcast(const UClientPresence::CReactionBroadcast &Reaction)
+{
+	char aNormalizedServer[NETADDR_MAXSTRSIZE];
+	if(!NormalizePresenceServerAddress(Reaction.m_ServerAddress.c_str(), aNormalizedServer, sizeof(aNormalizedServer)))
+		return;
+	if(!UcPeerAppliesToCurrentServer(aNormalizedServer))
+		return;
+
+	GameClient()->m_Chat.OnChatReactionReceived(Reaction.m_TargetClientId, Reaction.m_MessageHash,
+		Reaction.m_Emoji.c_str(), Reaction.m_ReactorClientId, Reaction.m_ReactorName.c_str(),
+		Reaction.m_Action != UClientPresence::REACTION_REMOVE);
+}
+
+void CClientIndicator::SendLiveCursor(bool Active, vec2 WorldPos)
+{
+	if(!IsUcPresenceUdpEnabled() || !m_Socket || !m_HasUcServerAddr)
+		return;
+
+	const int SenderClientId = GameClient()->m_Snap.m_LocalClientId;
+	if(SenderClientId < 0 || SenderClientId >= MAX_CLIENTS)
+		return;
+
+	const char *pServerAddress = EffectivePresenceServerAddress();
+	if(pServerAddress[0] == '\0')
+		return;
+
+	std::vector<uint8_t> vPacket;
+	vPacket.reserve(96);
+	UClientPresence::WriteCursorClientBody(vPacket,
+		g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
+		pServerAddress, PlayerNameForClient(SenderClientId), SenderClientId,
+		Active ? (uint8_t)1 : (uint8_t)0, (int32_t)WorldPos.x, (int32_t)WorldPos.y);
+	UClientPresence::AppendProof(vPacket, g_Config.m_UcPresenceUdpSharedToken);
+
+	net_udp_send(m_Socket, &m_UcServerAddr, vPacket.data(), (int)vPacket.size());
+}
+
+void CClientIndicator::UpdateLiveCursorSend(bool UcPresence)
+{
+	if(!UcPresence || !IsUcPresenceUdpEnabled())
+	{
+		// Make sure a lingering "active" state doesn't leak once presence turns off.
+		m_LiveCursorWasActive = false;
+		return;
+	}
+
+	// Only meaningful while actually in a game with a local character to aim.
+	const bool HasLocalAim = Client()->State() == IClient::STATE_ONLINE && GameClient()->m_Snap.m_pLocalCharacter != nullptr;
+	const bool Active = m_LiveCursorActive && HasLocalAim;
+
+	if(Active)
+	{
+		const int64_t Now = time_get();
+		const int64_t Interval = time_freq() / 25; // ~25Hz
+		if(m_LastLiveCursorSendTick == 0 || Now - m_LastLiveCursorSendTick >= Interval)
+		{
+			const vec2 WorldPos = GameClient()->m_Controls.m_aTargetPos[g_Config.m_ClDummy];
+			SendLiveCursor(true, WorldPos);
+			m_LastLiveCursorSendTick = Now;
+		}
+		m_LiveCursorWasActive = true;
+	}
+	else if(m_LiveCursorWasActive)
+	{
+		// Transition to inactive: tell peers to hide the cursor immediately.
+		SendLiveCursor(false, GameClient()->m_Controls.m_aTargetPos[g_Config.m_ClDummy]);
+		m_LiveCursorWasActive = false;
+		m_LastLiveCursorSendTick = 0;
+	}
+}
+
+void CClientIndicator::ApplyUcCursorBroadcast(const UClientPresence::CCursorBroadcast &Cursor)
+{
+	char aNormalizedServer[NETADDR_MAXSTRSIZE];
+	if(!NormalizePresenceServerAddress(Cursor.m_ServerAddress.c_str(), aNormalizedServer, sizeof(aNormalizedServer)))
+		return;
+	if(!UcPeerAppliesToCurrentServer(aNormalizedServer))
+		return;
+
+	const int SenderClientId = Cursor.m_SenderClientId;
+	if(SenderClientId < 0 || SenderClientId >= MAX_CLIENTS)
+		return;
+
+	// Ignore echoes of our own cursor (main or dummy client id).
+	for(const int LocalId : GameClient()->m_aLocalIds)
+	{
+		if(LocalId == SenderClientId)
+			return;
+	}
+
+	if(Cursor.m_Active == 0)
+	{
+		m_RemoteCursors.erase(SenderClientId);
+		return;
+	}
+
+	SRemoteCursor &Entry = m_RemoteCursors[SenderClientId];
+	Entry.m_TargetPos = vec2((float)Cursor.m_WorldX, (float)Cursor.m_WorldY);
+	if(!Entry.m_HasRenderPos)
+	{
+		Entry.m_RenderPos = Entry.m_TargetPos;
+		Entry.m_HasRenderPos = true;
+	}
+	str_copy(Entry.m_aName, Cursor.m_SenderName.c_str(), sizeof(Entry.m_aName));
+	Entry.m_LastUpdateTick = time_get();
+}
+
+void CClientIndicator::PruneStaleRemoteCursors()
+{
+	if(m_RemoteCursors.empty())
+		return;
+	const int64_t Now = time_get();
+	const int64_t MaxAge = (time_freq() * 7) / 10; // ~0.7s
+	for(auto It = m_RemoteCursors.begin(); It != m_RemoteCursors.end();)
+	{
+		if(Now - It->second.m_LastUpdateTick > MaxAge)
+			It = m_RemoteCursors.erase(It);
+		else
+			++It;
+	}
+}
+
+void CClientIndicator::OnRender()
+{
+	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
+		return;
+
+	PruneStaleRemoteCursors();
+	if(m_RemoteCursors.empty())
+		return;
+
+	// Map the screen to the game world at the current camera/zoom so world-absolute cursor
+	// positions land at the correct spot on the shared map.
+	float ScreenX0, ScreenY0, ScreenX1, ScreenY1;
+	Graphics()->GetScreen(&ScreenX0, &ScreenY0, &ScreenX1, &ScreenY1);
+
+	const vec2 Center = GameClient()->m_Camera.m_Center;
+	float aPoints[4];
+	Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->ScreenAspect(), GameClient()->m_Camera.m_Zoom, aPoints);
+	Graphics()->MapScreen(aPoints[0], aPoints[1], aPoints[2], aPoints[3]);
+
+	const float Scale = maximum(1, g_Config.m_TcCursorScale) / 100.0f;
+	float ScaleX = 1.0f, ScaleY = 1.0f;
+	Graphics()->GetSpriteScale(g_pData->m_Weapons.m_aId[WEAPON_GUN].m_pSpriteCursor, ScaleX, ScaleY);
+	const float SizeX = 64.0f * ScaleX * Scale;
+	const float SizeY = 64.0f * ScaleY * Scale;
+
+	const float Blend = std::clamp(Client()->RenderFrameTime() * 15.0f, 0.0f, 1.0f);
+	const float NameFontSize = 20.0f;
+
+	for(auto &Entry : m_RemoteCursors)
+	{
+		SRemoteCursor &Cursor = Entry.second;
+		if(!Cursor.m_HasRenderPos)
+		{
+			Cursor.m_RenderPos = Cursor.m_TargetPos;
+			Cursor.m_HasRenderPos = true;
+		}
+		Cursor.m_RenderPos += (Cursor.m_TargetPos - Cursor.m_RenderPos) * Blend;
+		const vec2 Pos = Cursor.m_RenderPos;
+
+		Graphics()->TextureSet(GameClient()->m_GameSkin.m_aSpriteWeaponCursors[WEAPON_GUN]);
+		Graphics()->QuadsBegin();
+		Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+		IGraphics::CQuadItem QuadItem(Pos.x, Pos.y, SizeX, SizeY);
+		Graphics()->QuadsDraw(&QuadItem, 1);
+		Graphics()->QuadsEnd();
+
+		if(Cursor.m_aName[0] != '\0')
+		{
+			const float TextWidth = TextRender()->TextWidth(NameFontSize, Cursor.m_aName);
+			const float TextX = Pos.x + SizeX * 0.35f;
+			const float TextY = Pos.y - SizeY * 0.5f - NameFontSize;
+			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+			TextRender()->TextOutlineColor(0.0f, 0.0f, 0.0f, 0.6f);
+			TextRender()->Text(TextX, TextY, NameFontSize, Cursor.m_aName, TextWidth + 8.0f);
+			TextRender()->TextColor(TextRender()->DefaultTextColor());
+			TextRender()->TextOutlineColor(TextRender()->DefaultTextOutlineColor());
+		}
+	}
+
+	Graphics()->MapScreen(ScreenX0, ScreenY0, ScreenX1, ScreenY1);
+}
+
 void CClientIndicator::PresenceHttpPlayerId(char *pBuffer, int BufferSize) const
 {
 	if(!pBuffer || BufferSize <= 0)
@@ -1518,7 +1744,21 @@ void CClientIndicator::ProcessUcPresencePacket(const unsigned char *pData, int D
 
 	UClientPresence::CPeerList PeerList;
 	if(UClientPresence::ReadPeerListPacket(pData, DataSize, PeerList))
+	{
 		ApplyUcPeerList(PeerList);
+		return;
+	}
+
+	UClientPresence::CReactionBroadcast Reaction;
+	if(UClientPresence::ReadReactionBroadcast(pData, DataSize, Reaction))
+	{
+		ApplyUcReactionBroadcast(Reaction);
+		return;
+	}
+
+	UClientPresence::CCursorBroadcast Cursor;
+	if(UClientPresence::ReadCursorBroadcast(pData, DataSize, Cursor))
+		ApplyUcCursorBroadcast(Cursor);
 }
 
 void CClientIndicator::ProcessIncomingPackets(bool Force)
@@ -1807,6 +2047,8 @@ void CClientIndicator::UpdatePresence()
 
 	if(UcPresence)
 		PruneStaleUcPeers();
+
+	UpdateLiveCursorSend(UcPresence);
 
 	if(m_UcPresenceMapReloadPending && UcPresence)
 	{

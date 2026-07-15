@@ -49,6 +49,13 @@ void WriteS16(std::vector<uint8_t> &vOut, int16_t Value)
 	WriteU16(vOut, (uint16_t)Value);
 }
 
+void WriteI32(std::vector<uint8_t> &vOut, int32_t Value)
+{
+	const uint32_t Unsigned = (uint32_t)Value;
+	for(int Shift = 24; Shift >= 0; Shift -= 8)
+		vOut.push_back((uint8_t)((Unsigned >> Shift) & 0xff));
+}
+
 void WriteU64(std::vector<uint8_t> &vOut, uint64_t Value)
 {
 	for(int Shift = 56; Shift >= 0; Shift -= 8)
@@ -109,6 +116,18 @@ bool ReadS16(const uint8_t *pData, int DataSize, int &Offset, int16_t &Out)
 	if(!ReadU16(pData, DataSize, Offset, Value))
 		return false;
 	Out = (int16_t)Value;
+	return true;
+}
+
+bool ReadI32(const uint8_t *pData, int DataSize, int &Offset, int32_t &Out)
+{
+	if(Offset + 4 > DataSize)
+		return false;
+	uint32_t Value = 0;
+	for(int i = 0; i < 4; ++i)
+		Value = (Value << 8) | (uint32_t)pData[Offset + i];
+	Offset += 4;
+	Out = (int32_t)Value;
 	return true;
 }
 

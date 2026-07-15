@@ -86,6 +86,13 @@ public:
 	void OnConsoleInit() override;
 	bool OnInput(const IInput::CEvent &Event) override;
 
+	// UClient: bind presets (loadouts). Each preset stores the full set of binds
+	// in its own config file so the user can switch between them freely.
+	static constexpr int NUM_PRESETS = 3;
+	void SaveToPreset(int Index);
+	bool LoadFromPreset(int Index); // returns false if the preset file does not exist yet
+	bool PresetExists(int Index) const;
+
 	// DDRace
 
 	void SetDDRaceBinds(bool FreeOnly);

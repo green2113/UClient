@@ -104,6 +104,112 @@ void WritePeerListPacket(std::vector<uint8_t> &vOut, const char *pServerAddress,
 	}
 }
 
+void WriteReactionClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pServerAddress, const char *pReactorName, int ReactorClientId, int TargetClientId, uint64_t MessageHash,
+	const char *pEmoji, uint8_t Action)
+{
+	WriteHeader(vOut, PACKET_REACTION);
+	WriteString(vOut, pPlayerId);
+	WriteUuid(vOut, SessionId);
+	WriteUuid(vOut, Nonce);
+	WriteU64(vOut, Timestamp);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pReactorName);
+	WriteS16(vOut, (int16_t)ReactorClientId);
+	WriteS16(vOut, (int16_t)TargetClientId);
+	WriteU64(vOut, MessageHash);
+	WriteString(vOut, pEmoji);
+	WriteU8(vOut, Action);
+}
+
+void WriteReactionBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pReactorName, int ReactorClientId,
+	int TargetClientId, uint64_t MessageHash, const char *pEmoji, uint8_t Action)
+{
+	vOut.clear();
+	WriteHeader(vOut, PACKET_REACTION_BROADCAST);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pReactorName);
+	WriteS16(vOut, (int16_t)ReactorClientId);
+	WriteS16(vOut, (int16_t)TargetClientId);
+	WriteU64(vOut, MessageHash);
+	WriteString(vOut, pEmoji);
+	WriteU8(vOut, Action);
+}
+
+bool ReadReactionBroadcast(const uint8_t *pData, int DataSize, CReactionBroadcast &Out)
+{
+	int Offset = 0;
+	EPacketType Type;
+	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != PACKET_REACTION_BROADCAST)
+		return false;
+
+	int16_t ReactorClientId = -1;
+	int16_t TargetClientId = -1;
+	if(!ReadString(pData, DataSize, Offset, Out.m_ServerAddress) ||
+		!ReadString(pData, DataSize, Offset, Out.m_ReactorName) ||
+		!ReadS16(pData, DataSize, Offset, ReactorClientId) ||
+		!ReadS16(pData, DataSize, Offset, TargetClientId) ||
+		!ReadU64(pData, DataSize, Offset, Out.m_MessageHash) ||
+		!ReadString(pData, DataSize, Offset, Out.m_Emoji) ||
+		!ReadU8(pData, DataSize, Offset, Out.m_Action))
+	{
+		return false;
+	}
+	Out.m_ReactorClientId = ReactorClientId;
+	Out.m_TargetClientId = TargetClientId;
+	return Offset == DataSize;
+}
+
+void WriteCursorClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pServerAddress, const char *pSenderName, int SenderClientId, uint8_t Active, int32_t WorldX, int32_t WorldY)
+{
+	WriteHeader(vOut, PACKET_CURSOR);
+	WriteString(vOut, pPlayerId);
+	WriteUuid(vOut, SessionId);
+	WriteUuid(vOut, Nonce);
+	WriteU64(vOut, Timestamp);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pSenderName);
+	WriteS16(vOut, (int16_t)SenderClientId);
+	WriteU8(vOut, Active);
+	WriteI32(vOut, WorldX);
+	WriteI32(vOut, WorldY);
+}
+
+void WriteCursorBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pSenderName, int SenderClientId,
+	uint8_t Active, int32_t WorldX, int32_t WorldY)
+{
+	vOut.clear();
+	WriteHeader(vOut, PACKET_CURSOR_BROADCAST);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pSenderName);
+	WriteS16(vOut, (int16_t)SenderClientId);
+	WriteU8(vOut, Active);
+	WriteI32(vOut, WorldX);
+	WriteI32(vOut, WorldY);
+}
+
+bool ReadCursorBroadcast(const uint8_t *pData, int DataSize, CCursorBroadcast &Out)
+{
+	int Offset = 0;
+	EPacketType Type;
+	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != PACKET_CURSOR_BROADCAST)
+		return false;
+
+	int16_t SenderClientId = -1;
+	if(!ReadString(pData, DataSize, Offset, Out.m_ServerAddress) ||
+		!ReadString(pData, DataSize, Offset, Out.m_SenderName) ||
+		!ReadS16(pData, DataSize, Offset, SenderClientId) ||
+		!ReadU8(pData, DataSize, Offset, Out.m_Active) ||
+		!ReadI32(pData, DataSize, Offset, Out.m_WorldX) ||
+		!ReadI32(pData, DataSize, Offset, Out.m_WorldY))
+	{
+		return false;
+	}
+	Out.m_SenderClientId = SenderClientId;
+	return Offset == DataSize;
+}
+
 bool ReadClientPresencePacket(const uint8_t *pData, int DataSize, CClientPresencePacket &Out)
 {
 	int Offset = 0;

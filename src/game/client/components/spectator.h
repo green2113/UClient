@@ -5,6 +5,7 @@
 #include <base/vmath.h>
 
 #include <engine/console.h>
+#include <engine/graphics.h>
 
 #include <game/client/component.h>
 #include <game/client/ui.h>
@@ -27,6 +28,8 @@ class CSpectator : public CComponent
 
 	float m_MultiViewActivateDelay;
 
+	IGraphics::CTextureHandle m_UcLogoTexture;
+
 	bool CanChangeSpectatorId();
 	void SpectateNext(bool Reverse);
 
@@ -42,6 +45,7 @@ public:
 	int Sizeof() const override { return sizeof(*this); }
 
 	void OnConsoleInit() override;
+	void OnInit() override;
 	bool OnCursorMove(float x, float y, IInput::ECursorType CursorType) override;
 	bool OnInput(const IInput::CEvent &Event) override;
 	void OnRender() override;

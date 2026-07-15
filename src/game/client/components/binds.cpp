@@ -8,6 +8,7 @@
 #include <engine/config.h>
 #include <engine/console.h>
 #include <engine/shared/config.h>
+#include <engine/storage.h>
 
 #include <game/client/components/chat.h>
 #include <game/client/components/console.h>
@@ -525,6 +526,67 @@ void CBinds::ConfigSaveCallback(IConfigManager *pConfigManager, void *pUserData)
 			free(pBuf);
 		}
 	}
+}
+
+// UClient: bind presets (loadouts)
+
+static void PresetFilename(int Index, char *pBuf, size_t Size)
+{
+	str_format(pBuf, Size, "bindpreset%d.cfg", Index);
+}
+
+bool CBinds::PresetExists(int Index) const
+{
+	if(Index < 0 || Index >= NUM_PRESETS)
+		return false;
+	char aFilename[IO_MAX_PATH_LENGTH];
+	PresetFilename(Index, aFilename, sizeof(aFilename));
+	IOHANDLE File = Storage()->OpenFile(aFilename, IOFLAG_READ, IStorage::TYPE_SAVE);
+	if(!File)
+		return false;
+	io_close(File);
+	return true;
+}
+
+void CBinds::SaveToPreset(int Index)
+{
+	if(Index < 0 || Index >= NUM_PRESETS)
+		return;
+
+	char aFilename[IO_MAX_PATH_LENGTH];
+	PresetFilename(Index, aFilename, sizeof(aFilename));
+	IOHANDLE File = Storage()->OpenFile(aFilename, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+	if(!File)
+	{
+		log_error("binds", "failed to open '%s' for writing", aFilename);
+		return;
+	}
+
+	static const char s_aClear[] = "unbindall\n";
+	io_write(File, s_aClear, sizeof(s_aClear) - 1);
+	for(int Modifier = KeyModifier::NONE; Modifier < KeyModifier::COMBINATION_COUNT; Modifier++)
+	{
+		for(int Key = KEY_FIRST; Key < KEY_LAST; Key++)
+		{
+			if(!m_aapKeyBindings[Modifier][Key])
+				continue;
+			char *pBuf = GetKeyBindCommand(Modifier, Key);
+			io_write(File, pBuf, str_length(pBuf));
+			io_write_newline(File);
+			free(pBuf);
+		}
+	}
+	io_close(File);
+}
+
+bool CBinds::LoadFromPreset(int Index)
+{
+	if(!PresetExists(Index))
+		return false;
+	char aFilename[IO_MAX_PATH_LENGTH];
+	PresetFilename(Index, aFilename, sizeof(aFilename));
+	// The preset file starts with "unbindall" and then a "bind ..." line per key.
+	return Console()->ExecuteFile(aFilename, IConsole::CLIENT_ID_NO_GAME, false, IStorage::TYPE_SAVE);
 }
 
 // DDRace

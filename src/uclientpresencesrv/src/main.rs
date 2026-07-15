@@ -43,6 +43,10 @@ const PACKET_SWITCH: u8 = 4;
 const PACKET_PEER_STATE: u8 = 5;
 const PACKET_PEER_REMOVE: u8 = 6;
 const PACKET_PEER_LIST: u8 = 7;
+const PACKET_REACTION: u8 = 8;
+const PACKET_REACTION_BROADCAST: u8 = 9;
+const PACKET_CURSOR: u8 = 10;
+const PACKET_CURSOR_BROADCAST: u8 = 11;
 
 #[derive(Clone)]
 struct Config {
@@ -700,6 +704,78 @@ fn handle_udp_packet(
         state.log_invalid(ip, now, "bad header");
         return outcome;
     };
+
+    // Chat reactions are relayed to every UC peer on the same game server.
+    if packet_type == PACKET_REACTION {
+        let Some(reaction) = read_reaction_packet(data) else {
+            state.log_invalid(ip, now, "bad reaction payload");
+            return outcome;
+        };
+        if !validate_proof(shared_token, data) {
+            state.log_invalid(ip, now, "invalid reaction proof");
+            return outcome;
+        }
+        if !state.remember_nonce(reaction.session_id, reaction.nonce, now) {
+            state.log_invalid(ip, now, "reaction nonce replay");
+            return outcome;
+        }
+        let sender_key = SessionKey {
+            player_id: reaction.player_id.clone(),
+            session_id: format!(
+                "{}:{}",
+                format_uuid(reaction.session_id),
+                reaction.reactor_client_id
+            ),
+        };
+        let packet = encode_reaction_broadcast(
+            &reaction.server_address,
+            &reaction.reactor_name,
+            reaction.reactor_client_id,
+            reaction.target_client_id,
+            reaction.message_hash,
+            &reaction.emoji,
+            reaction.action,
+        );
+        for peer in state.peers_on_server(&reaction.server_address, Some(&sender_key)) {
+            outcome.outbound.push((peer.return_addr, packet.clone()));
+        }
+        return outcome;
+    }
+
+    // Live cursor sharing is relayed to every UC peer on the same game server. This runs at
+    // ~25Hz per active sender, so we intentionally skip the nonce replay check (the cache would
+    // thrash and replaying a stale cursor position is harmless). Only the proof is validated.
+    if packet_type == PACKET_CURSOR {
+        let Some(cursor) = read_cursor_packet(data) else {
+            state.log_invalid(ip, now, "bad cursor payload");
+            return outcome;
+        };
+        if !validate_proof(shared_token, data) {
+            state.log_invalid(ip, now, "invalid cursor proof");
+            return outcome;
+        }
+        let sender_key = SessionKey {
+            player_id: cursor.player_id.clone(),
+            session_id: format!(
+                "{}:{}",
+                format_uuid(cursor.session_id),
+                cursor.sender_client_id
+            ),
+        };
+        let packet = encode_cursor_broadcast(
+            &cursor.server_address,
+            &cursor.sender_name,
+            cursor.sender_client_id,
+            cursor.active,
+            cursor.world_x,
+            cursor.world_y,
+        );
+        for peer in state.peers_on_server(&cursor.server_address, Some(&sender_key)) {
+            outcome.outbound.push((peer.return_addr, packet.clone()));
+        }
+        return outcome;
+    }
+
     if !matches!(
         packet_type,
         PACKET_JOIN | PACKET_HEARTBEAT | PACKET_LEAVE | PACKET_SWITCH
@@ -931,6 +1007,46 @@ fn encode_peer_remove(server_address: &str, player_name: &str, client_id: i16) -
     out
 }
 
+fn encode_reaction_broadcast(
+    server_address: &str,
+    reactor_name: &str,
+    reactor_client_id: i16,
+    target_client_id: i16,
+    message_hash: u64,
+    emoji: &str,
+    action: u8,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_header(&mut out, PACKET_REACTION_BROADCAST);
+    write_string(&mut out, server_address);
+    write_string(&mut out, reactor_name);
+    out.extend_from_slice(&reactor_client_id.to_be_bytes());
+    out.extend_from_slice(&target_client_id.to_be_bytes());
+    out.extend_from_slice(&message_hash.to_be_bytes());
+    write_string(&mut out, emoji);
+    out.push(action);
+    out
+}
+
+fn encode_cursor_broadcast(
+    server_address: &str,
+    sender_name: &str,
+    sender_client_id: i16,
+    active: u8,
+    world_x: i32,
+    world_y: i32,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_header(&mut out, PACKET_CURSOR_BROADCAST);
+    write_string(&mut out, server_address);
+    write_string(&mut out, sender_name);
+    out.extend_from_slice(&sender_client_id.to_be_bytes());
+    out.push(active);
+    out.extend_from_slice(&world_x.to_be_bytes());
+    out.extend_from_slice(&world_y.to_be_bytes());
+    out
+}
+
 fn encode_peer_list(server_address: &str, peers: &[(i16, String)]) -> Vec<u8> {
     let mut out = Vec::new();
     write_header(&mut out, PACKET_PEER_LIST);
@@ -1048,6 +1164,103 @@ fn read_presence_packet(data: &[u8]) -> Option<PresencePacket> {
     })
 }
 
+struct ReactionPacket {
+    player_id: String,
+    session_id: [u8; 16],
+    nonce: [u8; 16],
+    server_address: String,
+    reactor_name: String,
+    reactor_client_id: i16,
+    target_client_id: i16,
+    message_hash: u64,
+    emoji: String,
+    action: u8,
+}
+
+fn read_reaction_packet(data: &[u8]) -> Option<ReactionPacket> {
+    if packet_type(data)? != PACKET_REACTION {
+        return None;
+    }
+    if data.len() < PROOF_SIZE {
+        return None;
+    }
+    let payload_len = data.len().checked_sub(PROOF_SIZE)?;
+    let mut reader = Reader::new(&data[..payload_len]);
+    reader.skip(6)?;
+    let player_id = reader.string()?;
+    let session_id = reader.uuid()?;
+    let nonce = reader.uuid()?;
+    let _timestamp = reader.u64()?;
+    let server_address = reader.string()?;
+    let reactor_name = reader.string()?;
+    let reactor_client_id = reader.i16()?;
+    let target_client_id = reader.i16()?;
+    let message_hash = reader.u64()?;
+    let emoji = reader.string()?;
+    let action = reader.u8()?;
+    if reader.remaining() != 0 {
+        return None;
+    }
+    Some(ReactionPacket {
+        player_id,
+        session_id,
+        nonce,
+        server_address,
+        reactor_name,
+        reactor_client_id,
+        target_client_id,
+        message_hash,
+        emoji,
+        action,
+    })
+}
+
+struct CursorPacket {
+    player_id: String,
+    session_id: [u8; 16],
+    server_address: String,
+    sender_name: String,
+    sender_client_id: i16,
+    active: u8,
+    world_x: i32,
+    world_y: i32,
+}
+
+fn read_cursor_packet(data: &[u8]) -> Option<CursorPacket> {
+    if packet_type(data)? != PACKET_CURSOR {
+        return None;
+    }
+    if data.len() < PROOF_SIZE {
+        return None;
+    }
+    let payload_len = data.len().checked_sub(PROOF_SIZE)?;
+    let mut reader = Reader::new(&data[..payload_len]);
+    reader.skip(6)?;
+    let player_id = reader.string()?;
+    let session_id = reader.uuid()?;
+    let _nonce = reader.uuid()?;
+    let _timestamp = reader.u64()?;
+    let server_address = reader.string()?;
+    let sender_name = reader.string()?;
+    let sender_client_id = reader.i16()?;
+    let active = reader.u8()?;
+    let world_x = reader.i32()?;
+    let world_y = reader.i32()?;
+    if reader.remaining() != 0 {
+        return None;
+    }
+    Some(CursorPacket {
+        player_id,
+        session_id,
+        server_address,
+        sender_name,
+        sender_client_id,
+        active,
+        world_x,
+        world_y,
+    })
+}
+
 struct Reader<'a> {
     data: &'a [u8],
     offset: usize,
@@ -1077,12 +1290,20 @@ impl<'a> Reader<'a> {
         self.bytes(16)?.try_into().ok()
     }
 
+    fn u8(&mut self) -> Option<u8> {
+        Some(self.bytes(1)?[0])
+    }
+
     fn u16(&mut self) -> Option<u16> {
         Some(u16::from_be_bytes(self.bytes(2)?.try_into().ok()?))
     }
 
     fn i16(&mut self) -> Option<i16> {
         Some(i16::from_be_bytes(self.bytes(2)?.try_into().ok()?))
+    }
+
+    fn i32(&mut self) -> Option<i32> {
+        Some(i32::from_be_bytes(self.bytes(4)?.try_into().ok()?))
     }
 
     fn u64(&mut self) -> Option<u64> {

@@ -174,6 +174,17 @@ class CChat : public CComponent
 		float m_ReplyButtonAnchorY;
 		bool m_ReplyButtonAnchorValid;
 		float m_MessageFullWidth;
+
+		// UClient: chat emoji reactions (Discord-like), relayed over the presence UDP server.
+		struct SReaction
+		{
+			char m_aEmoji[16] = "";
+			std::vector<int> m_vReactorClientIds; // game-server client ids of everyone who reacted
+		};
+		std::vector<SReaction> m_vReactions;
+		std::vector<SRenderRect> m_vReactionRects; // one per reaction, screen-space, for click hit testing
+		bool m_ReactionRectsValid;
+		float m_aReactionRowHeight[2];
 	};
 
 	bool m_PrevScoreBoardShowed;
@@ -541,6 +552,21 @@ class CChat : public CComponent
 	static CUi::EPopupMenuFunctionResult PopupMediaSaveAsset(void *pContext, CUIRect View, bool Active);
 	static CUi::EPopupMenuFunctionResult PopupMediaSaveSkin(void *pContext, CUIRect View, bool Active);
 
+	// UClient: chat emoji reactions
+	SPopupMenuId m_ReactionPickerPopupId;
+	int m_ReactionPickerLineIndex = -1;
+	std::vector<CButtonContainer> m_vReactionPickerButtons;
+	static uint64_t ComputeMessageHash(const char *pText);
+	int FindLineForReaction(int TargetClientId, uint64_t MessageHash) const;
+	bool IsLocalClientId(int ClientId) const;
+	void ApplyReactionToLineData(CLine &Line, const char *pEmoji, int ReactorClientId, bool Add);
+	void ToggleLocalReaction(int LineIndex, const char *pEmoji);
+	// Lays out the reaction pill row. Returns the total height it occupies (0 if none).
+	// When pOutRects is set, fills it with absolute pill rects anchored at (OriginX, OriginY).
+	float LayoutReactionRow(const CLine &Line, float FontSize, float AvailWidth, float OriginX, float OriginY, std::vector<SRenderRect> *pOutRects);
+	void OpenReactionPicker(int LineIndex, float X, float Y);
+	static CUi::EPopupMenuFunctionResult PopupReactionPicker(void *pContext, CUIRect View, bool Active);
+
 	friend class CBindChat;
 	friend class CTranslate;
 	friend class CBestClient;
@@ -573,6 +599,9 @@ public:
 	bool OnInput(const IInput::CEvent &Event) override;
 	bool OnCursorMove(float x, float y, IInput::ECursorType CursorType) override;
 	void OnInit() override;
+
+	// Called by the client indicator when a reaction broadcast arrives over UDP.
+	void OnChatReactionReceived(int TargetClientId, uint64_t MessageHash, const char *pEmoji, int ReactorClientId, const char *pReactorName, bool Add);
 
 	void RebuildChat();
 	void ClearLines();
