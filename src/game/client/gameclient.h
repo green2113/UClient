@@ -293,6 +293,8 @@ private:
 	void UpdatePositions();
 	void UpdateAutoTeamLock();
 	void UpdateAutoLoginJapan();
+	void TryAutoLoginJapanConn(int Conn);
+	void SendAutoLoginMessage(int Conn, const char *pLogin);
 	void UpdateAutoLoginKog();
 	void OptimizerUpdateProcessPriorities();
 	void RenderOptimizerFpsFogRect();
@@ -1066,8 +1068,10 @@ private:
 	int m_aAutoTeamLockLastTeam[NUM_DUMMIES];
 	int64_t m_aAutoTeamLockDeadlineTick[NUM_DUMMIES];
 	bool m_aAutoTeamLockPending[NUM_DUMMIES];
-	char m_aAutoLoginJapanSentServer[NETADDR_MAXSTRSIZE] = "";
-	int64_t m_AutoLoginJapanDeadlineTick = 0;
+	// Auto-login is tracked per connection (main + dummy) so that creating a dummy on the
+	// Japan server also runs the login command with the same code.
+	char m_aaAutoLoginJapanSentServer[NUM_DUMMIES][NETADDR_MAXSTRSIZE] = {{'\0'}, {'\0'}};
+	int64_t m_aAutoLoginJapanDeadlineTick[NUM_DUMMIES] = {0, 0};
 	char m_aAutoLoginKogSentServer[NETADDR_MAXSTRSIZE] = "";
 	int64_t m_AutoLoginKogDeadlineTick = 0;
 	CCharOrder m_CharOrder;

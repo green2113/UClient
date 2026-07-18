@@ -1158,8 +1158,10 @@ void CClientIndicator::UpdateLiveCursorSend(bool UcPresence)
 		return;
 	}
 
-	// Only meaningful while actually in a game with a local character to aim.
-	const bool HasLocalAim = Client()->State() == IClient::STATE_ONLINE && GameClient()->m_Snap.m_pLocalCharacter != nullptr;
+	// Meaningful while in a game with a local character to aim, OR while spectating/free-viewing
+	// (m_aTargetPos still tracks the spectator cursor in that case).
+	const bool HasLocalAim = Client()->State() == IClient::STATE_ONLINE &&
+		(GameClient()->m_Snap.m_pLocalCharacter != nullptr || GameClient()->m_Snap.m_SpecInfo.m_Active);
 	const bool Active = m_LiveCursorActive && HasLocalAim;
 
 	if(Active)
@@ -1244,11 +1246,57 @@ void CClientIndicator::PruneStaleRemoteCursors()
 	}
 }
 
+void CClientIndicator::RenderLiveCursorSharingIndicator()
+{
+	// Only while we are actively broadcasting our cursor.
+	if(!m_LiveCursorWasActive)
+		return;
+
+	float ScreenX0, ScreenY0, ScreenX1, ScreenY1;
+	Graphics()->GetScreen(&ScreenX0, &ScreenY0, &ScreenX1, &ScreenY1);
+
+	const CUIRect Screen = *Ui()->Screen();
+	Graphics()->MapScreen(Screen.x, Screen.y, Screen.w, Screen.h);
+
+	const char *pText = "Sharing cursor";
+	const float FontSize = 8.0f;
+	const float PadX = 6.0f;
+	const float PadY = 3.0f;
+	const float DotR = 2.0f;
+	const float DotGap = 5.0f;
+	const float TextW = TextRender()->TextWidth(FontSize, pText);
+	const float PillW = PadX * 2.0f + DotR * 2.0f + DotGap + TextW;
+	const float PillH = FontSize + PadY * 2.0f;
+
+	// Bottom-center so it never overlaps the race timer / music player at the top-center.
+	CUIRect Pill;
+	Pill.w = PillW;
+	Pill.h = PillH;
+	Pill.x = (Screen.w - PillW) / 2.0f;
+	Pill.y = Screen.h - PillH - 8.0f;
+	Pill.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.45f), IGraphics::CORNER_ALL, PillH * 0.4f);
+
+	CUIRect Dot;
+	Dot.w = DotR * 2.0f;
+	Dot.h = DotR * 2.0f;
+	Dot.x = Pill.x + PadX;
+	Dot.y = Pill.y + (PillH - DotR * 2.0f) / 2.0f;
+	Dot.Draw(ColorRGBA(0.3f, 1.0f, 0.45f, 1.0f), IGraphics::CORNER_ALL, DotR);
+
+	TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.9f);
+	TextRender()->Text(Pill.x + PadX + DotR * 2.0f + DotGap, Pill.y + PadY, FontSize, pText, -1.0f);
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+
+	Graphics()->MapScreen(ScreenX0, ScreenY0, ScreenX1, ScreenY1);
+}
+
 void CClientIndicator::OnRender()
 {
 	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
 		return;
 
+	// Note: the "Sharing cursor" pill is drawn from CHud (after the timer/music player) so it is
+	// never hidden behind them. Here we only render the remote peers' world cursors.
 	PruneStaleRemoteCursors();
 	if(m_RemoteCursors.empty())
 		return;

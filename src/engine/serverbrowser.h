@@ -132,6 +132,7 @@ public:
 	bool m_HasBestClientPlayers;
 	int m_NumBestClientDeveloperPlayers;
 	bool m_HasBestClientDeveloperPlayers;
+	int m_NumUcClientPlayers;
 	bool m_HasUcClientPlayers;
 
 	static int EstimateLatency(int Loc1, int Loc2);
@@ -300,6 +301,7 @@ public:
 			SORT_NUMPLAYERS,
 			SORT_NUMFRIENDS,
 			SORT_NUMBESTCLIENT,
+			SORT_NUMUCLIENT,
 		};
 
 	enum

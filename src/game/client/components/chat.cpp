@@ -62,6 +62,11 @@ static constexpr int64_t CHAT_MEDIA_TEXTURE_UPLOAD_BUDGET_US = 2500; // keep fra
 static constexpr int64_t CHAT_MEDIA_MAX_RESPONSE_SIZE = 64 * 1024 * 1024;
 static constexpr int CHAT_MEDIA_MAX_GIF_FRAMES = 360;
 static constexpr int CHAT_MEDIA_MAX_DIMENSION = 960;
+// The fullscreen viewer decodes the original bytes at a much higher cap so screenshots and other
+// high-resolution images look sharp instead of the upscaled inline preview.
+static constexpr int CHAT_MEDIA_VIEWER_MAX_DIMENSION = 4096;
+// Only retain original bytes for static images up to this size to bound memory usage.
+static constexpr int64_t CHAT_MEDIA_ORIGINAL_RETAIN_MAX_BYTES = 24 * 1024 * 1024;
 static constexpr int CHAT_MEDIA_DOUBLE_CLICK_MS = 300;
 static constexpr int CHAT_MEDIA_MAX_RESOLVE_DEPTH = 2;
 static constexpr int CHAT_MEDIA_MAX_VIDEO_ANIMATION_MS = 15000;
@@ -557,6 +562,8 @@ CChat::CChat()
 	m_MediaViewerDragStartMouse = vec2(0.0f, 0.0f);
 	m_MediaViewerPanStart = vec2(0.0f, 0.0f);
 	m_MediaViewerLastClickTime = 0;
+	m_MediaViewerFullTexture = IGraphics::CTextureHandle();
+	m_MediaViewerFullTextureLine = -1;
 	m_aPreviousDisplayedInputText[0] = '\0';
 	m_ChatOpenAnimationStart = 0;
 	m_vTypingGlyphAnims.clear();
@@ -726,6 +733,7 @@ void CChat::Reset()
 		m_LinkPreflight.m_pRequest->Abort();
 	m_LinkPreflight = {};
 	m_LinkPolicyCache.m_pRequest.reset();
+	FreeMediaViewerFullTexture();
 	m_MediaViewerOpen = false;
 	m_MediaViewerLineIndex = -1;
 	m_MediaViewerZoom = 1.0f;
@@ -3048,6 +3056,10 @@ void CChat::ResetLineMedia(CLine &Line)
 	Line.m_vMediaFrameEndMs.clear();
 	Line.m_MediaTotalDurationMs = 0;
 	MediaDecoder::UnloadFrames(Graphics(), Line.m_vMediaFrames);
+	Line.m_vMediaOriginalData.clear();
+	Line.m_vMediaOriginalData.shrink_to_fit();
+	if(m_MediaViewerFullTextureLine == (int)(&Line - m_aLines))
+		FreeMediaViewerFullTexture();
 	Line.m_MediaState = EMediaState::NONE;
 	Line.m_MediaKind = EMediaKind::UNKNOWN;
 	Line.m_aMediaUrl[0] = '\0';
@@ -3551,6 +3563,15 @@ void CChat::UpdateMediaDownloads()
 							StartedDecode = StartMediaDecode(Line, MediaKind, pResult, ResultSize);
 							if(!StartedDecode)
 								pFailureReason = "decode job failed";
+							// Retain the original encoded bytes for static images so the fullscreen
+							// viewer can decode them at full resolution on demand. Bounded by size.
+							if(StartedDecode && MediaKind == EMediaKind::PHOTO && (int64_t)ResultSize <= CHAT_MEDIA_ORIGINAL_RETAIN_MAX_BYTES)
+								Line.m_vMediaOriginalData.assign(pResult, pResult + ResultSize);
+							else
+							{
+								Line.m_vMediaOriginalData.clear();
+								Line.m_vMediaOriginalData.shrink_to_fit();
+							}
 						}
 					}
 				}
@@ -3762,6 +3783,7 @@ bool CChat::ValidateMediaViewerLine() const
 
 void CChat::CloseMediaViewer()
 {
+	FreeMediaViewerFullTexture();
 	m_MediaViewerOpen = false;
 	m_MediaViewerLineIndex = -1;
 	m_MediaViewerZoom = 1.0f;
@@ -3785,6 +3807,54 @@ void CChat::OpenMediaViewer(int LineIndex)
 	m_MediaViewerPan = vec2(0.0f, 0.0f);
 	m_MediaViewerDragging = false;
 	m_MediaViewerLastClickTime = 0;
+	LoadMediaViewerFullTexture(Line);
+}
+
+void CChat::FreeMediaViewerFullTexture()
+{
+	if(m_MediaViewerFullTexture.IsValid())
+		Graphics()->UnloadTexture(&m_MediaViewerFullTexture);
+	m_MediaViewerFullTexture = IGraphics::CTextureHandle();
+	m_MediaViewerFullTextureLine = -1;
+}
+
+void CChat::LoadMediaViewerFullTexture(CLine &Line)
+{
+	FreeMediaViewerFullTexture();
+
+	// Only static images (photos) keep their original bytes; animated/video use the preview frames.
+	if(Line.m_MediaKind != EMediaKind::PHOTO || Line.m_MediaAnimated || Line.m_vMediaOriginalData.empty())
+		return;
+
+	// If the inline preview was not downscaled there is nothing higher-resolution to show.
+	if(Line.m_MediaWidth > 0 && Line.m_MediaHeight > 0 &&
+		Line.m_MediaWidth <= CHAT_MEDIA_MAX_DIMENSION && Line.m_MediaHeight <= CHAT_MEDIA_MAX_DIMENSION)
+		return;
+
+	SMediaDecodedFrames FullFrames;
+	if(MediaDecoder::DecodeStaticImageCpu(Graphics(), Line.m_vMediaOriginalData.data(), Line.m_vMediaOriginalData.size(),
+		   Line.m_aMediaUrl, FullFrames, CHAT_MEDIA_VIEWER_MAX_DIMENSION) &&
+		!FullFrames.m_vFrames.empty())
+	{
+		IGraphics::CTextureHandle Texture = Graphics()->LoadTextureRawMove(FullFrames.m_vFrames.front().m_Image, 0, Line.m_aMediaUrl);
+		if(Texture.IsValid())
+		{
+			m_MediaViewerFullTexture = Texture;
+			m_MediaViewerFullTextureLine = (int)(&Line - m_aLines);
+		}
+	}
+	FullFrames.Free();
+}
+
+bool CChat::GetMediaViewerTexture(CLine &Line, IGraphics::CTextureHandle &Texture) const
+{
+	// Prefer the full-resolution texture decoded on demand for the current viewer line.
+	if(m_MediaViewerFullTexture.IsValid() && m_MediaViewerFullTextureLine == (int)(&Line - m_aLines))
+	{
+		Texture = m_MediaViewerFullTexture;
+		return true;
+	}
+	return GetCurrentFrameTexture(Line, Texture);
 }
 
 bool CChat::GetCurrentFrameTexture(CLine &Line, IGraphics::CTextureHandle &Texture) const
@@ -7761,7 +7831,7 @@ void CChat::OnRender()
 		float ViewerY = 0.0f;
 		float ViewerW = 0.0f;
 		float ViewerH = 0.0f;
-		if(GetCurrentFrameTexture(ViewerLine, MediaTexture) && GetMediaViewerRect(ViewerLine, Width, Height, ViewerX, ViewerY, ViewerW, ViewerH))
+		if(GetMediaViewerTexture(ViewerLine, MediaTexture) && GetMediaViewerRect(ViewerLine, Width, Height, ViewerX, ViewerY, ViewerW, ViewerH))
 		{
 			Graphics()->TextureClear();
 			Graphics()->QuadsBegin();

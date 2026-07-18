@@ -439,6 +439,17 @@ bool CServerBrowser::SortCompareNumBestClientPlayers(int Index1, int Index2) con
 		return pIndex1->m_Info.m_NumBestClientPlayers > pIndex2->m_Info.m_NumBestClientPlayers;
 }
 
+bool CServerBrowser::SortCompareNumUcClientPlayers(int Index1, int Index2) const
+{
+	CServerEntry *pIndex1 = m_vpServerlist[Index1];
+	CServerEntry *pIndex2 = m_vpServerlist[Index2];
+
+	if(pIndex1->m_Info.m_NumUcClientPlayers == pIndex2->m_Info.m_NumUcClientPlayers)
+		return pIndex1->m_Info.m_NumFilteredPlayers > pIndex2->m_Info.m_NumFilteredPlayers;
+	else
+		return pIndex1->m_Info.m_NumUcClientPlayers > pIndex2->m_Info.m_NumUcClientPlayers;
+}
+
 bool CServerBrowser::SortCompareNumPlayersAndPing(int Index1, int Index2) const
 {
 	CServerEntry *pIndex1 = m_vpServerlist[Index1];
@@ -692,6 +703,8 @@ void CServerBrowser::Sort()
 		std::stable_sort(m_vSortedServerlist.begin(), m_vSortedServerlist.end(), CSortWrap(this, &CServerBrowser::SortCompareNumFriends));
 	else if(g_Config.m_BrSort == IServerBrowser::SORT_NUMBESTCLIENT)
 		std::stable_sort(m_vSortedServerlist.begin(), m_vSortedServerlist.end(), CSortWrap(this, &CServerBrowser::SortCompareNumBestClientPlayers));
+	else if(g_Config.m_BrSort == IServerBrowser::SORT_NUMUCLIENT)
+		std::stable_sort(m_vSortedServerlist.begin(), m_vSortedServerlist.end(), CSortWrap(this, &CServerBrowser::SortCompareNumUcClientPlayers));
 	else if(g_Config.m_BrSort == IServerBrowser::SORT_NUMPLAYERS)
 		std::stable_sort(m_vSortedServerlist.begin(), m_vSortedServerlist.end(), CSortWrap(this, &CServerBrowser::SortCompareNumPlayers));
 	else if(g_Config.m_BrSort == IServerBrowser::SORT_GAMETYPE)
@@ -1744,6 +1757,7 @@ void CServerBrowser::UpdateServerBestClients(CServerInfo *pInfo) const
 	pInfo->m_HasBestClientPlayers = false;
 	pInfo->m_NumBestClientDeveloperPlayers = 0;
 	pInfo->m_HasBestClientDeveloperPlayers = false;
+	pInfo->m_NumUcClientPlayers = 0;
 	pInfo->m_HasUcClientPlayers = false;
 	for(auto &Client : pInfo->m_aClients)
 	{
@@ -1764,30 +1778,30 @@ void CServerBrowser::UpdateServerBestClients(CServerInfo *pInfo) const
 			vpAddressMatches.push_back(&It->second);
 	}
 
-	if(vpAddressMatches.empty())
-		return;
-
-	for(int ClientIndex = 0; ClientIndex < NumClients; ++ClientIndex)
+	if(!vpAddressMatches.empty())
 	{
-		CServerInfo::CClient &Client = pInfo->m_aClients[ClientIndex];
-		for(const auto *pPlayers : vpAddressMatches)
+		for(int ClientIndex = 0; ClientIndex < NumClients; ++ClientIndex)
 		{
-			const auto PlayerIt = pPlayers->find(Client.m_aName);
-			if(PlayerIt == pPlayers->end())
-				continue;
-			Client.m_BestClient = true;
-			Client.m_BestClientDeveloper = Client.m_BestClientDeveloper || PlayerIt->second;
+			CServerInfo::CClient &Client = pInfo->m_aClients[ClientIndex];
+			for(const auto *pPlayers : vpAddressMatches)
+			{
+				const auto PlayerIt = pPlayers->find(Client.m_aName);
+				if(PlayerIt == pPlayers->end())
+					continue;
+				Client.m_BestClient = true;
+				Client.m_BestClientDeveloper = Client.m_BestClientDeveloper || PlayerIt->second;
+			}
+			if(Client.m_BestClient)
+			{
+				pInfo->m_NumBestClientPlayers++;
+				if(Client.m_BestClientDeveloper)
+					pInfo->m_NumBestClientDeveloperPlayers++;
+			}
 		}
-		if(Client.m_BestClient)
-		{
-			pInfo->m_NumBestClientPlayers++;
-			if(Client.m_BestClientDeveloper)
-				pInfo->m_NumBestClientDeveloperPlayers++;
-		}
-	}
 
-	pInfo->m_HasBestClientPlayers = pInfo->m_NumBestClientPlayers > 0;
-	pInfo->m_HasBestClientDeveloperPlayers = pInfo->m_NumBestClientDeveloperPlayers > 0;
+		pInfo->m_HasBestClientPlayers = pInfo->m_NumBestClientPlayers > 0;
+		pInfo->m_HasBestClientDeveloperPlayers = pInfo->m_NumBestClientDeveloperPlayers > 0;
+	}
 
 	// UC client flag
 	for(int AddressIndex = 0; AddressIndex < pInfo->m_NumAddresses; ++AddressIndex)
@@ -1806,6 +1820,12 @@ void CServerBrowser::UpdateServerBestClients(CServerInfo *pInfo) const
 				pInfo->m_HasUcClientPlayers = true;
 			}
 		}
+	}
+
+	for(int ClientIndex = 0; ClientIndex < NumClients; ++ClientIndex)
+	{
+		if(pInfo->m_aClients[ClientIndex].m_UcClient)
+			pInfo->m_NumUcClientPlayers++;
 	}
 }
 

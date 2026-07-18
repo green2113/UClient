@@ -68,6 +68,16 @@ static CUIRect CenterSquareIcon(const CUIRect &Rect, float Margin)
 	return Icon;
 }
 
+// The UClient logo image has less internal padding than the BestClient icon, so render it
+// slightly smaller than the BestClient count icon to match the visual weight of the logo
+// shown to the left of player names in-server.
+static CUIRect CenterUcClientIcon(const CUIRect &Rect)
+{
+	CUIRect Icon = CenterSquareIcon(Rect, 2.0f);
+	Icon.Margin(Icon.w * 0.09f, &Icon);
+	return Icon;
+}
+
 static void RenderCenteredBestClientTabIcon(IGraphics *pGraphics, const CUIRect &Rect, ColorRGBA Color = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f))
 {
 	CUIRect Icon = Rect;
@@ -293,6 +303,7 @@ void CMenus::RenderServerbrowserServerList(CUIRect View, bool &WasListboxItemAct
 			COL_MAP,
 			COL_BESTCLIENT_DEV,
 			COL_BESTCLIENT,
+			COL_UCLIENT,
 			COL_FRIENDS,
 			COL_PLAYERS,
 			COL_PING,
@@ -326,9 +337,10 @@ void CMenus::RenderServerbrowserServerList(CUIRect View, bool &WasListboxItemAct
 		{COL_COMMUNITY, -1, "", -1, 28.0f, {0}},
 			{COL_NAME, IServerBrowser::SORT_NAME, Localizable("Name"), 0, 50.0f, {0}},
 			{COL_GAMETYPE, IServerBrowser::SORT_GAMETYPE, Localizable("Type"), 1, 50.0f, {0}},
-			{COL_MAP, IServerBrowser::SORT_MAP, Localizable("Map"), 1, 120.0f + (Headers.w - 480) / 8, {0}},
+			{COL_MAP, IServerBrowser::SORT_MAP, Localizable("Map"), 1, 120.0f + (Headers.w - 502) / 8, {0}},
 			{COL_BESTCLIENT_DEV, -1, "", 1, 20.0f, {0}},
 			{COL_BESTCLIENT, IServerBrowser::SORT_NUMBESTCLIENT, "", 1, 20.0f, {0}},
+			{COL_UCLIENT, IServerBrowser::SORT_NUMUCLIENT, "", 1, 20.0f, {0}},
 			{COL_FRIENDS, IServerBrowser::SORT_NUMFRIENDS, "", 1, 20.0f, {0}},
 			{COL_PLAYERS, IServerBrowser::SORT_NUMPLAYERS, Localizable("Players"), 1, 60.0f, {0}},
 			{-1, -1, "", 1, 4.0f, {0}},
@@ -399,6 +411,11 @@ void CMenus::RenderServerbrowserServerList(CUIRect View, bool &WasListboxItemAct
 			{
 				const CUIRect Icon = CenterSquareIcon(Col.m_Rect, 2.0f);
 				RenderBestClientIcon(Graphics(), Icon, ColorRGBA(1.0f, 1.0f, 1.0f, 0.9f));
+			}
+			else if(Col.m_Id == COL_UCLIENT)
+			{
+				const CUIRect Icon = CenterUcClientIcon(Col.m_Rect);
+				RenderUcClientIcon(Graphics(), m_UcLogoTexture, Icon, ColorRGBA(1.0f, 1.0f, 1.0f, 0.9f));
 			}
 		}
 
@@ -652,6 +669,22 @@ void CMenus::RenderServerbrowserServerList(CUIRect View, bool &WasListboxItemAct
 						if(CounterValue > 1)
 						{
 							str_format(aTemp, sizeof(aTemp), "%d", CounterValue);
+							TextRender()->TextColor(1.0f, 0.9f, 0.55f, 1.0f);
+							Ui()->DoLabel(&Button, aTemp, 9.0f, TEXTALIGN_MC);
+							TextRender()->TextColor(TextRender()->DefaultTextColor());
+						}
+					}
+				}
+				else if(Id == COL_UCLIENT)
+				{
+					if(pItem->m_HasUcClientPlayers)
+					{
+						const CUIRect Icon = CenterUcClientIcon(Button);
+						RenderUcClientIcon(Graphics(), m_UcLogoTexture, Icon);
+
+						if(pItem->m_NumUcClientPlayers > 1)
+						{
+							str_format(aTemp, sizeof(aTemp), "%d", pItem->m_NumUcClientPlayers);
 							TextRender()->TextColor(1.0f, 0.9f, 0.55f, 1.0f);
 							Ui()->DoLabel(&Button, aTemp, 9.0f, TEXTALIGN_MC);
 							TextRender()->TextColor(TextRender()->DefaultTextColor());

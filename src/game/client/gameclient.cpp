@@ -1261,10 +1261,11 @@ void CGameClient::OnReset()
 		m_aAutoTeamLockDeadlineTick[Dummy] = 0;
 		m_aAutoTeamLockPending[Dummy] = false;
 	}
-	// Note: m_aAutoLoginJapanSentServer / m_aAutoLoginKogSentServer are intentionally NOT reset here.
+	// Note: m_aaAutoLoginJapanSentServer / m_aAutoLoginKogSentServer are intentionally NOT reset here.
 	// OnReset runs on every map change, but auto-login must only fire once per
 	// server connection. It is cleared on full disconnect in OnStateChange.
-	m_AutoLoginJapanDeadlineTick = 0;
+	for(int Conn = 0; Conn < NUM_DUMMIES; ++Conn)
+		m_aAutoLoginJapanDeadlineTick[Conn] = 0;
 	m_AutoLoginKogDeadlineTick = 0;
 	m_CharOrder.Reset();
 	std::fill(std::begin(m_aSwitchStateTeam), std::end(m_aSwitchStateTeam), -1);
@@ -1894,7 +1895,8 @@ void CGameClient::OnStateChange(int NewState, int OldState)
 	// (which drop to STATE_LOADING) do not re-trigger the login.
 	if(NewState == IClient::STATE_OFFLINE)
 	{
-		m_aAutoLoginJapanSentServer[0] = '\0';
+		for(int Conn = 0; Conn < NUM_DUMMIES; ++Conn)
+			m_aaAutoLoginJapanSentServer[Conn][0] = '\0';
 		m_aAutoLoginKogSentServer[0] = '\0';
 	}
 
@@ -1963,8 +1965,11 @@ void CGameClient::UpdateAutoLoginJapan()
 {
 	if(Client()->State() == IClient::STATE_OFFLINE)
 	{
-		m_aAutoLoginJapanSentServer[0] = '\0';
-		m_AutoLoginJapanDeadlineTick = 0;
+		for(int Conn = 0; Conn < NUM_DUMMIES; ++Conn)
+		{
+			m_aaAutoLoginJapanSentServer[Conn][0] = '\0';
+			m_aAutoLoginJapanDeadlineTick[Conn] = 0;
+		}
 		return;
 	}
 
@@ -1975,39 +1980,78 @@ void CGameClient::UpdateAutoLoginJapan()
 		m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_AUTO_LOGIN) ||
 		g_Config.m_UcAutoLoginJapanCode[0] == '\0')
 	{
-		m_AutoLoginJapanDeadlineTick = 0;
+		for(int Conn = 0; Conn < NUM_DUMMIES; ++Conn)
+			m_aAutoLoginJapanDeadlineTick[Conn] = 0;
 		return;
 	}
 
-	char aAddr[NETADDR_MAXSTRSIZE];
-	net_addr_str(&Client()->ServerAddress(), aAddr, sizeof(aAddr), false);
 	if(!IsAutoLoginJapanServer())
 	{
-		m_AutoLoginJapanDeadlineTick = 0;
+		for(int Conn = 0; Conn < NUM_DUMMIES; ++Conn)
+			m_aAutoLoginJapanDeadlineTick[Conn] = 0;
 		return;
 	}
+
+	// The main connection is always present. The dummy is a separate player on the same
+	// server, so it must run its own `/login <code>` when connected. Clear the dummy's state
+	// while it is disconnected so re-creating it triggers the login again.
+	TryAutoLoginJapanConn(IClient::CONN_MAIN);
+	if(Client()->DummyConnected())
+	{
+		TryAutoLoginJapanConn(IClient::CONN_DUMMY);
+	}
+	else
+	{
+		m_aaAutoLoginJapanSentServer[IClient::CONN_DUMMY][0] = '\0';
+		m_aAutoLoginJapanDeadlineTick[IClient::CONN_DUMMY] = 0;
+	}
+}
+
+void CGameClient::TryAutoLoginJapanConn(int Conn)
+{
+	char aAddr[NETADDR_MAXSTRSIZE];
+	net_addr_str(&Client()->ServerAddress(), aAddr, sizeof(aAddr), false);
 
 	// Auto-login only once per server connection. A map change keeps the same
 	// server address (and does not drop to STATE_OFFLINE), so it will not fire
-	// again until the client fully disconnects and reconnects.
-	if(str_comp(m_aAutoLoginJapanSentServer, aAddr) == 0)
+	// again until this connection fully disconnects and reconnects.
+	if(str_comp(m_aaAutoLoginJapanSentServer[Conn], aAddr) == 0)
 		return;
 
-	const int Dummy = g_Config.m_ClDummy;
-	if(m_AutoLoginJapanDeadlineTick == 0)
+	// Wait ~1s after the connection is in-game so the server is ready for the command.
+	if(m_aAutoLoginJapanDeadlineTick[Conn] == 0)
 	{
-		m_AutoLoginJapanDeadlineTick = (int64_t)Client()->GameTick(Dummy) + Client()->GameTickSpeed();
+		m_aAutoLoginJapanDeadlineTick[Conn] = (int64_t)Client()->GameTick(Conn) + Client()->GameTickSpeed();
 		return;
 	}
 
-	if(Client()->GameTick(Dummy) < m_AutoLoginJapanDeadlineTick)
+	if(Client()->GameTick(Conn) < m_aAutoLoginJapanDeadlineTick[Conn])
 		return;
 
 	char aLogin[160];
 	str_format(aLogin, sizeof(aLogin), "/login %s", g_Config.m_UcAutoLoginJapanCode);
-	m_Chat.SendChat(0, aLogin);
-	str_copy(m_aAutoLoginJapanSentServer, aAddr);
-	m_AutoLoginJapanDeadlineTick = 0;
+	SendAutoLoginMessage(Conn, aLogin);
+	str_copy(m_aaAutoLoginJapanSentServer[Conn], aAddr);
+	m_aAutoLoginJapanDeadlineTick[Conn] = 0;
+}
+
+void CGameClient::SendAutoLoginMessage(int Conn, const char *pLogin)
+{
+	// Send the chat command explicitly on the target connection (main or dummy).
+	if(Client()->IsSixup())
+	{
+		protocol7::CNetMsg_Cl_Say Msg7;
+		Msg7.m_Mode = protocol7::CHAT_ALL;
+		Msg7.m_Target = -1;
+		Msg7.m_pMessage = pLogin;
+		Client()->SendPackMsg(Conn, &Msg7, MSGFLAG_VITAL, true);
+		return;
+	}
+
+	CNetMsg_Cl_Say Msg;
+	Msg.m_Team = 0;
+	Msg.m_pMessage = pLogin;
+	Client()->SendPackMsg(Conn, &Msg, MSGFLAG_VITAL);
 }
 
 bool CGameClient::IsAutoLoginJapanServer() const

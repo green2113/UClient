@@ -135,6 +135,9 @@ class CChat : public CComponent
 		int m_MediaUploadIndex;
 		std::vector<SMediaFrame> m_vMediaFrames;
 		std::vector<int> m_vMediaFrameEndMs;
+		// Original encoded bytes of a static image, retained so the fullscreen viewer can decode
+		// it at full resolution (the inline preview is capped to CHAT_MEDIA_MAX_DIMENSION).
+		std::vector<unsigned char> m_vMediaOriginalData;
 		int m_MediaTotalDurationMs;
 		bool m_MediaAnimated;
 		bool m_MediaRevealed;
@@ -382,6 +385,9 @@ class CChat : public CComponent
 	vec2 m_MediaViewerDragStartMouse;
 	vec2 m_MediaViewerPanStart;
 	int64_t m_MediaViewerLastClickTime;
+	// Full-resolution texture decoded on demand when the viewer opens (static photos only).
+	IGraphics::CTextureHandle m_MediaViewerFullTexture;
+	int m_MediaViewerFullTextureLine;
 
 	static bool IsDirectMediaUrl(const char *pUrl);
 	static void ExtractMediaUrlsFromText(const char *pText, std::vector<std::string> &vOutUrls);
@@ -401,8 +407,11 @@ class CChat : public CComponent
 	bool DecodeImageWithFfmpeg(const unsigned char *pData, size_t DataSize, const char *pContextName, CLine &Line, bool DecodeAllFrames, int MaxAnimationDurationMs);
 	void CloseMediaViewer();
 	void OpenMediaViewer(int LineIndex);
+	void LoadMediaViewerFullTexture(CLine &Line);
+	void FreeMediaViewerFullTexture();
 	bool ValidateMediaViewerLine() const;
 	bool GetCurrentFrameTexture(CLine &Line, IGraphics::CTextureHandle &Texture) const;
+	bool GetMediaViewerTexture(CLine &Line, IGraphics::CTextureHandle &Texture) const;
 	vec2 ChatMousePos() const;
 	void ClampMediaViewerPan(const CLine &Line, float ScreenWidth, float ScreenHeight);
 	bool GetMediaViewerRect(const CLine &Line, float ScreenWidth, float ScreenHeight, float &x, float &y, float &w, float &h) const;

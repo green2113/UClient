@@ -4146,6 +4146,9 @@ void CHud::OnRender()
 		GameClient()->m_BestClient.RenderSpecMoved();
 	}
 	RenderCursor();
+
+	// Drawn last (after the timer / music player above) so it is never hidden behind them.
+	GameClient()->m_ClientIndicator.RenderLiveCursorSharingIndicator();
 }
 
 void CHud::RenderSpeedrunTimer()

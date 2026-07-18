@@ -64,6 +64,10 @@ public:
 	// identified across clients by MessageHash. Relayed via the UClient presence UDP server.
 	void SendChatReaction(int TargetClientId, uint64_t MessageHash, const char *pEmoji, bool Add);
 
+	// Draws the "Sharing cursor" indicator. Called from the HUD after the timer/music player so
+	// it is never hidden behind them (rendered on top, at the bottom-center of the screen).
+	void RenderLiveCursorSharingIndicator();
+
 private:
 	// Live cursor sharing: while +live_cursor is held, the local aim cursor world position is
 	// broadcast to UClient peers on the same server and rendered as their own gun-cursor sprite.
