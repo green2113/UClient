@@ -3628,6 +3628,8 @@ void CMenus::QuitWithMenuSfx()
 	if(Client()->State() == IClient::STATE_QUITTING || Client()->State() == IClient::STATE_RESTARTING)
 		return;
 
+	GameClient()->m_TimeoutReconnect.MarkIntentionalLeave();
+
 	if(!m_MenuSfxLoaded)
 		LoadMenuSfx();
 

@@ -642,11 +642,13 @@ void CHud::OnReset()
 	m_LastSpectatorCountTick = 0;
 	m_SpeedrunTimerExpiredTick = 0;
 	m_vFinishPredictionDistances.clear();
+	m_vFinishPredictionFromStartDistances.clear();
 	m_vFinishPredictionPassable.clear();
 	m_vFinishPredictionStartTiles.clear();
 	m_vFinishPredictionFinishTiles.clear();
 	m_FinishPredictionMapWidth = 0;
 	m_FinishPredictionMapHeight = 0;
+	m_FinishPredictionFreezePenalty = -1;
 	m_FinishPredictionRaceStartTick = -1;
 	m_FinishPredictionRaceStartDistance = -1.0f;
 	m_FinishPredictionLastProgress = 0.0f;
@@ -663,11 +665,13 @@ void CHud::OnReset()
 bool CHud::RebuildFinishPredictionPathData()
 {
 	m_vFinishPredictionDistances.clear();
+	m_vFinishPredictionFromStartDistances.clear();
 	m_vFinishPredictionPassable.clear();
 	m_vFinishPredictionStartTiles.clear();
 	m_vFinishPredictionFinishTiles.clear();
 	m_FinishPredictionMapWidth = 0;
 	m_FinishPredictionMapHeight = 0;
+	m_FinishPredictionFreezePenalty = g_Config.m_UcRacePathFreezePenalty;
 	m_FinishPredictionRaceStartDistance = -1.0f;
 	m_FinishPredictionLastProgress = 0.0f;
 	m_FinishPredictionSmoothedFinishTimeMs = -1;
@@ -681,7 +685,20 @@ bool CHud::RebuildFinishPredictionPathData()
 	m_FinishPredictionMapHeight = Collision()->GetHeight();
 	const int MapSize = m_FinishPredictionMapWidth * m_FinishPredictionMapHeight;
 	m_vFinishPredictionDistances.assign(MapSize, -1);
+	m_vFinishPredictionFromStartDistances.assign(MapSize, -1);
 	m_vFinishPredictionPassable.assign(MapSize, 0);
+	const int FreezePenalty = maximum(0, g_Config.m_UcRacePathFreezePenalty);
+
+	auto IsFreezeTileIndex = [&](int Index) {
+		if(Index < 0 || Index >= MapSize)
+			return false;
+		const int GameTile = Collision()->GetTileIndex(Index);
+		const int FrontTile = Collision()->GetFrontTileIndex(Index);
+		auto IsFreezeType = [](int Tile) {
+			return Tile == TILE_FREEZE || Tile == TILE_DFREEZE || Tile == TILE_LFREEZE;
+		};
+		return IsFreezeType(GameTile) || IsFreezeType(FrontTile);
+	};
 
 	auto IsPassableTile = [&](int TileX, int TileY) {
 		if(TileX < 0 || TileX >= m_FinishPredictionMapWidth || TileY < 0 || TileY >= m_FinishPredictionMapHeight)
@@ -703,28 +720,6 @@ bool CHud::RebuildFinishPredictionPathData()
 	}
 
 	using TDistanceNode = std::pair<int, int>;
-	std::priority_queue<TDistanceNode, std::vector<TDistanceNode>, std::greater<>> PriorityQueue;
-	for(int y = 0; y < m_FinishPredictionMapHeight; ++y)
-	{
-		for(int x = 0; x < m_FinishPredictionMapWidth; ++x)
-		{
-			const int Index = y * m_FinishPredictionMapWidth + x;
-			const bool StartTile = Collision()->GetTileIndex(Index) == TILE_START || Collision()->GetFrontTileIndex(Index) == TILE_START;
-			const bool FinishTile = Collision()->GetTileIndex(Index) == TILE_FINISH || Collision()->GetFrontTileIndex(Index) == TILE_FINISH;
-			if(StartTile)
-				m_vFinishPredictionStartTiles.emplace_back(x, y);
-			if(FinishTile && m_vFinishPredictionPassable[Index] != 0)
-			{
-				m_vFinishPredictionFinishTiles.emplace_back(x, y);
-				m_vFinishPredictionDistances[Index] = 0;
-				PriorityQueue.emplace(0, Index);
-			}
-		}
-	}
-
-	if(PriorityQueue.empty())
-		return false;
-
 	struct SFinishPredictionDir
 	{
 		ivec2 m_Dir;
@@ -740,37 +735,264 @@ bool CHud::RebuildFinishPredictionPathData()
 		{{-1, 1}, 14},
 		{{-1, -1}, 14},
 	};
-	while(!PriorityQueue.empty())
-	{
-		const auto [CurDist, Index] = PriorityQueue.top();
-		PriorityQueue.pop();
-		if(Index < 0 || Index >= MapSize || m_vFinishPredictionDistances[Index] != CurDist)
-			continue;
-		const int TileX = Index % m_FinishPredictionMapWidth;
-		const int TileY = Index / m_FinishPredictionMapWidth;
-		for(const SFinishPredictionDir &DirInfo : s_aDirs)
-		{
-			const ivec2 Dir = DirInfo.m_Dir;
-			const int NextX = TileX + Dir.x;
-			const int NextY = TileY + Dir.y;
-			if(NextX < 0 || NextX >= m_FinishPredictionMapWidth || NextY < 0 || NextY >= m_FinishPredictionMapHeight)
-				continue;
-			const int NextIndex = NextY * m_FinishPredictionMapWidth + NextX;
-			if(m_vFinishPredictionPassable[NextIndex] == 0)
-				continue;
-			if(Dir.x != 0 && Dir.y != 0)
-			{
-				const int SideIndexX = TileY * m_FinishPredictionMapWidth + NextX;
-				const int SideIndexY = NextY * m_FinishPredictionMapWidth + TileX;
-				if(m_vFinishPredictionPassable[SideIndexX] == 0 || m_vFinishPredictionPassable[SideIndexY] == 0)
-					continue;
-			}
 
-			const int NextDistance = CurDist + DirInfo.m_Cost;
-			if(m_vFinishPredictionDistances[NextIndex] >= 0 && m_vFinishPredictionDistances[NextIndex] <= NextDistance)
-				continue;
-			m_vFinishPredictionDistances[NextIndex] = NextDistance;
+	auto StepCost = [&](int NextIndex, int BaseCost) {
+		int Cost = BaseCost;
+		// Soft cost only: required freeze drops must stay traversable.
+		if(FreezePenalty > 0 && IsFreezeTileIndex(NextIndex))
+			Cost += FreezePenalty;
+		return Cost;
+	};
+
+	auto PosToTileIndex = [&](vec2 Pos) -> int {
+		const int X = (int)std::floor(Pos.x / 32.0f);
+		const int Y = (int)std::floor(Pos.y / 32.0f);
+		if(X < 0 || X >= m_FinishPredictionMapWidth || Y < 0 || Y >= m_FinishPredictionMapHeight)
+			return -1;
+		return Y * m_FinishPredictionMapWidth + X;
+	};
+
+	auto RunDijkstra = [&](std::vector<int> &vDistances, auto &&SeedTiles, auto &&ExpandTeleports) {
+		vDistances.assign(MapSize, -1);
+		std::priority_queue<TDistanceNode, std::vector<TDistanceNode>, std::greater<>> PriorityQueue;
+		SeedTiles(vDistances, PriorityQueue);
+		if(PriorityQueue.empty())
+			return false;
+
+		auto TryRelax = [&](int NextIndex, int NextDistance) {
+			if(NextIndex < 0 || NextIndex >= MapSize)
+				return;
+			if(m_vFinishPredictionPassable[NextIndex] == 0)
+				return;
+			if(vDistances[NextIndex] >= 0 && vDistances[NextIndex] <= NextDistance)
+				return;
+			vDistances[NextIndex] = NextDistance;
 			PriorityQueue.emplace(NextDistance, NextIndex);
+		};
+
+		while(!PriorityQueue.empty())
+		{
+			const auto [CurDist, Index] = PriorityQueue.top();
+			PriorityQueue.pop();
+			if(Index < 0 || Index >= MapSize || vDistances[Index] != CurDist)
+				continue;
+			const int TileX = Index % m_FinishPredictionMapWidth;
+			const int TileY = Index / m_FinishPredictionMapWidth;
+			for(const SFinishPredictionDir &DirInfo : s_aDirs)
+			{
+				const ivec2 Dir = DirInfo.m_Dir;
+				const int NextX = TileX + Dir.x;
+				const int NextY = TileY + Dir.y;
+				if(NextX < 0 || NextX >= m_FinishPredictionMapWidth || NextY < 0 || NextY >= m_FinishPredictionMapHeight)
+					continue;
+				const int NextIndex = NextY * m_FinishPredictionMapWidth + NextX;
+				if(Dir.x != 0 && Dir.y != 0)
+				{
+					const int SideIndexX = TileY * m_FinishPredictionMapWidth + NextX;
+					const int SideIndexY = NextY * m_FinishPredictionMapWidth + TileX;
+					if(m_vFinishPredictionPassable[SideIndexX] == 0 || m_vFinishPredictionPassable[SideIndexY] == 0)
+						continue;
+				}
+				TryRelax(NextIndex, CurDist + StepCost(NextIndex, DirInfo.m_Cost));
+			}
+			ExpandTeleports(CurDist, Index, TryRelax);
+		}
+		return true;
+	};
+
+	constexpr int TeleportCost = 10;
+
+	// Collect start/finish tiles first.
+	for(int y = 0; y < m_FinishPredictionMapHeight; ++y)
+	{
+		for(int x = 0; x < m_FinishPredictionMapWidth; ++x)
+		{
+			const int Index = y * m_FinishPredictionMapWidth + x;
+			const bool StartTile = Collision()->GetTileIndex(Index) == TILE_START || Collision()->GetFrontTileIndex(Index) == TILE_START;
+			const bool FinishTile = Collision()->GetTileIndex(Index) == TILE_FINISH || Collision()->GetFrontTileIndex(Index) == TILE_FINISH;
+			if(StartTile)
+				m_vFinishPredictionStartTiles.emplace_back(x, y);
+			if(FinishTile && m_vFinishPredictionPassable[Index] != 0)
+				m_vFinishPredictionFinishTiles.emplace_back(x, y);
+		}
+	}
+
+	const bool HasFinishDistances = RunDijkstra(
+		m_vFinishPredictionDistances,
+		[&](std::vector<int> &vDistances, auto &PriorityQueue) {
+			for(const ivec2 &FinishTile : m_vFinishPredictionFinishTiles)
+			{
+				const int Index = FinishTile.y * m_FinishPredictionMapWidth + FinishTile.x;
+				vDistances[Index] = 0;
+				PriorityQueue.emplace(0, Index);
+			}
+		},
+		[&](int CurDist, int Index, auto &&TryRelax) {
+			// Reverse teleport edges: OUT -> matching INs.
+			const CTeleTile *pTele = Collision()->TeleLayer();
+			if(!pTele)
+				return;
+			const int TeleType = pTele[Index].m_Type;
+			const int TeleNumber = pTele[Index].m_Number;
+			if(TeleNumber <= 0)
+				return;
+			const int TeleKey = TeleNumber - 1;
+			auto ExpandEntrances = [&](const std::vector<vec2> &vEntrances, auto &&IsEntrance) {
+				for(const vec2 &EntrancePos : vEntrances)
+				{
+					const int EntranceIndex = PosToTileIndex(EntrancePos);
+					if(EntranceIndex < 0 || !IsEntrance(EntranceIndex))
+						continue;
+					TryRelax(EntranceIndex, CurDist + StepCost(EntranceIndex, TeleportCost));
+				}
+			};
+			if(TeleType == TILE_TELEOUT)
+			{
+				ExpandEntrances(Collision()->TeleIns(TeleKey), [&](int EntranceIndex) {
+					return Collision()->IsTeleport(EntranceIndex) == TeleNumber;
+				});
+				ExpandEntrances(Collision()->TeleOthers(TeleKey), [&](int EntranceIndex) {
+					return Collision()->IsEvilTeleport(EntranceIndex) == TeleNumber ||
+						Collision()->IsTeleportWeapon(EntranceIndex) == TeleNumber ||
+						Collision()->IsTeleportHook(EntranceIndex) == TeleNumber;
+				});
+			}
+			else if(TeleType == TILE_TELECHECKOUT)
+			{
+				ExpandEntrances(Collision()->TeleOthers(TeleKey), [&](int EntranceIndex) {
+					return Collision()->IsCheckTeleport(EntranceIndex) || Collision()->IsCheckEvilTeleport(EntranceIndex);
+				});
+			}
+		});
+
+	if(!HasFinishDistances)
+		return false;
+
+	// Distances from start (forward teleports: IN -> OUT). Used so "behind" follows race order.
+	RunDijkstra(
+		m_vFinishPredictionFromStartDistances,
+		[&](std::vector<int> &vDistances, auto &PriorityQueue) {
+			for(const ivec2 &StartTile : m_vFinishPredictionStartTiles)
+			{
+				const int Index = StartTile.y * m_FinishPredictionMapWidth + StartTile.x;
+				if(m_vFinishPredictionPassable[Index] == 0)
+					continue;
+				vDistances[Index] = 0;
+				PriorityQueue.emplace(0, Index);
+			}
+		},
+		[&](int CurDist, int Index, auto &&TryRelax) {
+			const CTeleTile *pTele = Collision()->TeleLayer();
+			if(!pTele)
+				return;
+			const int TeleType = pTele[Index].m_Type;
+			const int TeleNumber = pTele[Index].m_Number;
+			if(TeleNumber <= 0)
+				return;
+			const int TeleKey = TeleNumber - 1;
+			auto ExpandExits = [&](const std::vector<vec2> &vExits) {
+				for(const vec2 &ExitPos : vExits)
+				{
+					const int ExitIndex = PosToTileIndex(ExitPos);
+					if(ExitIndex < 0)
+						continue;
+					TryRelax(ExitIndex, CurDist + StepCost(ExitIndex, TeleportCost));
+				}
+			};
+			if(TeleType == TILE_TELEIN || TeleType == TILE_TELEINEVIL || TeleType == TILE_TELEINWEAPON || TeleType == TILE_TELEINHOOK)
+				ExpandExits(Collision()->TeleOuts(TeleKey));
+			else if(TeleType == TILE_TELECHECKIN || TeleType == TILE_TELECHECKINEVIL)
+				ExpandExits(Collision()->TeleCheckOuts(TeleKey));
+		});
+
+	// Keep freeze traversable for required drops. For display/progress, snap each freeze tile
+	// to its nearest safe shore (tie -> earliest from-start) so a map-wide freeze blob
+	// doesn't collapse every freeze cell to 0% at the start shore.
+	if(FreezePenalty > 0)
+	{
+		static const ivec2 s_aOrthoDirs[] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+		std::vector<int> vFreezeBfs(MapSize, -1);
+		std::vector<int> vFreezeShore(MapSize, -1);
+		std::queue<int> Queue;
+
+		auto ShoreFromStartOf = [&](int ShoreIndex) {
+			return m_vFinishPredictionFromStartDistances[ShoreIndex];
+		};
+
+		for(int Index = 0; Index < MapSize; ++Index)
+		{
+			if(!IsFreezeTileIndex(Index) || m_vFinishPredictionPassable[Index] == 0)
+				continue;
+
+			const int TileX = Index % m_FinishPredictionMapWidth;
+			const int TileY = Index / m_FinishPredictionMapWidth;
+			int BestShoreIndex = -1;
+			int BestShoreFromStart = -1;
+			for(const ivec2 &Dir : s_aOrthoDirs)
+			{
+				const int NextX = TileX + Dir.x;
+				const int NextY = TileY + Dir.y;
+				if(NextX < 0 || NextX >= m_FinishPredictionMapWidth || NextY < 0 || NextY >= m_FinishPredictionMapHeight)
+					continue;
+				const int ShoreIndex = NextY * m_FinishPredictionMapWidth + NextX;
+				if(IsFreezeTileIndex(ShoreIndex) || m_vFinishPredictionPassable[ShoreIndex] == 0)
+					continue;
+				if(m_vFinishPredictionFromStartDistances[ShoreIndex] < 0 || m_vFinishPredictionDistances[ShoreIndex] < 0)
+					continue;
+				const int ShoreFromStart = m_vFinishPredictionFromStartDistances[ShoreIndex];
+				if(BestShoreIndex < 0 || ShoreFromStart < BestShoreFromStart)
+				{
+					BestShoreIndex = ShoreIndex;
+					BestShoreFromStart = ShoreFromStart;
+				}
+			}
+			if(BestShoreIndex < 0)
+				continue;
+			vFreezeBfs[Index] = 0;
+			vFreezeShore[Index] = BestShoreIndex;
+			Queue.push(Index);
+		}
+
+		while(!Queue.empty())
+		{
+			const int Index = Queue.front();
+			Queue.pop();
+			const int TileX = Index % m_FinishPredictionMapWidth;
+			const int TileY = Index / m_FinishPredictionMapWidth;
+			const int ShoreIndex = vFreezeShore[Index];
+			for(const ivec2 &Dir : s_aOrthoDirs)
+			{
+				const int NextX = TileX + Dir.x;
+				const int NextY = TileY + Dir.y;
+				if(NextX < 0 || NextX >= m_FinishPredictionMapWidth || NextY < 0 || NextY >= m_FinishPredictionMapHeight)
+					continue;
+				const int NextIndex = NextY * m_FinishPredictionMapWidth + NextX;
+				if(!IsFreezeTileIndex(NextIndex) || m_vFinishPredictionPassable[NextIndex] == 0)
+					continue;
+
+				const int NextBfs = vFreezeBfs[Index] + 1;
+				if(vFreezeBfs[NextIndex] < 0 || NextBfs < vFreezeBfs[NextIndex])
+				{
+					vFreezeBfs[NextIndex] = NextBfs;
+					vFreezeShore[NextIndex] = ShoreIndex;
+					Queue.push(NextIndex);
+				}
+				else if(NextBfs == vFreezeBfs[NextIndex] &&
+					ShoreFromStartOf(ShoreIndex) < ShoreFromStartOf(vFreezeShore[NextIndex]))
+				{
+					vFreezeShore[NextIndex] = ShoreIndex;
+					Queue.push(NextIndex);
+				}
+			}
+		}
+
+		for(int Index = 0; Index < MapSize; ++Index)
+		{
+			const int ShoreIndex = vFreezeShore[Index];
+			if(ShoreIndex < 0)
+				continue;
+			m_vFinishPredictionDistances[Index] = m_vFinishPredictionDistances[ShoreIndex];
+			m_vFinishPredictionFromStartDistances[Index] = m_vFinishPredictionFromStartDistances[ShoreIndex];
 		}
 	}
 
@@ -783,40 +1005,152 @@ bool CHud::EnsureFinishPredictionPathData()
 		return false;
 	if(m_FinishPredictionMapWidth != Collision()->GetWidth() ||
 		m_FinishPredictionMapHeight != Collision()->GetHeight() ||
-		m_vFinishPredictionDistances.empty())
+		m_FinishPredictionFreezePenalty != g_Config.m_UcRacePathFreezePenalty ||
+		m_vFinishPredictionDistances.empty() ||
+		m_vFinishPredictionFromStartDistances.empty())
 		return RebuildFinishPredictionPathData();
 	return !m_vFinishPredictionDistances.empty();
 }
 
-float CHud::GetFinishPredictionDistanceAtPos(vec2 Pos) const
+float CHud::SampleRacePathDistanceField(const std::vector<int> &vDistances, vec2 Pos) const
 {
-	if(m_vFinishPredictionDistances.empty() || m_FinishPredictionMapWidth <= 0 || m_FinishPredictionMapHeight <= 0)
+	if(vDistances.empty() || m_FinishPredictionMapWidth <= 0 || m_FinishPredictionMapHeight <= 0)
+		return -1.0f;
+	if((int)vDistances.size() != m_FinishPredictionMapWidth * m_FinishPredictionMapHeight)
 		return -1.0f;
 
 	const int TileX = std::clamp((int)std::floor(Pos.x / 32.0f), 0, m_FinishPredictionMapWidth - 1);
 	const int TileY = std::clamp((int)std::floor(Pos.y / 32.0f), 0, m_FinishPredictionMapHeight - 1);
 
-	float BestDistance = -1.0f;
-	for(int Radius = 0; Radius <= 2; ++Radius)
-	{
-		for(int y = maximum(0, TileY - Radius); y <= minimum(m_FinishPredictionMapHeight - 1, TileY + Radius); ++y)
+	auto IsFreezeTileIndex = [&](int Index) {
+		const int GameTile = Collision()->GetTileIndex(Index);
+		const int FrontTile = Collision()->GetFrontTileIndex(Index);
+		auto IsFreezeType = [](int Tile) {
+			return Tile == TILE_FREEZE || Tile == TILE_DFREEZE || Tile == TILE_LFREEZE;
+		};
+		return IsFreezeType(GameTile) || IsFreezeType(FrontTile);
+	};
+
+	// Prefer nearby non-freeze corridor tiles. On freeze this keeps BACK/progress aligned
+	// with the path next to the death, not a snapped 0% freeze cell.
+	auto SampleDistance = [&](bool SkipFreezeTiles) -> float {
+		float BestDistance = -1.0f;
+		const int MaxRadius = SkipFreezeTiles ? 4 : 2;
+		for(int Radius = 0; Radius <= MaxRadius; ++Radius)
 		{
-			for(int x = maximum(0, TileX - Radius); x <= minimum(m_FinishPredictionMapWidth - 1, TileX + Radius); ++x)
+			for(int y = maximum(0, TileY - Radius); y <= minimum(m_FinishPredictionMapHeight - 1, TileY + Radius); ++y)
 			{
-				const int Index = y * m_FinishPredictionMapWidth + x;
-				const int Dist = m_vFinishPredictionDistances[Index];
-				if(Dist < 0)
-					continue;
-				const float OffsetCost = distance(Pos, vec2(x * 32.0f + 16.0f, y * 32.0f + 16.0f)) / 32.0f;
-				const float Total = Dist / 10.0f + OffsetCost;
-				if(BestDistance < 0.0f || Total < BestDistance)
-					BestDistance = Total;
+				for(int x = maximum(0, TileX - Radius); x <= minimum(m_FinishPredictionMapWidth - 1, TileX + Radius); ++x)
+				{
+					const int Index = y * m_FinishPredictionMapWidth + x;
+					const int Dist = vDistances[Index];
+					if(Dist < 0)
+						continue;
+					if(SkipFreezeTiles && IsFreezeTileIndex(Index))
+						continue;
+					const float OffsetCost = distance(Pos, vec2(x * 32.0f + 16.0f, y * 32.0f + 16.0f)) / 32.0f;
+					const float Total = Dist / 10.0f + OffsetCost;
+					if(BestDistance < 0.0f || Total < BestDistance)
+						BestDistance = Total;
+				}
 			}
+			if(BestDistance >= 0.0f)
+				break;
 		}
-		if(BestDistance >= 0.0f)
-			break;
+		return BestDistance;
+	};
+
+	if(m_FinishPredictionFreezePenalty > 0)
+	{
+		const float SafeDistance = SampleDistance(true);
+		if(SafeDistance >= 0.0f)
+			return SafeDistance;
 	}
-	return BestDistance;
+	return SampleDistance(false);
+}
+
+float CHud::GetFinishPredictionDistanceAtPos(vec2 Pos) const
+{
+	return SampleRacePathDistanceField(m_vFinishPredictionDistances, Pos);
+}
+
+float CHud::GetRacePathFromStartAtPos(vec2 Pos) const
+{
+	return SampleRacePathDistanceField(m_vFinishPredictionFromStartDistances, Pos);
+}
+
+float CHud::GetRacePathProgressAtPos(vec2 Pos) const
+{
+	if(m_vFinishPredictionDistances.empty() || m_vFinishPredictionFromStartDistances.empty() ||
+		m_FinishPredictionMapWidth <= 0 || m_FinishPredictionMapHeight <= 0)
+		return -1.0f;
+
+	const int TileX = std::clamp((int)std::floor(Pos.x / 32.0f), 0, m_FinishPredictionMapWidth - 1);
+	const int TileY = std::clamp((int)std::floor(Pos.y / 32.0f), 0, m_FinishPredictionMapHeight - 1);
+
+	auto IsFreezeTileIndex = [&](int Index) {
+		const int GameTile = Collision()->GetTileIndex(Index);
+		const int FrontTile = Collision()->GetFrontTileIndex(Index);
+		auto IsFreezeType = [](int Tile) {
+			return Tile == TILE_FREEZE || Tile == TILE_DFREEZE || Tile == TILE_LFREEZE;
+		};
+		return IsFreezeType(GameTile) || IsFreezeType(FrontTile);
+	};
+
+	// Use one reference tile for both distances so freeze shortcuts can't mix metrics.
+	// On/near freeze, prefer the earliest nearby safe corridor tile (not freeze 0%).
+	auto FindReferenceIndex = [&](bool SkipFreezeTiles) -> int {
+		int BestIndex = -1;
+		int BestFromStart = -1;
+		float BestOffset = -1.0f;
+		const int MaxRadius = SkipFreezeTiles ? 4 : 2;
+		for(int Radius = 0; Radius <= MaxRadius; ++Radius)
+		{
+			for(int y = maximum(0, TileY - Radius); y <= minimum(m_FinishPredictionMapHeight - 1, TileY + Radius); ++y)
+			{
+				for(int x = maximum(0, TileX - Radius); x <= minimum(m_FinishPredictionMapWidth - 1, TileX + Radius); ++x)
+				{
+					const int Index = y * m_FinishPredictionMapWidth + x;
+					if(m_vFinishPredictionDistances[Index] < 0 || m_vFinishPredictionFromStartDistances[Index] < 0)
+						continue;
+					if(SkipFreezeTiles && IsFreezeTileIndex(Index))
+						continue;
+					const int FromStart = m_vFinishPredictionFromStartDistances[Index];
+					const float OffsetCost = distance(Pos, vec2(x * 32.0f + 16.0f, y * 32.0f + 16.0f)) / 32.0f;
+					const bool Better = BestIndex < 0 ||
+						(SkipFreezeTiles && (FromStart < BestFromStart || (FromStart == BestFromStart && OffsetCost < BestOffset))) ||
+						(!SkipFreezeTiles && OffsetCost < BestOffset);
+					if(Better)
+					{
+						BestIndex = Index;
+						BestFromStart = FromStart;
+						BestOffset = OffsetCost;
+					}
+				}
+			}
+			if(BestIndex >= 0)
+				break;
+		}
+		return BestIndex;
+	};
+
+	const int CurIndex = TileY * m_FinishPredictionMapWidth + TileX;
+	int RefIndex = -1;
+	if(m_FinishPredictionFreezePenalty > 0)
+		RefIndex = FindReferenceIndex(true);
+	if(RefIndex < 0 && m_vFinishPredictionDistances[CurIndex] >= 0 && m_vFinishPredictionFromStartDistances[CurIndex] >= 0)
+		RefIndex = CurIndex;
+	if(RefIndex < 0)
+		RefIndex = FindReferenceIndex(false);
+	if(RefIndex < 0)
+		return -1.0f;
+
+	const float FromStart = m_vFinishPredictionFromStartDistances[RefIndex] / 10.0f;
+	const float ToFinish = m_vFinishPredictionDistances[RefIndex] / 10.0f;
+	const float Total = FromStart + ToFinish;
+	if(Total <= 0.0f)
+		return ToFinish <= 0.5f ? 1.0f : 0.0f;
+	return std::clamp(FromStart / Total, 0.0f, 1.0f);
 }
 
 float CHud::GetFinishPredictionStartDistance() const
@@ -941,6 +1275,238 @@ void CHud::ResetFinishPredictionState(bool ClearFinishedRace) const
 	m_FinishPredictionLastPredictTick = -1;
 	if(ClearFinishedRace)
 		m_FinishPredictionFinishedRaceTick = -1;
+}
+
+bool CHud::GetDebugRaceProgress(float &Progress) const
+{
+	Progress = 0.0f;
+	if(!GameClient()->m_Snap.m_pLocalCharacter || GameClient()->m_Snap.m_SpecInfo.m_Active)
+		return false;
+	if(!const_cast<CHud *>(this)->EnsureFinishPredictionPathData())
+		return false;
+
+	const vec2 LocalPos(GameClient()->m_Snap.m_pLocalCharacter->m_X, GameClient()->m_Snap.m_pLocalCharacter->m_Y);
+	const float CurrentDistance = GetFinishPredictionDistanceAtPos(LocalPos);
+	if(CurrentDistance < 0.0f)
+		return false;
+
+	float StartDistance = -1.0f;
+	const int RaceStartTick = GameClient()->LastRaceTick();
+	if(RaceStartTick >= 0 && m_FinishPredictionRaceStartTick == RaceStartTick && m_FinishPredictionRaceStartDistance > 0.0f)
+		StartDistance = m_FinishPredictionRaceStartDistance;
+	else
+		StartDistance = GetFinishPredictionStartDistance();
+
+	if(StartDistance <= 0.0f)
+		StartDistance = CurrentDistance;
+	if(StartDistance <= 0.0f)
+		return false;
+
+	Progress = std::clamp(1.0f - CurrentDistance / maximum(StartDistance, 1.0f), 0.0f, 1.0f);
+	if(CurrentDistance <= 0.5f)
+		Progress = 1.0f;
+	return true;
+}
+
+bool CHud::GetRacePathDistanceForClient(int ClientId, float &Distance) const
+{
+	Distance = -1.0f;
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return false;
+	if(!GameClient()->m_Snap.m_aCharacters[ClientId].m_Active)
+		return false;
+	if(!const_cast<CHud *>(this)->EnsureFinishPredictionPathData())
+		return false;
+
+	const vec2 Pos(
+		GameClient()->m_Snap.m_aCharacters[ClientId].m_Cur.m_X,
+		GameClient()->m_Snap.m_aCharacters[ClientId].m_Cur.m_Y);
+	Distance = GetFinishPredictionDistanceAtPos(Pos);
+	return Distance >= 0.0f;
+}
+
+bool CHud::GetRacePathFromStartForClient(int ClientId, float &Distance) const
+{
+	Distance = -1.0f;
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return false;
+	if(!GameClient()->m_Snap.m_aCharacters[ClientId].m_Active)
+		return false;
+	if(!const_cast<CHud *>(this)->EnsureFinishPredictionPathData())
+		return false;
+
+	const vec2 Pos(
+		GameClient()->m_Snap.m_aCharacters[ClientId].m_Cur.m_X,
+		GameClient()->m_Snap.m_aCharacters[ClientId].m_Cur.m_Y);
+	Distance = GetRacePathFromStartAtPos(Pos);
+	return Distance >= 0.0f;
+}
+
+bool CHud::GetRacePathProgressForClient(int ClientId, float &Progress) const
+{
+	Progress = 0.0f;
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return false;
+	if(!GameClient()->m_Snap.m_aCharacters[ClientId].m_Active)
+		return false;
+	if(!const_cast<CHud *>(this)->EnsureFinishPredictionPathData())
+		return false;
+
+	const vec2 Pos(
+		GameClient()->m_Snap.m_aCharacters[ClientId].m_Cur.m_X,
+		GameClient()->m_Snap.m_aCharacters[ClientId].m_Cur.m_Y);
+	Progress = GetRacePathProgressAtPos(Pos);
+	return Progress >= 0.0f;
+}
+
+void CHud::RenderNotifyWhenBack()
+{
+	if(!g_Config.m_UcNotifyWhenBack || !GameClient()->m_GameInfo.m_EntitiesDDRace)
+		return;
+	if(!EnsureFinishPredictionPathData())
+		return;
+
+	int ViewClientId = GameClient()->m_Snap.m_LocalClientId;
+	if(GameClient()->m_Snap.m_SpecInfo.m_Active)
+	{
+		if(GameClient()->m_Snap.m_SpecInfo.m_SpectatorId < 0)
+			return;
+		ViewClientId = GameClient()->m_Snap.m_SpecInfo.m_SpectatorId;
+	}
+	if(ViewClientId < 0)
+		return;
+
+	float LocalFromStart = -1.0f;
+	float LocalProgress = -1.0f;
+	if(!GetRacePathFromStartForClient(ViewClientId, LocalFromStart) || !GetRacePathProgressForClient(ViewClientId, LocalProgress))
+		return;
+
+	const float MaxGap = std::clamp(g_Config.m_UcNotifyWhenBackMaxDistance, 1, 100) / 100.0f;
+	constexpr float MinOtherProgress = 0.01f; // at least 1%
+
+	const int LocalTeamId = GameClient()->m_Teams.Team(ViewClientId);
+	bool BehindFrozen = false;
+	for(int i = 0; i < MAX_CLIENTS; ++i)
+	{
+		if(i == ViewClientId || !GameClient()->m_Snap.m_apPlayerInfos[i])
+			continue;
+		if(GameClient()->m_Teams.Team(i) != LocalTeamId)
+			continue;
+
+		const bool Frozen = GameClient()->m_aClients[i].m_FreezeEnd > 0 || GameClient()->m_aClients[i].m_DeepFrozen;
+		if(!Frozen)
+			continue;
+
+		float OtherFromStart = -1.0f;
+		float OtherProgress = -1.0f;
+		if(!GetRacePathFromStartForClient(i, OtherFromStart) || !GetRacePathProgressForClient(i, OtherProgress))
+			continue;
+		if(OtherProgress < MinOtherProgress)
+			continue;
+
+		// "Behind" uses distance-from-start so winding corridors don't invert vs finish-only %.
+		if(OtherFromStart >= LocalFromStart)
+			continue;
+
+		const float Gap = LocalProgress - OtherProgress;
+		if(Gap > 0.0f && Gap <= MaxGap)
+		{
+			BehindFrozen = true;
+			break;
+		}
+	}
+	if(!BehindFrozen)
+		return;
+
+	const char *pText = g_Config.m_UcNotifyWhenBackText[0] != '\0' ? g_Config.m_UcNotifyWhenBackText : "Back";
+	TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcNotifyWhenBackColor)));
+	const float FontSize = (float)g_Config.m_UcNotifyWhenBackSize;
+	const float XPos = std::clamp((g_Config.m_UcNotifyWhenBackX / 100.0f) * m_Width, 1.0f, m_Width - FontSize);
+	const float YPos = std::clamp((g_Config.m_UcNotifyWhenBackY / 100.0f) * m_Height, 1.0f, m_Height - FontSize);
+	TextRender()->Text(XPos, YPos, FontSize, pText, -1.0f);
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+}
+
+void CHud::RenderDebugRaceProgress()
+{
+	if(!g_Config.m_UcDebugRaceProgress)
+		return;
+	if(!EnsureFinishPredictionPathData())
+		return;
+
+	float PrevScreenX0, PrevScreenY0, PrevScreenX1, PrevScreenY1;
+	Graphics()->GetScreen(&PrevScreenX0, &PrevScreenY0, &PrevScreenX1, &PrevScreenY1);
+
+	const vec2 Center = GameClient()->m_Camera.m_Center;
+	const float Zoom = GameClient()->m_Camera.m_Zoom;
+	float aPoints[4];
+	Graphics()->MapScreenToWorld(Center.x, Center.y, 100.0f, 100.0f, 100.0f, 0, 0, Graphics()->ScreenAspect(), Zoom, aPoints);
+	Graphics()->MapScreen(aPoints[0], aPoints[1], aPoints[2], aPoints[3]);
+
+	float ScreenX0, ScreenY0, ScreenX1, ScreenY1;
+	Graphics()->GetScreen(&ScreenX0, &ScreenY0, &ScreenX1, &ScreenY1);
+
+	const int MinTileX = std::clamp((int)std::floor(ScreenX0 / 32.0f) - 1, 0, m_FinishPredictionMapWidth - 1);
+	const int MaxTileX = std::clamp((int)std::floor(ScreenX1 / 32.0f) + 1, 0, m_FinishPredictionMapWidth - 1);
+	const int MinTileY = std::clamp((int)std::floor(ScreenY0 / 32.0f) - 1, 0, m_FinishPredictionMapHeight - 1);
+	const int MaxTileY = std::clamp((int)std::floor(ScreenY1 / 32.0f) + 1, 0, m_FinishPredictionMapHeight - 1);
+
+	// When zoomed far out, thin labels so the overlay stays usable.
+	const int VisibleTilesX = MaxTileX - MinTileX + 1;
+	int Step = 1;
+	if(VisibleTilesX > 80)
+		Step = 4;
+	else if(VisibleTilesX > 50)
+		Step = 2;
+
+	const float FontSize = 10.0f;
+	TextRender()->TextOutlineColor(0.0f, 0.0f, 0.0f, 0.7f);
+	TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT);
+
+	char aBuf[16];
+	for(int y = MinTileY; y <= MaxTileY; y += Step)
+	{
+		for(int x = MinTileX; x <= MaxTileX; x += Step)
+		{
+			const int Index = y * m_FinishPredictionMapWidth + x;
+			const int ToFinish = m_vFinishPredictionDistances[Index];
+			if(ToFinish < 0 || Index >= (int)m_vFinishPredictionFromStartDistances.size())
+				continue;
+			const int FromStart = m_vFinishPredictionFromStartDistances[Index];
+			if(FromStart < 0)
+				continue;
+
+			// Progress along the race: from-start / (from-start + to-finish).
+			float Progress;
+			int Percent;
+			if(ToFinish == 0)
+			{
+				Progress = 1.0f;
+				Percent = 100;
+			}
+			else
+			{
+				const float Total = (FromStart + ToFinish) / 10.0f;
+				Progress = Total > 0.0f ? std::clamp((FromStart / 10.0f) / Total, 0.0f, 1.0f) : 0.0f;
+				Percent = std::clamp((int)std::floor(Progress * 100.0f), 0, 99);
+			}
+			str_format(aBuf, sizeof(aBuf), "%d", Percent);
+
+			// Hue: red (0%) -> yellow -> green (100%)
+			const ColorRGBA Color = color_cast<ColorRGBA>(ColorHSLA(Progress * (1.0f / 3.0f), 1.0f, 0.55f, 0.9f));
+			TextRender()->TextColor(Color);
+
+			const float PosX = x * 32.0f + 16.0f;
+			const float PosY = y * 32.0f + 16.0f;
+			const float TextW = TextRender()->TextWidth(FontSize, aBuf);
+			TextRender()->Text(PosX - TextW * 0.5f, PosY - FontSize * 0.5f, FontSize, aBuf, -1.0f);
+		}
+	}
+
+	TextRender()->SetRenderFlags(0);
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+	TextRender()->TextOutlineColor(TextRender()->DefaultTextOutlineColor());
+	Graphics()->MapScreen(PrevScreenX0, PrevScreenY0, PrevScreenX1, PrevScreenY1);
 }
 
 bool CHud::GetFinishPredictionState(SFinishPredictionState &State, bool ForcePreview) const
@@ -1714,6 +2280,8 @@ void CHud::RenderTextInfo()
 
 		RenderFrozenHud();
 	}
+
+	RenderNotifyWhenBack();
 }
 
 void CHud::RenderConnectionWarning()
@@ -4039,15 +4607,29 @@ void CHud::OnRender()
 	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
 		return;
 
+	auto RenderTimeoutReconnectHud = [&]() {
+		m_Width = 300.0f * Graphics()->ScreenAspect();
+		m_Height = 300.0f;
+		Graphics()->MapScreen(0.0f, 0.0f, m_Width, m_Height);
+		GameClient()->m_TimeoutReconnect.RenderHud();
+	};
+
 	if(!GameClient()->m_Snap.m_pGameInfoObj)
+	{
+		// Still show the reclaim timer even before the first game snapshot arrives.
+		RenderTimeoutReconnectHud();
 		return;
+	}
 
 	if(GameClient()->m_Menus.IsActive())
 	{
 		const bool IngameGamePage = GameClient()->m_Menus.IsIngameGamePage();
 		const bool IngameSettingsPage = GameClient()->m_Menus.IsIngameSettingsPage();
 		if(!IngameGamePage && (!IngameSettingsPage || g_Config.m_BcHideHudInSettings))
+		{
+			RenderTimeoutReconnectHud();
 			return;
+		}
 	}
 
 	m_Width = 300.0f * Graphics()->ScreenAspect();
@@ -4068,6 +4650,7 @@ void CHud::OnRender()
 		if(FocusModeActive && HideHudInFocusMode)
 		{
 			RenderCursor();
+			GameClient()->m_TimeoutReconnect.RenderHud();
 			return;
 		}
 
@@ -4149,6 +4732,8 @@ void CHud::OnRender()
 
 	// Drawn last (after the timer / music player above) so it is never hidden behind them.
 	GameClient()->m_ClientIndicator.RenderLiveCursorSharingIndicator();
+	GameClient()->m_TimeoutReconnect.RenderHud();
+	RenderDebugRaceProgress();
 }
 
 void CHud::RenderSpeedrunTimer()

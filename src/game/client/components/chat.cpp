@@ -63,10 +63,13 @@ static constexpr int64_t CHAT_MEDIA_MAX_RESPONSE_SIZE = 64 * 1024 * 1024;
 static constexpr int CHAT_MEDIA_MAX_GIF_FRAMES = 360;
 static constexpr int CHAT_MEDIA_MAX_DIMENSION = 960;
 // The fullscreen viewer decodes the original bytes at a much higher cap so screenshots and other
-// high-resolution images look sharp instead of the upscaled inline preview.
-static constexpr int CHAT_MEDIA_VIEWER_MAX_DIMENSION = 4096;
-// Only retain original bytes for static images up to this size to bound memory usage.
-static constexpr int64_t CHAT_MEDIA_ORIGINAL_RETAIN_MAX_BYTES = 24 * 1024 * 1024;
+// high-resolution images (4K/5K/ultrawide) look sharp instead of the upscaled inline preview.
+// 8192 is supported by virtually all desktop GPUs; if a texture is still too large the upload
+// simply fails and we fall back to the inline preview, so this is safe.
+static constexpr int CHAT_MEDIA_VIEWER_MAX_DIMENSION = 8192;
+// Only retain original (compressed) bytes for static images up to this size to bound memory usage.
+// These are the encoded PNG/JPEG bytes, not decoded pixels, so even large screenshots stay small.
+static constexpr int64_t CHAT_MEDIA_ORIGINAL_RETAIN_MAX_BYTES = 64 * 1024 * 1024;
 static constexpr int CHAT_MEDIA_DOUBLE_CLICK_MS = 300;
 static constexpr int CHAT_MEDIA_MAX_RESOLVE_DEPTH = 2;
 static constexpr int CHAT_MEDIA_MAX_VIDEO_ANIMATION_MS = 15000;
@@ -3826,21 +3829,23 @@ void CChat::LoadMediaViewerFullTexture(CLine &Line)
 	if(Line.m_MediaKind != EMediaKind::PHOTO || Line.m_MediaAnimated || Line.m_vMediaOriginalData.empty())
 		return;
 
-	// If the inline preview was not downscaled there is nothing higher-resolution to show.
-	if(Line.m_MediaWidth > 0 && Line.m_MediaHeight > 0 &&
-		Line.m_MediaWidth <= CHAT_MEDIA_MAX_DIMENSION && Line.m_MediaHeight <= CHAT_MEDIA_MAX_DIMENSION)
-		return;
-
+	// Decode the original bytes at a much higher cap. The inline preview's m_MediaWidth/Height are
+	// already clamped to CHAT_MEDIA_MAX_DIMENSION, so they can't tell us the original size; instead
+	// we only keep the freshly decoded texture when it is actually higher-resolution than the preview.
 	SMediaDecodedFrames FullFrames;
 	if(MediaDecoder::DecodeStaticImageCpu(Graphics(), Line.m_vMediaOriginalData.data(), Line.m_vMediaOriginalData.size(),
 		   Line.m_aMediaUrl, FullFrames, CHAT_MEDIA_VIEWER_MAX_DIMENSION) &&
 		!FullFrames.m_vFrames.empty())
 	{
-		IGraphics::CTextureHandle Texture = Graphics()->LoadTextureRawMove(FullFrames.m_vFrames.front().m_Image, 0, Line.m_aMediaUrl);
-		if(Texture.IsValid())
+		const bool LargerThanPreview = FullFrames.m_Width > Line.m_MediaWidth || FullFrames.m_Height > Line.m_MediaHeight;
+		if(LargerThanPreview)
 		{
-			m_MediaViewerFullTexture = Texture;
-			m_MediaViewerFullTextureLine = (int)(&Line - m_aLines);
+			IGraphics::CTextureHandle Texture = Graphics()->LoadTextureRawMove(FullFrames.m_vFrames.front().m_Image, 0, Line.m_aMediaUrl);
+			if(Texture.IsValid())
+			{
+				m_MediaViewerFullTexture = Texture;
+				m_MediaViewerFullTextureLine = (int)(&Line - m_aLines);
+			}
 		}
 	}
 	FullFrames.Free();
@@ -5596,6 +5601,10 @@ void CChat::OnMessage(int MsgType, void *pRawMsg)
 	if(MsgType == NETMSGTYPE_SV_CHAT)
 	{
 		CNetMsg_Sv_Chat *pMsg = (CNetMsg_Sv_Chat *)pRawMsg;
+
+		// Silently consume the response to our automatic `/settings timeout` query.
+		if(GameClient()->m_TimeoutReconnect.TryConsumeTimeoutSettingsMessage(pMsg->m_ClientId, pMsg->m_pMessage))
+			return;
 
 		/*
 		if(g_Config.m_ClCensorChat)

@@ -1248,6 +1248,9 @@ void CClientIndicator::PruneStaleRemoteCursors()
 
 void CClientIndicator::RenderLiveCursorSharingIndicator()
 {
+	if(!g_Config.m_UcShowSharedCursors)
+		return;
+
 	// Only while we are actively broadcasting our cursor.
 	if(!m_LiveCursorWasActive)
 		return;
@@ -1297,6 +1300,9 @@ void CClientIndicator::OnRender()
 
 	// Note: the "Sharing cursor" pill is drawn from CHud (after the timer/music player) so it is
 	// never hidden behind them. Here we only render the remote peers' world cursors.
+	if(!g_Config.m_UcShowSharedCursors)
+		return;
+
 	PruneStaleRemoteCursors();
 	if(m_RemoteCursors.empty())
 		return;
@@ -1322,6 +1328,12 @@ void CClientIndicator::OnRender()
 
 	for(auto &Entry : m_RemoteCursors)
 	{
+		const int ClientId = Entry.first;
+		const bool OtherTeam = GameClient()->IsOtherTeam(ClientId);
+		if(OtherTeam && g_Config.m_ClShowOthers != SHOW_OTHERS_ON)
+			continue;
+		const float Alpha = OtherTeam ? g_Config.m_ClShowOthersAlpha / 100.0f : 1.0f;
+
 		SRemoteCursor &Cursor = Entry.second;
 		if(!Cursor.m_HasRenderPos)
 		{
@@ -1333,7 +1345,7 @@ void CClientIndicator::OnRender()
 
 		Graphics()->TextureSet(GameClient()->m_GameSkin.m_aSpriteWeaponCursors[WEAPON_GUN]);
 		Graphics()->QuadsBegin();
-		Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+		Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
 		IGraphics::CQuadItem QuadItem(Pos.x, Pos.y, SizeX, SizeY);
 		Graphics()->QuadsDraw(&QuadItem, 1);
 		Graphics()->QuadsEnd();
@@ -1343,8 +1355,8 @@ void CClientIndicator::OnRender()
 			const float TextWidth = TextRender()->TextWidth(NameFontSize, Cursor.m_aName);
 			const float TextX = Pos.x + SizeX * 0.35f;
 			const float TextY = Pos.y - SizeY * 0.5f - NameFontSize;
-			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
-			TextRender()->TextOutlineColor(0.0f, 0.0f, 0.0f, 0.6f);
+			TextRender()->TextColor(1.0f, 1.0f, 1.0f, Alpha);
+			TextRender()->TextOutlineColor(0.0f, 0.0f, 0.0f, 0.6f * Alpha);
 			TextRender()->Text(TextX, TextY, NameFontSize, Cursor.m_aName, TextWidth + 8.0f);
 			TextRender()->TextColor(TextRender()->DefaultTextColor());
 			TextRender()->TextOutlineColor(TextRender()->DefaultTextOutlineColor());

@@ -2906,6 +2906,8 @@ if(CLIENT)
     components/uclient/chat_reply.cpp
     components/uclient/chat_reply.h
     components/uclient/menus_uclient.cpp
+    components/uclient/timeout_reconnect.cpp
+    components/uclient/timeout_reconnect.h
     components/uclient/uclient.cpp
     components/uclient/uclient.h
     components/binds.cpp
@@ -2974,6 +2976,7 @@ if(CLIENT)
     components/menus.h
     components/menus_browser.cpp
     components/menus_demo.cpp
+    components/menus_games.cpp
     components/menus_ingame.cpp
     components/menus_ingame_touch_controls.cpp
     components/menus_ingame_touch_controls.h

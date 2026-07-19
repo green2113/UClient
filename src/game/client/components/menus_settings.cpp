@@ -2110,6 +2110,11 @@ void CMenus::RenderSettings(CUIRect MainView)
 			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_RESERVED0);
 			RenderSettingsBestClient(PageView);
 		}
+		else if(g_Config.m_UiSettingsPage == SETTINGS_UCLIENT)
+		{
+			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_RESERVED0);
+			RenderSettingsUClient(PageView);
+		}
 		else if(g_Config.m_UiSettingsPage == SETTINGS_PROFILES)
 		{
 			GameClient()->m_MenuBackground.ChangePosition(14);
@@ -2219,6 +2224,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 			ROOT_TAB_APPEARANCE,
 			ROOT_TAB_TCLIENT,
 			ROOT_TAB_BESTCLIENT,
+			ROOT_TAB_UCLIENT,
 			ROOT_TAB_LENGTH,
 		};
 
@@ -2229,6 +2235,8 @@ void CMenus::RenderSettings(CUIRect MainView)
 				return ROOT_TAB_APPEARANCE;
 			if(Page == SETTINGS_TCLIENT || Page == SETTINGS_PROFILES || Page == SETTINGS_CONFIGS)
 				return ROOT_TAB_TCLIENT;
+			if(Page == SETTINGS_UCLIENT)
+				return ROOT_TAB_UCLIENT;
 			return ROOT_TAB_BESTCLIENT;
 		};
 
@@ -2240,6 +2248,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 			Localize("Appearance"),
 			TCLocalize("TClient"),
 			BCLocalize("BestClient"),
+			"UClient",
 		};
 		static CButtonContainer s_aRootTabButtons[ROOT_TAB_LENGTH];
 		const int CurRootTab = GetRootTabByPage(g_Config.m_UiSettingsPage);
@@ -2258,15 +2267,17 @@ void CMenus::RenderSettings(CUIRect MainView)
 					g_Config.m_UiSettingsPage = SETTINGS_APPEARANCE;
 				else if(i == ROOT_TAB_TCLIENT)
 					g_Config.m_UiSettingsPage = SETTINGS_TCLIENT;
-				else
+				else if(i == ROOT_TAB_BESTCLIENT)
 					g_Config.m_UiSettingsPage = SETTINGS_BESTCLIENT;
+				else
+					g_Config.m_UiSettingsPage = SETTINGS_UCLIENT;
 			}
 		}
 
 		const int ActiveRootTab = GetRootTabByPage(g_Config.m_UiSettingsPage);
 		ContentView.HSplitTop(6.0f, nullptr, &ContentView);
 
-		if(ActiveRootTab != ROOT_TAB_BESTCLIENT)
+		if(ActiveRootTab != ROOT_TAB_BESTCLIENT && ActiveRootTab != ROOT_TAB_UCLIENT)
 		{
 			CUIRect SubTabBar;
 			ContentView.HSplitTop(24.0f, &SubTabBar, &ContentView);
@@ -2360,6 +2371,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 		SETTINGS_ASSETS,
 		SETTINGS_TCLIENT,
 		SETTINGS_BESTCLIENT,
+		SETTINGS_UCLIENT,
 		SETTINGS_PROFILES,
 		SETTINGS_CONFIGS,
 	};
@@ -2375,6 +2387,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 		Localize("Assets"),
 		TCLocalize("TClient"),
 		"BestClient",
+		"UClient",
 		Localize("Profiles"),
 		Localize("Configs")};
 
@@ -2715,7 +2728,6 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudScore, Localize("Show score"), &g_Config.m_ClShowhudScore, &LeftView, LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowLocalTimeAlways, Localize("Show local time always"), &g_Config.m_ClShowLocalTimeAlways, &LeftView, LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClSpecCursor, Localize("Show spectator cursor"), &g_Config.m_ClSpecCursor, &LeftView, LineSize);
-
 		// Settings of the HUD element for votes
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowVotesAfterVoting, Localize("Show votes window after voting"), &g_Config.m_ClShowVotesAfterVoting, &LeftView, LineSize);
 

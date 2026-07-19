@@ -38,6 +38,7 @@
 #include "components/bestclient/music_player.h"
 #include "components/bestclient/translate.h"
 #include "components/bestclient/voice/voice.h"
+#include "components/uclient/timeout_reconnect.h"
 #include "components/uclient/uclient.h"
 #include "components/binds.h"
 #include "components/broadcast.h"
@@ -1127,6 +1128,7 @@ public:
 	void SetConnectInfo(const NETADDR *pAddress) override;
 
 	CUClient m_UClient;
+	CTimeoutReconnect m_TimeoutReconnect;
 };
 
 ColorRGBA CalculateNameColor(ColorHSLA TextColorHSL);

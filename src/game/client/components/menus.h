@@ -1057,6 +1057,7 @@ public:
 		SETTINGS_PROFILES,
 		SETTINGS_CONFIGS,
 		SETTINGS_BESTCLIENT,
+		SETTINGS_UCLIENT,
 
 		SETTINGS_LENGTH,
 	};
@@ -1237,6 +1238,8 @@ private:
 	void RenderSettingsDDNet(CUIRect MainView);
 	void RenderSettingsBestClient(CUIRect MainView);
 	void RenderSettingsBestClientInfo(CUIRect MainView);
+	void RenderSettingsBestClientFun(CUIRect MainView);
+	void RenderSettingsUClient(CUIRect MainView);
 	void RenderSettingsAppearance(CUIRect MainView);
 
 	// found in menus_tclient.cpp

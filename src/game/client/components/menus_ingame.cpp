@@ -82,6 +82,7 @@ void CMenus::RenderGame(CUIRect MainView)
 		}
 		else
 		{
+			GameClient()->m_TimeoutReconnect.MarkIntentionalLeave();
 			Client()->Disconnect();
 			RefreshBrowserTab(true);
 		}
@@ -512,6 +513,7 @@ void CMenus::RenderEscPlayersCarousel(CUIRect MainView)
 
 void CMenus::PopupConfirmDisconnect()
 {
+	GameClient()->m_TimeoutReconnect.MarkIntentionalLeave();
 	Client()->Disconnect();
 }
 

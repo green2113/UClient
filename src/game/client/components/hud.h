@@ -202,12 +202,22 @@ private:
 	bool RebuildFinishPredictionPathData();
 	bool EnsureFinishPredictionPathData();
 	float GetFinishPredictionDistanceAtPos(vec2 Pos) const;
+	float GetRacePathFromStartAtPos(vec2 Pos) const;
+	float GetRacePathProgressAtPos(vec2 Pos) const;
 	float GetFinishPredictionStartDistance() const;
 	int64_t GetFinishPredictionScoreboardTimeMs(int ClientId) const;
 	int64_t GetFinishPredictionBestTimeMs() const;
 	int64_t GetFinishPredictionPersonalBestTimeMs() const;
 	int64_t GetFinishPredictionAverageTimeMs() const;
 	bool GetFinishPredictionState(SFinishPredictionState &State, bool ForcePreview) const;
+	// Temporary debug helper: progress 0..1 using finish-prediction path distances.
+	bool GetDebugRaceProgress(float &Progress) const;
+	void RenderDebugRaceProgress();
+	bool GetRacePathDistanceForClient(int ClientId, float &Distance) const;
+	bool GetRacePathFromStartForClient(int ClientId, float &Distance) const;
+	bool GetRacePathProgressForClient(int ClientId, float &Progress) const;
+	void RenderNotifyWhenBack();
+	float SampleRacePathDistanceField(const std::vector<int> &vDistances, vec2 Pos) const;
 	CUIRect GetFinishPredictionAnchorRect() const;
 	CUIRect GetFinishPredictionClassicRect(bool ForcePreview) const;
 	CUIRect GetFinishPredictionBarRect(bool ForcePreview) const;
@@ -229,11 +239,13 @@ private:
 	int m_SpeedrunTimerExpiredTick;
 	bool m_ShowFinishTime;
 	mutable std::vector<int> m_vFinishPredictionDistances;
+	mutable std::vector<int> m_vFinishPredictionFromStartDistances;
 	mutable std::vector<unsigned char> m_vFinishPredictionPassable;
 	mutable std::vector<ivec2> m_vFinishPredictionStartTiles;
 	mutable std::vector<ivec2> m_vFinishPredictionFinishTiles;
 	mutable int m_FinishPredictionMapWidth;
 	mutable int m_FinishPredictionMapHeight;
+	mutable int m_FinishPredictionFreezePenalty;
 	mutable int m_FinishPredictionRaceStartTick;
 	mutable float m_FinishPredictionRaceStartDistance;
 	mutable float m_FinishPredictionLastProgress;

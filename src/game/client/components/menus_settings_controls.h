@@ -59,6 +59,7 @@ class CMenusSettingsControls : public CComponentInterfaces
 public:
 	void OnInterfacesInit(CGameClient *pClient) override;
 	void Render(CUIRect MainView);
+	void RenderBindPresets(CUIRect &View);
 
 private:
 	bool m_aBindGroupExpanded[(int)EBindOptionGroup::NUM];

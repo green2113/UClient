@@ -637,6 +637,7 @@ void CGameClient::OnConsoleInit()
 					      &m_Translate, // TClient
 					      &m_Ghost,
 					      &m_BestClient, // BestClient binds
+					      &m_TimeoutReconnect,
 					      &m_TClient, // TClient (Must be before chat and players)
 					      &m_Players,
 					      &m_MovingTilesBackground, // TClient

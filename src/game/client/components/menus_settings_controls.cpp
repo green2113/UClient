@@ -200,6 +200,8 @@ void CMenusSettingsControls::Render(CUIRect MainView)
 		return;
 	}
 
+	RenderBindPresets(MainView);
+
 	CUIRect QuickSearch, SearchMatches, ResetToDefault;
 	MainView.HSplitBottom(BUTTON_HEIGHT, &MainView, &QuickSearch);
 	QuickSearch.VSplitRight(200.0f, &QuickSearch, &ResetToDefault);
@@ -739,35 +741,37 @@ void CMenusSettingsControls::SwitchBindPreset(int Index)
 	g_Config.m_UcBindPresetActive = Index;
 }
 
-void CMenusSettingsControls::RenderVisualBinds(CUIRect View)
+void CMenusSettingsControls::RenderBindPresets(CUIRect &View)
 {
-	// Preset (loadout) switcher: save the current binds as a preset and switch between them.
-	{
-		CUIRect PresetRow, PresetLabel;
-		View.HSplitTop(BUTTON_HEIGHT, &PresetRow, &View);
-		View.HSplitTop(MARGIN, nullptr, &View);
-		PresetRow.VSplitLeft(120.0f, &PresetLabel, &PresetRow);
-		PresetRow.VSplitLeft(BUTTON_SPACING, nullptr, &PresetRow);
-		Ui()->DoLabel(&PresetLabel, Localize("Bind preset"), FONT_SIZE, TEXTALIGN_ML);
+	CUIRect PresetRow, PresetLabel;
+	View.HSplitTop(BUTTON_HEIGHT, &PresetRow, &View);
+	View.HSplitTop(MARGIN, nullptr, &View);
+	PresetRow.VSplitLeft(120.0f, &PresetLabel, &PresetRow);
+	PresetRow.VSplitLeft(BUTTON_SPACING, nullptr, &PresetRow);
+	Ui()->DoLabel(&PresetLabel, Localize("Bind preset"), FONT_SIZE, TEXTALIGN_ML);
 
-		const int ActivePreset = g_Config.m_UcBindPresetActive;
-		const float PresetWidth = (PresetRow.w - (CBinds::NUM_PRESETS - 1) * BUTTON_SPACING) / CBinds::NUM_PRESETS;
-		for(int i = 0; i < CBinds::NUM_PRESETS; i++)
+	const int ActivePreset = g_Config.m_UcBindPresetActive;
+	const float PresetWidth = (PresetRow.w - (CBinds::NUM_PRESETS - 1) * BUTTON_SPACING) / CBinds::NUM_PRESETS;
+	for(int i = 0; i < CBinds::NUM_PRESETS; i++)
+	{
+		CUIRect PresetButton;
+		PresetRow.VSplitLeft(PresetWidth, &PresetButton, &PresetRow);
+		if(i < CBinds::NUM_PRESETS - 1)
 		{
-			CUIRect PresetButton;
-			PresetRow.VSplitLeft(PresetWidth, &PresetButton, &PresetRow);
-			if(i < CBinds::NUM_PRESETS - 1)
-			{
-				PresetRow.VSplitLeft(BUTTON_SPACING, nullptr, &PresetRow);
-			}
-			char aLabel[32];
-			str_format(aLabel, sizeof(aLabel), "%s %d", Localize("Preset"), i + 1);
-			if(GameClient()->m_Menus.DoButton_Menu(&m_aBindPresetButtons[i], aLabel, i == ActivePreset ? 1 : 0, &PresetButton))
-			{
-				SwitchBindPreset(i);
-			}
+			PresetRow.VSplitLeft(BUTTON_SPACING, nullptr, &PresetRow);
+		}
+		char aLabel[32];
+		str_format(aLabel, sizeof(aLabel), "%s %d", Localize("Preset"), i + 1);
+		if(GameClient()->m_Menus.DoButton_Menu(&m_aBindPresetButtons[i], aLabel, i == ActivePreset ? 1 : 0, &PresetButton))
+		{
+			SwitchBindPreset(i);
 		}
 	}
+}
+
+void CMenusSettingsControls::RenderVisualBinds(CUIRect View)
+{
+	RenderBindPresets(View);
 
 	// Top row: modifier toggles on the left (combine freely, e.g. Ctrl+Alt), reset on the right.
 	CUIRect TogglesRow, ResetButton;
