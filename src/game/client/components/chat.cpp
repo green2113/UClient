@@ -6508,7 +6508,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 
 	// Custom color for new line
 	std::optional<ColorRGBA> CustomColor = std::nullopt;
-	if(ClientId == CLIENT_MSG)
+	if(ClientId == CLIENT_MSG && Team != TEAM_UCLIENT)
 		CustomColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
 
 	CLine &PreviousLine = m_aLines[m_CurrentLine];

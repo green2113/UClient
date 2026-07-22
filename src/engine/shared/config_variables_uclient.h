@@ -33,7 +33,7 @@ MACRO_CONFIG_INT(UcShowSharedCursors, uc_show_shared_cursors, 1, 0, 1, CFGFLAG_C
 MACRO_CONFIG_INT(UcChat, uc_chat, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable UClient chat channel (relayed via UClient presence UDP)")
 MACRO_CONFIG_INT(UcChatSendSameServerOnly, uc_chat_send_same_server_only, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Only send UClient chat to users on the same game server")
 MACRO_CONFIG_INT(UcChatShowSameServerOnly, uc_chat_show_same_server_only, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Only show UClient chat from users on the same game server")
-MACRO_CONFIG_COL(UcMessageColor, uc_message_color, 10027007, CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient chat message color")
+MACRO_CONFIG_COL(UcMessageColor, uc_message_color, 9043920, CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient chat message color")
 MACRO_CONFIG_INT(UcShowTimeoutReconnect, uc_show_timeout_reconnect, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show remaining reconnect timeout after an abnormal disconnect")
 MACRO_CONFIG_INT(UcAutoTimeoutReconnect, uc_auto_timeout_reconnect, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto reconnect to the same server 3 seconds after the reconnect timeout expires")
 MACRO_CONFIG_INT(UcNotifyWhenBack, uc_back_notify, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Notify when a teammate behind you (lower race progress) is frozen")

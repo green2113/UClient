@@ -412,7 +412,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			static float s_UcChatPhase = 0.0f;
 			const bool ChatExpanded = g_Config.m_UcChat != 0;
 			UpdateRevealPhase(s_UcChatPhase, ChatExpanded);
-			const float ExpandedTargetHeight = MarginSmall + LineSize * 2.0f;
+			const float ExpandedTargetHeight = MarginSmall + LineSize * 2.0f + ColorPickerLineSize + ColorPickerLineSpacing;
 			const float ExpandedHeight = ExpandedTargetHeight * s_UcChatPhase;
 			const float ContentHeight = LineSize + MarginSmall + LineSize + ExpandedHeight;
 			CUIRect Content, Label, Visible;
@@ -470,6 +470,9 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 						s_UcChatSendCoupledWithShow = false;
 					}
 				}
+
+				static CButtonContainer s_UcMessageColor;
+				DoLine_ColorPicker(&s_UcMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &Expand, "UClient message", &g_Config.m_UcMessageColor, ColorRGBA(0.63f, 0.92f, 1.0f));
 			}
 			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 		}
