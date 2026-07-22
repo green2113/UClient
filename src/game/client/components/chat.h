@@ -496,6 +496,7 @@ class CChat : public CComponent
 	static void ConchainChatFontSize(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainChatWidth(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainRegexPlayerWhitelist(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
+	static void ConchainUcChatShowSameServerOnly(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 
 	static std::vector<std::string> SplitWords(const char *pMessage);
 	Regex m_RegexPlayerWhitelist;
@@ -512,6 +513,8 @@ class CChat : public CComponent
 	void ApplyStashedUcReplyAfterSendScopePrompt();
 	void ClearStashedUcReplySendScopePrompt();
 	bool CanShowReplyButton(const CLine &Line) const;
+	static bool LineNeedsNameColon(const CLine &Line);
+	static bool LineNeedsTeePadding(const CLine &Line);
 	float ReplyBannerHeight(float ScaledFontSize) const;
 	void RenderReplyBanner(float x, float InputY, float ScaledFontSize);
 	void ResetTypingAnimation();

@@ -1029,6 +1029,15 @@ void CChat::ConchainChatWidth(IConsole::IResult *pResult, void *pUserData, ICons
 	pChat->RebuildChat();
 }
 
+void CChat::ConchainUcChatShowSameServerOnly(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
+{
+	const int OldShow = g_Config.m_UcChatShowSameServerOnly;
+	pfnCallback(pResult, pCallbackUserData);
+	// Match Settings > UClient: enabling show-same-server also enables send-same-server.
+	if(!OldShow && g_Config.m_UcChatShowSameServerOnly && !g_Config.m_UcChatSendSameServerOnly)
+		g_Config.m_UcChatSendSameServerOnly = 1;
+}
+
 void CChat::Echo(const char *pString)
 {
 	AddLine(CLIENT_MSG, 0, pString);
@@ -1054,6 +1063,7 @@ void CChat::OnInit()
 	Console()->Chain("cl_chat_size", ConchainChatFontSize, this);
 	Console()->Chain("cl_chat_width", ConchainChatWidth, this);
 	Console()->Chain("bc_regex_player_whitelist", ConchainRegexPlayerWhitelist, this);
+	Console()->Chain("uc_chat_show_same_server_only", ConchainUcChatShowSameServerOnly, this);
 
 	if(g_Config.m_BcRegexPlayerWhitelist[0])
 	{
@@ -2694,12 +2704,12 @@ static float ReplyQuoteTextStartOffset(float TeeSize, float FontSize)
 }
 
 // Remote UClient lines use CLIENT_MSG but still show a tee + "Name: text" like normal chat.
-static bool LineNeedsNameColon(const CChat::CLine &Line)
+bool CChat::LineNeedsNameColon(const CLine &Line)
 {
 	return Line.m_aName[0] != '\0' && (Line.m_ClientId >= 0 || Line.m_UClient);
 }
 
-static bool LineNeedsTeePadding(const CChat::CLine &Line)
+bool CChat::LineNeedsTeePadding(const CLine &Line)
 {
 	if(g_Config.m_ClChatOld || Line.m_aName[0] == '\0')
 		return false;
