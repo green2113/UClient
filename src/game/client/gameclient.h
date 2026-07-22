@@ -1080,8 +1080,6 @@ private:
 	// BestClient: optimizer
 	void OptimizerSetDdnetPriorityHigh();
 	void OptimizerSetDiscordPriorityBelowNormal();
-	void OptimizerUpdateProcessPriorities();
-	void RenderOptimizerFpsFogRect();
 	unsigned long m_OptimizerDdnetPrevPriorityClass = 0;
 	unsigned long m_OptimizerDdnetLastSetPriorityClass = 0;
 	bool m_OptimizerDdnetPriorityHighActive = false;

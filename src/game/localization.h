@@ -64,4 +64,6 @@ extern CLocalizationDatabase g_Localization;
 
 [[gnu::format_arg(1)]] extern const char *TCLocalize(const char *pStr, const char *pContext = "");
 
+[[gnu::format_arg(1)]] extern const char *BCLocalize(const char *pStr, const char *pContext = "");
+
 #endif

@@ -214,6 +214,18 @@ namespace
 			return "uc_peer_remove";
 		case UClientPresence::PACKET_PEER_LIST:
 			return "uc_peer_list";
+		case UClientPresence::PACKET_REACTION:
+			return "uc_reaction";
+		case UClientPresence::PACKET_REACTION_BROADCAST:
+			return "uc_reaction_broadcast";
+		case UClientPresence::PACKET_CURSOR:
+			return "uc_cursor";
+		case UClientPresence::PACKET_CURSOR_BROADCAST:
+			return "uc_cursor_broadcast";
+		case UClientPresence::PACKET_CHAT:
+			return "uc_chat";
+		case UClientPresence::PACKET_CHAT_BROADCAST:
+			return "uc_chat_broadcast";
 		default:
 			return "unknown";
 		}
@@ -1133,6 +1145,102 @@ void CClientIndicator::ApplyUcReactionBroadcast(const UClientPresence::CReaction
 		Reaction.m_Action != UClientPresence::REACTION_REMOVE);
 }
 
+void CClientIndicator::SendUClientChat(const char *pMessage)
+{
+	if(!g_Config.m_UcChat || !IsUcPresenceUdpEnabled() || !m_Socket || !m_HasUcServerAddr)
+		return;
+	if(!pMessage)
+		return;
+
+	const char *pTrimmed = str_utf8_skip_whitespaces(pMessage);
+	if(pTrimmed[0] == '\0')
+		return;
+
+	char aMessage[UClientPresence::CHAT_MESSAGE_MAX_BYTES];
+	str_copy(aMessage, pTrimmed, sizeof(aMessage));
+	if(aMessage[0] == '\0')
+		return;
+
+	const int SenderClientId = GameClient()->m_Snap.m_LocalClientId;
+	const char *pServerAddress = EffectivePresenceServerAddress();
+	if(pServerAddress[0] == '\0')
+		return;
+
+	const uint8_t Scope = g_Config.m_UcChatSendSameServerOnly ?
+		(uint8_t)UClientPresence::CHAT_SCOPE_SAME_SERVER :
+		(uint8_t)UClientPresence::CHAT_SCOPE_GLOBAL;
+
+	const char *pSkinName = g_Config.m_ClPlayerSkin;
+	uint8_t UseCustomColor = (uint8_t)g_Config.m_ClPlayerUseCustomColor;
+	int32_t ColorBody = (int32_t)g_Config.m_ClPlayerColorBody;
+	int32_t ColorFeet = (int32_t)g_Config.m_ClPlayerColorFeet;
+	if(SenderClientId >= 0 && SenderClientId < MAX_CLIENTS && GameClient()->m_aClients[SenderClientId].m_Active)
+	{
+		const auto &Local = GameClient()->m_aClients[SenderClientId];
+		pSkinName = Local.m_aSkinName[0] != '\0' ? Local.m_aSkinName : g_Config.m_ClPlayerSkin;
+		UseCustomColor = (uint8_t)Local.m_UseCustomColor;
+		ColorBody = (int32_t)Local.m_ColorBody;
+		ColorFeet = (int32_t)Local.m_ColorFeet;
+	}
+
+	std::vector<uint8_t> vPacket;
+	vPacket.reserve(128 + str_length(aMessage));
+	UClientPresence::WriteChatClientBody(vPacket,
+		g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
+		pServerAddress,
+		SenderClientId >= 0 ? PlayerNameForClient(SenderClientId) : g_Config.m_PlayerName,
+		SenderClientId >= 0 ? SenderClientId : -1,
+		Scope, aMessage,
+		pSkinName, UseCustomColor, ColorBody, ColorFeet);
+	UClientPresence::AppendProof(vPacket, g_Config.m_UcPresenceUdpSharedToken);
+	net_udp_send(m_Socket, &m_UcServerAddr, vPacket.data(), (int)vPacket.size());
+
+	// Local echo so the sender sees their own line immediately.
+	GameClient()->m_Chat.AddUClientChatLine(
+		SenderClientId >= 0 ? PlayerNameForClient(SenderClientId) : g_Config.m_PlayerName,
+		SenderClientId, aMessage, pServerAddress,
+		pSkinName, UseCustomColor, ColorBody, ColorFeet);
+}
+
+void CClientIndicator::ApplyUcChatBroadcast(const UClientPresence::CChatBroadcast &Chat)
+{
+	if(!g_Config.m_UcChat)
+		return;
+	if(Chat.m_Message.empty() || Chat.m_SenderName.empty())
+		return;
+
+	char aNormalizedServer[NETADDR_MAXSTRSIZE];
+	if(!NormalizePresenceServerAddress(Chat.m_ServerAddress.c_str(), aNormalizedServer, sizeof(aNormalizedServer)))
+		return;
+
+	if(g_Config.m_UcChatShowSameServerOnly || Chat.m_Scope == UClientPresence::CHAT_SCOPE_SAME_SERVER)
+	{
+		if(!UcPeerAppliesToCurrentServer(aNormalizedServer))
+			return;
+	}
+
+	// Ignore echo of our own global/same-server messages if the relay includes us later.
+	const int LocalId = GameClient()->m_Snap.m_LocalClientId;
+	if(LocalId >= 0 && Chat.m_SenderClientId == LocalId &&
+		str_comp(Chat.m_SenderName.c_str(), PlayerNameForClient(LocalId)) == 0 &&
+		UcPeerAppliesToCurrentServer(aNormalizedServer))
+	{
+		return;
+	}
+
+	GameClient()->m_Chat.AddUClientChatLine(Chat.m_SenderName.c_str(), Chat.m_SenderClientId,
+		Chat.m_Message.c_str(), aNormalizedServer,
+		Chat.m_SkinName.c_str(), Chat.m_UseCustomColor, Chat.m_ColorBody, Chat.m_ColorFeet);
+}
+
+bool CClientIndicator::IsLiveCursorBlockedByPlayerSpectate() const
+{
+	// Free-view spectating is fine; following a specific player is not (held key would spam their view).
+	if(!GameClient()->m_Snap.m_SpecInfo.m_Active)
+		return false;
+	return GameClient()->m_Snap.m_SpecInfo.m_SpectatorId >= 0;
+}
+
 void CClientIndicator::SendLiveCursor(bool Active, vec2 WorldPos)
 {
 	if(!IsUcPresenceUdpEnabled() || !m_Socket || !m_HasUcServerAddr)
@@ -1166,11 +1274,11 @@ void CClientIndicator::UpdateLiveCursorSend(bool UcPresence)
 		return;
 	}
 
-	// Meaningful while in a game with a local character to aim, OR while spectating/free-viewing
-	// (m_aTargetPos still tracks the spectator cursor in that case).
+	// Meaningful while in a game with a local character to aim, OR while free-view spectating.
+	// Following a specific player is blocked so a held bind cannot interfere.
 	const bool HasLocalAim = Client()->State() == IClient::STATE_ONLINE &&
 		(GameClient()->m_Snap.m_pLocalCharacter != nullptr || GameClient()->m_Snap.m_SpecInfo.m_Active);
-	const bool Active = m_LiveCursorActive && HasLocalAim;
+	const bool Active = m_LiveCursorActive && HasLocalAim && !IsLiveCursorBlockedByPlayerSpectate();
 
 	if(Active)
 	{
@@ -1254,22 +1362,14 @@ void CClientIndicator::PruneStaleRemoteCursors()
 	}
 }
 
-void CClientIndicator::RenderLiveCursorSharingIndicator()
+void CClientIndicator::RenderLiveCursorIndicatorPill(const char *pText, const ColorRGBA &DotColor)
 {
-	if(!g_Config.m_UcShowSharedCursors)
-		return;
-
-	// Only while we are actively broadcasting our cursor.
-	if(!m_LiveCursorWasActive)
-		return;
-
 	float ScreenX0, ScreenY0, ScreenX1, ScreenY1;
 	Graphics()->GetScreen(&ScreenX0, &ScreenY0, &ScreenX1, &ScreenY1);
 
 	const CUIRect Screen = *Ui()->Screen();
 	Graphics()->MapScreen(Screen.x, Screen.y, Screen.w, Screen.h);
 
-	const char *pText = "Sharing cursor";
 	const float FontSize = 8.0f;
 	const float PadX = 6.0f;
 	const float PadY = 3.0f;
@@ -1292,13 +1392,29 @@ void CClientIndicator::RenderLiveCursorSharingIndicator()
 	Dot.h = DotR * 2.0f;
 	Dot.x = Pill.x + PadX;
 	Dot.y = Pill.y + (PillH - DotR * 2.0f) / 2.0f;
-	Dot.Draw(ColorRGBA(0.3f, 1.0f, 0.45f, 1.0f), IGraphics::CORNER_ALL, DotR);
+	Dot.Draw(DotColor, IGraphics::CORNER_ALL, DotR);
 
 	TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.9f);
 	TextRender()->Text(Pill.x + PadX + DotR * 2.0f + DotGap, Pill.y + PadY, FontSize, pText, -1.0f);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
 
 	Graphics()->MapScreen(ScreenX0, ScreenY0, ScreenX1, ScreenY1);
+}
+
+void CClientIndicator::RenderLiveCursorSharingIndicator()
+{
+	if(!g_Config.m_UcShowSharedCursors)
+		return;
+
+	if(m_LiveCursorWasActive)
+	{
+		RenderLiveCursorIndicatorPill("Sharing cursor", ColorRGBA(0.3f, 1.0f, 0.45f, 1.0f));
+		return;
+	}
+
+	// Held while following a player: do not broadcast, but show a distinct bottom hint.
+	if(m_LiveCursorActive && IsLiveCursorBlockedByPlayerSpectate())
+		RenderLiveCursorIndicatorPill("Can't share while spectating a player", ColorRGBA(1.0f, 0.55f, 0.2f, 1.0f));
 }
 
 void CClientIndicator::OnRender()
@@ -1836,7 +1952,14 @@ void CClientIndicator::ProcessUcPresencePacket(const unsigned char *pData, int D
 
 	UClientPresence::CCursorBroadcast Cursor;
 	if(UClientPresence::ReadCursorBroadcast(pData, DataSize, Cursor))
+	{
 		ApplyUcCursorBroadcast(Cursor);
+		return;
+	}
+
+	UClientPresence::CChatBroadcast Chat;
+	if(UClientPresence::ReadChatBroadcast(pData, DataSize, Chat))
+		ApplyUcChatBroadcast(Chat);
 }
 
 void CClientIndicator::ProcessIncomingPackets(bool Force)

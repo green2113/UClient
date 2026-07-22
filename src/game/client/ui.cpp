@@ -544,8 +544,9 @@ void CUi::UpdateClipping()
 	}
 }
 
-int CUi::DoButtonLogic(const void *pId, int Checked, const CUIRect *pRect, const unsigned Flags)
+int CUi::DoButtonLogic(const void *pId, int Checked, const CUIRect *pRect, const unsigned Flags, EButtonSoundType SoundType)
 {
+	(void)SoundType;
 	int ReturnValue = 0;
 	const bool Inside = MouseHovered(pRect);
 
@@ -1740,13 +1741,17 @@ void CUi::RenderProgressSpinner(vec2 Center, float OuterRadius, const SProgressS
 	Graphics()->QuadsEnd();
 }
 
-void CUi::DoPopupMenu(const SPopupMenuId *pId, float X, float Y, float Width, float Height, void *pContext, FPopupMenuFunction pfnFunc, const SPopupMenuProperties &Props)
+void CUi::DoPopupMenu(const SPopupMenuId *pId, float X, float Y, float Width, float Height, void *pContext, FPopupMenuFunction pfnFunc, const SPopupMenuProperties &Props, EButtonSoundType SoundType)
 {
-	constexpr float Margin = SPopupMenu::POPUP_BORDER + SPopupMenu::POPUP_MARGIN;
-	if(X + Width > Screen()->w - Margin)
-		X = maximum<float>(X - Width, Margin);
-	if(Y + Height > Screen()->h - Margin)
-		Y = maximum<float>(Y - Height, Margin);
+	(void)SoundType;
+	if(!Props.m_FixedPosition)
+	{
+		constexpr float Margin = SPopupMenu::POPUP_BORDER + SPopupMenu::POPUP_MARGIN;
+		if(X + Width > Screen()->w - Margin)
+			X = maximum<float>(X - Width, Margin);
+		if(Y + Height > Screen()->h - Margin)
+			Y = maximum<float>(Y - Height, Margin);
+	}
 
 	m_vPopupMenus.emplace_back();
 	SPopupMenu *pNewMenu = &m_vPopupMenus.back();
@@ -2076,7 +2081,7 @@ void CUi::ShowPopupSelection(float X, float Y, SSelectionPopupContext *pContext)
 			pContext->m_Props.m_Corners = IGraphics::CORNER_B;
 		}
 	}
-	DoPopupMenu(pContext, X, Y, pContext->m_Width, PopupHeight, pContext, PopupSelection, pContext->m_Props);
+	DoPopupMenu(pContext, X, Y, pContext->m_Width, PopupHeight, pContext, PopupSelection, pContext->m_Props, pContext->m_IsDropDown ? EButtonSoundType::SILENT : EButtonSoundType::DEFAULT);
 }
 
 int CUi::DoDropDown(CUIRect *pRect, int CurSelection, const char **pStrs, int Num, SDropDownState &State)
@@ -2121,6 +2126,7 @@ int CUi::DoDropDown(CUIRect *pRect, int CurSelection, const char **pStrs, int Nu
 		State.m_SelectionPopupContext.m_Width = pRect->w;
 		State.m_SelectionPopupContext.m_AlignmentHeight = pRect->h;
 		State.m_SelectionPopupContext.m_TransparentButtons = true;
+		State.m_SelectionPopupContext.m_IsDropDown = true;
 		ShowPopupSelection(pRect->x, pRect->y, &State.m_SelectionPopupContext);
 	}
 

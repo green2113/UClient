@@ -674,25 +674,26 @@ void CMenus::RenderServerbrowserServerList(CUIRect View, bool &WasListboxItemAct
 						TextRender()->TextColor(TextRender()->DefaultTextColor());
 					}
 				}
-				else if(Id == COL_UCLIENT)
+			}
+			else if(Id == COL_UCLIENT)
+			{
+				if(pItem->m_HasUcClientPlayers)
 				{
-					if(pItem->m_HasUcClientPlayers)
-					{
-						const CUIRect Icon = CenterUcClientIcon(Button);
-						RenderUcClientIcon(Graphics(), m_UcLogoTexture, Icon);
+					const CUIRect Icon = CenterUcClientIcon(Button);
+					RenderUcClientIcon(Graphics(), m_UcLogoTexture, Icon);
 
-						if(pItem->m_NumUcClientPlayers > 1)
-						{
-							str_format(aTemp, sizeof(aTemp), "%d", pItem->m_NumUcClientPlayers);
-							TextRender()->TextColor(1.0f, 0.9f, 0.55f, 1.0f);
-							Ui()->DoLabel(&Button, aTemp, 9.0f, TEXTALIGN_MC);
-							TextRender()->TextColor(TextRender()->DefaultTextColor());
-						}
+					if(pItem->m_NumUcClientPlayers > 1)
+					{
+						str_format(aTemp, sizeof(aTemp), "%d", pItem->m_NumUcClientPlayers);
+						TextRender()->TextColor(1.0f, 0.9f, 0.55f, 1.0f);
+						Ui()->DoLabel(&Button, aTemp, 9.0f, TEXTALIGN_MC);
+						TextRender()->TextColor(TextRender()->DefaultTextColor());
 					}
 				}
-				else if(Id == COL_FRIENDS)
-				{
-					if(pItem->m_FriendState != IFriends::FRIEND_NO)
+			}
+			else if(Id == COL_FRIENDS)
+			{
+				if(pItem->m_FriendState != IFriends::FRIEND_NO)
 				{
 					RenderBrowserIcons(*pUiElement->Rect(UI_ELEM_FRIEND_ICON), &Button, ColorRGBA(0.94f, 0.4f, 0.4f, 1.0f), TextRender()->DefaultTextOutlineColor(), FontIcon::HEART, TEXTALIGN_MC);
 

@@ -58,6 +58,7 @@ class CChat : public CComponent
 	enum
 	{
 		MAX_LINES = 64,
+		MAX_LINE_LENGTH = ::MAX_LINE_LENGTH,
 		CHAT_LINE_LENGTH = ::MAX_LINE_LENGTH,
 	};
 
@@ -102,6 +103,8 @@ class CChat : public CComponent
 		int m_ClientId;
 		int m_TeamNumber;
 		bool m_Team;
+		bool m_UClient;
+		bool m_UClientFromCurrentServer;
 		bool m_Whisper;
 		int m_NameColor;
 		char m_aName[64];
@@ -241,6 +244,12 @@ class CChat : public CComponent
 		MODE_NONE = 0,
 		MODE_ALL,
 		MODE_TEAM,
+		MODE_UCLIENT,
+	};
+
+	enum
+	{
+		TEAM_UCLIENT = 4,
 	};
 
 	enum
@@ -352,6 +361,11 @@ class CChat : public CComponent
 	int m_PendingReplySourceLineIndex;
 	char m_aPendingReplyName[64];
 	char m_aPendingReplyPreview[CHAT_LINE_LENGTH];
+	bool m_UcReplySendScopePromptPending = false;
+	int m_UcReplySendScopePromptClientId = -1;
+	int m_UcReplySendScopePromptSourceLineIndex = -1;
+	char m_aUcReplySendScopePromptName[64] = "";
+	char m_aUcReplySendScopePromptPreview[CHAT_LINE_LENGTH] = "";
 	CButtonContainer m_ReplyCancelButton;
 	SRenderRect m_ReplyCancelButtonRect;
 	bool m_ReplyCancelButtonRectValid;
@@ -494,6 +508,9 @@ class CChat : public CComponent
 	bool TryResolveReplyQuoteText(int ReplyClientId, const char *pReplyToName, const char *pWirePreview, char *pOut, int OutSize, int SkipLineIndex = -1) const;
 	void SetPendingReply(int ClientId, const char *pName, int SourceLineIndex, const char *pQuoteText);
 	void ClearPendingReply();
+	void StashUcReplySendScopePrompt(int ClientId, const char *pName, int SourceLineIndex, const char *pQuoteText);
+	void ApplyStashedUcReplyAfterSendScopePrompt();
+	void ClearStashedUcReplySendScopePrompt();
 	bool CanShowReplyButton(const CLine &Line) const;
 	float ReplyBannerHeight(float ScaledFontSize) const;
 	void RenderReplyBanner(float x, float InputY, float ScaledFontSize);
@@ -619,7 +636,7 @@ class CChat : public CComponent
 	static bool ExtractMapUrlFromText(const char *pText, char *pOutUrl, int UrlSize, char *pOutName, int NameSize);
 	void SetMapAttachment(CLine &Line, const char *pUrl, const char *pFileName);
 	bool HasMapAttachment(const CLine &Line) const;
-	void OpenMapContextMenu(int LineIndex, float X, float Y);
+	void OpenMapContextMenu(int LineIndex);
 	void BeginMapAddDownload();
 	void UpdateMapSave();
 	void UpdateMapSizeRequests();
@@ -658,6 +675,8 @@ public:
 
 	bool IsActive() const { return m_Mode != MODE_NONE; }
 	void AddLine(int ClientId, int Team, const char *pLine);
+	void AddUClientChatLine(const char *pName, int SuggestedClientId, const char *pLine, const char *pServerAddress,
+		const char *pSkinName = nullptr, int UseCustomColor = 0, int ColorBody = 0, int ColorFeet = 0);
 	const char *FilterText(const char *pMessage, int ClientId = -2, bool IsChat = false);
 	void EnableMode(int Team);
 	void DisableMode();

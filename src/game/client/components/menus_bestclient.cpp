@@ -15,6 +15,7 @@
 #include <game/client/components/hud_layout.h>
 #include <game/client/components/media_decoder.h>
 #include <game/client/components/menus.h>
+#include <game/client/components/bestclient/bestclient.h>
 #include <game/client/gameclient.h>
 #include <game/client/ui.h>
 #include <game/client/ui_scrollregion.h>
@@ -3067,7 +3068,7 @@ void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
 	const bool ShowScoreboardSettings = g_Config.m_BcClientIndicatorInScoreboard != 0;
 	const float NamePlateSettingsHeight = ShowNamePlateSettings ? 2.0f * LineSize : 0.0f;
 	const float ScoreboardSettingsHeight = ShowScoreboardSettings ? LineSize : 0.0f;
-	const float ClientIndicatorBlockHeight = LineSize + MarginSmall + 2.0f * LineSize + NamePlateSettingsHeight + ScoreboardSettingsHeight;
+	const float ClientIndicatorBlockHeight = LineSize + MarginSmall + 3.0f * LineSize + NamePlateSettingsHeight + ScoreboardSettingsHeight;
 
 	CUIRect ClientIndicatorBlock;
 	RightColumn.HSplitTop(ClientIndicatorBlockHeight, &ClientIndicatorBlock, &RightColumn);
@@ -3082,6 +3083,9 @@ void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
 	ClientIndicatorBlock.HSplitTop(LineSize, &Label, &ClientIndicatorBlock);
 	Ui()->DoLabel(&Label, Localize("Client Indicator"), HeadlineFontSize, TEXTALIGN_ML);
 	ClientIndicatorBlock.HSplitTop(MarginSmall, nullptr, &ClientIndicatorBlock);
+
+	ClientIndicatorBlock.HSplitTop(LineSize, &Content, &ClientIndicatorBlock);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcClientIndicatorSendInfo, Localize("Send usage info to indicator server"), &g_Config.m_BcClientIndicatorSendInfo, &Content, LineSize);
 
 	ClientIndicatorBlock.HSplitTop(LineSize, &Content, &ClientIndicatorBlock);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcClientIndicatorInNamePlate, Localize("Show indicator in name plates"), &g_Config.m_BcClientIndicatorInNamePlate, &Content, LineSize);
@@ -3453,3 +3457,374 @@ void CMenus::RenderSettingsBestClientInfo(CUIRect MainView)
 	const int HideableRows = (HideableTabCount + 1) / 2;
 	RightView.HSplitTop(LineSize * (HideableRows + 0.5f), nullptr, &RightView);
 }
+
+// UClient: Components editor (restored from pre-v2.0 menus_bestclient.cpp)
+
+enum
+{
+	COMPONENTS_GROUP_VISUALS = 0,
+	COMPONENTS_GROUP_GAMEPLAY,
+	COMPONENTS_GROUP_OTHERS,
+	COMPONENTS_GROUP_TCLIENT,
+	NUM_COMPONENTS_GROUPS,
+};
+
+struct SBestClientComponentEntry
+{
+	CBestClient::EBestClientComponent m_Component;
+	const char *m_pName;
+	int m_Group;
+};
+
+static const SBestClientComponentEntry gs_aBestClientComponentEntries[] = {
+	{CBestClient::COMPONENT_VISUALS_JELLY_TEE, "Jelly Tee", COMPONENTS_GROUP_VISUALS},
+	{CBestClient::COMPONENT_VISUALS_3D_PARTICLES, "3D Particles", COMPONENTS_GROUP_VISUALS},
+	{CBestClient::COMPONENT_VISUALS_CRYSTAL_LASER, "Crystal Laser", COMPONENTS_GROUP_VISUALS},
+	{CBestClient::COMPONENT_VISUALS_MUSIC_PLAYER, "Music Player", COMPONENTS_GROUP_VISUALS},
+	{CBestClient::COMPONENT_VISUALS_KEYSTROKES, "Keystrokes", COMPONENTS_GROUP_VISUALS},
+	{CBestClient::COMPONENT_VISUALS_MEDIA_BACKGROUND, "Media Background", COMPONENTS_GROUP_VISUALS},
+	{CBestClient::COMPONENT_VISUALS_ANIMATIONS, "Animations", COMPONENTS_GROUP_VISUALS},
+	{CBestClient::COMPONENT_VISUALS_ASPECT_RATIO, "Aspect Ratio", COMPONENTS_GROUP_VISUALS},
+	{CBestClient::COMPONENT_VISUALS_EYE_COMFORT, "Eye Comfort", COMPONENTS_GROUP_VISUALS},
+	{CBestClient::COMPONENT_VISUALS_MOTION_BLUR, "Motion Blur", COMPONENTS_GROUP_VISUALS},
+	{CBestClient::COMPONENT_VISUALS_FLYING_NAMEPLATES, "Flying Nameplates", COMPONENTS_GROUP_VISUALS},
+	{CBestClient::COMPONENT_GAMEPLAY_HOOK_COMBO, "Hook Combo", COMPONENTS_GROUP_VISUALS},
+	{CBestClient::COMPONENT_GAMEPLAY_INPUT, "Input", COMPONENTS_GROUP_GAMEPLAY},
+	{CBestClient::COMPONENT_GAMEPLAY_FAST_ACTIONS, "Fast Actions", COMPONENTS_GROUP_GAMEPLAY},
+	{CBestClient::COMPONENT_GAMEPLAY_SPEEDRUN_TIMER, "Speedrun Timer", COMPONENTS_GROUP_GAMEPLAY},
+	{CBestClient::COMPONENT_GAMEPLAY_FINISH_PREDICTION, "Finish Prediction", COMPONENTS_GROUP_GAMEPLAY},
+	{CBestClient::COMPONENT_GAMEPLAY_AUTO_TEAM_LOCK, "Auto Team Lock", COMPONENTS_GROUP_GAMEPLAY},
+	{CBestClient::COMPONENT_GAMEPLAY_AUTO_LOGIN, "Auto Login", COMPONENTS_GROUP_GAMEPLAY},
+	{CBestClient::COMPONENT_GAMEPLAY_GORES_MODE, "Gores Mode", COMPONENTS_GROUP_GAMEPLAY},
+	{CBestClient::COMPONENT_VISUALS_OPTIMIZER, "Optimizer", COMPONENTS_GROUP_GAMEPLAY},
+	{CBestClient::COMPONENT_VISUALS_FOCUS_MODE, "Focus Mode", COMPONENTS_GROUP_GAMEPLAY},
+	{CBestClient::COMPONENT_OTHERS_MISC, "Misc", COMPONENTS_GROUP_OTHERS},
+	{CBestClient::COMPONENT_OTHERS_CHAT_MEDIA, "Chat Media", COMPONENTS_GROUP_OTHERS},
+	{CBestClient::COMPONENT_OTHERS_VOICE_SETTINGS, "Voice Chat", COMPONENTS_GROUP_OTHERS},
+	{CBestClient::COMPONENT_OTHERS_VOICE_BINDS, "Voice Binds", COMPONENTS_GROUP_OTHERS},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_TAB, "Settings tab", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_BIND_WHEEL_TAB, "Bind wheel tab", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_WAR_LIST_TAB, "War list tab", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_CHAT_BINDS_TAB, "Chat binds tab", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_STATUS_BAR_TAB, "Status bar tab", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_INFO_TAB, "Info tab", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_PROFILES_PAGE, "Profiles page", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_CONFIGS_PAGE, "Configs page", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_VISUAL, "Settings: Visual", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_ANTI_LATENCY, "Settings: Anti Latency Tools", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_ANTI_PING_SMOOTHING, "Settings: Anti Ping Smoothing", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_AUTO_EXECUTE, "Settings: Auto execute", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_VOTING, "Settings: Voting", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_AUTO_REPLY, "Settings: Auto Reply", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_PLAYER_INDICATOR, "Settings: Player Indicator", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_PET, "Settings: Pet", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_HUD, "Settings: HUD", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_FROZEN_TEE_DISPLAY, "Settings: Frozen Tee Display", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_TILE_OUTLINES, "Settings: Tile Outlines", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_GHOST_TOOLS, "Settings: Ghost Tools", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_RAINBOW, "Settings: Rainbow", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_TEE_TRAILS, "Settings: Tee Trails", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_BACKGROUND_DRAW, "Settings: Background Draw", COMPONENTS_GROUP_TCLIENT},
+	{CBestClient::COMPONENT_TCLIENT_SETTINGS_FINISH_NAME, "Settings: Finish Name", COMPONENTS_GROUP_TCLIENT},
+};
+
+static bool ComponentsEditorIsDisabled(int Component, int MaskLo, int MaskHi)
+{
+	return CBestClient::IsComponentDisabledByMask(Component, MaskLo, MaskHi);
+}
+
+static void ComponentsEditorSetDisabled(int Component, int &MaskLo, int &MaskHi, bool Disabled)
+{
+	if(Component < 0 || Component >= CBestClient::NUM_COMPONENTS_EDITOR_COMPONENTS)
+		return;
+
+	int *pMask = &MaskLo;
+	int Bit = Component;
+	if(Component >= 31)
+	{
+		pMask = &MaskHi;
+		Bit = Component - 31;
+	}
+
+	if(Disabled)
+		*pMask |= (1 << Bit);
+	else
+		*pMask &= ~(1 << Bit);
+}
+
+void CMenus::ComponentsEditorSyncFromConfig()
+{
+	m_ComponentsEditorState.m_AppliedMaskLo = g_Config.m_BcDisabledComponentsMaskLo;
+	m_ComponentsEditorState.m_AppliedMaskHi = g_Config.m_BcDisabledComponentsMaskHi;
+	m_ComponentsEditorState.m_StagedMaskLo = m_ComponentsEditorState.m_AppliedMaskLo;
+	m_ComponentsEditorState.m_StagedMaskHi = m_ComponentsEditorState.m_AppliedMaskHi;
+	m_ComponentsEditorState.m_HasUnsavedChanges = false;
+}
+
+void CMenus::ComponentsEditorOpen()
+{
+	ComponentsEditorSyncFromConfig();
+	m_ComponentsEditorState.m_Open = true;
+	m_ComponentsEditorState.m_FullscreenOpen = true;
+	m_ComponentsEditorState.m_ShowExitConfirm = false;
+	m_ComponentsEditorState.m_ShowRestartConfirm = false;
+}
+
+void CMenus::ComponentsEditorRequestClose()
+{
+	if(m_ComponentsEditorState.m_HasUnsavedChanges)
+	{
+		m_ComponentsEditorState.m_ShowExitConfirm = true;
+		return;
+	}
+	ComponentsEditorCloseNow();
+}
+
+void CMenus::ComponentsEditorCloseNow()
+{
+	m_ComponentsEditorState.m_Open = false;
+	m_ComponentsEditorState.m_ShowExitConfirm = false;
+	m_ComponentsEditorState.m_ShowRestartConfirm = false;
+	m_ComponentsEditorState.m_HasUnsavedChanges = false;
+	ComponentsEditorSyncFromConfig();
+}
+
+void CMenus::ComponentsEditorApply()
+{
+	g_Config.m_BcDisabledComponentsMaskLo = m_ComponentsEditorState.m_StagedMaskLo;
+	g_Config.m_BcDisabledComponentsMaskHi = m_ComponentsEditorState.m_StagedMaskHi;
+	m_ComponentsEditorState.m_AppliedMaskLo = m_ComponentsEditorState.m_StagedMaskLo;
+	m_ComponentsEditorState.m_AppliedMaskHi = m_ComponentsEditorState.m_StagedMaskHi;
+	m_ComponentsEditorState.m_HasUnsavedChanges = false;
+	m_ComponentsEditorState.m_ShowExitConfirm = false;
+	m_ComponentsEditorState.m_ShowRestartConfirm = true;
+}
+
+void CMenus::ComponentsEditorRenderExitConfirm(const CUIRect &Rect)
+{
+	const float FontSize = 14.0f;
+	const float LineSize = 20.0f;
+	const float MarginSmall = 5.0f;
+
+	CUIRect Overlay = Rect;
+	Overlay.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.6f), IGraphics::CORNER_ALL, 0.0f);
+
+	CUIRect Box;
+	Box.w = minimum(520.0f, Rect.w - 30.0f);
+	Box.h = 130.0f;
+	Box.x = Rect.x + (Rect.w - Box.w) * 0.5f;
+	Box.y = Rect.y + (Rect.h - Box.h) * 0.5f;
+	Box.Draw(ColorRGBA(0.1f, 0.1f, 0.1f, 0.95f), IGraphics::CORNER_ALL, 8.0f);
+
+	CUIRect Title, Message, Buttons;
+	Box.Margin(10.0f, &Box);
+	Box.HSplitTop(LineSize + 4.0f, &Title, &Box);
+	Box.HSplitTop(LineSize, &Message, &Box);
+	Box.HSplitBottom(LineSize + 4.0f, &Box, &Buttons);
+
+	Ui()->DoLabel(&Title, BCLocalize("Cancel all changes?"), FontSize * 1.1f, TEXTALIGN_ML);
+	Ui()->DoLabel(&Message, BCLocalize("All staged component changes will be lost."), FontSize, TEXTALIGN_ML);
+
+	CUIRect YesButton, NoButton;
+	Buttons.VSplitMid(&YesButton, &NoButton, MarginSmall);
+	static CButtonContainer s_YesButton;
+	static CButtonContainer s_NoButton;
+	if(DoButton_Menu(&s_YesButton, BCLocalize("Yes"), 0, &YesButton))
+		ComponentsEditorCloseNow();
+	if(DoButton_Menu(&s_NoButton, BCLocalize("No"), 0, &NoButton) || Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
+		m_ComponentsEditorState.m_ShowExitConfirm = false;
+}
+
+void CMenus::ComponentsEditorRenderRestartConfirm(const CUIRect &Rect)
+{
+	const float FontSize = 14.0f;
+	const float LineSize = 20.0f;
+	const float MarginSmall = 5.0f;
+
+	CUIRect Overlay = Rect;
+	Overlay.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.6f), IGraphics::CORNER_ALL, 0.0f);
+
+	CUIRect Box;
+	Box.w = minimum(560.0f, Rect.w - 30.0f);
+	Box.h = 140.0f;
+	Box.x = Rect.x + (Rect.w - Box.w) * 0.5f;
+	Box.y = Rect.y + (Rect.h - Box.h) * 0.5f;
+	Box.Draw(ColorRGBA(0.1f, 0.1f, 0.1f, 0.95f), IGraphics::CORNER_ALL, 8.0f);
+
+	CUIRect Title, Message, Buttons;
+	Box.Margin(10.0f, &Box);
+	Box.HSplitTop(LineSize + 4.0f, &Title, &Box);
+	Box.HSplitTop(LineSize * 2.0f, &Message, &Box);
+	Box.HSplitBottom(LineSize + 4.0f, &Box, &Buttons);
+
+	Ui()->DoLabel(&Title, BCLocalize("Restart"), FontSize * 1.1f, TEXTALIGN_ML);
+	Ui()->DoLabel(&Message, BCLocalize("Restart client now so component changes fully apply?"), FontSize, TEXTALIGN_ML);
+
+	CUIRect YesButton, NoButton;
+	Buttons.VSplitMid(&YesButton, &NoButton, MarginSmall);
+	static CButtonContainer s_RestartYesButton;
+	static CButtonContainer s_RestartNoButton;
+	if(DoButton_Menu(&s_RestartYesButton, BCLocalize("Yes"), 0, &YesButton))
+	{
+		m_ComponentsEditorState.m_ShowRestartConfirm = false;
+		m_ComponentsEditorState.m_Open = false;
+		if(Client()->State() == IClient::STATE_ONLINE || GameClient()->Editor()->HasUnsavedData())
+			m_Popup = POPUP_RESTART;
+		else
+			Client()->Restart();
+	}
+	if(DoButton_Menu(&s_RestartNoButton, BCLocalize("No"), 0, &NoButton) || Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
+	{
+		m_ComponentsEditorState.m_ShowRestartConfirm = false;
+		m_ComponentsEditorState.m_Open = false;
+	}
+}
+
+void CMenus::RenderComponentsEditorScreen(CUIRect MainView)
+{
+	const float FontSize = 14.0f;
+	const float LineSize = 20.0f;
+	const float HeadlineFontSize = 20.0f;
+	const float MarginSmall = 5.0f;
+
+	if(m_ComponentsEditorState.m_FullscreenOpen)
+		MainView = *Ui()->Screen();
+
+	if(!m_ComponentsEditorState.m_ShowExitConfirm && !m_ComponentsEditorState.m_ShowRestartConfirm && Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
+	{
+		ComponentsEditorRequestClose();
+		if(!m_ComponentsEditorState.m_Open)
+			return;
+	}
+	if(m_ComponentsEditorState.m_ShowExitConfirm)
+	{
+		ComponentsEditorRenderExitConfirm(*Ui()->Screen());
+		return;
+	}
+	if(m_ComponentsEditorState.m_ShowRestartConfirm)
+	{
+		ComponentsEditorRenderRestartConfirm(*Ui()->Screen());
+		return;
+	}
+
+	CUIRect EditorRect = MainView;
+	EditorRect.Margin(8.0f, &EditorRect);
+	EditorRect.Draw(ColorRGBA(0.10f, 0.11f, 0.15f, 0.96f), IGraphics::CORNER_ALL, 8.0f);
+
+	CUIRect WorkRect;
+	EditorRect.Margin(8.0f, &WorkRect);
+	CUIRect Header, Content, Footer;
+	WorkRect.HSplitTop(24.0f, &Header, &WorkRect);
+	WorkRect.HSplitBottom(34.0f, &Content, &Footer);
+
+	CUIRect HeaderText = Header;
+	CUIRect CloseButtonArea, HeaderSpacer;
+	HeaderText.VSplitLeft(18.0f, &CloseButtonArea, &HeaderText);
+	HeaderText.VSplitLeft(6.0f, &HeaderSpacer, &HeaderText);
+	(void)HeaderSpacer;
+
+	CUIRect CloseButton;
+	CloseButtonArea.HMargin(3.0f, &CloseButton);
+
+	static CButtonContainer s_CloseButton;
+	if(Ui()->DoButton_FontIcon(&s_CloseButton, FontIcon::XMARK, 0, &CloseButton, IGraphics::CORNER_ALL))
+	{
+		ComponentsEditorRequestClose();
+		if(!m_ComponentsEditorState.m_Open)
+			return;
+	}
+
+	Ui()->DoLabel(&HeaderText, BCLocalize("Components editor"), HeadlineFontSize, TEXTALIGN_ML);
+
+	static CScrollRegion s_ScrollRegion;
+	vec2 ScrollOffset(0.0f, 0.0f);
+	CScrollRegionParams ScrollParams;
+	ScrollParams.m_ScrollUnit = 60.0f;
+	ScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
+	ScrollParams.m_ScrollbarMargin = 5.0f;
+	s_ScrollRegion.Begin(&Content, &ScrollOffset, &ScrollParams);
+
+	CUIRect View = Content;
+	View.y += ScrollOffset.y;
+	View.VSplitLeft(5.0f, nullptr, &View);
+	View.VSplitRight(5.0f, &View, nullptr);
+
+	const char *apGroupNames[NUM_COMPONENTS_GROUPS] = {
+		BCLocalize("Visuals"),
+		BCLocalize("Gameplay"),
+		BCLocalize("Others"),
+		"TClient",
+	};
+
+	for(int Group = 0; Group < NUM_COMPONENTS_GROUPS; ++Group)
+	{
+		int Count = 0;
+		for(const auto &Entry : gs_aBestClientComponentEntries)
+		{
+			if(Entry.m_Group == Group)
+				++Count;
+		}
+		if(Count == 0)
+			continue;
+
+		CUIRect GroupBox;
+		const float GroupHeight = 20.0f + HeadlineFontSize + MarginSmall + Count * LineSize;
+		View.HSplitTop(GroupHeight, &GroupBox, &View);
+		GroupBox.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.22f), IGraphics::CORNER_ALL, 8.0f);
+		GroupBox.Margin(10.0f, &GroupBox);
+
+		CUIRect Label;
+		GroupBox.HSplitTop(HeadlineFontSize, &Label, &GroupBox);
+		Ui()->DoLabel(&Label, apGroupNames[Group], HeadlineFontSize, TEXTALIGN_ML);
+		GroupBox.HSplitTop(MarginSmall, nullptr, &GroupBox);
+
+		for(const auto &Entry : gs_aBestClientComponentEntries)
+		{
+			if(Entry.m_Group != Group)
+				continue;
+
+			CUIRect Row;
+			GroupBox.HSplitTop(LineSize, &Row, &GroupBox);
+			int Disabled = ComponentsEditorIsDisabled((int)Entry.m_Component, m_ComponentsEditorState.m_StagedMaskLo, m_ComponentsEditorState.m_StagedMaskHi);
+			if(DoButton_CheckBox(&Entry, BCLocalize(Entry.m_pName), Disabled, &Row))
+			{
+				Disabled ^= 1;
+				ComponentsEditorSetDisabled((int)Entry.m_Component, m_ComponentsEditorState.m_StagedMaskLo, m_ComponentsEditorState.m_StagedMaskHi, Disabled != 0);
+				m_ComponentsEditorState.m_HasUnsavedChanges =
+					m_ComponentsEditorState.m_StagedMaskLo != m_ComponentsEditorState.m_AppliedMaskLo ||
+					m_ComponentsEditorState.m_StagedMaskHi != m_ComponentsEditorState.m_AppliedMaskHi;
+			}
+		}
+
+		View.HSplitTop(16.0f, nullptr, &View);
+	}
+
+	CUIRect ScrollRegion;
+	ScrollRegion.x = Content.x;
+	ScrollRegion.y = View.y;
+	ScrollRegion.w = Content.w;
+	ScrollRegion.h = 0.0f;
+	s_ScrollRegion.AddRect(ScrollRegion);
+	s_ScrollRegion.End();
+
+	CUIRect Counter, ApplyButton;
+	Footer.VSplitLeft(300.0f, &Counter, &Footer);
+	Footer.VSplitRight(88.0f, &Footer, &ApplyButton);
+
+	int DisabledCount = 0;
+	for(const auto &Entry : gs_aBestClientComponentEntries)
+	{
+		if(ComponentsEditorIsDisabled((int)Entry.m_Component, m_ComponentsEditorState.m_StagedMaskLo, m_ComponentsEditorState.m_StagedMaskHi))
+			++DisabledCount;
+	}
+
+	char aBuf[128];
+	str_format(aBuf, sizeof(aBuf), BCLocalize("Disabled components: %d"), DisabledCount);
+	Ui()->DoLabel(&Counter, aBuf, FontSize, TEXTALIGN_ML);
+
+	static CButtonContainer s_ApplyButton;
+	const int DisabledStyle = m_ComponentsEditorState.m_HasUnsavedChanges ? 0 : -1;
+	if(DoButton_Menu(&s_ApplyButton, BCLocalize("Apply"), DisabledStyle, &ApplyButton) && m_ComponentsEditorState.m_HasUnsavedChanges)
+		ComponentsEditorApply();
+}
+

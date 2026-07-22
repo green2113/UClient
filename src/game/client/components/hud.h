@@ -279,14 +279,6 @@ private:
 	void RenderFinishPredictionClassic(const CUIRect &Rect, const SFinishPredictionState &State);
 	void RenderFinishPredictionBar(const CUIRect &Rect, const SFinishPredictionState &State, bool ForcePreview);
 	void ResetFinishPredictionState(bool ClearFinishedRace = true) const;
-	float m_TimeCpDiff;
-	float m_aPlayerRecord[NUM_DUMMIES];
-	float m_FinishTimeDiff;
-	int m_DDRaceTime;
-	int m_FinishTimeLastReceivedTick;
-	int m_TimeCpLastReceivedTick;
-	int m_SpeedrunTimerExpiredTick;
-	bool m_ShowFinishTime;
 	mutable std::vector<int> m_vFinishPredictionDistances; // to-finish with teleports (finish prediction)
 	mutable std::vector<int> m_vRacePathToFinishDistances; // to-finish without teleports (progress/BACK)
 	mutable std::vector<int> m_vFinishPredictionFromStartDistances; // from-start without teleports (progress/BACK)
@@ -304,11 +296,6 @@ private:
 	mutable int m_FinishPredictionLastPredictTick = -1;
 	mutable int m_FinishPredictionFinishedRaceTick = -1;
 	mutable bool m_FinishPredictionUsingFastPractice = false;
-	IGraphics::CTextureHandle m_KeystrokesKeyboardTexture;
-	IGraphics::CTextureHandle m_KeystrokesMouseTexture;
-	int64_t m_KeystrokesMouse1EndTime = 0;
-	int64_t m_KeystrokesWheelUpEndTime = 0;
-	int64_t m_KeystrokesWheelDownEndTime = 0;
 
 	inline int GetDigitsIndex(int Value, int Max);
 

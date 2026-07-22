@@ -455,6 +455,8 @@ CChat::CLine::CLine()
 	m_aMapCardHeight[1] = 0.0f;
 	m_MapCardRectValid = false;
 	m_MapDownloadBtnRectValid = false;
+	m_UClient = false;
+	m_UClientFromCurrentServer = false;
 	m_vLinkBounds.clear();
 	m_vLinks.clear();
 	m_vLinkFontSizes.clear();
@@ -516,6 +518,8 @@ void CChat::CLine::Reset(CChat &This)
 	m_aMapCardHeight[1] = 0.0f;
 	m_MapCardRectValid = false;
 	m_MapDownloadBtnRectValid = false;
+	m_UClient = false;
+	m_UClientFromCurrentServer = false;
 	m_HasReply = false;
 	m_ReplyToClientId = -1;
 	m_ReplyMessageIndex = 0;
@@ -942,15 +946,27 @@ void CChat::ConSayTeam(IConsole::IResult *pResult, void *pUserData)
 
 void CChat::ConChat(IConsole::IResult *pResult, void *pUserData)
 {
+	CChat *pChat = (CChat *)pUserData;
 	const char *pMode = pResult->GetString(0);
 	if(str_comp(pMode, "all") == 0)
-		((CChat *)pUserData)->EnableMode(0);
+		pChat->EnableMode(0);
 	else if(str_comp(pMode, "team") == 0)
-		((CChat *)pUserData)->EnableMode(1);
+		pChat->EnableMode(1);
+	else if(str_comp(pMode, "uclient") == 0)
+	{
+		if(!g_Config.m_UcChat)
+		{
+			pChat->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "console", "UClient chat is disabled (enable it in Settings > UClient)");
+			return;
+		}
+		pChat->EnableMode(TEAM_UCLIENT);
+	}
 	else
-		((CChat *)pUserData)->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "console", "expected all or team as mode");
+	{
+		pChat->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "console", "expected all, team or uclient as mode");
+		return;
+	}
 
-	CChat *pChat = (CChat *)pUserData;
 	if(pResult->GetString(1)[0])
 	{
 		pChat->m_Input.Set(pResult->GetString(1));
@@ -1016,7 +1032,7 @@ void CChat::OnConsoleInit()
 {
 	Console()->Register("say", "r[message]", CFGFLAG_CLIENT, ConSay, this, "Say in chat");
 	Console()->Register("say_team", "r[message]", CFGFLAG_CLIENT, ConSayTeam, this, "Say in team chat");
-	Console()->Register("chat", "s['team'|'all'] ?r[message]", CFGFLAG_CLIENT, ConChat, this, "Enable chat with all/team mode");
+	Console()->Register("chat", "s['team'|'all'|'uclient'] ?r[message]", CFGFLAG_CLIENT, ConChat, this, "Enable chat with all/team/uclient mode");
 	Console()->Register("+show_chat", "", CFGFLAG_CLIENT, ConShowChat, this, "Show chat");
 	Console()->Register("echo", "r[message]", CFGFLAG_CLIENT | CFGFLAG_STORE, ConEcho, this, "Echo the text in chat window");
 	Console()->Register("clear_chat", "", CFGFLAG_CLIENT | CFGFLAG_STORE, ConClearChat, this, "Clear chat messages");
@@ -4784,6 +4800,8 @@ void CChat::RenderTextLine(CLine &Line, float y, float FontSize, float LineWidth
 		NameColor = *CustomColor;
 	else if(Line.m_ClientId == SERVER_MSG)
 		NameColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageSystemColor));
+	else if(Line.m_UClient)
+		NameColor = CalculateNameColor(ColorHSLA(g_Config.m_UcMessageColor));
 	else if(Line.m_ClientId == CLIENT_MSG)
 		NameColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
 	else if(Line.m_ClientId >= 0 && g_Config.m_TcWarList && g_Config.m_TcWarListChat && GameClient()->m_WarList.GetAnyWar(Line.m_ClientId))
@@ -4825,6 +4843,8 @@ void CChat::RenderTextLine(CLine &Line, float y, float FontSize, float LineWidth
 		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
 	else if(Line.m_Highlighted)
 		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageHighlightColor));
+	else if(Line.m_UClient)
+		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
 	else if(Line.m_Team)
 		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageTeamColor));
 	else
@@ -5013,7 +5033,15 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 					GameClient()->m_BestClient.SanitizePlayerName(GameClient()->m_aClients[Line.m_ClientId].m_aName, aSanitizedName, sizeof(aSanitizedName), Line.m_ClientId);
 					pReplyName = aSanitizedName;
 				}
+				if(Line.m_UClient && g_Config.m_UcChat && g_Config.m_UcChatSendSameServerOnly && !Line.m_UClientFromCurrentServer)
+				{
+					StashUcReplySendScopePrompt(Line.m_ClientId, pReplyName, m_HoveredReplyLineIndex, GetLineDisplayText(Line));
+					GameClient()->m_Menus.OfferDisableUcChatSendSameServerForReply();
+					return true;
+				}
 				SetPendingReply(Line.m_ClientId, pReplyName, m_HoveredReplyLineIndex, GetLineDisplayText(Line));
+				if(Line.m_UClient && g_Config.m_UcChat)
+					m_Mode = MODE_UCLIENT;
 				m_Input.Activate(EInputPriority::CHAT);
 				return true;
 			}
@@ -5350,9 +5378,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			if(MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
 				MousePos.y >= Rect.m_Y && MousePos.y <= Rect.m_Y + Rect.m_H)
 			{
-				const vec2 WindowSize(maximum(1.0f, (float)Graphics()->WindowWidth()), maximum(1.0f, (float)Graphics()->WindowHeight()));
-				const vec2 UiPos = Ui()->UpdatedMousePos() * vec2(Ui()->Screen()->w, Ui()->Screen()->h) / WindowSize;
-				OpenMapContextMenu(LineIndex, UiPos.x, UiPos.y);
+				OpenMapContextMenu(LineIndex);
 				return true;
 			}
 		}
@@ -5935,7 +5961,9 @@ void CChat::EnableMode(int Team)
 	if(m_Mode == MODE_NONE)
 	{
 		const bool AnimateWholeChatOpen = WasChatAutoHidden();
-		if(Team)
+		if(Team == TEAM_UCLIENT)
+			m_Mode = MODE_UCLIENT;
+		else if(Team)
 			m_Mode = MODE_TEAM;
 		else
 			m_Mode = MODE_ALL;
@@ -5956,9 +5984,8 @@ void CChat::EnableMode(int Team)
 		SetUiMousePos(Ui()->Screen()->Center());
 		m_Input.Activate(EInputPriority::CHAT);
 		SyncTypingAnimationBaseline();
-
-		}
 	}
+}
 
 void CChat::DisableMode()
 {
@@ -6201,7 +6228,8 @@ const char *CChat::GetLineReplyQuoteText(const CLine &Line) const
 
 void CChat::SetPendingReply(int ClientId, const char *pName, int SourceLineIndex, const char *pQuoteText)
 {
-	if(ClientId < 0 || SourceLineIndex < 0 || !pName || pName[0] == '\0')
+	// ClientId may be < 0 for remote UClient chat lines (CLIENT_MSG).
+	if(SourceLineIndex < 0 || !pName || pName[0] == '\0')
 		return;
 	m_PendingReplyActive = true;
 	m_PendingReplyClientId = ClientId;
@@ -6220,13 +6248,50 @@ void CChat::ClearPendingReply()
 	m_ReplyCancelButtonRectValid = false;
 }
 
+void CChat::StashUcReplySendScopePrompt(int ClientId, const char *pName, int SourceLineIndex, const char *pQuoteText)
+{
+	m_UcReplySendScopePromptPending = true;
+	m_UcReplySendScopePromptClientId = ClientId;
+	m_UcReplySendScopePromptSourceLineIndex = SourceLineIndex;
+	str_copy(m_aUcReplySendScopePromptName, pName ? pName : "", sizeof(m_aUcReplySendScopePromptName));
+	str_copy(m_aUcReplySendScopePromptPreview, pQuoteText ? pQuoteText : "", sizeof(m_aUcReplySendScopePromptPreview));
+}
+
+void CChat::ClearStashedUcReplySendScopePrompt()
+{
+	m_UcReplySendScopePromptPending = false;
+	m_UcReplySendScopePromptClientId = -1;
+	m_UcReplySendScopePromptSourceLineIndex = -1;
+	m_aUcReplySendScopePromptName[0] = '\0';
+	m_aUcReplySendScopePromptPreview[0] = '\0';
+}
+
+void CChat::ApplyStashedUcReplyAfterSendScopePrompt()
+{
+	if(!m_UcReplySendScopePromptPending)
+		return;
+
+	const int ClientId = m_UcReplySendScopePromptClientId;
+	const int SourceLineIndex = m_UcReplySendScopePromptSourceLineIndex;
+	char aName[sizeof(m_aUcReplySendScopePromptName)];
+	char aPreview[sizeof(m_aUcReplySendScopePromptPreview)];
+	str_copy(aName, m_aUcReplySendScopePromptName, sizeof(aName));
+	str_copy(aPreview, m_aUcReplySendScopePromptPreview, sizeof(aPreview));
+	ClearStashedUcReplySendScopePrompt();
+
+	SetPendingReply(ClientId, aName, SourceLineIndex, aPreview);
+	if(g_Config.m_UcChat)
+		m_Mode = MODE_UCLIENT;
+	m_Input.Activate(EInputPriority::CHAT);
+}
+
 bool CChat::CanShowReplyButton(const CLine &Line) const
 {
-	return CUClientChatReply::IsReplyFeatureEnabled() &&
-		m_Mode != MODE_NONE &&
-		Line.m_ClientId >= 0 &&
-		Line.m_aName[0] != '\0' &&
-		!Line.m_Whisper;
+	if(!CUClientChatReply::IsReplyFeatureEnabled() || m_Mode == MODE_NONE || Line.m_Whisper || Line.m_aName[0] == '\0')
+		return false;
+	if(Line.m_UClient)
+		return g_Config.m_UcChat != 0;
+	return Line.m_ClientId >= 0;
 }
 
 float CChat::ReplyBannerHeight(float ScaledFontSize) const
@@ -6406,6 +6471,8 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 		{
 			if(ShouldShowFriendMarker(Line))
 				ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageFriendColor));
+			else if(Line.m_UClient)
+				ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
 			else if(Line.m_Team)
 				ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageTeamColor));
 			else if(Line.m_ClientId == SERVER_MSG)
@@ -6419,6 +6486,8 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 		const char *pFrom;
 		if(Line.m_Whisper)
 			pFrom = "chat/whisper";
+		else if(Line.m_UClient)
+			pFrom = "chat/uclient";
 		else if(Line.m_Team)
 			pFrom = "chat/team";
 		else if(Line.m_ClientId == SERVER_MSG)
@@ -6442,7 +6511,9 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	// 0 = global; 1 = team; 2 = sending whisper; 3 = receiving whisper
 
 	// If it's a client message, m_aText will have ": " prepended so we have to work around it.
+	// Remote UClient lines all share CLIENT_MSG, so skip merge there (names differ).
 	if(PreviousLine.m_Initialized &&
+		!(Team == TEAM_UCLIENT && ClientId == CLIENT_MSG) &&
 		PreviousLine.m_TeamNumber == Team &&
 		PreviousLine.m_ClientId == ClientId &&
 		str_comp(PreviousLine.m_aText, pLine) == 0 &&
@@ -6477,7 +6548,8 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	CurrentLine.m_ClientId = ClientId;
 	CurrentLine.m_TeamNumber = Team;
 	CurrentLine.m_Team = Team == 1;
-	CurrentLine.m_Whisper = Team >= 2;
+	CurrentLine.m_UClient = Team == TEAM_UCLIENT;
+	CurrentLine.m_Whisper = Team >= 2 && Team != TEAM_UCLIENT;
 	CurrentLine.m_NameColor = -2;
 	CurrentLine.m_CustomColor = CustomColor;
 
@@ -6728,6 +6800,79 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 
 	// BestClient
 	GameClient()->m_Translate.AutoTranslate(CurrentLine);
+}
+
+void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const char *pLine, const char *pServerAddress,
+	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet)
+{
+	if(!g_Config.m_UcChat || !pName || !pLine || pName[0] == '\0' || pLine[0] == '\0')
+		return;
+
+	int ClientId = CLIENT_MSG;
+	const bool SameServer = pServerAddress && pServerAddress[0] != '\0' &&
+		GameClient()->m_ClientIndicator.UcPeerAppliesToCurrentServer(pServerAddress);
+	if(SameServer)
+	{
+		if(SuggestedClientId >= 0 && SuggestedClientId < MAX_CLIENTS &&
+			GameClient()->m_aClients[SuggestedClientId].m_Active &&
+			str_comp(GameClient()->m_aClients[SuggestedClientId].m_aName, pName) == 0)
+		{
+			ClientId = SuggestedClientId;
+		}
+		else
+		{
+			for(int i = 0; i < MAX_CLIENTS; i++)
+			{
+				if(!GameClient()->m_aClients[i].m_Active)
+					continue;
+				if(str_comp(GameClient()->m_aClients[i].m_aName, pName) == 0)
+				{
+					ClientId = i;
+					break;
+				}
+			}
+		}
+	}
+
+	const int PrevShowClient = g_Config.m_TcShowChatClient;
+	if(ClientId == CLIENT_MSG)
+		g_Config.m_TcShowChatClient = 1;
+	AddLine(ClientId, TEAM_UCLIENT, pLine);
+	if(ClientId == CLIENT_MSG)
+		g_Config.m_TcShowChatClient = PrevShowClient;
+
+	CLine &Line = m_aLines[m_CurrentLine];
+	if(!Line.m_Initialized || !Line.m_UClient)
+		return;
+
+	Line.m_UClientFromCurrentServer = SameServer;
+
+	// Remote / unmatched senders: show the presence name instead of the client-msg dash prefix.
+	if(ClientId == CLIENT_MSG)
+	{
+		const char *pFiltered = FilterText(pName);
+		GameClient()->m_BestClient.SanitizePlayerName(pFiltered, Line.m_aName, sizeof(Line.m_aName), -1);
+		Line.m_CustomColor = std::nullopt;
+		Line.m_Friend = false;
+		Line.m_pManagedTeeRenderInfo.reset();
+		if(pSkinName && pSkinName[0] != '\0')
+		{
+			CSkinDescriptor SkinDescriptor;
+			SkinDescriptor.m_Flags = CSkinDescriptor::FLAG_SIX;
+			str_copy(SkinDescriptor.m_aSkinName, pSkinName, sizeof(SkinDescriptor.m_aSkinName));
+			if(!CSkin::IsValidName(SkinDescriptor.m_aSkinName))
+				str_copy(SkinDescriptor.m_aSkinName, "default", sizeof(SkinDescriptor.m_aSkinName));
+
+			CTeeRenderInfo TeeRenderInfo;
+			TeeRenderInfo.ApplyColors(UseCustomColor, ColorBody, ColorFeet);
+			TeeRenderInfo.m_Size = 64.0f;
+			Line.m_pManagedTeeRenderInfo = GameClient()->CreateManagedTeeRenderInfo(TeeRenderInfo, SkinDescriptor);
+		}
+		TextRender()->DeleteTextContainer(Line.m_TextContainerIndex);
+		Graphics()->DeleteQuadContainer(Line.m_QuadContainerIndex);
+		Line.m_aYOffset[0] = -1.0f;
+		Line.m_aYOffset[1] = -1.0f;
+	}
 }
 
 void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex)
@@ -7092,6 +7237,8 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
 		else if(Line.m_Highlighted)
 			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageHighlightColor));
+		else if(Line.m_UClient)
+			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
 		else if(Line.m_Team)
 			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageTeamColor));
 		else // regular message
@@ -7122,6 +7269,8 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			NameColor = *Line.m_CustomColor;
 		else if(Line.m_ClientId == SERVER_MSG)
 			NameColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageSystemColor));
+		else if(Line.m_UClient)
+			NameColor = CalculateNameColor(ColorHSLA(g_Config.m_UcMessageColor));
 		else if(Line.m_ClientId == CLIENT_MSG)
 			NameColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
 		else if(Line.m_ClientId >= 0 && g_Config.m_TcWarList && g_Config.m_TcWarListChat && GameClient()->m_WarList.GetAnyWar(Line.m_ClientId)) // BestClient
@@ -7453,6 +7602,8 @@ void CChat::OnRender()
 			TextRender()->TextEx(&InputCursor, Localize("All"));
 		else if(m_Mode == MODE_TEAM)
 			TextRender()->TextEx(&InputCursor, Localize("Team"));
+		else if(m_Mode == MODE_UCLIENT)
+			TextRender()->TextEx(&InputCursor, "UClient");
 		else
 			TextRender()->TextEx(&InputCursor, Localize("Chat"));
 
@@ -7877,6 +8028,10 @@ void CChat::OnRender()
 				const float TextEndX = Line.m_ReplyButtonAnchorX + ChatOpenOffsetX + BcLineXOffset;
 				HighlightW = maximum(1.0f, (TextEndX - LineRenderX) + FontSize() * 0.12f);
 			}
+			// Map attachment cards stretch toward the chat edge; keep the reply
+			// highlight at least as wide so the blue backdrop reaches the card.
+			if(HasMapAttachment(Line))
+				HighlightW = maximum(HighlightW, RealMsgPaddingX / 2.0f + ReactionAvailWidth);
 			Graphics()->DrawRect(LineRenderX, LineRenderY, HighlightW, LineH, ColorRGBA(0.18f, 0.32f, 0.58f, 0.42f * Blend), IGraphics::CORNER_L, MessageRounding());
 
 			const float AccentW = maximum(0.8f, FontSize() * 0.06f);
@@ -8297,10 +8452,17 @@ void CChat::OnRender()
 					const float NameW = TextRender()->TextWidth(NameFont, pFileName);
 					const float SizeW = TextRender()->TextWidth(SizeFont, aSizeLabel);
 					const float ContentW = IconPad + IconSize + TextGap + maximum(NameW, SizeW) + BtnReserve;
-					const float CardW = minimum(maximum(ContentW, FontSize() * 7.0f), minimum(150.0f, ReactionAvailWidth));
+					const float CardW = minimum(ReactionAvailWidth, maximum(ContentW, ReactionAvailWidth * 0.92f));
 					const float CardRounding = maximum(3.0f, FontSize() * 0.3f);
 
-					Graphics()->DrawRect(CardX, CardY, CardW, CardH, ColorRGBA(0.13f, 0.14f, 0.16f, 0.95f * Blend), IGraphics::CORNER_ALL, CardRounding);
+					const ColorRGBA CardBg = IsPendingReplyTarget ?
+						ColorRGBA(0.16f, 0.30f, 0.52f, 0.92f * Blend) :
+						ColorRGBA(0.13f, 0.14f, 0.16f, 0.95f * Blend);
+					Graphics()->DrawRect(CardX, CardY, CardW, CardH, CardBg, IGraphics::CORNER_ALL, CardRounding);
+					if(IsPendingReplyTarget)
+					{
+						Graphics()->DrawRect(CardX, CardY, CardW, CardH, ColorRGBA(0.35f, 0.62f, 1.0f, 0.18f * Blend), IGraphics::CORNER_ALL, CardRounding);
+					}
 
 					CUIRect IconRect(CardX + IconPad, CardY + (CardH - IconSize) / 2.0f, IconSize, IconSize);
 					TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
@@ -8331,8 +8493,10 @@ void CChat::OnRender()
 					if(HoverCard)
 					{
 						const float Btn = maximum(8.0f, FontSize() * 0.72f);
-						const float BtnX = CardX + CardW - Btn - FontSize() * 0.18f;
-						const float BtnY = CardY + (CardH - Btn) / 2.0f;
+						// Upper-right of the card, inset enough to clear the rounded corner.
+						const float CornerInset = maximum(3.5f, FontSize() * 0.38f);
+						const float BtnX = CardX + CardW - Btn - CornerInset;
+						const float BtnY = CardY + CornerInset;
 						const bool HoverBtn = MousePos.x >= BtnX && MousePos.x <= BtnX + Btn &&
 							MousePos.y >= BtnY && MousePos.y <= BtnY + Btn;
 						Graphics()->DrawRect(BtnX, BtnY, Btn, Btn,
@@ -8473,7 +8637,9 @@ CUIRect CChat::GetHudRect(float HudWidth, float HudHeight, bool ForcePreview) co
 			TextRender()->TextWidth(ScaledFontSize, Localize("All")) + ModeSuffixWidth,
 			maximum(
 				TextRender()->TextWidth(ScaledFontSize, Localize("Team")) + ModeSuffixWidth,
-				TextRender()->TextWidth(ScaledFontSize, Localize("Chat")) + ModeSuffixWidth));
+				maximum(
+					TextRender()->TextWidth(ScaledFontSize, "UClient") + ModeSuffixWidth,
+					TextRender()->TextWidth(ScaledFontSize, Localize("Chat")) + ModeSuffixWidth)));
 		const float InputAndTranslateWidth = maximum(InputLineWidth, PrefixWidth + 40.0f + TranslateButtonGap + TranslateButtonSize);
 
 		VisibleWidth = maximum(VisibleWidth, InputAndTranslateWidth);
@@ -8601,6 +8767,44 @@ void CChat::SendChatQueued(const char *pLine)
 	char aConvertedLine[MAX_LINE_LENGTH];
 	if(TryConvertWrongLayoutSlashCommand(pLine, aConvertedLine, sizeof(aConvertedLine)))
 		pLine = aConvertedLine;
+
+	if(m_Mode == MODE_UCLIENT)
+	{
+		if(!g_Config.m_UcChat)
+			return;
+		AddHistoryEntry(TEAM_UCLIENT, pLine);
+
+		const char *pPayload = pLine;
+		char aPayload[MAX_LINE_LENGTH];
+		if(m_PendingReplyActive && CUClientChatReply::IsReplyFeatureEnabled())
+		{
+			const int ReplyIndex = ComputeSenderRecentIndex(m_PendingReplySourceLineIndex, m_aPendingReplyName, m_PendingReplyClientId);
+			if(ReplyIndex > 0 && CUClientChatReply::EncodeReply(m_aPendingReplyName, ReplyIndex, pLine, aPayload, sizeof(aPayload), m_PendingReplyClientId))
+			{
+				pPayload = aPayload;
+				m_LastOutgoingReplyTime = time();
+				str_copy(m_aLastOutgoingReplyWire, aPayload, sizeof(m_aLastOutgoingReplyWire));
+				m_LastOutgoingReplyToClientId = m_PendingReplyClientId;
+				m_LastOutgoingReplyMessageIndex = ReplyIndex;
+				str_copy(m_aLastOutgoingReplyToName, m_aPendingReplyName, sizeof(m_aLastOutgoingReplyToName));
+				str_copy(m_aLastOutgoingReplyPreview, m_aPendingReplyPreview, sizeof(m_aLastOutgoingReplyPreview));
+				CUClientChatReply::SReplyMeta OutMeta;
+				if(CUClientChatReply::TryParseReply(aPayload, OutMeta, m_aLastOutgoingReplyBody, sizeof(m_aLastOutgoingReplyBody)))
+				{
+					str_copy(m_aLastOutgoingReplyToName, OutMeta.m_aReplyToName, sizeof(m_aLastOutgoingReplyToName));
+					m_LastOutgoingReplyMessageIndex = OutMeta.m_ReplyMessageIndex;
+				}
+				else
+				{
+					m_aLastOutgoingReplyBody[0] = '\0';
+				}
+			}
+			ClearPendingReply();
+		}
+
+		GameClient()->m_ClientIndicator.SendUClientChat(pPayload);
+		return;
+	}
 
 	const int Team = m_Mode == MODE_ALL ? 0 : 1;
 	AddHistoryEntry(Team, pLine);
@@ -9010,10 +9214,19 @@ CUi::EPopupMenuFunctionResult CChat::PopupGiphyBrowser(void *pContext, CUIRect V
 			else
 				str_copy(aLine, pResult->m_Url.c_str(), sizeof(aLine));
 
-			const int Team = pChat->m_Mode == MODE_TEAM ? 1 : 0;
-			pChat->AddHistoryEntry(Team, aLine);
-			if(!pChat->GameClient()->m_Translate.TryTranslateOutgoingChat(Team, aLine))
-				pChat->SendChatPayloadQueued(Team, aLine);
+			if(pChat->m_Mode == MODE_UCLIENT)
+			{
+				pChat->AddHistoryEntry(TEAM_UCLIENT, aLine);
+				if(g_Config.m_UcChat)
+					pChat->GameClient()->m_ClientIndicator.SendUClientChat(aLine);
+			}
+			else
+			{
+				const int Team = pChat->m_Mode == MODE_TEAM ? 1 : 0;
+				pChat->AddHistoryEntry(Team, aLine);
+				if(!pChat->GameClient()->m_Translate.TryTranslateOutgoingChat(Team, aLine))
+					pChat->SendChatPayloadQueued(Team, aLine);
+			}
 			pChat->DisableMode();
 			pChat->GameClient()->OnRelease();
 			pChat->m_SavedInputPending = false;
@@ -9344,6 +9557,123 @@ static void MediaSanitizeAssetName(const char *pIn, char *pOut, int OutSize)
 		pOut[--End] = '\0';
 }
 
+// Decode a few URL escapes used in shared asset names (especially %2F for category/name).
+static void MediaDecodeUrlComponentLite(const char *pIn, char *pOut, int OutSize)
+{
+	if(OutSize <= 0)
+		return;
+	pOut[0] = '\0';
+	if(!pIn)
+		return;
+
+	int o = 0;
+	for(const char *p = pIn; *p != '\0' && o < OutSize - 1;)
+	{
+		if(p[0] == '%' && p[1] && p[2] &&
+			((p[1] >= '0' && p[1] <= '9') || (p[1] >= 'A' && p[1] <= 'F') || (p[1] >= 'a' && p[1] <= 'f')) &&
+			((p[2] >= '0' && p[2] <= '9') || (p[2] >= 'A' && p[2] <= 'F') || (p[2] >= 'a' && p[2] <= 'f')))
+		{
+			auto Hex = [](char C) -> int {
+				if(C >= '0' && C <= '9')
+					return C - '0';
+				if(C >= 'A' && C <= 'F')
+					return C - 'A' + 10;
+				if(C >= 'a' && C <= 'f')
+					return C - 'a' + 10;
+				return 0;
+			};
+			pOut[o++] = (char)((Hex(p[1]) << 4) | Hex(p[2]));
+			p += 3;
+		}
+		else if(p[0] == '+')
+		{
+			pOut[o++] = ' ';
+			++p;
+		}
+		else
+		{
+			pOut[o++] = *p++;
+		}
+	}
+	pOut[o] = '\0';
+}
+
+// Returns category index if the URL encodes a shared-asset path like entities/foo.png, else -1.
+// Always writes a sanitized bare asset name into pNameOut when possible.
+static int MediaDetectAssetCategoryFromUrl(const char *pUrl, char *pNameOut, int NameOutSize)
+{
+	if(pNameOut && NameOutSize > 0)
+		pNameOut[0] = '\0';
+	if(!pUrl || pUrl[0] == '\0')
+		return -1;
+
+	char aFile[256];
+	MediaExtractUrlFileName(pUrl, aFile, sizeof(aFile));
+	char aDecoded[256];
+	MediaDecodeUrlComponentLite(aFile, aDecoded, sizeof(aDecoded));
+
+	char aCategory[64] = "";
+	const char *pBaseName = aDecoded;
+	const char *pSlash = nullptr;
+	for(const char *p = aDecoded; *p != '\0'; ++p)
+	{
+		if(*p == '/' || *p == '\\')
+			pSlash = p;
+	}
+	if(pSlash && pSlash != aDecoded)
+	{
+		const char *pCatStart = aDecoded;
+		for(const char *p = aDecoded; p < pSlash; ++p)
+		{
+			if(*p == '/' || *p == '\\')
+				pCatStart = p + 1;
+		}
+		str_copy(aCategory, pCatStart, minimum((int)(pSlash - pCatStart) + 1, (int)sizeof(aCategory)));
+		pBaseName = pSlash + 1;
+	}
+	else
+	{
+		// Fallback: look for "/entities/" (etc.) earlier in the full URL path.
+		for(size_t i = 0; i < std::size(gs_apMediaAssetCategoryDirs); ++i)
+		{
+			const char *pDir = gs_apMediaAssetCategoryDirs[i];
+			const char *pBase = pDir;
+			for(const char *p = pDir; *p; ++p)
+			{
+				if(*p == '/')
+					pBase = p + 1;
+			}
+			char aNeedle[64];
+			str_format(aNeedle, sizeof(aNeedle), "/%s/", pBase);
+			if(str_find_nocase(pUrl, aNeedle) != nullptr)
+			{
+				str_copy(aCategory, pBase, sizeof(aCategory));
+				break;
+			}
+		}
+	}
+
+	if(pNameOut && NameOutSize > 0)
+		MediaSanitizeAssetName(pBaseName, pNameOut, NameOutSize);
+
+	if(aCategory[0] == '\0')
+		return -1;
+
+	for(size_t i = 0; i < std::size(gs_apMediaAssetCategoryDirs); ++i)
+	{
+		const char *pDir = gs_apMediaAssetCategoryDirs[i];
+		const char *pBase = pDir;
+		for(const char *p = pDir; *p; ++p)
+		{
+			if(*p == '/')
+				pBase = p + 1;
+		}
+		if(str_comp_nocase(aCategory, pBase) == 0)
+			return (int)i;
+	}
+	return -1;
+}
+
 // UClient: chat emoji reactions
 static const char *const gs_apReactionEmojis[] = {
 	"\xF0\x9F\x91\x8D", // thumbs up
@@ -9651,10 +9981,17 @@ CUi::EPopupMenuFunctionResult CChat::PopupMediaContext(void *pContext, CUIRect V
 		View.HSplitTop(RowHeight, &Row, &View);
 		if(Menus.DoButton_Menu(&pChat->m_aMediaContextButtons[1], Localize("Save to Assets"), 0, &Row))
 		{
-			char aName[128], aClean[64];
-			MediaExtractUrlFileName(pChat->m_aMediaContextUrl, aName, sizeof(aName));
-			MediaSanitizeAssetName(aName, aClean, sizeof(aClean));
+			char aClean[64];
+			const int DetectedCategory = MediaDetectAssetCategoryFromUrl(pChat->m_aMediaContextUrl, aClean, sizeof(aClean));
+			if(aClean[0] == '\0')
+			{
+				char aName[128];
+				MediaExtractUrlFileName(pChat->m_aMediaContextUrl, aName, sizeof(aName));
+				MediaSanitizeAssetName(aName, aClean, sizeof(aClean));
+			}
 			pChat->m_MediaAssetNameInput.Set(aClean);
+			if(DetectedCategory >= 0)
+				pChat->m_MediaAssetCategory = DetectedCategory;
 			pChat->m_MediaAssetApply = true;
 			pChat->Ui()->DoPopupMenu(&pChat->m_MediaSaveAssetPopupId, View.x, Row.y, 200.0f, 206.0f, pChat, PopupMediaSaveAsset, {}, CUi::EButtonSoundType::DEFAULT);
 			return CUi::POPUP_CLOSE_CURRENT;
@@ -10123,12 +10460,12 @@ void CChat::UpdateMapSizeRequests()
 	}
 }
 
-void CChat::OpenMapContextMenu(int LineIndex, float X, float Y)
+void CChat::OpenMapContextMenu(int LineIndex)
 {
 	if(LineIndex < 0 || LineIndex >= MAX_LINES)
 		return;
 	CLine &Line = m_aLines[LineIndex];
-	if(!Line.m_Initialized || !HasMapAttachment(Line))
+	if(!Line.m_Initialized || !HasMapAttachment(Line) || !Line.m_MapDownloadBtnRectValid)
 		return;
 
 	m_MapContextLineIndex = LineIndex;
@@ -10139,7 +10476,28 @@ void CChat::OpenMapContextMenu(int LineIndex, float X, float Y)
 	const float Spacing = 2.0f;
 	const float PopupW = 140.0f;
 	const float PopupH = 2 * RowHeight + Spacing + 10.0f;
-	Ui()->DoPopupMenu(&m_MapContextPopupId, X, Y, PopupW, PopupH, this, PopupMapContext, {}, CUi::EButtonSoundType::DEFAULT);
+	const float Gap = 4.0f;
+
+	// Button rect is in chat screen space; popups use UI screen space.
+	const float ChatH = 300.0f;
+	const float ChatW = ChatH * Graphics()->ScreenAspect();
+	const float ScaleX = Ui()->Screen()->w / ChatW;
+	const float ScaleY = Ui()->Screen()->h / ChatH;
+	const SRenderRect &Btn = Line.m_MapDownloadBtnRect;
+	const float BtnX = Btn.m_X * ScaleX;
+	const float BtnY = Btn.m_Y * ScaleY;
+	const float BtnW = Btn.m_W * ScaleX;
+
+	// POPUP_BORDER(1) + POPUP_MARGIN(4); SPopupMenu is private to CUi.
+	constexpr float Margin = 5.0f;
+	float PopupX = BtnX + BtnW + Gap;
+	if(PopupX + PopupW > Ui()->Screen()->w - Margin)
+		PopupX = BtnX - Gap - PopupW;
+	const float PopupY = BtnY; // top edge aligned with the button
+
+	SPopupMenuProperties Props;
+	Props.m_FixedPosition = true;
+	Ui()->DoPopupMenu(&m_MapContextPopupId, PopupX, PopupY, PopupW, PopupH, this, PopupMapContext, Props, CUi::EButtonSoundType::DEFAULT);
 }
 
 CUi::EPopupMenuFunctionResult CChat::PopupMapContext(void *pContext, CUIRect View, bool Active)

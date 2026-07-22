@@ -6,6 +6,7 @@ namespace FontIcon
 	// Each font icon is named according to its official name in Font Awesome.
 	// The constants are sorted in lexicographical order.
 
+	inline const char *const ANGLE_DOWN = "\uF107";
 	inline const char *const ARROW_ROTATE_LEFT = "\uF0E2";
 	inline const char *const ARROW_ROTATE_RIGHT = "\uF01E";
 	inline const char *const ARROW_UP_RIGHT_FROM_SQUARE = "\uF08E";
@@ -66,6 +67,7 @@ namespace FontIcon
 	inline const char *const INFO = "\uF129";
 	inline const char *const KEY = "\uF084";
 	inline const char *const KEYBOARD = "\u2328";
+	inline const char *const LANGUAGE = "\uF1AB";
 	inline const char *const LAYER_GROUP = "\uF5FD";
 	inline const char *const LIST_UL = "\uF0CA";
 	inline const char *const LOCK = "\uF023";

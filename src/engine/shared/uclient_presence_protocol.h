@@ -14,10 +14,13 @@
 namespace UClientPresence
 {
 constexpr uint32_t PROTOCOL_MAGIC = 0x55435031u; // UCP1
+// Keep at 2: chat uses new packet types (12/13), not a wire-format bump.
+// Bumping the version would break presence against older relays that only accept v1/v2.
 constexpr uint8_t PROTOCOL_VERSION = 2;
 constexpr uint8_t PROTOCOL_VERSION_MIN = 1;
 constexpr int DEFAULT_PORT = 8778;
 constexpr int CLIENT_PACKET_PROOF_SIZE = BestClientIndicator::CLIENT_PACKET_PROOF_SIZE;
+constexpr int CHAT_MESSAGE_MAX_BYTES = 512;
 
 enum EPacketType : uint8_t
 {
@@ -34,6 +37,15 @@ enum EPacketType : uint8_t
 	// Live cursor sharing (broadcast the local aim cursor while a key is held).
 	PACKET_CURSOR = 10, // Client -> Server (proof protected, no nonce replay tracking)
 	PACKET_CURSOR_BROADCAST = 11, // Server -> Client (relayed to peers on the same game server)
+	// Cross-server UClient chat channel.
+	PACKET_CHAT = 12, // Client -> Server (proof protected)
+	PACKET_CHAT_BROADCAST = 13, // Server -> Client
+};
+
+enum EChatScope : uint8_t
+{
+	CHAT_SCOPE_SAME_SERVER = 0,
+	CHAT_SCOPE_GLOBAL = 1,
 };
 
 enum EReactionAction : uint8_t
@@ -98,6 +110,21 @@ struct CCursorBroadcast
 	int32_t m_WorldY = 0;
 };
 
+// UClient chat as received by peers (server -> client broadcast).
+struct CChatBroadcast
+{
+	std::string m_ServerAddress;
+	std::string m_SenderName;
+	int m_SenderClientId = -1;
+	uint8_t m_Scope = CHAT_SCOPE_GLOBAL;
+	std::string m_Message;
+	// Optional 0.6 skin snapshot so remote-server senders can still show a tee in chat.
+	std::string m_SkinName;
+	uint8_t m_UseCustomColor = 0;
+	int32_t m_ColorBody = 0;
+	int32_t m_ColorFeet = 0;
+};
+
 using BestClientIndicator::AppendProof;
 using BestClientIndicator::ComputeProof;
 using BestClientIndicator::ParseAddress;
@@ -146,6 +173,13 @@ void WriteCursorClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CU
 void WriteCursorBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pSenderName, int SenderClientId,
 	uint8_t Active, int32_t WorldX, int32_t WorldY);
 bool ReadCursorBroadcast(const uint8_t *pData, int DataSize, CCursorBroadcast &Out);
+
+void WriteChatClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pServerAddress, const char *pSenderName, int SenderClientId, uint8_t Scope, const char *pMessage,
+	const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet);
+void WriteChatBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pSenderName, int SenderClientId,
+	uint8_t Scope, const char *pMessage, const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet);
+bool ReadChatBroadcast(const uint8_t *pData, int DataSize, CChatBroadcast &Out);
 }
 
 #endif

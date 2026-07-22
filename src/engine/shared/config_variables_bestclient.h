@@ -10,6 +10,8 @@
 
 // SettingsTabs
 MACRO_CONFIG_INT(BcBestClientSettingsTabs, bc_bestclient_settings_tabs, 0, 0, 65536, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Bit flags to disable BestClient settings tabs")
+MACRO_CONFIG_INT(BcDisabledComponentsMaskLo, bc_disabled_components_mask_lo, 0, 0, 2147483647, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Low bitmask for disabled components")
+MACRO_CONFIG_INT(BcDisabledComponentsMaskHi, bc_disabled_components_mask_hi, 0, 0, 2147483647, CFGFLAG_CLIENT | CFGFLAG_SAVE, "High bitmask for disabled components")
 
 // Chat Filter
 MACRO_CONFIG_INT(BcShowBlockedWordInConsole, bc_show_blocked_word_in_console, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show blocked word with regex in console")
@@ -62,6 +64,7 @@ MACRO_CONFIG_INT(BcNameplateGradientSkin, bc_nameplate_gradient_skin, 0, 0, 1, C
 MACRO_CONFIG_INT(BcNameplateGradientEverything, bc_nameplate_gradient_everything, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Apply gradient to all rendered text")
 MACRO_CONFIG_INT(BcNameplateGradientAnimateSpeed, bc_nameplate_gradient_animate_speed, 35, 1, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Speed of the animated gradient sweep, in percent")
 MACRO_CONFIG_INT(BcScoreboardTeamGradients, bc_scoreboard_team_gradients, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Render scoreboard team colors with a left-to-right gradient")
+MACRO_CONFIG_INT(BcShowPointsInTab, bc_show_points_in_tab, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show DDNet points in the scoreboard between player name and clan")
 MACRO_CONFIG_INT(BcShowhudDummyCoordIndicator, bc_showhud_dummy_coord_indicator, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show player-below indicator when aligned above another player")
 MACRO_CONFIG_INT(BcShowCorrectCheckpoint, bc_show_correct_checkpoint, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show the last touched time checkpoint in movement information")
 
@@ -85,6 +88,8 @@ MACRO_CONFIG_INT(BcChatMediaGifs, bc_chat_media_gifs, 1, 0, 1, CFGFLAG_CLIENT | 
 MACRO_CONFIG_INT(BcChatMediaContentFilter, bc_chat_media_content_filter, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Allow chat media previews only from configured domains")
 MACRO_CONFIG_STR(BcChatMediaAllowedDomains, bc_chat_media_allowed_domains, 512, "tenor.com; imgur.com; giphy.com; media.under1111.com; gifs.teeworlds.xyz", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Semicolon-separated allowlist for chat media domains")
 MACRO_CONFIG_INT(BcChatMediaPreviewMaxWidth, bc_chat_media_preview_max_width, 220, 120, 400, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum width of chat media previews")
+MACRO_CONFIG_INT(BcChatMediaViewer, bc_chat_media_viewer, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable fullscreen media viewer for chat previews")
+MACRO_CONFIG_INT(BcChatMediaViewerMaxZoom, bc_chat_media_viewer_max_zoom, 800, 100, 2000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum zoom of the chat media viewer in percent")
 
 // CherryGifs provider
 MACRO_CONFIG_INT(BcCherryGifsShowNsfw, bc_cherrygifs_show_nsfw, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Include NSFW gifs in the CherryGifs browser")
@@ -295,11 +300,14 @@ MACRO_CONFIG_INT(BcKeystrokesMcShowSpace, bc_keystrokes_mc_show_space, 1, 0, 1, 
 
 // Finish prediction
 MACRO_CONFIG_INT(BcFinishPrediction, bc_finish_prediction, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable finish prediction")
+MACRO_CONFIG_INT(BcFinishPredictionMode, bc_finish_prediction_mode, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Finish prediction HUD mode (0=classic, 1=progress bar)")
 MACRO_CONFIG_INT(BcFinishPredictionShowAlways, bc_finish_prediction_show_always, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show finish prediction even before race start")
 MACRO_CONFIG_INT(BcFinishPredictionTimeMode, bc_finish_prediction_time_mode, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Finish prediction time mode (0=remaining, 1=predicted finish time)")
 MACRO_CONFIG_INT(BcFinishPredictionShowTime, bc_finish_prediction_show_time, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show finish prediction time")
 MACRO_CONFIG_INT(BcFinishPredictionShowPercentage, bc_finish_prediction_show_percentage, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show finish prediction progress percentage")
 MACRO_CONFIG_INT(BcFinishPredictionShowMillis, bc_finish_prediction_show_millis, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show finish prediction milliseconds")
+MACRO_CONFIG_INT(BcFinishPredictionBarCustomColor, bc_finish_prediction_bar_custom_color, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Use a custom finish prediction progress bar color")
+MACRO_CONFIG_COL(BcFinishPredictionBarColor, bc_finish_prediction_bar_color, 0xFFFFFFFF, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Finish prediction progress bar custom color")
 
 // Fast Actions
 MACRO_CONFIG_INT(BcFastActions, bc_fast_actions, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable the Fast Actions quick command selector")
@@ -332,6 +340,7 @@ MACRO_CONFIG_INT(BcSnapTapDelay, bc_snap_tap_delay, 0, 0, 200, CFGFLAG_CLIENT | 
 MACRO_CONFIG_INT(BcAutoServerListRefresh, bc_auto_server_list_refresh, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Automatically refresh the server browser list while a browser tab is open")
 MACRO_CONFIG_INT(BcAutoServerListRefreshSeconds, bc_auto_server_list_refresh_seconds, 10, 1, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto refresh interval for the server browser list in seconds")
 MACRO_CONFIG_INT(BcUseShortKogServerName, bc_use_short_kog_server_name, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Use short name for KoG gores servers in browser list")
+MACRO_CONFIG_INT(BcStreamerFlags, bc_streamer_flags, 64, 0, 127, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Bitmask of BestClient streamer mode options")
 
 // Media background
 MACRO_CONFIG_INT(BcMenuMediaBackground, bc_menu_media_background, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable custom media background in offline menus")
@@ -393,3 +402,52 @@ MACRO_CONFIG_INT(BcClansEnabled, bc_clans_enabled, 1, 0, 1, CFGFLAG_CLIENT | CFG
 MACRO_CONFIG_STR(BcClansApiUrl, bc_clans_api_url, 128, "https://clans.bestclient.fun", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Clans API base URL (allowlisted)")
 MACRO_CONFIG_INT(BcClansAllowLocalDev, bc_clans_allow_local_dev, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Allow localhost clans API for development")
 MACRO_CONFIG_INT(BcClansUnreadBadge, bc_clans_unread_badge, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show unread badge on Clans menubar button")
+
+// UClient compatibility configs retained after BestClient 2.0 merge
+MACRO_CONFIG_INT(BcIngameMenuAnimation, bc_ingame_menu_animation, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Toggle ingame ESC menu animation")
+MACRO_CONFIG_INT(BcIngameMenuAnimationMs, bc_ingame_menu_animation_ms, 220, 1, 500, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Ingame ESC menu animation time (in ms)")
+MACRO_CONFIG_INT(BcNewColorPicker, bc_new_color_picker, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Use the new wheel-style color picker")
+MACRO_CONFIG_INT(BcEscPlayerList, bc_esc_player_list, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show players list in ESC game tab")
+MACRO_CONFIG_INT(BcEmoticonShadow, bc_emoticon_shadow, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Draw shadow behind emoticons")
+MACRO_CONFIG_COL(BcShowhudDummyCoordIndicatorColor, bc_showhud_dummy_coord_indicator_color, 65407, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Player-below indicator color")
+MACRO_CONFIG_COL(BcShowhudDummyCoordIndicatorSameHeightColor, bc_showhud_dummy_coord_indicator_same_height_color, 5635967, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Player-below indicator color when aligned vertically")
+MACRO_CONFIG_INT(BcFastInputMode, bc_fast_input_mode, 0, 0, 4, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Fast input mode (0 = fast input, 1 = delta input, 3 = best input, 4 = saiko+; legacy gamma mode maps to best input)")
+MACRO_CONFIG_INT(BcFastInputDeltaInput, bc_fast_input_delta_input, 0, 0, 500, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Delta input amount in 0.01 ticks")
+MACRO_CONFIG_INT(BcFastInputGammaInput, bc_fast_input_gamma_input, 0, 0, 600, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Legacy gamma input amount in 0.01 ticks (unused)")
+MACRO_CONFIG_INT(BcSaikoPlusAmount, bc_saiko_plus_amount, 0, 0, 500, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Saiko+ input amount in 0.01 ticks")
+MACRO_CONFIG_INT(BcBestInputPreset, bc_best_input_preset, 0, 0, 3, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Best input preset (0 = custom, 3 = auto; legacy values preserved for compatibility)")
+MACRO_CONFIG_INT(BcBestInputOffset, bc_best_input_offset, 0, 0, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Best input prediction offset in 0.01 ticks (0-10.00 ticks)")
+MACRO_CONFIG_INT(BcGammaInputOthers, bc_gamma_input_others, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Legacy gamma input toggle for other tees (unused)")
+MACRO_CONFIG_INT(BcSaikoPlusOthers, bc_saiko_plus_others, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Apply Saiko+ input to other tees")
+MACRO_CONFIG_INT(BcFastInputAutoMargin, bc_fast_input_auto_margin, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Automatically adjusts prediction margin in real time for fast input, latency and connection stability")
+MACRO_CONFIG_INT(BcSpeedrunTimerTime, bc_speedrun_timer_time, 0, 0, 9999, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Speedrun timer time (MMSS format)")
+MACRO_CONFIG_INT(BcAdminPanelAutoScroll, bc_adminpanel_autoscroll, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto-scroll logs in admin panel")
+MACRO_CONFIG_INT(BcAdminPanelRememberTab, bc_adminpanel_remember_tab, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Remember last active admin panel tab")
+MACRO_CONFIG_INT(BcAdminPanelLastTab, bc_adminpanel_last_tab, 0, 0, 10, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Last active admin panel tab")
+MACRO_CONFIG_INT(BcAdminPanelDisableAnim, bc_adminpanel_disable_anim, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Disable admin panel animations")
+MACRO_CONFIG_INT(BcAdminPanelScale, bc_adminpanel_scale, 100, 80, 120, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Admin panel scale in percent")
+MACRO_CONFIG_INT(BcAdminPanelLogLines, bc_adminpanel_log_lines, 200, 50, 500, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum lines to keep in admin panel logs")
+MACRO_CONFIG_INT(BcAdminPanelRconLog, bc_adminpanel_rcon_log, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Log F2 console (rcon) output to rcon-log.txt in DDNet appdata")
+MACRO_CONFIG_COL(BcAdminPanelBgColor, bc_adminpanel_bg_color, 0x8C000000, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Admin panel background color")
+MACRO_CONFIG_COL(BcAdminPanelTabInactiveColor, bc_adminpanel_tab_inactive_color, 0xCC00002E, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Admin panel inactive tab color")
+MACRO_CONFIG_COL(BcAdminPanelTabActiveColor, bc_adminpanel_tab_active_color, 0xE6000052, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Admin panel active tab color")
+MACRO_CONFIG_COL(BcAdminPanelTabHoverColor, bc_adminpanel_tab_hover_color, 0xE600003D, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Admin panel hover tab color")
+MACRO_CONFIG_STR(BcAdminFastAction0, bc_admin_fast_action0, 96, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Admin panel fast action command slot 1")
+MACRO_CONFIG_STR(BcAdminFastAction1, bc_admin_fast_action1, 96, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Admin panel fast action command slot 2")
+MACRO_CONFIG_STR(BcAdminFastAction2, bc_admin_fast_action2, 96, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Admin panel fast action command slot 3")
+MACRO_CONFIG_STR(BcAdminFastAction3, bc_admin_fast_action3, 96, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Admin panel fast action command slot 4")
+MACRO_CONFIG_STR(BcAdminFastAction4, bc_admin_fast_action4, 96, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Admin panel fast action command slot 5")
+MACRO_CONFIG_STR(BcAdminFastAction5, bc_admin_fast_action5, 96, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Admin panel fast action command slot 6")
+MACRO_CONFIG_STR(BcAdminFastAction6, bc_admin_fast_action6, 96, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Admin panel fast action command slot 7")
+MACRO_CONFIG_STR(BcAdminFastAction7, bc_admin_fast_action7, 96, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Admin panel fast action command slot 8")
+MACRO_CONFIG_STR(BcAdminFastAction8, bc_admin_fast_action8, 96, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Admin panel fast action command slot 9")
+MACRO_CONFIG_STR(BcAdminFastAction9, bc_admin_fast_action9, 96, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Admin panel fast action command slot 10")
+MACRO_CONFIG_INT(BcTrail, bc_trail, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable player trail effect")
+MACRO_CONFIG_INT(BcTrailOthers, bc_trail_others, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show player trail for other players")
+MACRO_CONFIG_INT(BcTrailMode, bc_trail_mode, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Player trail mode (0=grenade, 1=invisible, 2=ninja)")
+MACRO_CONFIG_INT(ClFreezeSnowFlakes, p_effect_freeze_snowflakes, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "toggles snowflakes effect")
+MACRO_CONFIG_INT(ClHammerHitEffect, p_effect_hammerhit, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "toggles hammer hit effect")
+MACRO_CONFIG_INT(ClHammerHitEffectSound, p_effect_sound_hammerhit, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "toggles hammer hit effect")
+MACRO_CONFIG_INT(ClJumpEffect, p_effect_jump, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "toggles hammer hit effect")
+MACRO_CONFIG_INT(ClJumpEffectSound, p_effect_sound_jump, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "toggles jump effect sound")
+

@@ -91,6 +91,7 @@ void CMenusSettingsControls::OnInterfacesInit(CGameClient *pClient)
 		{EBindOptionGroup::VOTING, Localizable("Vote no"), "vote no"},
 		{EBindOptionGroup::CHAT, Localizable("Chat"), "+show_chat; chat all"},
 		{EBindOptionGroup::CHAT, Localizable("Team chat"), "+show_chat; chat team"},
+		{EBindOptionGroup::CHAT, Localizable("UClient chat"), "+show_chat; chat uclient"},
 		{EBindOptionGroup::CHAT, Localizable("Converse"), "+show_chat; chat all /c "},
 		{EBindOptionGroup::CHAT, Localizable("Chat command"), "+show_chat; chat all /"},
 		{EBindOptionGroup::CHAT, Localizable("Show chat"), "+show_chat"},

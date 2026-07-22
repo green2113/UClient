@@ -209,6 +209,7 @@ protected:
 	char m_aShareAssetName[64] = "";
 	char m_aShareAssetTargetName[64] = "";
 	bool m_ShareAssetToAll = false;
+	bool m_ShareAssetToUClientChat = false;
 	bool m_ShareAssetAgree = false;
 	std::vector<std::string> m_vShareAssetUserNames;
 	std::vector<std::string> m_vShareAssetAssetNames;
@@ -231,6 +232,7 @@ protected:
 	char m_aShareSkinName[64] = "";
 	char m_aShareSkinTargetName[64] = "";
 	bool m_ShareSkinToAll = false;
+	bool m_ShareSkinToUClientChat = false;
 	bool m_ShareSkinAgree = false;
 	std::vector<std::string> m_vShareSkinUserNames;
 	std::vector<std::string> m_vShareSkinNames;
@@ -262,6 +264,7 @@ protected:
 	char m_aShareMapListFolder[IO_MAX_PATH_LENGTH] = "";
 	char m_aShareMapTargetName[64] = "";
 	bool m_ShareMapToAll = true;
+	bool m_ShareMapToUClientChat = false;
 	bool m_ShareMapAgree = false;
 	std::vector<std::string> m_vShareMapUserNames;
 	std::vector<CMapListItem> m_vShareMapListItems;
@@ -955,9 +958,9 @@ public:
 		SETTINGS_ASSETS,
 		SETTINGS_TCLIENT,
 		SETTINGS_BESTCLIENT,
+		SETTINGS_UCLIENT,
 		SETTINGS_PROFILES,
 		SETTINGS_CONFIGS,
-		SETTINGS_UCLIENT,
 
 		SETTINGS_LENGTH,
 	};
@@ -1070,6 +1073,9 @@ public:
 	void OfferAutoLoginFromChat(int Kind, const char *pCode);
 	void PopupConfirmAutoLoginOffer();
 	void PopupCancelAutoLoginOffer();
+	void OfferDisableUcChatSendSameServerForReply();
+	void PopupConfirmDisableUcChatSendSameServerForReply();
+	void PopupCancelDisableUcChatSendSameServerForReply();
 
 	enum
 	{

@@ -1402,6 +1402,7 @@ void CMenus::OpenShareAssetPopup(int Tab)
 	m_aShareAssetStatus[0] = '\0';
 	m_aShareAssetTargetName[0] = '\0';
 	m_ShareAssetToAll = true;
+	m_ShareAssetToUClientChat = false;
 	if(m_pShareAssetUploadRequest)
 	{
 		m_pShareAssetUploadRequest->Abort();
@@ -1466,10 +1467,16 @@ bool CMenus::ResolveAssetSharePng(int Tab, const char *pName, void **ppData, uns
 
 void CMenus::BeginShareAssetUpload()
 {
-	if(!m_ShareAssetToAll && m_aShareAssetTargetName[0] == '\0')
+	if(!m_ShareAssetToAll && !m_ShareAssetToUClientChat && m_aShareAssetTargetName[0] == '\0')
 	{
 		m_ShareAssetState = EShareAssetState::FAILED;
 		str_copy(m_aShareAssetStatus, Localize("Select a player first."));
+		return;
+	}
+	if(m_ShareAssetToUClientChat && !g_Config.m_UcChat)
+	{
+		m_ShareAssetState = EShareAssetState::FAILED;
+		str_copy(m_aShareAssetStatus, "UClient chat is disabled.");
 		return;
 	}
 
@@ -1493,7 +1500,35 @@ void CMenus::BeginShareAssetUpload()
 		return;
 	}
 
-	std::shared_ptr<CHttpRequest> pPost = HttpPost(g_Config.m_UcChatPasteUploadUrl, (const unsigned char *)pData, Len);
+	// Embed the asset category in the upload name (e.g. entities/foo) so receivers
+	// can pre-select the matching tab when using "Save to Assets".
+	const char *pCategoryDir = nullptr;
+	switch(m_ShareAssetTab)
+	{
+	case ASSETS_TAB_ENTITIES: pCategoryDir = "entities"; break;
+	case ASSETS_TAB_GAME: pCategoryDir = "game"; break;
+	case ASSETS_TAB_EMOTICONS: pCategoryDir = "emoticons"; break;
+	case ASSETS_TAB_PARTICLES: pCategoryDir = "particles"; break;
+	case ASSETS_TAB_HUD: pCategoryDir = "hud"; break;
+	case ASSETS_TAB_EXTRAS: pCategoryDir = "extras"; break;
+	case ASSETS_TAB_CURSOR: pCategoryDir = "cursor"; break;
+	case ASSETS_TAB_ARROW: pCategoryDir = "arrow"; break;
+	default: break;
+	}
+
+	char aUploadName[160];
+	if(pCategoryDir)
+		str_format(aUploadName, sizeof(aUploadName), "%s/%s", pCategoryDir, m_aShareAssetName);
+	else
+		str_copy(aUploadName, m_aShareAssetName, sizeof(aUploadName));
+
+	char aEscapedName[256];
+	EscapeUrl(aEscapedName, sizeof(aEscapedName), aUploadName);
+	char aUploadUrl[768];
+	const char *pSep = str_find(g_Config.m_UcChatPasteUploadUrl, "?") != nullptr ? "&" : "?";
+	str_format(aUploadUrl, sizeof(aUploadUrl), "%s%sname=%s", g_Config.m_UcChatPasteUploadUrl, pSep, aEscapedName);
+
+	std::shared_ptr<CHttpRequest> pPost = HttpPost(aUploadUrl, (const unsigned char *)pData, Len);
 	pPost->Header("Content-Type: image/png");
 	pPost->Header("Accept: application/json");
 	pPost->FailOnErrorStatus(false);
@@ -1540,7 +1575,12 @@ void CMenus::UpdateShareAssetUpload()
 		return;
 	}
 
-	if(m_ShareAssetToAll)
+	if(m_ShareAssetToUClientChat)
+	{
+		// Respects uc_chat_send_same_server_only / receive filter on peers.
+		GameClient()->m_ClientIndicator.SendUClientChat(aUrl);
+	}
+	else if(m_ShareAssetToAll)
 	{
 		// Broadcast the link to everyone via public chat.
 		GameClient()->m_Chat.SendChat(0, aUrl);
@@ -1567,10 +1607,12 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 	CUIRect Row;
 
 	// gather the players currently on this server (excluding ourselves), and whether they use UClient.
-	// Display index 0 is a special "All" entry that broadcasts to public chat instead of whispering.
-	bool aUserUsesUClient[MAX_CLIENTS + 1] = {false};
+	// Index 0 = "All" (public chat). Index 1 = "UClient chat" when enabled. Then per-player whispers.
+	bool aUserUsesUClient[MAX_CLIENTS + 2] = {false};
 	pThis->m_vShareAssetUserNames.clear();
 	const int LocalId = pThis->GameClient()->m_Snap.m_LocalClientId;
+	const bool OfferUClientChat = g_Config.m_UcChat != 0;
+	const int FirstPlayerIndex = OfferUClientChat ? 2 : 1;
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
 		if(i == LocalId)
@@ -1580,28 +1622,40 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 		if(pThis->GameClient()->m_aClients[i].m_aName[0] == '\0')
 			continue;
 		const size_t Slot = pThis->m_vShareAssetUserNames.size();
-		if(Slot + 1 <= MAX_CLIENTS)
-			aUserUsesUClient[Slot + 1] = pThis->GameClient()->m_ClientIndicator.IsPlayerUClient(i);
+		if((int)Slot + FirstPlayerIndex <= MAX_CLIENTS + 1)
+			aUserUsesUClient[Slot + FirstPlayerIndex] = pThis->GameClient()->m_ClientIndicator.IsPlayerUClient(i);
 		pThis->m_vShareAssetUserNames.emplace_back(pThis->GameClient()->m_aClients[i].m_aName);
 	}
 
 	std::vector<const char *> vpNames;
-	vpNames.reserve(pThis->m_vShareAssetUserNames.size() + 1);
+	vpNames.reserve(pThis->m_vShareAssetUserNames.size() + 2);
 	vpNames.push_back("All");
+	if(OfferUClientChat)
+	{
+		vpNames.push_back("UClient chat");
+		aUserUsesUClient[1] = true;
+	}
 	for(const auto &Name : pThis->m_vShareAssetUserNames)
 		vpNames.push_back(Name.c_str());
 
 	int CurSelection = 0; // default: "All" (broadcast)
-	if(!pThis->m_ShareAssetToAll)
+	if(pThis->m_ShareAssetToUClientChat && OfferUClientChat)
+		CurSelection = 1;
+	else if(!pThis->m_ShareAssetToAll)
 	{
 		for(size_t i = 0; i < pThis->m_vShareAssetUserNames.size(); i++)
 		{
 			if(str_comp(pThis->m_vShareAssetUserNames[i].c_str(), pThis->m_aShareAssetTargetName) == 0)
 			{
-				CurSelection = (int)i + 1;
+				CurSelection = (int)i + FirstPlayerIndex;
 				break;
 			}
 		}
+	}
+	else if(pThis->m_ShareAssetToUClientChat && !OfferUClientChat)
+	{
+		pThis->m_ShareAssetToUClientChat = false;
+		pThis->m_ShareAssetToAll = true;
 	}
 
 	// gather the shareable assets in the current tab (skip the built-in "default")
@@ -1651,7 +1705,7 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 	View.HSplitTop(22.0f, &Row, &View);
 	CUIRect ShareRect, R0, AssetDropRect, R1, WithRect, PlayerDropRect;
 	const float AssetDropW = 100.0f;
-	const float PlayerDropW = 100.0f;
+	const float PlayerDropW = 120.0f;
 	const float ShareW = pThis->TextRender()->TextWidth(FontSize, "Share ") + 4.0f;
 	const float WithW = pThis->TextRender()->TextWidth(FontSize, " with ") + 4.0f;
 	Row.VSplitLeft(ShareW, &ShareRect, &R0);
@@ -1684,7 +1738,7 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 
 	pThis->Ui()->DoLabel(&WithRect, "with", FontSize, TEXTALIGN_MC);
 
-	// player selector (index 0 = "All" -> broadcast to public chat)
+	// player selector: All / UClient chat / players
 	static CScrollRegion s_ShareUserScrollRegion;
 	pThis->m_ShareAssetUserDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_ShareUserScrollRegion;
 	{
@@ -1692,12 +1746,20 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 		if(NewSelection == 0)
 		{
 			pThis->m_ShareAssetToAll = true;
+			pThis->m_ShareAssetToUClientChat = false;
 			pThis->m_aShareAssetTargetName[0] = '\0';
 		}
-		else if(NewSelection > 0 && NewSelection - 1 < (int)pThis->m_vShareAssetUserNames.size())
+		else if(OfferUClientChat && NewSelection == 1)
 		{
 			pThis->m_ShareAssetToAll = false;
-			str_copy(pThis->m_aShareAssetTargetName, pThis->m_vShareAssetUserNames[NewSelection - 1].c_str());
+			pThis->m_ShareAssetToUClientChat = true;
+			pThis->m_aShareAssetTargetName[0] = '\0';
+		}
+		else if(NewSelection >= FirstPlayerIndex && NewSelection - FirstPlayerIndex < (int)pThis->m_vShareAssetUserNames.size())
+		{
+			pThis->m_ShareAssetToAll = false;
+			pThis->m_ShareAssetToUClientChat = false;
+			str_copy(pThis->m_aShareAssetTargetName, pThis->m_vShareAssetUserNames[NewSelection - FirstPlayerIndex].c_str());
 		}
 	}
 
@@ -1748,7 +1810,7 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareAsset(void *pContext, CUIRect Vi
 	}
 
 	const bool Uploading = pThis->m_ShareAssetState == EShareAssetState::UPLOADING;
-	const bool HasTarget = pThis->m_ShareAssetToAll || pThis->m_aShareAssetTargetName[0] != '\0';
+	const bool HasTarget = pThis->m_ShareAssetToAll || pThis->m_ShareAssetToUClientChat || pThis->m_aShareAssetTargetName[0] != '\0';
 	const bool CanConfirm = pThis->m_ShareAssetAgree && !Uploading && HasTarget && !pThis->m_vShareAssetAssetNames.empty();
 	const char *pConfirmText = Uploading ? Localize("Uploading...") : Localize("Confirm");
 	if(pThis->DoButton_Menu(&pThis->m_ShareAssetConfirmButton, pConfirmText, 0, &ConfirmRect) && CanConfirm)

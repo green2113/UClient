@@ -45,6 +45,11 @@ class CTimeoutReconnect : public CComponent
 	int64_t m_PendingUntilUnix = 0;
 	bool m_ShowPending = false;
 
+	// After the pending timeout hits 0, optionally reconnect after a short delay.
+	static constexpr int AUTO_RECONNECT_DELAY_SEC = 3;
+	char m_aAutoReconnectAddr[NETADDR_MAXSTRSIZE] = "";
+	int64_t m_AutoReconnectAtUnix = 0;
+
 	bool m_IntentionalLeave = false;
 
 	void CurrentServerAddr(char *pBuf, int BufSize) const;
@@ -60,6 +65,8 @@ class CTimeoutReconnect : public CComponent
 	void PersistHeartbeat();
 	void UpdatePendingDisplay();
 	void ClearPending();
+	void ClearAutoReconnect();
+	void TryAutoReconnect();
 
 public:
 	int Sizeof() const override { return sizeof(*this); }

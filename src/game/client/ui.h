@@ -302,11 +302,31 @@ struct SPopupMenuProperties
 	int m_Corners = IGraphics::CORNER_ALL;
 	ColorRGBA m_BorderColor = ColorRGBA(0.5f, 0.5f, 0.5f, 0.75f);
 	ColorRGBA m_BackgroundColor = ColorRGBA(0.0f, 0.0f, 0.0f, 0.75f);
+	// When true, DoPopupMenu keeps the given X/Y instead of auto-flipping on overflow.
+	bool m_FixedPosition = false;
 };
 
 class CUi
 {
 public:
+	// Compatibility enum retained from UClient MenuSfx wiring. Currently unused by
+	// the active UI sound path after the BestClient 2.0 merge, but call sites still
+	// pass these values so the signatures must accept them.
+	enum class EButtonSoundType
+	{
+		SILENT = 0,
+		DEFAULT,
+		BUTTON,
+		BUTTON_SIDEBAR,
+		TAB_SELECT,
+		TOOLBAR,
+		CHECKBOX,
+		DROPDOWN,
+		DIALOG_OK,
+		DIALOG_CANCEL,
+		DIALOG_DANGEROUS,
+	};
+
 	/**
 	 * These enum values are returned by popup menu functions to specify the behavior.
 	 */
@@ -598,7 +618,7 @@ public:
 	const CUIRect *ClipArea() const;
 	bool IsClipped() const { return !m_vClips.empty(); }
 
-	int DoButtonLogic(const void *pId, int Checked, const CUIRect *pRect, unsigned Flags);
+	int DoButtonLogic(const void *pId, int Checked, const CUIRect *pRect, unsigned Flags, EButtonSoundType SoundType = EButtonSoundType::DEFAULT);
 	int DoDraggableButtonLogic(const void *pId, int Checked, const CUIRect *pRect, bool *pClicked, bool *pAbrupted);
 	bool DoDoubleClickLogic(const void *pId);
 	EEditState DoPickerLogic(const void *pId, const CUIRect *pRect, float *pX, float *pY);
@@ -696,7 +716,7 @@ public:
 	void RenderProgressSpinner(vec2 Center, float OuterRadius, const SProgressSpinnerProperties &Props = {}) const;
 
 	// popup menu
-	void DoPopupMenu(const SPopupMenuId *pId, float X, float Y, float Width, float Height, void *pContext, FPopupMenuFunction pfnFunc, const SPopupMenuProperties &Props = {});
+	void DoPopupMenu(const SPopupMenuId *pId, float X, float Y, float Width, float Height, void *pContext, FPopupMenuFunction pfnFunc, const SPopupMenuProperties &Props = {}, EButtonSoundType SoundType = EButtonSoundType::DEFAULT);
 	void RenderPopupMenus();
 	void ClosePopupMenu(const SPopupMenuId *pId, bool IncludeDescendants = false);
 	void ClosePopupMenus();
@@ -764,6 +784,7 @@ public:
 		float m_Width;
 		float m_AlignmentHeight;
 		bool m_TransparentButtons;
+		bool m_IsDropDown;
 
 		bool m_SpecialFontRenderMode = false; // TClient
 

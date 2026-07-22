@@ -61,6 +61,7 @@ void CTimeoutReconnect::OnStateChange(int NewState, int OldState)
 void CTimeoutReconnect::OnUpdate()
 {
 	LoadCrashSnapshotOnce();
+	TryAutoReconnect();
 
 	if(Client()->State() != IClient::STATE_ONLINE)
 		return;
@@ -118,6 +119,7 @@ void CTimeoutReconnect::MarkIntentionalLeave()
 	m_aMemoryServerAddr[0] = '\0';
 	m_MemoryDisconnectUnix = 0;
 	ClearPending();
+	ClearAutoReconnect();
 }
 
 bool CTimeoutReconnect::TryConsumeTimeoutSettingsMessage(int ClientId, const char *pMessage)
@@ -367,6 +369,7 @@ void CTimeoutReconnect::EndOnlineSession(bool ClearFile)
 		m_aMemoryServerAddr[0] = '\0';
 		m_MemoryDisconnectUnix = 0;
 		ClearPending();
+		ClearAutoReconnect();
 	}
 }
 
@@ -425,6 +428,19 @@ void CTimeoutReconnect::UpdatePendingDisplay()
 		return;
 	if(RemainingSeconds() > 0)
 		return;
+
+	if(g_Config.m_UcShowTimeoutReconnect && g_Config.m_UcAutoTimeoutReconnect &&
+		m_aPendingServerAddr[0] != '\0' && m_AutoReconnectAtUnix == 0)
+	{
+		char aCurrent[NETADDR_MAXSTRSIZE];
+		CurrentServerAddr(aCurrent, sizeof(aCurrent));
+		if(aCurrent[0] != '\0' && str_comp(aCurrent, m_aPendingServerAddr) == 0)
+		{
+			str_copy(m_aAutoReconnectAddr, m_aPendingServerAddr, sizeof(m_aAutoReconnectAddr));
+			m_AutoReconnectAtUnix = time_timestamp() + AUTO_RECONNECT_DELAY_SEC;
+		}
+	}
+
 	ClearPending();
 }
 
@@ -433,4 +449,52 @@ void CTimeoutReconnect::ClearPending()
 	m_ShowPending = false;
 	m_PendingUntilUnix = 0;
 	m_aPendingServerAddr[0] = '\0';
+}
+
+void CTimeoutReconnect::ClearAutoReconnect()
+{
+	m_AutoReconnectAtUnix = 0;
+	m_aAutoReconnectAddr[0] = '\0';
+}
+
+void CTimeoutReconnect::TryAutoReconnect()
+{
+	if(m_AutoReconnectAtUnix <= 0)
+		return;
+
+	if(!g_Config.m_UcShowTimeoutReconnect || !g_Config.m_UcAutoTimeoutReconnect)
+	{
+		ClearAutoReconnect();
+		return;
+	}
+
+	if(Client()->State() != IClient::STATE_ONLINE)
+	{
+		ClearAutoReconnect();
+		return;
+	}
+
+	char aCurrent[NETADDR_MAXSTRSIZE];
+	CurrentServerAddr(aCurrent, sizeof(aCurrent));
+	if(aCurrent[0] == '\0' || str_comp(aCurrent, m_aAutoReconnectAddr) != 0)
+	{
+		ClearAutoReconnect();
+		return;
+	}
+
+	if(time_timestamp() < m_AutoReconnectAtUnix)
+		return;
+
+	char aAddr[NETADDR_MAXSTRSIZE];
+	str_copy(aAddr, m_aAutoReconnectAddr, sizeof(aAddr));
+	if(aAddr[0] == '\0')
+	{
+		ClearAutoReconnect();
+		return;
+	}
+
+	// Avoid treating this reconnect as another unnatural drop.
+	// MarkIntentionalLeave also clears the auto-reconnect schedule.
+	MarkIntentionalLeave();
+	Client()->Connect(aAddr);
 }

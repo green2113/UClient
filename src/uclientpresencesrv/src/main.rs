@@ -47,6 +47,12 @@ const PACKET_REACTION: u8 = 8;
 const PACKET_REACTION_BROADCAST: u8 = 9;
 const PACKET_CURSOR: u8 = 10;
 const PACKET_CURSOR_BROADCAST: u8 = 11;
+const PACKET_CHAT: u8 = 12;
+const PACKET_CHAT_BROADCAST: u8 = 13;
+const CHAT_SCOPE_SAME_SERVER: u8 = 0;
+const CHAT_SCOPE_GLOBAL: u8 = 1;
+const CHAT_MESSAGE_MAX_BYTES: usize = 512;
+const CHAT_MIN_INTERVAL: Duration = Duration::from_millis(400);
 
 #[derive(Clone)]
 struct Config {
@@ -138,6 +144,7 @@ struct ServerState {
     entries: HashMap<SessionKey, PresenceEntry>,
     recent_nonces: HashMap<([u8; 16], [u8; 16]), Instant>,
     last_heartbeat_sync: HashMap<SessionKey, Instant>,
+    last_chat_send: HashMap<SessionKey, Instant>,
     invalid_rate_by_ip: HashMap<IpAddr, Instant>,
     json_path: PathBuf,
 }
@@ -148,8 +155,19 @@ impl ServerState {
             entries: HashMap::new(),
             recent_nonces: HashMap::new(),
             last_heartbeat_sync: HashMap::new(),
+            last_chat_send: HashMap::new(),
             invalid_rate_by_ip: HashMap::new(),
             json_path,
+        }
+    }
+
+    fn allow_chat_send(&mut self, key: &SessionKey, now: Instant) -> bool {
+        match self.last_chat_send.get(key) {
+            Some(last) if now.saturating_duration_since(*last) < CHAT_MIN_INTERVAL => false,
+            _ => {
+                self.last_chat_send.insert(key.clone(), now);
+                true
+            }
         }
     }
 
@@ -271,6 +289,18 @@ impl ServerState {
                 if entry.server_address != server_address {
                     return None;
                 }
+                if except.is_some_and(|skip| skip == key) {
+                    return None;
+                }
+                Some(entry)
+            })
+            .collect()
+    }
+
+    fn peers_all<'a>(&'a self, except: Option<&SessionKey>) -> Vec<&'a PresenceEntry> {
+        self.entries
+            .iter()
+            .filter_map(|(key, entry)| {
                 if except.is_some_and(|skip| skip == key) {
                     return None;
                 }
@@ -776,6 +806,62 @@ fn handle_udp_packet(
         return outcome;
     }
 
+    // UClient chat: same-server or global relay depending on scope.
+    if packet_type == PACKET_CHAT {
+        let Some(chat) = read_chat_packet(data) else {
+            state.log_invalid(ip, now, "bad chat payload");
+            return outcome;
+        };
+        if !validate_proof(shared_token, data) {
+            state.log_invalid(ip, now, "invalid chat proof");
+            return outcome;
+        }
+        if chat.message.is_empty() || chat.message.len() > CHAT_MESSAGE_MAX_BYTES {
+            state.log_invalid(ip, now, "invalid chat message length");
+            return outcome;
+        }
+        if chat.scope != CHAT_SCOPE_SAME_SERVER && chat.scope != CHAT_SCOPE_GLOBAL {
+            state.log_invalid(ip, now, "invalid chat scope");
+            return outcome;
+        }
+        if !state.remember_nonce(chat.session_id, chat.nonce, now) {
+            state.log_invalid(ip, now, "chat nonce replay");
+            return outcome;
+        }
+        let sender_key = SessionKey {
+            player_id: chat.player_id.clone(),
+            session_id: format!(
+                "{}:{}",
+                format_uuid(chat.session_id),
+                chat.sender_client_id
+            ),
+        };
+        if !state.allow_chat_send(&sender_key, now) {
+            state.log_invalid(ip, now, "chat rate limited");
+            return outcome;
+        }
+        let packet = encode_chat_broadcast(
+            &chat.server_address,
+            &chat.sender_name,
+            chat.sender_client_id,
+            chat.scope,
+            &chat.message,
+            &chat.skin_name,
+            chat.use_custom_color,
+            chat.color_body,
+            chat.color_feet,
+        );
+        let peers = if chat.scope == CHAT_SCOPE_SAME_SERVER {
+            state.peers_on_server(&chat.server_address, Some(&sender_key))
+        } else {
+            state.peers_all(Some(&sender_key))
+        };
+        for peer in peers {
+            outcome.outbound.push((peer.return_addr, packet.clone()));
+        }
+        return outcome;
+    }
+
     if !matches!(
         packet_type,
         PACKET_JOIN | PACKET_HEARTBEAT | PACKET_LEAVE | PACKET_SWITCH
@@ -1047,6 +1133,31 @@ fn encode_cursor_broadcast(
     out
 }
 
+fn encode_chat_broadcast(
+    server_address: &str,
+    sender_name: &str,
+    sender_client_id: i16,
+    scope: u8,
+    message: &str,
+    skin_name: &str,
+    use_custom_color: u8,
+    color_body: i32,
+    color_feet: i32,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_header(&mut out, PACKET_CHAT_BROADCAST);
+    write_string(&mut out, server_address);
+    write_string(&mut out, sender_name);
+    out.extend_from_slice(&sender_client_id.to_be_bytes());
+    out.push(scope);
+    write_string(&mut out, message);
+    write_string(&mut out, skin_name);
+    out.push(use_custom_color);
+    out.extend_from_slice(&color_body.to_be_bytes());
+    out.extend_from_slice(&color_feet.to_be_bytes());
+    out
+}
+
 fn encode_peer_list(server_address: &str, peers: &[(i16, String)]) -> Vec<u8> {
     let mut out = Vec::new();
     write_header(&mut out, PACKET_PEER_LIST);
@@ -1109,6 +1220,7 @@ fn wire_protocol_version(data: &[u8]) -> Option<u8> {
     if data.len() < 6 || data[..4] != PROTOCOL_MAGIC {
         return None;
     }
+    // Chat packets reuse the v2 header; accept v1/v2 only (same as presence).
     let version = data[5];
     if version != PROTOCOL_VERSION_V1 && version != PROTOCOL_VERSION_V2 {
         return None;
@@ -1258,6 +1370,66 @@ fn read_cursor_packet(data: &[u8]) -> Option<CursorPacket> {
         active,
         world_x,
         world_y,
+    })
+}
+
+struct ChatPacket {
+    player_id: String,
+    session_id: [u8; 16],
+    nonce: [u8; 16],
+    server_address: String,
+    sender_name: String,
+    sender_client_id: i16,
+    scope: u8,
+    message: String,
+    skin_name: String,
+    use_custom_color: u8,
+    color_body: i32,
+    color_feet: i32,
+}
+
+fn read_chat_packet(data: &[u8]) -> Option<ChatPacket> {
+    if packet_type(data)? != PACKET_CHAT {
+        return None;
+    }
+    if data.len() < PROOF_SIZE {
+        return None;
+    }
+    let payload_len = data.len().checked_sub(PROOF_SIZE)?;
+    let mut reader = Reader::new(&data[..payload_len]);
+    reader.skip(6)?;
+    let player_id = reader.string()?;
+    let session_id = reader.uuid()?;
+    let nonce = reader.uuid()?;
+    let _timestamp = reader.u64()?;
+    let server_address = reader.string()?;
+    let sender_name = reader.string()?;
+    let sender_client_id = reader.i16()?;
+    let scope = reader.u8()?;
+    let message = reader.string()?;
+    let skin_name = reader.string()?;
+    let use_custom_color = reader.u8()?;
+    let color_body = reader.i32()?;
+    let color_feet = reader.i32()?;
+    if reader.remaining() != 0 {
+        return None;
+    }
+    if skin_name.len() > 64 {
+        return None;
+    }
+    Some(ChatPacket {
+        player_id,
+        session_id,
+        nonce,
+        server_address,
+        sender_name,
+        sender_client_id,
+        scope,
+        message,
+        skin_name,
+        use_custom_color,
+        color_body,
+        color_feet,
     })
 }
 

@@ -31,6 +31,7 @@ struct CPeerState;
 struct CPeerList;
 struct CReactionBroadcast;
 struct CCursorBroadcast;
+struct CChatBroadcast;
 }
 
 class CClientIndicator : public CComponent
@@ -64,6 +65,10 @@ public:
 	// identified across clients by MessageHash. Relayed via the UClient presence UDP server.
 	void SendChatReaction(int TargetClientId, uint64_t MessageHash, const char *pEmoji, bool Add);
 
+	// UClient chat channel (cross-server by default; optional same-server scope).
+	void SendUClientChat(const char *pMessage);
+	bool UcPeerAppliesToCurrentServer(const char *pServerAddress) const;
+
 	// Draws the "Sharing cursor" indicator. Called from the HUD after the timer/music player so
 	// it is never hidden behind them (rendered on top, at the bottom-center of the screen).
 	void RenderLiveCursorSharingIndicator();
@@ -73,9 +78,12 @@ private:
 	// broadcast to UClient peers on the same server and rendered as their own gun-cursor sprite.
 	static void ConLiveCursor(IConsole::IResult *pResult, void *pUserData);
 	vec2 LocalCursorWorldPos() const;
+	bool IsLiveCursorBlockedByPlayerSpectate() const;
 	void SendLiveCursor(bool Active, vec2 WorldPos);
 	void UpdateLiveCursorSend(bool UcPresence);
+	void RenderLiveCursorIndicatorPill(const char *pText, const ColorRGBA &DotColor);
 	void ApplyUcCursorBroadcast(const UClientPresence::CCursorBroadcast &Cursor);
+	void ApplyUcChatBroadcast(const UClientPresence::CChatBroadcast &Chat);
 	void PruneStaleRemoteCursors();
 
 	bool m_LiveCursorActive = false;
@@ -160,7 +168,6 @@ private:
 	void ApplyUcPeerList(const UClientPresence::CPeerList &PeerList);
 	void ApplyUcReactionBroadcast(const UClientPresence::CReactionBroadcast &Reaction);
 	void ClearUcPeersForServer(const char *pNormalizedServer);
-	bool UcPeerAppliesToCurrentServer(const char *pServerAddress) const;
 	void PruneStaleUcPeers();
 	void SyncLocalRegistrations(bool Force = false);
 	void SendPresencePacket(int ClientId, int PacketType);

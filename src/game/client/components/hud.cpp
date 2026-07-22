@@ -41,6 +41,21 @@
 
 namespace
 {
+	ColorRGBA ThemeHudColor(CGameClient *pGameClient, ColorRGBA Fallback, bool ForcePreview, float MixAmount)
+	{
+		ColorRGBA ThemeColor;
+		if(pGameClient != nullptr && pGameClient->m_MusicPlayer.GetHudThemeColor(ThemeColor, ForcePreview))
+		{
+			const float Blend = std::clamp(MixAmount, 0.0f, 1.0f);
+			return ColorRGBA(
+				mix(Fallback.r, ThemeColor.r, Blend),
+				mix(Fallback.g, ThemeColor.g, Blend),
+				mix(Fallback.b, ThemeColor.b, Blend),
+				mix(Fallback.a, ThemeColor.a, Blend));
+		}
+		return Fallback;
+	}
+
 	constexpr float KEYSTROKES_ATLAS_SCALE = 0.14f;
 	constexpr int KEYSTROKES_WHEEL_HIGHLIGHT_MS = 150;
 	constexpr int KEYSTROKES_PRESSED_TEXTURE_SPACE = 3;
@@ -52,6 +67,8 @@ namespace
 	constexpr float KEYSTROKES_MC_GAP = 8.0f;
 	constexpr int KEYSTROKES_MC_MAX_KEYS = 8;
 	constexpr int KEYSTROKES_STYLE_MINECRAFT = 1;
+	constexpr float FINISH_PREDICTION_BAR_WIDTH = 170.0f;
+	constexpr float FINISH_PREDICTION_BAR_HEIGHT = 34.0f;
 	void FormatPredictionTime(int64_t Milliseconds, bool ShowMillis, char *pBuf, size_t BufSize)
 	{
 		const int64_t TimeCentiseconds = maximum<int64_t>(0, (Milliseconds + 5) / 10);
@@ -3020,8 +3037,6 @@ void CHud::RenderKeystrokesMouseInternal(bool ForcePreview, bool IgnoreModuleEna
 			ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f),
 			Rotation);
 	}
-
-	RenderNotifyWhenBack();
 }
 
 void CHud::RenderConnectionWarning()
@@ -4762,16 +4777,7 @@ void CHud::RenderFinishPredictionBar(const CUIRect &Rect, const SFinishPredictio
 	const int Corners = HudLayout::BackgroundCorners(IGraphics::CORNER_ALL, Rect.x, Rect.y, Rect.w, Rect.h, m_Width, m_Height);
 	if(Layout.m_BackgroundEnabled)
 	{
-		IGraphics::SBlurRectRenderInfo BlurInfo;
-		BlurInfo.m_X = Rect.x;
-		BlurInfo.m_Y = Rect.y;
-		BlurInfo.m_Width = Rect.w;
-		BlurInfo.m_Height = Rect.h;
-		BlurInfo.m_Rounding = 4.0f * Scale;
-		BlurInfo.m_BlurRadius = 7.0f * Scale;
-		BlurInfo.m_BlurStrength = 1.0f;
-		BlurInfo.m_TintColor = ColorRGBA(BackgroundColor.r, BackgroundColor.g, BackgroundColor.b, 0.28f);
-		Graphics()->DrawBlurRect(BlurInfo);
+		// BestClient 2.0 removed the blur shader path; keep a solid themed background.
 		Graphics()->DrawRect(Rect.x, Rect.y, Rect.w, Rect.h, BackgroundColor, Corners, 4.0f * Scale);
 	}
 
@@ -5021,6 +5027,7 @@ void CHud::OnRender()
 		RenderWarmupTimer();
 		RenderTextInfo();
 		RenderFrozenHud();
+		RenderNotifyWhenBack();
 		RenderNotifyLast();
 		GameClient()->m_TClient.RenderCenterLines();
 		if(!(FocusModeActive && HideUIInFocusMode))

@@ -210,6 +210,70 @@ bool ReadCursorBroadcast(const uint8_t *pData, int DataSize, CCursorBroadcast &O
 	return Offset == DataSize;
 }
 
+void WriteChatClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pServerAddress, const char *pSenderName, int SenderClientId, uint8_t Scope, const char *pMessage,
+	const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet)
+{
+	WriteHeader(vOut, PACKET_CHAT);
+	WriteString(vOut, pPlayerId);
+	WriteUuid(vOut, SessionId);
+	WriteUuid(vOut, Nonce);
+	WriteU64(vOut, Timestamp);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pSenderName);
+	WriteS16(vOut, (int16_t)SenderClientId);
+	WriteU8(vOut, Scope);
+	WriteString(vOut, pMessage);
+	WriteString(vOut, pSkinName && pSkinName[0] != '\0' ? pSkinName : "default");
+	WriteU8(vOut, UseCustomColor);
+	WriteI32(vOut, ColorBody);
+	WriteI32(vOut, ColorFeet);
+}
+
+void WriteChatBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pSenderName, int SenderClientId,
+	uint8_t Scope, const char *pMessage, const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet)
+{
+	vOut.clear();
+	WriteHeader(vOut, PACKET_CHAT_BROADCAST);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pSenderName);
+	WriteS16(vOut, (int16_t)SenderClientId);
+	WriteU8(vOut, Scope);
+	WriteString(vOut, pMessage);
+	WriteString(vOut, pSkinName && pSkinName[0] != '\0' ? pSkinName : "default");
+	WriteU8(vOut, UseCustomColor);
+	WriteI32(vOut, ColorBody);
+	WriteI32(vOut, ColorFeet);
+}
+
+bool ReadChatBroadcast(const uint8_t *pData, int DataSize, CChatBroadcast &Out)
+{
+	int Offset = 0;
+	EPacketType Type;
+	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != PACKET_CHAT_BROADCAST)
+		return false;
+
+	int16_t SenderClientId = -1;
+	int32_t ColorBody = 0;
+	int32_t ColorFeet = 0;
+	if(!ReadString(pData, DataSize, Offset, Out.m_ServerAddress) ||
+		!ReadString(pData, DataSize, Offset, Out.m_SenderName) ||
+		!ReadS16(pData, DataSize, Offset, SenderClientId) ||
+		!ReadU8(pData, DataSize, Offset, Out.m_Scope) ||
+		!ReadString(pData, DataSize, Offset, Out.m_Message) ||
+		!ReadString(pData, DataSize, Offset, Out.m_SkinName) ||
+		!ReadU8(pData, DataSize, Offset, Out.m_UseCustomColor) ||
+		!ReadI32(pData, DataSize, Offset, ColorBody) ||
+		!ReadI32(pData, DataSize, Offset, ColorFeet))
+	{
+		return false;
+	}
+	Out.m_SenderClientId = SenderClientId;
+	Out.m_ColorBody = ColorBody;
+	Out.m_ColorFeet = ColorFeet;
+	return Offset == DataSize;
+}
+
 bool ReadClientPresencePacket(const uint8_t *pData, int DataSize, CClientPresencePacket &Out)
 {
 	int Offset = 0;

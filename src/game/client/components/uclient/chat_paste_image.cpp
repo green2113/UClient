@@ -1143,7 +1143,12 @@ bool CUClientChatPasteImage::StartPendingUpload(CChat *pChat, const char *pMessa
 	pPost->MaxResponseSize(64 * 1024);
 	pPost->LogProgress(HTTPLOG::FAILURE);
 
-	m_PendingUploadImage.m_Team = pChat->m_Mode == CChat::MODE_TEAM ? 1 : 0;
+	if(pChat->m_Mode == CChat::MODE_UCLIENT)
+		m_PendingUploadImage.m_Team = CChat::TEAM_UCLIENT;
+	else if(pChat->m_Mode == CChat::MODE_TEAM)
+		m_PendingUploadImage.m_Team = 1;
+	else
+		m_PendingUploadImage.m_Team = 0;
 	str_copy(m_PendingUploadImage.m_aMessagePrefix, pMessagePrefix ? pMessagePrefix : "", sizeof(m_PendingUploadImage.m_aMessagePrefix));
 	m_PendingUploadImage.m_pRequest = pPost;
 	m_PendingUploadImage.m_State = CUClientChatPasteImage::EPendingUploadState::UPLOADING;
@@ -1198,8 +1203,15 @@ void CUClientChatPasteImage::UpdatePendingUpload(CChat *pChat)
 			str_copy(aLine, aUrl, sizeof(aLine));
 
 		pChat->AddHistoryEntry(m_PendingUploadImage.m_Team, aLine);
-		if(!pChat->GameClient()->m_Translate.TryTranslateOutgoingChat(m_PendingUploadImage.m_Team, aLine))
+		if(m_PendingUploadImage.m_Team == CChat::TEAM_UCLIENT)
+		{
+			if(g_Config.m_UcChat)
+				pChat->GameClient()->m_ClientIndicator.SendUClientChat(aLine);
+		}
+		else if(!pChat->GameClient()->m_Translate.TryTranslateOutgoingChat(m_PendingUploadImage.m_Team, aLine))
+		{
 			pChat->SendChatPayloadQueued(m_PendingUploadImage.m_Team, aLine);
+		}
 		pChat->DisableMode();
 		pChat->GameClient()->OnRelease();
 		ClearPendingUploadImage(pChat);

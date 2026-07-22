@@ -1,10 +1,13 @@
 #include <base/math.h>
 #include <base/system.h>
+#include <base/time.h>
 
+#include <engine/graphics.h>
 #include <engine/shared/config.h>
 #include <engine/textrender.h>
 
 #include <game/client/bc_ui_animations.h>
+#include <game/client/components/chat.h>
 #include <game/client/components/menus.h>
 #include <game/client/gameclient.h>
 #include <game/client/lineinput.h>
@@ -13,7 +16,19 @@
 #include <game/localization.h>
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
+
+static void DrawUcMenuBadge(IGraphics *pGraphics, CUi *pUi, ITextRender *pTextRender, CUIRect *pRow, const char *pText, float FontSize, const ColorRGBA &Top, const ColorRGBA &Bottom, float Gap)
+{
+	const float BadgeWidth = pTextRender->TextWidth(FontSize, pText) + 10.0f;
+	CUIRect Badge;
+	pRow->VSplitRight(BadgeWidth + Gap, pRow, &Badge);
+	Badge.VSplitLeft(Gap, nullptr, &Badge);
+	Badge.HMargin(2.0f, &Badge);
+	pGraphics->DrawRect4(Badge.x, Badge.y, Badge.w, Badge.h, Top, Bottom, Top, Bottom, IGraphics::CORNER_ALL, 5.0f);
+	pUi->DoLabel(&Badge, pText, FontSize, TEXTALIGN_MC);
+}
 
 void CMenus::PopupConfirmPasteImageFromChat()
 {
@@ -80,6 +95,33 @@ void CMenus::PopupCancelAutoLoginOffer()
 
 	m_AutoLoginOfferKind = AUTO_LOGIN_OFFER_NONE;
 	m_aAutoLoginOfferCode[0] = '\0';
+	SetActive(false);
+}
+
+void CMenus::OfferDisableUcChatSendSameServerForReply()
+{
+	PopupConfirm(
+		"UClient chat",
+		"'Only send to users on the same server' is currently enabled. Turn that setting off?",
+		Localize("Yes"),
+		Localize("No"),
+		&CMenus::PopupConfirmDisableUcChatSendSameServerForReply,
+		POPUP_NONE,
+		&CMenus::PopupCancelDisableUcChatSendSameServerForReply,
+		POPUP_NONE);
+	SetActive(true);
+}
+
+void CMenus::PopupConfirmDisableUcChatSendSameServerForReply()
+{
+	g_Config.m_UcChatSendSameServerOnly = 0;
+	GameClient()->m_Chat.ApplyStashedUcReplyAfterSendScopePrompt();
+	SetActive(false);
+}
+
+void CMenus::PopupCancelDisableUcChatSendSameServerForReply()
+{
+	GameClient()->m_Chat.ClearStashedUcReplySendScopePrompt();
 	SetActive(false);
 }
 
@@ -192,6 +234,9 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			CUIRect Content, Label, Button, Visible;
 			BeginBlock(Column, ContentHeight, Content);
 			Content.HSplitTop(LineSize, &Label, &Content);
+			Label.VSplitRight(MarginSmall, &Label, nullptr);
+			DrawUcMenuBadge(Graphics(), Ui(), TextRender(), &Label, Localize("NEW"), 12.0f,
+				ColorRGBA(0.25f, 0.85f, 0.40f, 1.0f), ColorRGBA(0.10f, 0.60f, 0.25f, 1.0f), MarginSmall);
 			Ui()->DoLabel(&Label, Localize("Back notify"), HeadlineFontSize, TEXTALIGN_ML);
 			Content.HSplitTop(MarginSmall, nullptr, &Content);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcNotifyWhenBack, Localize("Show when a teammate behind you freezes"), &g_Config.m_UcNotifyWhenBack, &Content, LineSize);
@@ -237,13 +282,55 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 
 		// Timeout reconnect
 		{
-			const float ContentHeight = LineSize + MarginSmall + LineSize;
-			CUIRect Content, Label;
+			static float s_TimeoutPhase = 0.0f;
+			static float s_AutoTimeoutPhase = 0.0f;
+			const bool TimeoutExpanded = g_Config.m_UcShowTimeoutReconnect != 0;
+			const bool AutoExpanded = TimeoutExpanded && g_Config.m_UcAutoTimeoutReconnect != 0;
+			UpdateRevealPhase(s_TimeoutPhase, TimeoutExpanded);
+			UpdateRevealPhase(s_AutoTimeoutPhase, AutoExpanded);
+
+			const float WarningGap = 1.0f;
+			const float WarningHeight = WarningGap + LineSize;
+			const float AutoExpandedHeight = WarningHeight * s_AutoTimeoutPhase;
+			const float ExpandedTargetHeight = MarginSmall + LineSize + AutoExpandedHeight;
+			const float ExpandedHeight = ExpandedTargetHeight * s_TimeoutPhase;
+			const float ContentHeight = LineSize + MarginSmall + LineSize + ExpandedHeight;
+
+			CUIRect Content, Label, Visible;
 			BeginBlock(Column, ContentHeight, Content);
 			Content.HSplitTop(LineSize, &Label, &Content);
+			Label.VSplitRight(MarginSmall, &Label, nullptr);
+			DrawUcMenuBadge(Graphics(), Ui(), TextRender(), &Label, Localize("NEW"), 12.0f,
+				ColorRGBA(0.25f, 0.85f, 0.40f, 1.0f), ColorRGBA(0.10f, 0.60f, 0.25f, 1.0f), MarginSmall);
 			Ui()->DoLabel(&Label, Localize("Reconnect timeout"), HeadlineFontSize, TEXTALIGN_ML);
 			Content.HSplitTop(MarginSmall, nullptr, &Content);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcShowTimeoutReconnect, Localize("Show remaining reconnect timeout"), &g_Config.m_UcShowTimeoutReconnect, &Content, LineSize);
+			if(ExpandedHeight > 0.0f)
+			{
+				Content.HSplitTop(ExpandedHeight, &Visible, &Content);
+				Ui()->ClipEnable(&Visible);
+				struct SScopedClip
+				{
+					CUi *m_pUi;
+					~SScopedClip() { m_pUi->ClipDisable(); }
+				} ClipGuard{Ui()};
+
+				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
+				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
+				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcAutoTimeoutReconnect, "Auto reconnect to server when timeout expires", &g_Config.m_UcAutoTimeoutReconnect, &Expand, LineSize);
+				if(AutoExpandedHeight > 0.0f)
+				{
+					CUIRect Warning;
+					Expand.HSplitTop(WarningGap, nullptr, &Expand);
+					Expand.HSplitTop(LineSize, &Warning, &Expand);
+					// Slow pulse (~0.4 Hz); keep alpha high so the warning stays readable.
+					const float Pulse = 0.5f + 0.5f * std::sin((float)time_get() / (float)time_freq() * (0.8f * pi));
+					const float Blink = 0.55f + 0.45f * Pulse;
+					TextRender()->TextColor(1.0f, 0.15f, 0.1f, Blink);
+					Ui()->DoLabel(&Warning, "You may be reconnected while playing the map.", 11.0f, TEXTALIGN_ML);
+					TextRender()->TextColor(TextRender()->DefaultTextColor());
+				}
+			}
 			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 		}
 
@@ -319,6 +406,73 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 	{
 		CUIRect Column = LeftView;
 		Column.HSplitTop(10.0f, nullptr, &Column);
+
+		// UClient chat
+		{
+			static float s_UcChatPhase = 0.0f;
+			const bool ChatExpanded = g_Config.m_UcChat != 0;
+			UpdateRevealPhase(s_UcChatPhase, ChatExpanded);
+			const float ExpandedTargetHeight = MarginSmall + LineSize * 2.0f;
+			const float ExpandedHeight = ExpandedTargetHeight * s_UcChatPhase;
+			const float ContentHeight = LineSize + MarginSmall + LineSize + ExpandedHeight;
+			CUIRect Content, Label, Visible;
+			BeginBlock(Column, ContentHeight, Content);
+			Content.HSplitTop(LineSize, &Label, &Content);
+			Label.VSplitRight(MarginSmall, &Label, nullptr);
+			DrawUcMenuBadge(Graphics(), Ui(), TextRender(), &Label, Localize("NEW"), 12.0f,
+				ColorRGBA(0.25f, 0.85f, 0.40f, 1.0f), ColorRGBA(0.10f, 0.60f, 0.25f, 1.0f), MarginSmall);
+			Ui()->DoLabel(&Label, "UClient chat", HeadlineFontSize, TEXTALIGN_ML);
+			Content.HSplitTop(MarginSmall, nullptr, &Content);
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcChat, "Enable UClient chat", &g_Config.m_UcChat, &Content, LineSize);
+			if(ExpandedHeight > 0.0f)
+			{
+				Content.HSplitTop(ExpandedHeight, &Visible, &Content);
+				Ui()->ClipEnable(&Visible);
+				struct SScopedClip
+				{
+					CUi *m_pUi;
+					~SScopedClip() { m_pUi->ClipDisable(); }
+				} ClipGuard{Ui()};
+
+				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
+				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
+
+				// "채팅 보기" (show) can auto-couple "유저 전송" (send):
+				// show 0→1 with send 0 => send 1 (coupled); show 1→0 then also clears send.
+				// show 0→1 with send already 1 => leave send alone (not coupled).
+				static bool s_UcChatSendCoupledWithShow = false;
+				const int OldShow = g_Config.m_UcChatShowSameServerOnly;
+				const int OldSend = g_Config.m_UcChatSendSameServerOnly;
+
+				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcChatSendSameServerOnly, "Only send to users on the same server", &g_Config.m_UcChatSendSameServerOnly, &Expand, LineSize);
+				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcChatShowSameServerOnly, "Only show chats from users on the same server", &g_Config.m_UcChatShowSameServerOnly, &Expand, LineSize);
+
+				if(g_Config.m_UcChatSendSameServerOnly != OldSend)
+					s_UcChatSendCoupledWithShow = false;
+
+				if(g_Config.m_UcChatShowSameServerOnly != OldShow)
+				{
+					if(g_Config.m_UcChatShowSameServerOnly)
+					{
+						if(OldSend == 0)
+						{
+							g_Config.m_UcChatSendSameServerOnly = 1;
+							s_UcChatSendCoupledWithShow = true;
+						}
+						else
+						{
+							s_UcChatSendCoupledWithShow = false;
+						}
+					}
+					else if(s_UcChatSendCoupledWithShow)
+					{
+						g_Config.m_UcChatSendSameServerOnly = 0;
+						s_UcChatSendCoupledWithShow = false;
+					}
+				}
+			}
+			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+		}
 
 		// Misc
 		{

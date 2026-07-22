@@ -320,7 +320,6 @@ public:
 	CServerEntry *Find(const NETADDR &Addr) override;
 	int GetCurrentType() override { return m_ServerlistType; }
 	bool IsRegistered(const NETADDR &Addr);
-	void SetBestClientPlayers(const std::vector<CBestClientPlayerEntry> &vPlayers) override;
 
 private:
 	CNetClient *m_pNetClient = nullptr;

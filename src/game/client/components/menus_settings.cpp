@@ -1020,6 +1020,7 @@ void CMenus::OpenShareSkinPopup()
 	m_aShareSkinName[0] = '\0';
 	m_aShareSkinTargetName[0] = '\0';
 	m_ShareSkinToAll = true;
+	m_ShareSkinToUClientChat = false;
 	m_ShareSkinAgree = g_Config.m_UcShareAgreed != 0;
 	m_ShareSkinState = EShareAssetState::NONE;
 	m_aShareSkinStatus[0] = '\0';
@@ -1073,10 +1074,16 @@ bool CMenus::ResolveSkinSharePng(const char *pName, void **ppData, unsigned *pLe
 
 void CMenus::BeginShareSkinUpload()
 {
-	if(!m_ShareSkinToAll && m_aShareSkinTargetName[0] == '\0')
+	if(!m_ShareSkinToAll && !m_ShareSkinToUClientChat && m_aShareSkinTargetName[0] == '\0')
 	{
 		m_ShareSkinState = EShareAssetState::FAILED;
 		str_copy(m_aShareSkinStatus, Localize("Select a player first."));
+		return;
+	}
+	if(m_ShareSkinToUClientChat && !g_Config.m_UcChat)
+	{
+		m_ShareSkinState = EShareAssetState::FAILED;
+		str_copy(m_aShareSkinStatus, "UClient chat is disabled.");
 		return;
 	}
 
@@ -1156,7 +1163,11 @@ void CMenus::UpdateShareSkinUpload()
 		return;
 	}
 
-	if(m_ShareSkinToAll)
+	if(m_ShareSkinToUClientChat)
+	{
+		GameClient()->m_ClientIndicator.SendUClientChat(aUrl);
+	}
+	else if(m_ShareSkinToAll)
 	{
 		// Broadcast the link to everyone via public chat.
 		GameClient()->m_Chat.SendChat(0, aUrl);
@@ -1182,11 +1193,12 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareSkin(void *pContext, CUIRect Vie
 	const float SmallFontSize = 10.0f;
 	CUIRect Row;
 
-	// gather the players currently on this server (excluding ourselves), and whether they use UClient.
-	// Display index 0 is a special "All" entry that broadcasts to public chat instead of whispering.
-	bool aUserUsesUClient[MAX_CLIENTS + 1] = {false};
+	// Index 0 = "All", index 1 = "UClient chat" (when enabled), then per-player whispers.
+	bool aUserUsesUClient[MAX_CLIENTS + 2] = {false};
 	pThis->m_vShareSkinUserNames.clear();
 	const int LocalId = pThis->GameClient()->m_Snap.m_LocalClientId;
+	const bool OfferUClientChat = g_Config.m_UcChat != 0;
+	const int FirstPlayerIndex = OfferUClientChat ? 2 : 1;
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
 		if(i == LocalId)
@@ -1196,28 +1208,40 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareSkin(void *pContext, CUIRect Vie
 		if(pThis->GameClient()->m_aClients[i].m_aName[0] == '\0')
 			continue;
 		const size_t Slot = pThis->m_vShareSkinUserNames.size();
-		if(Slot + 1 <= MAX_CLIENTS)
-			aUserUsesUClient[Slot + 1] = pThis->GameClient()->m_ClientIndicator.IsPlayerUClient(i);
+		if((int)Slot + FirstPlayerIndex <= MAX_CLIENTS + 1)
+			aUserUsesUClient[Slot + FirstPlayerIndex] = pThis->GameClient()->m_ClientIndicator.IsPlayerUClient(i);
 		pThis->m_vShareSkinUserNames.emplace_back(pThis->GameClient()->m_aClients[i].m_aName);
 	}
 
 	std::vector<const char *> vpNames;
-	vpNames.reserve(pThis->m_vShareSkinUserNames.size() + 1);
+	vpNames.reserve(pThis->m_vShareSkinUserNames.size() + 2);
 	vpNames.push_back("All");
+	if(OfferUClientChat)
+	{
+		vpNames.push_back("UClient chat");
+		aUserUsesUClient[1] = true;
+	}
 	for(const auto &Name : pThis->m_vShareSkinUserNames)
 		vpNames.push_back(Name.c_str());
 
 	int CurSelection = 0; // default: "All" (broadcast)
-	if(!pThis->m_ShareSkinToAll)
+	if(pThis->m_ShareSkinToUClientChat && OfferUClientChat)
+		CurSelection = 1;
+	else if(!pThis->m_ShareSkinToAll)
 	{
 		for(size_t i = 0; i < pThis->m_vShareSkinUserNames.size(); i++)
 		{
 			if(str_comp(pThis->m_vShareSkinUserNames[i].c_str(), pThis->m_aShareSkinTargetName) == 0)
 			{
-				CurSelection = (int)i + 1;
+				CurSelection = (int)i + FirstPlayerIndex;
 				break;
 			}
 		}
+	}
+	else if(pThis->m_ShareSkinToUClientChat && !OfferUClientChat)
+	{
+		pThis->m_ShareSkinToUClientChat = false;
+		pThis->m_ShareSkinToAll = true;
 	}
 
 	// gather the user's own skins (from the writable skins folder)
@@ -1244,7 +1268,7 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareSkin(void *pContext, CUIRect Vie
 	CUIRect ShareRect, R0, SkinDropRect, R1, WithRect, PlayerDropRect;
 	const float ShareW = pThis->TextRender()->TextWidth(FontSize, "Share ") + 4.0f;
 	const float WithW = pThis->TextRender()->TextWidth(FontSize, " with ") + 4.0f;
-	const float PlayerDropW = 110.0f;
+	const float PlayerDropW = 120.0f;
 	const float SkinDropW = 150.0f;
 	Row.VSplitLeft(ShareW, &ShareRect, &R0);
 	R0.VSplitLeft(SkinDropW, &SkinDropRect, &R1);
@@ -1290,12 +1314,20 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareSkin(void *pContext, CUIRect Vie
 		if(NewSelection == 0)
 		{
 			pThis->m_ShareSkinToAll = true;
+			pThis->m_ShareSkinToUClientChat = false;
 			pThis->m_aShareSkinTargetName[0] = '\0';
 		}
-		else if(NewSelection > 0 && NewSelection - 1 < (int)pThis->m_vShareSkinUserNames.size())
+		else if(OfferUClientChat && NewSelection == 1)
 		{
 			pThis->m_ShareSkinToAll = false;
-			str_copy(pThis->m_aShareSkinTargetName, pThis->m_vShareSkinUserNames[NewSelection - 1].c_str());
+			pThis->m_ShareSkinToUClientChat = true;
+			pThis->m_aShareSkinTargetName[0] = '\0';
+		}
+		else if(NewSelection >= FirstPlayerIndex && NewSelection - FirstPlayerIndex < (int)pThis->m_vShareSkinUserNames.size())
+		{
+			pThis->m_ShareSkinToAll = false;
+			pThis->m_ShareSkinToUClientChat = false;
+			str_copy(pThis->m_aShareSkinTargetName, pThis->m_vShareSkinUserNames[NewSelection - FirstPlayerIndex].c_str());
 		}
 	}
 
@@ -1346,7 +1378,7 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareSkin(void *pContext, CUIRect Vie
 	}
 
 	const bool Uploading = pThis->m_ShareSkinState == EShareAssetState::UPLOADING;
-	const bool HasTarget = pThis->m_ShareSkinToAll || pThis->m_aShareSkinTargetName[0] != '\0';
+	const bool HasTarget = pThis->m_ShareSkinToAll || pThis->m_ShareSkinToUClientChat || pThis->m_aShareSkinTargetName[0] != '\0';
 	const bool CanConfirm = pThis->m_ShareSkinAgree && !Uploading && HasTarget && !pThis->m_vShareSkinNames.empty() && pThis->m_aShareSkinName[0] != '\0';
 	const char *pConfirmText = Uploading ? Localize("Uploading...") : Localize("Confirm");
 	if(pThis->DoButton_Menu(&pThis->m_ShareSkinConfirmButton, pConfirmText, 0, &ConfirmRect) && CanConfirm)
@@ -1444,6 +1476,7 @@ void CMenus::OpenShareMapPopup()
 	m_aShareMapListFolder[0] = '\0';
 	m_aShareMapTargetName[0] = '\0';
 	m_ShareMapToAll = true;
+	m_ShareMapToUClientChat = false;
 	m_ShareMapAgree = g_Config.m_UcShareAgreed != 0;
 	m_ShareMapState = EShareAssetState::NONE;
 	m_aShareMapStatus[0] = '\0';
@@ -1574,10 +1607,16 @@ bool CMenus::ResolveMapShareFile(const char *pRelPath, void **ppData, unsigned *
 
 void CMenus::BeginShareMapUpload()
 {
-	if(!m_ShareMapToAll && m_aShareMapTargetName[0] == '\0')
+	if(!m_ShareMapToAll && !m_ShareMapToUClientChat && m_aShareMapTargetName[0] == '\0')
 	{
 		m_ShareMapState = EShareAssetState::FAILED;
 		str_copy(m_aShareMapStatus, Localize("Select a player first."));
+		return;
+	}
+	if(m_ShareMapToUClientChat && !g_Config.m_UcChat)
+	{
+		m_ShareMapState = EShareAssetState::FAILED;
+		str_copy(m_aShareMapStatus, "UClient chat is disabled.");
 		return;
 	}
 	if(m_aShareMapPath[0] == '\0' || str_comp(m_aShareMapPath, CURRENT_MAP) == 0)
@@ -1676,7 +1715,9 @@ void CMenus::UpdateShareMapUpload()
 		return;
 	}
 
-	if(m_ShareMapToAll)
+	if(m_ShareMapToUClientChat)
+		GameClient()->m_ClientIndicator.SendUClientChat(aUrl);
+	else if(m_ShareMapToAll)
 		GameClient()->m_Chat.SendChat(0, aUrl);
 	else
 	{
@@ -1699,9 +1740,11 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareMap(void *pContext, CUIRect View
 	const float SmallFontSize = 10.0f;
 	CUIRect Row;
 
-	bool aUserUsesUClient[MAX_CLIENTS + 1] = {false};
+	bool aUserUsesUClient[MAX_CLIENTS + 2] = {false};
 	pThis->m_vShareMapUserNames.clear();
 	const int LocalId = pThis->GameClient()->m_Snap.m_LocalClientId;
+	const bool OfferUClientChat = g_Config.m_UcChat != 0;
+	const int FirstPlayerIndex = OfferUClientChat ? 2 : 1;
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
 		if(i == LocalId)
@@ -1711,35 +1754,47 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareMap(void *pContext, CUIRect View
 		if(pThis->GameClient()->m_aClients[i].m_aName[0] == '\0')
 			continue;
 		const size_t Slot = pThis->m_vShareMapUserNames.size();
-		if(Slot + 1 <= MAX_CLIENTS)
-			aUserUsesUClient[Slot + 1] = pThis->GameClient()->m_ClientIndicator.IsPlayerUClient(i);
+		if((int)Slot + FirstPlayerIndex <= MAX_CLIENTS + 1)
+			aUserUsesUClient[Slot + FirstPlayerIndex] = pThis->GameClient()->m_ClientIndicator.IsPlayerUClient(i);
 		pThis->m_vShareMapUserNames.emplace_back(pThis->GameClient()->m_aClients[i].m_aName);
 	}
 
 	std::vector<const char *> vpNames;
-	vpNames.reserve(pThis->m_vShareMapUserNames.size() + 1);
+	vpNames.reserve(pThis->m_vShareMapUserNames.size() + 2);
 	vpNames.push_back("All");
+	if(OfferUClientChat)
+	{
+		vpNames.push_back("UClient chat");
+		aUserUsesUClient[1] = true;
+	}
 	for(const auto &Name : pThis->m_vShareMapUserNames)
 		vpNames.push_back(Name.c_str());
 
 	int CurSelection = 0;
-	if(!pThis->m_ShareMapToAll)
+	if(pThis->m_ShareMapToUClientChat && OfferUClientChat)
+		CurSelection = 1;
+	else if(!pThis->m_ShareMapToAll)
 	{
 		for(size_t i = 0; i < pThis->m_vShareMapUserNames.size(); i++)
 		{
 			if(str_comp(pThis->m_vShareMapUserNames[i].c_str(), pThis->m_aShareMapTargetName) == 0)
 			{
-				CurSelection = (int)i + 1;
+				CurSelection = (int)i + FirstPlayerIndex;
 				break;
 			}
 		}
+	}
+	else if(pThis->m_ShareMapToUClientChat && !OfferUClientChat)
+	{
+		pThis->m_ShareMapToUClientChat = false;
+		pThis->m_ShareMapToAll = true;
 	}
 
 	View.HSplitTop(22.0f, &Row, &View);
 	CUIRect ShareRect, R0, MapDropRect, R1, WithRect, PlayerDropRect;
 	const float ShareW = pThis->TextRender()->TextWidth(FontSize, "Share ") + 4.0f;
 	const float WithW = pThis->TextRender()->TextWidth(FontSize, " with ") + 4.0f;
-	const float PlayerDropW = 110.0f;
+	const float PlayerDropW = 120.0f;
 	const float MapDropW = 150.0f;
 	Row.VSplitLeft(ShareW, &ShareRect, &R0);
 	R0.VSplitLeft(MapDropW, &MapDropRect, &R1);
@@ -1776,12 +1831,20 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareMap(void *pContext, CUIRect View
 		if(NewSelection == 0)
 		{
 			pThis->m_ShareMapToAll = true;
+			pThis->m_ShareMapToUClientChat = false;
 			pThis->m_aShareMapTargetName[0] = '\0';
 		}
-		else if(NewSelection > 0 && NewSelection - 1 < (int)pThis->m_vShareMapUserNames.size())
+		else if(OfferUClientChat && NewSelection == 1)
 		{
 			pThis->m_ShareMapToAll = false;
-			str_copy(pThis->m_aShareMapTargetName, pThis->m_vShareMapUserNames[NewSelection - 1].c_str());
+			pThis->m_ShareMapToUClientChat = true;
+			pThis->m_aShareMapTargetName[0] = '\0';
+		}
+		else if(NewSelection >= FirstPlayerIndex && NewSelection - FirstPlayerIndex < (int)pThis->m_vShareMapUserNames.size())
+		{
+			pThis->m_ShareMapToAll = false;
+			pThis->m_ShareMapToUClientChat = false;
+			str_copy(pThis->m_aShareMapTargetName, pThis->m_vShareMapUserNames[NewSelection - FirstPlayerIndex].c_str());
 		}
 	}
 
@@ -1827,7 +1890,7 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareMap(void *pContext, CUIRect View
 	}
 
 	const bool Uploading = pThis->m_ShareMapState == EShareAssetState::UPLOADING;
-	const bool HasTarget = pThis->m_ShareMapToAll || pThis->m_aShareMapTargetName[0] != '\0';
+	const bool HasTarget = pThis->m_ShareMapToAll || pThis->m_ShareMapToUClientChat || pThis->m_aShareMapTargetName[0] != '\0';
 	const bool CanConfirm = pThis->m_ShareMapAgree && !Uploading && HasTarget && pThis->m_aShareMapPath[0] != '\0';
 	const char *pConfirmText = Uploading ? Localize("Uploading...") : Localize("Confirm");
 	if(pThis->DoButton_Menu(&pThis->m_ShareMapConfirmButton, pConfirmText, 0, &ConfirmRect) && CanConfirm)
@@ -2603,6 +2666,11 @@ void CMenus::RenderSettings(CUIRect MainView)
 				GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_RESERVED0);
 				RenderSettingsBestClient(PageView);
 			}
+			else if(g_Config.m_UiSettingsPage == SETTINGS_UCLIENT)
+			{
+				GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_RESERVED1);
+				RenderSettingsUClient(PageView);
+			}
 			else
 			{
 				dbg_assert_failed("ui_settings_page invalid");
@@ -2846,9 +2914,9 @@ void CMenus::RenderSettings(CUIRect MainView)
 		Localize("Assets"),
 		TCLocalize("TClient"),
 		"BestClient",
+		"UClient",
 		Localize("Profiles"),
-		Localize("Configs"),
-		"UClient"};
+		Localize("Configs")};
 
 	if(g_Config.m_UiSettingsPage == SETTINGS_LANGUAGE)
 		g_Config.m_UiSettingsPage = SETTINGS_GENERAL;
@@ -2939,6 +3007,11 @@ void CMenus::RenderSettings(CUIRect MainView)
 	{
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_RESERVED0);
 		RenderSettingsBestClient(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_UCLIENT)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_RESERVED1);
+		RenderSettingsUClient(MainView);
 	}
 	else
 	{
@@ -3426,6 +3499,8 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		DoLine_ColorPicker(&s_HighlightedMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, Localize("Highlighted message"), &g_Config.m_ClMessageHighlightColor, ColorRGBA(1.0f, 0.5f, 0.5f));
 		static CButtonContainer s_TeamMessageColor;
 		DoLine_ColorPicker(&s_TeamMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, Localize("Team message"), &g_Config.m_ClMessageTeamColor, ColorRGBA(0.65f, 1.0f, 0.65f));
+		static CButtonContainer s_UClientMessageColor;
+		DoLine_ColorPicker(&s_UClientMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, "UClient message", &g_Config.m_UcMessageColor, ColorRGBA(0.75f, 0.55f, 1.0f));
 		static CButtonContainer s_FriendMessageColor;
 		DoLine_ColorPicker(&s_FriendMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, Localize("Friend message"), &g_Config.m_ClMessageFriendColor, ColorRGBA(1.0f, 0.137f, 0.137f), true, &g_Config.m_ClMessageFriend);
 		static CButtonContainer s_NormalMessageColor;

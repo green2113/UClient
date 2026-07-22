@@ -44,6 +44,18 @@ Stop:
 ./src/uclientpresencesrv/run.sh stop
 ```
 
+Restart while already running (rebuild binary first if you copied a new one):
+
+```bash
+cd ~/BestClient
+# optional: copy/update the binary, then
+./src/uclientpresencesrv/run.sh restart
+./src/uclientpresencesrv/run.sh status
+curl -k https://127.0.0.1:8780/healthz
+```
+
+`restart` = `stop` then `start`. Logs: `run/uclientpresencesrv/uclient-presence-server.log`.
+
 ## Deployment
 
 Point your public presence API at this service, for example:

@@ -11,6 +11,7 @@
 #include <engine/serverbrowser.h>
 #include <engine/shared/config.h>
 #include <engine/shared/http.h>
+#include <engine/shared/json.h>
 #include <engine/textrender.h>
 
 #include <generated/client_data.h>
@@ -26,6 +27,7 @@
 #include <game/client/gameclient.h>
 #include <game/client/ui.h>
 #include <game/localization.h>
+#include <game/version.h>
 
 #include <algorithm>
 #include <cctype>
@@ -1206,18 +1208,6 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 			{
 				str_format(aBuf, sizeof(aBuf), "%d", std::clamp(pInfo->m_Score, -999, 99999));
 				TextRender()->Text(ScoreOffset + ScoreLength - TextRender()->TextWidth(FontSize, aBuf), ScorePosition.y + (Row.h - FontSize) / 2.0f, FontSize, aBuf);
-			}
-
-			if(g_Config.m_BcClientIndicatorInScoreboard && pInfo->m_ClientId >= 0 && GameClient()->m_ClientIndicator.IsPlayerBestClient(pInfo->m_ClientId))
-			{
-				const float IconSize = FontSize * (0.8f + 0.3f * g_Config.m_BcClientIndicatorInSoreboardSize / 100.0f);
-				const float IconSpacing = 4.0f;
-				const CUIRect IconRect = {
-					ScoreOffset - IconSize - IconSpacing,
-					Row.y + (Row.h - IconSize) / 2.0f,
-					IconSize,
-					IconSize};
-				RenderBestClientIcon(Graphics(), IconRect, GameClient()->m_ClientIndicator.IsPlayerDeveloper(pInfo->m_ClientId));
 			}
 
 			// CTF flag

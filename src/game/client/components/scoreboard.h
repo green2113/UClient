@@ -10,6 +10,11 @@
 #include <game/client/ui.h>
 #include <game/client/ui_rect.h>
 
+#include <array>
+#include <memory>
+
+class CHttpRequest;
+
 class CScoreboard : public CComponent
 {
 	struct CScoreboardRenderState
@@ -29,6 +34,10 @@ class CScoreboard : public CComponent
 	void RenderSpectators(CUIRect Spectators);
 	void RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart, int CountEnd, CScoreboardRenderState &State);
 	void RenderRecordingNotification(float x);
+	void ResetTabPlayerPoints();
+	void UpdateTabPlayerPoints();
+	void StartTabPlayerPointsRequest(int ClientId, const char *pName);
+	bool TryGetTabPlayerPointsText(int ClientId, const char *pName, char *pBuf, int BufSize);
 
 	static void ConKeyScoreboard(IConsole::IResult *pResult, void *pUserData);
 	static void ConToggleScoreboardCursor(IConsole::IResult *pResult, void *pUserData);
