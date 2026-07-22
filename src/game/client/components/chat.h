@@ -158,6 +158,16 @@ class CChat : public CComponent
 		bool m_MediaPreviewRectValid;
 		SRenderRect m_MediaRetryRect;
 		bool m_MediaRetryRectValid;
+		// UClient: shared background .map attachment card
+		char m_aMapUrl[512];
+		char m_aMapFileName[128];
+		int64_t m_MapFileSize;
+		std::shared_ptr<CHttpRequest> m_pMapSizeRequest;
+		float m_aMapCardHeight[2];
+		SRenderRect m_MapCardRect;
+		bool m_MapCardRectValid;
+		SRenderRect m_MapDownloadBtnRect;
+		bool m_MapDownloadBtnRectValid;
 
 		bool m_HasReply;
 		int m_ReplyToClientId;
@@ -560,6 +570,32 @@ class CChat : public CComponent
 	static CUi::EPopupMenuFunctionResult PopupMediaContext(void *pContext, CUIRect View, bool Active);
 	static CUi::EPopupMenuFunctionResult PopupMediaSaveAsset(void *pContext, CUIRect View, bool Active);
 	static CUi::EPopupMenuFunctionResult PopupMediaSaveSkin(void *pContext, CUIRect View, bool Active);
+
+	// UClient: background map share card in chat
+	SPopupMenuId m_MapContextPopupId;
+	SPopupMenuId m_MapAddPopupId;
+	int m_MapContextLineIndex = -1;
+	char m_aMapContextUrl[512] = "";
+	char m_aMapContextFileName[128] = "";
+	CLineInputBuffered<64> m_MapAddNameInput;
+	bool m_MapAddUseAsBackground = true;
+	CButtonContainer m_aMapContextButtons[2];
+	CButtonContainer m_MapAddConfirmButton;
+	CButtonContainer m_MapAddCancelButton;
+	CButtonContainer m_MapAddUseBgButton;
+	std::shared_ptr<class CHttpRequest> m_pMapSaveRequest;
+	char m_aMapSaveName[64] = "";
+	bool m_MapSaveApplyBackground = false;
+
+	static bool ExtractMapUrlFromText(const char *pText, char *pOutUrl, int UrlSize, char *pOutName, int NameSize);
+	void SetMapAttachment(CLine &Line, const char *pUrl, const char *pFileName);
+	bool HasMapAttachment(const CLine &Line) const;
+	void OpenMapContextMenu(int LineIndex, float X, float Y);
+	void BeginMapAddDownload();
+	void UpdateMapSave();
+	void UpdateMapSizeRequests();
+	static CUi::EPopupMenuFunctionResult PopupMapContext(void *pContext, CUIRect View, bool Active);
+	static CUi::EPopupMenuFunctionResult PopupMapAdd(void *pContext, CUIRect View, bool Active);
 
 	// UClient: chat emoji reactions
 	SPopupMenuId m_ReactionPickerPopupId;

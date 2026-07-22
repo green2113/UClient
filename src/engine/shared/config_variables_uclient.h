@@ -27,6 +27,7 @@ MACRO_CONFIG_INT(UcClientIndicatorInScoreboardSize, uc_client_indicator_in_score
 MACRO_CONFIG_INT(UcChatPlayerSearchEngine, uc_chat_player_search_engine, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Search engine used when clicking player names in chat (0=DDNet, 1=DDStats)")
 MACRO_CONFIG_COL(UcChatReplyQuoteColor, uc_chat_reply_quote_color, 65471, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Reply quote name color")
 MACRO_CONFIG_INT(UcShareAgreed, uc_share_agreed, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Remember that the user agreed to upload shared assets/skins to media.under1111.com")
+MACRO_CONFIG_INT(UcMapShareMaxBytes, uc_map_share_max_bytes, 33554432, 0, 67108864, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum .map size in bytes for background map sharing uploads")
 MACRO_CONFIG_INT(UcBindPresetActive, uc_bind_preset_active, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Currently active bind preset slot (0-2)")
 MACRO_CONFIG_INT(UcShowSharedCursors, uc_show_shared_cursors, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show shared cursors from other UClient players and the sharing indicator")
 MACRO_CONFIG_INT(UcShowTimeoutReconnect, uc_show_timeout_reconnect, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show remaining reconnect timeout after an abnormal disconnect")
@@ -37,6 +38,9 @@ MACRO_CONFIG_INT(UcNotifyWhenBackX, uc_back_notify_x, 20, 0, 100, CFGFLAG_CLIENT
 MACRO_CONFIG_INT(UcNotifyWhenBackY, uc_back_notify_y, 8, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Vertical position for back notify as percentage of screen height")
 MACRO_CONFIG_INT(UcNotifyWhenBackSize, uc_back_notify_size, 10, 0, 50, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Font size for back notify")
 MACRO_CONFIG_INT(UcNotifyWhenBackMaxDistance, uc_back_notify_max_distance, 25, 1, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Max race-progress gap (%) behind you for back freeze notify")
+MACRO_CONFIG_INT(UcNotifyWhenBackIncludeSpec, uc_back_notify_include_spec, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Also show back notify when a teammate behind you is in /spec")
+MACRO_CONFIG_INT(UcNotifyWhenBackShowCount, uc_back_notify_show_count, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show frozen user count next to back notify text")
+MACRO_CONFIG_INT(UcNotifyWhenBackShowNames, uc_back_notify_show_names, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show frozen user names under back notify text")
 MACRO_CONFIG_INT(UcRacePathFreezePenalty, uc_race_path_freeze_penalty, 200, 0, 2000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Extra path cost for freeze tiles in race progress (0=off; freeze stays traversable)")
 // Temporary debug overlay (console only, not saved, no settings UI). Remove later.
 MACRO_CONFIG_INT(UcDebugRaceProgress, uc_debug_race_progress, 0, 0, 1, CFGFLAG_CLIENT, "Temporary: show race progress percent on each tile (0/1)")

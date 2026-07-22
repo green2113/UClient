@@ -186,7 +186,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			static float s_BackPhase = 0.0f;
 			const bool BackExpanded = g_Config.m_UcNotifyWhenBack != 0;
 			UpdateRevealPhase(s_BackPhase, BackExpanded);
-			const float ExpandedTargetHeight = MarginSmall + LineSize + MarginSmall + ColorPickerLineSize + ColorPickerLineSpacing + LineSize * 4.0f;
+			const float ExpandedTargetHeight = MarginSmall + LineSize + MarginSmall + ColorPickerLineSize + ColorPickerLineSpacing + LineSize * 7.0f;
 			const float ExpandedHeight = ExpandedTargetHeight * s_BackPhase;
 			const float ContentHeight = LineSize + MarginSmall + LineSize + ExpandedHeight;
 			CUIRect Content, Label, Button, Visible;
@@ -222,6 +222,9 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 
 				Expand.HSplitTop(LineSize, &Button, &Expand);
 				Ui()->DoScrollbarOption(&g_Config.m_UcNotifyWhenBackMaxDistance, &g_Config.m_UcNotifyWhenBackMaxDistance, &Button, Localize("Max distance"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcNotifyWhenBackIncludeSpec, Localize("Also show players in /spec"), &g_Config.m_UcNotifyWhenBackIncludeSpec, &Expand, LineSize);
+				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcNotifyWhenBackShowCount, Localize("Show frozen user count"), &g_Config.m_UcNotifyWhenBackShowCount, &Expand, LineSize);
+				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcNotifyWhenBackShowNames, Localize("Show frozen user names"), &g_Config.m_UcNotifyWhenBackShowNames, &Expand, LineSize);
 				Expand.HSplitTop(LineSize, &Button, &Expand);
 				Ui()->DoScrollbarOption(&g_Config.m_UcNotifyWhenBackX, &g_Config.m_UcNotifyWhenBackX, &Button, Localize("Horizontal Position"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
 				Expand.HSplitTop(LineSize, &Button, &Expand);

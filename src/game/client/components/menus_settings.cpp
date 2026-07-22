@@ -25,6 +25,7 @@
 #include <game/client/bc_ui_animations.h>
 #include <game/client/components/chat.h>
 #include <game/client/components/media_decoder.h>
+#include <game/client/components/background.h>
 #include <game/client/components/menu_background.h>
 #include <game/client/components/sounds.h>
 #include <game/client/gameclient.h>
@@ -34,6 +35,7 @@
 #include <game/client/ui_scrollregion.h>
 #include <game/localization.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -1432,6 +1434,489 @@ CUi::EPopupMenuFunctionResult CMenus::PopupShareSkinList(void *pContext, CUIRect
 
 	if(Selected)
 		return CUi::POPUP_CLOSE_CURRENT;
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+
+// UClient: share a background .map from maps/
+void CMenus::OpenShareMapPopup()
+{
+	m_aShareMapPath[0] = '\0';
+	m_aShareMapListFolder[0] = '\0';
+	m_aShareMapTargetName[0] = '\0';
+	m_ShareMapToAll = true;
+	m_ShareMapAgree = g_Config.m_UcShareAgreed != 0;
+	m_ShareMapState = EShareAssetState::NONE;
+	m_aShareMapStatus[0] = '\0';
+	m_vShareMapListItems.clear();
+	m_ShareMapListSelection = -1;
+	if(m_pShareMapUploadRequest)
+	{
+		m_pShareMapUploadRequest->Abort();
+		m_pShareMapUploadRequest.reset();
+	}
+
+	const char *pCurrent = g_Config.m_ClBackgroundEntities;
+	if(pCurrent[0] != '\0' && str_comp(pCurrent, CURRENT_MAP) != 0)
+	{
+		void *pData = nullptr;
+		unsigned Len = 0;
+		if(ResolveMapShareFile(pCurrent, &pData, &Len))
+		{
+			str_copy(m_aShareMapPath, pCurrent);
+			free(pData);
+		}
+	}
+
+	const float Width = 420.0f;
+	const float Height = 165.0f;
+	const float X = (Ui()->Screen()->w - Width) / 2.0f;
+	const float Y = (Ui()->Screen()->h - Height) / 2.0f;
+	Ui()->DoPopupMenu(&m_ShareMapPopupId, X, Y, Width, Height, this, PopupShareMap);
+}
+
+void CMenus::OpenShareMapListPopup(float X, float Y)
+{
+	m_aShareMapListFolder[0] = '\0';
+	if(m_aShareMapPath[0] != '\0')
+	{
+		const char *pSlash = str_rchr(m_aShareMapPath, '/');
+		if(pSlash != nullptr)
+		{
+			const int FolderLen = (int)(pSlash - m_aShareMapPath);
+			if(FolderLen > 0 && FolderLen < (int)sizeof(m_aShareMapListFolder))
+			{
+				mem_copy(m_aShareMapListFolder, m_aShareMapPath, FolderLen);
+				m_aShareMapListFolder[FolderLen] = '\0';
+			}
+		}
+	}
+	PopulateShareMapList();
+
+	SPopupMenuProperties Props;
+	Props.m_BorderColor = ColorRGBA(0.7f, 0.7f, 0.7f, 0.9f);
+	Props.m_BackgroundColor = ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f);
+	Ui()->DoPopupMenu(&m_ShareMapListPopupId, X, Y, 300.0f, 250.0f, this, PopupShareMapList, Props);
+}
+
+void CMenus::PopulateShareMapList()
+{
+	m_vShareMapListItems.clear();
+	char aTemp[IO_MAX_PATH_LENGTH];
+	str_format(aTemp, sizeof(aTemp), "maps/%s", m_aShareMapListFolder);
+	Storage()->ListDirectoryInfo(IStorage::TYPE_ALL, aTemp, ShareMapListFetchCallback, this);
+	std::stable_sort(m_vShareMapListItems.begin(), m_vShareMapListItems.end(), CompareFilenameAscending);
+
+	m_ShareMapListSelection = -1;
+	if(m_aShareMapPath[0] == '\0')
+		return;
+
+	const char *pSelectedName = m_aShareMapPath;
+	if(const char *pSlash = str_rchr(m_aShareMapPath, '/'))
+		pSelectedName = pSlash + 1;
+	char aSelectedWithExt[IO_MAX_PATH_LENGTH];
+	if(str_endswith(pSelectedName, ".map"))
+		str_copy(aSelectedWithExt, pSelectedName);
+	else
+		str_format(aSelectedWithExt, sizeof(aSelectedWithExt), "%s.map", pSelectedName);
+	for(size_t i = 0; i < m_vShareMapListItems.size(); ++i)
+	{
+		if(m_vShareMapListItems[i].m_IsDirectory)
+			continue;
+		if(str_comp(m_vShareMapListItems[i].m_aFilename, pSelectedName) == 0 ||
+			str_comp(m_vShareMapListItems[i].m_aFilename, aSelectedWithExt) == 0)
+		{
+			m_ShareMapListSelection = (int)i;
+			break;
+		}
+	}
+}
+
+int CMenus::ShareMapListFetchCallback(const CFsFileInfo *pInfo, int IsDir, int StorageType, void *pUser)
+{
+	CMenus *pMenus = (CMenus *)pUser;
+	if((!IsDir && !str_endswith(pInfo->m_pName, ".map")) || !str_comp(pInfo->m_pName, ".") || (!str_comp(pInfo->m_pName, "..") && pMenus->m_aShareMapListFolder[0] == '\0'))
+		return 0;
+
+	CMapListItem Item;
+	str_copy(Item.m_aFilename, pInfo->m_pName);
+	Item.m_IsDirectory = IsDir;
+	pMenus->m_vShareMapListItems.emplace_back(Item);
+	return 0;
+}
+
+bool CMenus::ResolveMapShareFile(const char *pRelPath, void **ppData, unsigned *pLen) const
+{
+	*ppData = nullptr;
+	*pLen = 0;
+	if(pRelPath == nullptr || pRelPath[0] == '\0' || str_comp(pRelPath, CURRENT_MAP) == 0)
+		return false;
+
+	char aPath[IO_MAX_PATH_LENGTH];
+	str_format(aPath, sizeof(aPath), "maps/%s%s", pRelPath, str_endswith(pRelPath, ".map") ? "" : ".map");
+	if(Storage()->ReadFile(aPath, IStorage::TYPE_SAVE, ppData, pLen) && *ppData != nullptr && *pLen > 0)
+		return true;
+	if(*ppData != nullptr)
+	{
+		free(*ppData);
+		*ppData = nullptr;
+		*pLen = 0;
+	}
+	if(Storage()->ReadFile(aPath, IStorage::TYPE_ALL, ppData, pLen) && *ppData != nullptr && *pLen > 0)
+		return true;
+	if(*ppData != nullptr)
+	{
+		free(*ppData);
+		*ppData = nullptr;
+		*pLen = 0;
+	}
+	return false;
+}
+
+void CMenus::BeginShareMapUpload()
+{
+	if(!m_ShareMapToAll && m_aShareMapTargetName[0] == '\0')
+	{
+		m_ShareMapState = EShareAssetState::FAILED;
+		str_copy(m_aShareMapStatus, Localize("Select a player first."));
+		return;
+	}
+	if(m_aShareMapPath[0] == '\0' || str_comp(m_aShareMapPath, CURRENT_MAP) == 0)
+	{
+		m_ShareMapState = EShareAssetState::FAILED;
+		str_copy(m_aShareMapStatus, Localize("Select a map file first."));
+		return;
+	}
+
+	g_Config.m_UcShareAgreed = 1;
+
+	void *pData = nullptr;
+	unsigned Len = 0;
+	if(!ResolveMapShareFile(m_aShareMapPath, &pData, &Len))
+	{
+		m_ShareMapState = EShareAssetState::FAILED;
+		str_copy(m_aShareMapStatus, Localize("Could not find the map file."));
+		return;
+	}
+
+	const int MaxBytes = g_Config.m_UcMapShareMaxBytes;
+	if(MaxBytes > 0 && (int)Len > MaxBytes)
+	{
+		free(pData);
+		m_ShareMapState = EShareAssetState::FAILED;
+		str_copy(m_aShareMapStatus, Localize("Map file is too large to upload."));
+		return;
+	}
+
+	if(g_Config.m_UcChatPasteUploadUrl[0] == '\0')
+	{
+		free(pData);
+		m_ShareMapState = EShareAssetState::FAILED;
+		str_copy(m_aShareMapStatus, Localize("Upload URL is not configured."));
+		return;
+	}
+
+	const char *pBase = m_aShareMapPath;
+	if(const char *pSlash = str_rchr(m_aShareMapPath, '/'))
+		pBase = pSlash + 1;
+	char aNameNoExt[IO_MAX_PATH_LENGTH];
+	str_copy(aNameNoExt, pBase);
+	if(str_endswith(aNameNoExt, ".map"))
+		aNameNoExt[str_length(aNameNoExt) - 4] = '\0';
+
+	char aEscapedName[256];
+	EscapeUrl(aEscapedName, sizeof(aEscapedName), aNameNoExt);
+	char aUploadUrl[512];
+	const char *pSep = str_find(g_Config.m_UcChatPasteUploadUrl, "?") != nullptr ? "&" : "?";
+	str_format(aUploadUrl, sizeof(aUploadUrl), "%s%sname=%s.map", g_Config.m_UcChatPasteUploadUrl, pSep, aEscapedName);
+
+	std::shared_ptr<CHttpRequest> pPost = HttpPost(aUploadUrl, (const unsigned char *)pData, Len);
+	pPost->Header("Content-Type: application/octet-stream");
+	pPost->Header("Accept: application/json");
+	pPost->FailOnErrorStatus(false);
+	pPost->MaxResponseSize(64 * 1024);
+	pPost->LogProgress(HTTPLOG::FAILURE);
+	free(pData);
+
+	m_pShareMapUploadRequest = pPost;
+	m_ShareMapState = EShareAssetState::UPLOADING;
+	str_copy(m_aShareMapStatus, Localize("Uploading..."));
+	Http()->Run(pPost);
+}
+
+void CMenus::UpdateShareMapUpload()
+{
+	if(!m_pShareMapUploadRequest || !m_pShareMapUploadRequest->Done())
+		return;
+
+	std::shared_ptr<CHttpRequest> pRequest = m_pShareMapUploadRequest;
+	m_pShareMapUploadRequest.reset();
+
+	char aUrl[512] = "";
+	if(pRequest->State() == EHttpState::DONE && pRequest->StatusCode() >= 200 && pRequest->StatusCode() < 400)
+	{
+		json_value *pRoot = pRequest->ResultJson();
+		if(pRoot != nullptr && pRoot->type == json_object)
+		{
+			const json_value &UrlValue = (*pRoot)["url"];
+			if(UrlValue.type == json_string)
+				str_copy(aUrl, UrlValue.u.string.ptr);
+			if(aUrl[0] == '\0')
+			{
+				const json_value &PublicUrlValue = (*pRoot)["publicUrl"];
+				if(PublicUrlValue.type == json_string)
+					str_copy(aUrl, PublicUrlValue.u.string.ptr);
+			}
+		}
+	}
+
+	if(aUrl[0] == '\0')
+	{
+		m_ShareMapState = EShareAssetState::FAILED;
+		str_format(m_aShareMapStatus, sizeof(m_aShareMapStatus), Localize("Upload failed (HTTP %d)"), pRequest->StatusCode());
+		return;
+	}
+
+	if(m_ShareMapToAll)
+		GameClient()->m_Chat.SendChat(0, aUrl);
+	else
+	{
+		char aMsg[600];
+		str_format(aMsg, sizeof(aMsg), "/w %s %s", m_aShareMapTargetName, aUrl);
+		GameClient()->m_Chat.SendChat(0, aMsg);
+	}
+
+	m_ShareMapState = EShareAssetState::SENT;
+	str_copy(m_aShareMapStatus, Localize("Shared!"));
+	Ui()->ClosePopupMenu(&m_ShareMapPopupId);
+}
+
+CUi::EPopupMenuFunctionResult CMenus::PopupShareMap(void *pContext, CUIRect View, bool Active)
+{
+	CMenus *pThis = static_cast<CMenus *>(pContext);
+	pThis->UpdateShareMapUpload();
+
+	const float FontSize = 14.0f;
+	const float SmallFontSize = 10.0f;
+	CUIRect Row;
+
+	bool aUserUsesUClient[MAX_CLIENTS + 1] = {false};
+	pThis->m_vShareMapUserNames.clear();
+	const int LocalId = pThis->GameClient()->m_Snap.m_LocalClientId;
+	for(int i = 0; i < MAX_CLIENTS; i++)
+	{
+		if(i == LocalId)
+			continue;
+		if(!pThis->GameClient()->m_aClients[i].m_Active)
+			continue;
+		if(pThis->GameClient()->m_aClients[i].m_aName[0] == '\0')
+			continue;
+		const size_t Slot = pThis->m_vShareMapUserNames.size();
+		if(Slot + 1 <= MAX_CLIENTS)
+			aUserUsesUClient[Slot + 1] = pThis->GameClient()->m_ClientIndicator.IsPlayerUClient(i);
+		pThis->m_vShareMapUserNames.emplace_back(pThis->GameClient()->m_aClients[i].m_aName);
+	}
+
+	std::vector<const char *> vpNames;
+	vpNames.reserve(pThis->m_vShareMapUserNames.size() + 1);
+	vpNames.push_back("All");
+	for(const auto &Name : pThis->m_vShareMapUserNames)
+		vpNames.push_back(Name.c_str());
+
+	int CurSelection = 0;
+	if(!pThis->m_ShareMapToAll)
+	{
+		for(size_t i = 0; i < pThis->m_vShareMapUserNames.size(); i++)
+		{
+			if(str_comp(pThis->m_vShareMapUserNames[i].c_str(), pThis->m_aShareMapTargetName) == 0)
+			{
+				CurSelection = (int)i + 1;
+				break;
+			}
+		}
+	}
+
+	View.HSplitTop(22.0f, &Row, &View);
+	CUIRect ShareRect, R0, MapDropRect, R1, WithRect, PlayerDropRect;
+	const float ShareW = pThis->TextRender()->TextWidth(FontSize, "Share ") + 4.0f;
+	const float WithW = pThis->TextRender()->TextWidth(FontSize, " with ") + 4.0f;
+	const float PlayerDropW = 110.0f;
+	const float MapDropW = 150.0f;
+	Row.VSplitLeft(ShareW, &ShareRect, &R0);
+	R0.VSplitLeft(MapDropW, &MapDropRect, &R1);
+	R1.VSplitLeft(WithW, &WithRect, &PlayerDropRect);
+	PlayerDropRect.VSplitLeft(PlayerDropW, &PlayerDropRect, nullptr);
+
+	CUIRect MapDropSmall, PlayerDropSmall;
+	MapDropRect.HMargin((MapDropRect.h - 17.0f) / 2.0f, &MapDropSmall);
+	PlayerDropRect.HMargin((PlayerDropRect.h - 17.0f) / 2.0f, &PlayerDropSmall);
+
+	pThis->Ui()->DoLabel(&ShareRect, "Share", FontSize, TEXTALIGN_ML);
+
+	{
+		if(pThis->DoButton_Menu(&pThis->m_ShareMapSelectButton, "", 0, &MapDropSmall))
+			pThis->OpenShareMapListPopup(MapDropSmall.x, MapDropSmall.y + MapDropSmall.h);
+
+		CUIRect MapLabelRect, ArrowRect;
+		MapDropSmall.VSplitRight(12.0f, &MapLabelRect, &ArrowRect);
+		MapLabelRect.VSplitLeft(3.0f, nullptr, &MapLabelRect);
+		SLabelProperties Props;
+		Props.m_MaxWidth = MapLabelRect.w;
+		Props.m_EllipsisAtEnd = true;
+		const char *pMapText = pThis->m_aShareMapPath[0] != '\0' ? pThis->m_aShareMapPath : Localize("(select map)");
+		pThis->Ui()->DoLabel(&MapLabelRect, pMapText, 10.0f, TEXTALIGN_ML, Props);
+		pThis->Ui()->DoLabel(&ArrowRect, "\xE2\x96\xBE", 10.0f, TEXTALIGN_MC);
+	}
+
+	pThis->Ui()->DoLabel(&WithRect, "with", FontSize, TEXTALIGN_MC);
+
+	static CScrollRegion s_ShareMapUserScrollRegion;
+	pThis->m_ShareMapUserDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_ShareMapUserScrollRegion;
+	{
+		const int NewSelection = pThis->Ui()->DoDropDown(&PlayerDropSmall, CurSelection, vpNames.data(), (int)vpNames.size(), pThis->m_ShareMapUserDropDownState, aUserUsesUClient, pThis->m_UcLogoTexture);
+		if(NewSelection == 0)
+		{
+			pThis->m_ShareMapToAll = true;
+			pThis->m_aShareMapTargetName[0] = '\0';
+		}
+		else if(NewSelection > 0 && NewSelection - 1 < (int)pThis->m_vShareMapUserNames.size())
+		{
+			pThis->m_ShareMapToAll = false;
+			str_copy(pThis->m_aShareMapTargetName, pThis->m_vShareMapUserNames[NewSelection - 1].c_str());
+		}
+	}
+
+	View.HSplitTop(6.0f, nullptr, &View);
+	View.HSplitTop(14.0f, &Row, &View);
+	if(pThis->m_aShareMapStatus[0] != '\0')
+	{
+		if(pThis->m_ShareMapState == EShareAssetState::FAILED)
+			pThis->TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
+		else
+			pThis->TextRender()->TextColor(0.6f, 0.8f, 1.0f, 1.0f);
+		pThis->Ui()->DoLabel(&Row, pThis->m_aShareMapStatus, SmallFontSize, TEXTALIGN_ML);
+		pThis->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+	}
+
+	CUIRect ButtonRow, CancelRect, ConfirmRect, DisclaimerRow, CheckRow;
+	View.HSplitBottom(20.0f, &View, &ButtonRow);
+	View.HSplitBottom(8.0f, &View, nullptr);
+	View.HSplitBottom(24.0f, &View, &DisclaimerRow);
+	View.HSplitBottom(4.0f, &View, nullptr);
+	View.HSplitBottom(20.0f, &View, &CheckRow);
+
+	if(pThis->DoButton_CheckBox(&pThis->m_ShareMapAgree, "I agree to upload this map to media.under1111.com.", pThis->m_ShareMapAgree ? 1 : 0, &CheckRow))
+		pThis->m_ShareMapAgree = !pThis->m_ShareMapAgree;
+
+	{
+		SLabelProperties Props;
+		Props.m_MaxWidth = DisclaimerRow.w;
+		pThis->TextRender()->TextColor(0.6f, 0.6f, 0.6f, 1.0f);
+		pThis->Ui()->DoLabel(&DisclaimerRow, "If the receiving player is not using UClient, the map card may not be displayed.", SmallFontSize, TEXTALIGN_ML, Props);
+		pThis->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+	}
+
+	ButtonRow.VSplitMid(&CancelRect, &ConfirmRect, 10.0f);
+	if(pThis->DoButton_Menu(&pThis->m_ShareMapCancelButton, Localize("Cancel"), 0, &CancelRect))
+	{
+		if(pThis->m_pShareMapUploadRequest)
+		{
+			pThis->m_pShareMapUploadRequest->Abort();
+			pThis->m_pShareMapUploadRequest.reset();
+		}
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	const bool Uploading = pThis->m_ShareMapState == EShareAssetState::UPLOADING;
+	const bool HasTarget = pThis->m_ShareMapToAll || pThis->m_aShareMapTargetName[0] != '\0';
+	const bool CanConfirm = pThis->m_ShareMapAgree && !Uploading && HasTarget && pThis->m_aShareMapPath[0] != '\0';
+	const char *pConfirmText = Uploading ? Localize("Uploading...") : Localize("Confirm");
+	if(pThis->DoButton_Menu(&pThis->m_ShareMapConfirmButton, pConfirmText, 0, &ConfirmRect) && CanConfirm)
+		pThis->BeginShareMapUpload();
+
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+CUi::EPopupMenuFunctionResult CMenus::PopupShareMapList(void *pContext, CUIRect View, bool Active)
+{
+	CMenus *pThis = static_cast<CMenus *>(pContext);
+
+	if(pThis->m_vShareMapListItems.empty())
+	{
+		SLabelProperties Props;
+		Props.m_MaxWidth = View.w;
+		pThis->TextRender()->TextColor(0.7f, 0.7f, 0.7f, 1.0f);
+		pThis->Ui()->DoLabel(&View, Localize("No map files found in the maps folder."), 10.0f, TEXTALIGN_MC, Props);
+		pThis->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+		return CUi::POPUP_KEEP_OPEN;
+	}
+
+	static CListBox s_ShareMapListBox;
+	s_ShareMapListBox.SetActive(Active);
+	s_ShareMapListBox.DoStart(20.0f, pThis->m_vShareMapListItems.size(), 1, 3, -1, &View, false);
+
+	int MapIndex = 0;
+	for(auto &Map : pThis->m_vShareMapListItems)
+	{
+		const CListboxItem Item = s_ShareMapListBox.DoNextItem(&Map, MapIndex == pThis->m_ShareMapListSelection);
+		++MapIndex;
+		if(!Item.m_Visible)
+			continue;
+
+		CUIRect Label, Icon;
+		Item.m_Rect.VSplitLeft(20.0f, &Icon, &Label);
+
+		char aLabelText[IO_MAX_PATH_LENGTH];
+		str_copy(aLabelText, Map.m_aFilename);
+		if(Map.m_IsDirectory)
+			str_append(aLabelText, "/", sizeof(aLabelText));
+
+		const char *pIconType;
+		if(!Map.m_IsDirectory)
+			pIconType = FontIcon::MAP;
+		else if(!str_comp(Map.m_aFilename, ".."))
+			pIconType = FontIcon::FOLDER_TREE;
+		else
+			pIconType = FontIcon::FOLDER;
+
+		pThis->TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+		pThis->TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING);
+		pThis->Ui()->DoLabel(&Icon, pIconType, 12.0f, TEXTALIGN_ML);
+		pThis->TextRender()->SetRenderFlags(0);
+		pThis->TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+
+		pThis->Ui()->DoLabel(&Label, aLabelText, 10.0f, TEXTALIGN_ML);
+	}
+
+	const int NewSelected = s_ShareMapListBox.DoEnd();
+	pThis->m_ShareMapListSelection = NewSelected >= 0 ? NewSelected : -1;
+	if(s_ShareMapListBox.WasItemSelected() || s_ShareMapListBox.WasItemActivated())
+	{
+		const CMapListItem &SelectedItem = pThis->m_vShareMapListItems[pThis->m_ShareMapListSelection];
+		if(SelectedItem.m_IsDirectory)
+		{
+			if(!str_comp(SelectedItem.m_aFilename, ".."))
+			{
+				fs_parent_dir(pThis->m_aShareMapListFolder);
+			}
+			else
+			{
+				if(pThis->m_aShareMapListFolder[0] != '\0')
+					str_append(pThis->m_aShareMapListFolder, "/", sizeof(pThis->m_aShareMapListFolder));
+				str_append(pThis->m_aShareMapListFolder, SelectedItem.m_aFilename, sizeof(pThis->m_aShareMapListFolder));
+			}
+			pThis->PopulateShareMapList();
+		}
+		else
+		{
+			if(pThis->m_aShareMapListFolder[0] == '\0')
+				str_copy(pThis->m_aShareMapPath, SelectedItem.m_aFilename);
+			else
+				str_format(pThis->m_aShareMapPath, sizeof(pThis->m_aShareMapPath), "%s/%s", pThis->m_aShareMapListFolder, SelectedItem.m_aFilename);
+			return CUi::POPUP_CLOSE_CURRENT;
+		}
+	}
+
 	return CUi::POPUP_KEEP_OPEN;
 }
 
@@ -3764,20 +4249,22 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 	static CButtonContainer s_ResetId2;
 	DoLine_ColorPicker(&s_ResetId2, 25.0f, 13.0f, 5.0f, &Background, Localize("Entities background color"), &g_Config.m_ClBackgroundEntitiesColor, GreyDefault, false);
 
-	CUIRect EditBox, ReloadButton;
+	CUIRect EditBox, ReloadButton, ShareButton;
 	Background.HSplitTop(20.0f, &Label, &Background);
 	Background.HSplitTop(2.0f, nullptr, &Background);
 	Label.VSplitLeft(100.0f, &Label, &EditBox);
-	EditBox.VSplitRight(60.0f, &EditBox, &Button);
+	EditBox.VSplitRight(125.0f, &EditBox, &Button);
+	Button.VSplitRight(55.0f, &Button, &ShareButton);
 	Button.VSplitMid(&ReloadButton, &Button, 5.0f);
 	EditBox.VSplitRight(5.0f, &EditBox, nullptr);
+	ShareButton.VSplitLeft(5.0f, nullptr, &ShareButton);
 
 	Ui()->DoLabel(&Label, Localize("Map"), 14.0f, TEXTALIGN_ML);
 
 	static CLineInput s_BackgroundEntitiesInput(g_Config.m_ClBackgroundEntities, sizeof(g_Config.m_ClBackgroundEntities));
 	Ui()->DoEditBox(&s_BackgroundEntitiesInput, &EditBox, 14.0f);
 
-	static CButtonContainer s_BackgroundEntitiesMapPicker, s_BackgroundEntitiesReload;
+	static CButtonContainer s_BackgroundEntitiesMapPicker, s_BackgroundEntitiesReload, s_BackgroundEntitiesShare;
 
 	if(Ui()->DoButton_FontIcon(&s_BackgroundEntitiesReload, FontIcon::ARROW_ROTATE_RIGHT, 0, &ReloadButton, BUTTONFLAG_LEFT))
 	{
@@ -3792,6 +4279,13 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 		s_PopupMapPickerContext.MapListPopulate();
 		Ui()->DoPopupMenu(&s_PopupMapPickerId, Ui()->MouseX(), Ui()->MouseY(), 300.0f, 250.0f, &s_PopupMapPickerContext, PopupMapPicker);
 	}
+
+	const bool CanShareMap = g_Config.m_ClBackgroundEntities[0] != '\0' && str_comp(g_Config.m_ClBackgroundEntities, CURRENT_MAP) != 0;
+	if(DoButton_Menu(&s_BackgroundEntitiesShare, Localize("Share"), CanShareMap ? 0 : 1, &ShareButton) && CanShareMap)
+	{
+		OpenShareMapPopup();
+	}
+	GameClient()->m_Tooltips.DoToolTip(&s_BackgroundEntitiesShare, &ShareButton, Localize("Share this background map in chat"));
 
 	Background.HSplitTop(20.0f, &Button, &Background);
 	const bool UseCurrentMap = str_comp(g_Config.m_ClBackgroundEntities, CURRENT_MAP) == 0;

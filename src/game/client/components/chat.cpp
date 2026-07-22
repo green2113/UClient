@@ -2,6 +2,7 @@
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
 
 #include "chat.h"
+#include "background.h"
 
 #include <base/io.h>
 #include <base/log.h>
@@ -445,6 +446,14 @@ CChat::CLine::CLine()
 	m_TranslateLanguageRectValid = false;
 	m_MediaPreviewRectValid = false;
 	m_MediaRetryRectValid = false;
+	m_aMapUrl[0] = '\0';
+	m_aMapFileName[0] = '\0';
+	m_MapFileSize = -1;
+	m_pMapSizeRequest = nullptr;
+	m_aMapCardHeight[0] = 0.0f;
+	m_aMapCardHeight[1] = 0.0f;
+	m_MapCardRectValid = false;
+	m_MapDownloadBtnRectValid = false;
 	m_vLinkBounds.clear();
 	m_vLinks.clear();
 	m_vLinkFontSizes.clear();
@@ -493,6 +502,18 @@ void CChat::CLine::Reset(CChat &This)
 	m_TranslateLanguageRectValid = false;
 	m_MediaPreviewRectValid = false;
 	m_MediaRetryRectValid = false;
+	m_aMapUrl[0] = '\0';
+	m_aMapFileName[0] = '\0';
+	m_MapFileSize = -1;
+	if(m_pMapSizeRequest)
+	{
+		m_pMapSizeRequest->Abort();
+		m_pMapSizeRequest = nullptr;
+	}
+	m_aMapCardHeight[0] = 0.0f;
+	m_aMapCardHeight[1] = 0.0f;
+	m_MapCardRectValid = false;
+	m_MapDownloadBtnRectValid = false;
 	m_HasReply = false;
 	m_ReplyToClientId = -1;
 	m_ReplyMessageIndex = 0;
@@ -3092,6 +3113,8 @@ void CChat::SetMediaCandidates(CLine &Line, const std::vector<std::string> &vCan
 			continue;
 		if((int)Candidate.size() > CHAT_MEDIA_MAX_URL_LENGTH)
 			continue;
+		if(ExtractUrlExtensionLower(Candidate) == "map")
+			continue;
 
 		bool Exists = false;
 		for(const std::string &Existing : Line.m_vMediaCandidates)
@@ -3132,6 +3155,8 @@ void CChat::InsertMediaCandidates(CLine &Line, const std::vector<std::string> &v
 		if(!IsUrlStart(Candidate.c_str()))
 			continue;
 		if((int)Candidate.size() > CHAT_MEDIA_MAX_URL_LENGTH)
+			continue;
+		if(ExtractUrlExtensionLower(Candidate) == "map")
 			continue;
 
 		bool Exists = false;
@@ -3915,7 +3940,9 @@ std::string CChat::MediaPlaceholderText(const CLine &Line) const
 std::string CChat::BuildVisibleMessageText(const CLine &Line, bool UseMediaLabelWhenEmpty) const
 {
 	const char *pSource = GetLineDisplayText(Line);
-	if(!ShouldDisplayMediaSlot(Line))
+	const bool HideMediaUrls = ShouldDisplayMediaSlot(Line);
+	const bool HideMapUrls = HasMapAttachment(Line);
+	if(!HideMediaUrls && !HideMapUrls)
 		return pSource;
 
 	std::string Result;
@@ -3924,10 +3951,27 @@ std::string CChat::BuildVisibleMessageText(const CLine &Line, bool UseMediaLabel
 	{
 		if(IsUrlStart(pCur))
 		{
-			RemovedUrl = true;
-			while(*pCur && !IsTokenEnd(*pCur))
-				++pCur;
-			continue;
+			const char *pEnd = pCur;
+			while(*pEnd && !IsTokenEnd(*pEnd))
+				++pEnd;
+
+			std::string Url(pCur, pEnd - pCur);
+			while(!Url.empty() && IsTrimmedUrlChar(Url.back()))
+				Url.pop_back();
+
+			bool Strip = HideMediaUrls;
+			if(!Strip && HideMapUrls)
+			{
+				Strip = str_comp(Url.c_str(), Line.m_aMapUrl) == 0 ||
+					ExtractUrlExtensionLower(Url) == "map";
+			}
+
+			if(Strip)
+			{
+				RemovedUrl = true;
+				pCur = pEnd;
+				continue;
+			}
 		}
 
 		Result.push_back(*pCur);
@@ -3954,7 +3998,11 @@ std::string CChat::BuildVisibleMessageText(const CLine &Line, bool UseMediaLabel
 	TrimAsciiWhitespace(Compacted);
 
 	if(Compacted.empty() && RemovedUrl && UseMediaLabelWhenEmpty)
-		return MediaPlaceholderText(Line);
+	{
+		if(HideMediaUrls)
+			return MediaPlaceholderText(Line);
+		return "";
+	}
 
 	return Compacted;
 }
@@ -4960,6 +5008,29 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 					ToggleLocalReaction(LineIndex, aEmoji);
 					return true;
 				}
+			}
+		}
+	}
+
+	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && !m_MediaViewerOpen && !m_pMapSaveRequest)
+	{
+		const vec2 MousePos = ChatMousePos();
+		for(int i = m_BacklogCurLine; i < MAX_LINES; i++)
+		{
+			const int LineIndex = ((m_CurrentLine - i) + MAX_LINES) % MAX_LINES;
+			CLine &Line = m_aLines[LineIndex];
+			if(!Line.m_Initialized)
+				break;
+			if(!Line.m_MapDownloadBtnRectValid)
+				continue;
+			const SRenderRect &Rect = Line.m_MapDownloadBtnRect;
+			if(MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
+				MousePos.y >= Rect.m_Y && MousePos.y <= Rect.m_Y + Rect.m_H)
+			{
+				const vec2 WindowSize(maximum(1.0f, (float)Graphics()->WindowWidth()), maximum(1.0f, (float)Graphics()->WindowHeight()));
+				const vec2 UiPos = Ui()->UpdatedMousePos() * vec2(Ui()->Screen()->w, Ui()->Screen()->h) / WindowSize;
+				OpenMapContextMenu(LineIndex, UiPos.x, UiPos.y);
+				return true;
 			}
 		}
 	}
@@ -6172,6 +6243,12 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 			log_debug("chat/media", "No usable media candidates in message: %s", CurrentLine.m_aText);
 		}
 	}
+	{
+		char aMapUrl[512];
+		char aMapName[128];
+		if(ExtractMapUrlFromText(CurrentLine.m_aText, aMapUrl, sizeof(aMapUrl), aMapName, sizeof(aMapName)))
+			SetMapAttachment(CurrentLine, aMapUrl, aMapName);
+	}
 
 	if(CurrentLine.m_ClientId == SERVER_MSG)
 	{
@@ -6614,6 +6691,14 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 				TotalHeight += FontSize * 0.4f + Line.m_aMediaPreviewHeight[OffsetType];
 			}
 
+			// UClient: reserve space for shared .map attachment card.
+			Line.m_aMapCardHeight[OffsetType] = 0.0f;
+			if(HasMapAttachment(Line))
+			{
+				Line.m_aMapCardHeight[OffsetType] = maximum(18.0f, FontSize * 1.85f);
+				TotalHeight += FontSize * 0.25f + Line.m_aMapCardHeight[OffsetType];
+			}
+
 			// UClient: reserve space for the emoji reaction row below the message/media.
 			Line.m_aReactionRowHeight[OffsetType] = LayoutReactionRow(Line, FontSize, LineWidth, 0.0f, 0.0f, nullptr);
 			TotalHeight += Line.m_aReactionRowHeight[OffsetType];
@@ -6864,6 +6949,8 @@ void CChat::OnRender()
 
 	UpdateMediaDownloads();
 	UpdateMediaSave();
+	UpdateMapSave();
+	UpdateMapSizeRequests();
 	UpdateGiphySearch();
 	UpdateGiphyPreviewCache();
 	m_UcChatPaste.OnUpdate(this);
@@ -7650,6 +7737,8 @@ void CChat::OnRender()
 					float ReactionOriginY = Line.m_TextYOffset + TextOffsetY + Line.m_aTextHeight[OffsetType];
 					if(HasReactionMedia)
 						ReactionOriginY += FontSize() * 0.4f + Line.m_aMediaPreviewHeight[OffsetType];
+					if(HasMapAttachment(Line) && Line.m_aMapCardHeight[OffsetType] > 0.0f)
+						ReactionOriginY += FontSize() * 0.25f + Line.m_aMapCardHeight[OffsetType];
 					const float ReactionOriginX = LineRenderX + RealMsgPaddingX / 2.0f + RealMsgPaddingTee;
 
 					Line.m_vReactionRects.clear();
@@ -7816,6 +7905,104 @@ void CChat::OnRender()
 							Line.m_MediaRetryRect.m_W = RetryW;
 							Line.m_MediaRetryRect.m_H = RetryH;
 						}
+					}
+				}
+
+				// UClient: Discord-style .map attachment card
+				Line.m_MapCardRectValid = false;
+				Line.m_MapDownloadBtnRectValid = false;
+				if(HasMapAttachment(Line) && Line.m_aMapCardHeight[OffsetType] > 0.0f)
+				{
+					const bool HasMediaAbove = ShowMediaSlot && HasMediaPreview;
+					float CardY = Line.m_TextYOffset + TextOffsetY + Line.m_aTextHeight[OffsetType] + FontSize() * 0.25f;
+					if(HasMediaAbove)
+						CardY += FontSize() * 0.4f + Line.m_aMediaPreviewHeight[OffsetType];
+					const float CardX = LineRenderX + RealMsgPaddingX / 2.0f;
+					const float CardH = Line.m_aMapCardHeight[OffsetType];
+					const float NameFont = FontSize() * 0.78f;
+					const float SizeFont = FontSize() * 0.66f;
+					const char *pFileName = Line.m_aMapFileName[0] != '\0' ? Line.m_aMapFileName : "map.map";
+
+					char aSizeLabel[64];
+					if(Line.m_MapFileSize > 0)
+					{
+						const double Mb = (double)Line.m_MapFileSize / (1024.0 * 1024.0);
+						if(Mb >= 1.0)
+							str_format(aSizeLabel, sizeof(aSizeLabel), "%.1f MB", Mb);
+						else
+							str_format(aSizeLabel, sizeof(aSizeLabel), "%.0f KB", (double)Line.m_MapFileSize / 1024.0);
+					}
+					else
+						str_copy(aSizeLabel, "Map file");
+
+					const float IconPad = FontSize() * 0.28f;
+					const float IconSize = FontSize() * 0.95f;
+					const float TextGap = FontSize() * 0.28f;
+					const float BtnReserve = FontSize() * 1.05f;
+					const float NameW = TextRender()->TextWidth(NameFont, pFileName);
+					const float SizeW = TextRender()->TextWidth(SizeFont, aSizeLabel);
+					const float ContentW = IconPad + IconSize + TextGap + maximum(NameW, SizeW) + BtnReserve;
+					const float CardW = minimum(maximum(ContentW, FontSize() * 7.0f), minimum(150.0f, ReactionAvailWidth));
+					const float CardRounding = maximum(3.0f, FontSize() * 0.3f);
+
+					Graphics()->DrawRect(CardX, CardY, CardW, CardH, ColorRGBA(0.13f, 0.14f, 0.16f, 0.95f * Blend), IGraphics::CORNER_ALL, CardRounding);
+
+					CUIRect IconRect(CardX + IconPad, CardY + (CardH - IconSize) / 2.0f, IconSize, IconSize);
+					TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+					TextRender()->TextColor(0.75f, 0.78f, 0.85f, Blend);
+					Ui()->DoLabel(&IconRect, FontIcon::FILE, IconSize * CUi::ms_FontmodHeight, TEXTALIGN_MC);
+					TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+
+					const float TextX = CardX + IconPad + IconSize + TextGap;
+					const float TextMaxW = maximum(8.0f, CardW - (TextX - CardX) - BtnReserve * 0.85f);
+					CTextCursor NameCursor;
+					NameCursor.SetPosition(vec2(TextX, CardY + CardH * 0.12f));
+					NameCursor.m_FontSize = NameFont;
+					NameCursor.m_LineWidth = TextMaxW;
+					TextRender()->TextColor(0.35f, 0.62f, 0.95f, Blend);
+					TextRender()->TextEx(&NameCursor, pFileName);
+
+					CTextCursor SizeCursor;
+					SizeCursor.SetPosition(vec2(TextX, CardY + CardH * 0.52f));
+					SizeCursor.m_FontSize = SizeFont;
+					SizeCursor.m_LineWidth = TextMaxW;
+					TextRender()->TextColor(0.55f, 0.57f, 0.62f, Blend);
+					TextRender()->TextEx(&SizeCursor, aSizeLabel);
+					TextRender()->TextColor(TextRender()->DefaultTextColor());
+
+					const bool HoverCard = ChatInteractionActive &&
+						MousePos.x >= CardX && MousePos.x <= CardX + CardW &&
+						MousePos.y >= CardY && MousePos.y <= CardY + CardH;
+					if(HoverCard)
+					{
+						const float Btn = maximum(8.0f, FontSize() * 0.72f);
+						const float BtnX = CardX + CardW - Btn - FontSize() * 0.18f;
+						const float BtnY = CardY + (CardH - Btn) / 2.0f;
+						const bool HoverBtn = MousePos.x >= BtnX && MousePos.x <= BtnX + Btn &&
+							MousePos.y >= BtnY && MousePos.y <= BtnY + Btn;
+						Graphics()->DrawRect(BtnX, BtnY, Btn, Btn,
+							HoverBtn ? ColorRGBA(0.25f, 0.28f, 0.34f, 0.95f * Blend) : ColorRGBA(0.18f, 0.20f, 0.24f, 0.9f * Blend),
+							IGraphics::CORNER_ALL, Btn * 0.22f);
+						CUIRect DlIcon(BtnX, BtnY, Btn, Btn);
+						TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+						TextRender()->TextColor(0.9f, 0.92f, 0.96f, Blend);
+						Ui()->DoLabel(&DlIcon, FontIcon::ANGLE_DOWN, Btn * 0.65f * CUi::ms_FontmodHeight, TEXTALIGN_MC);
+						TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+						TextRender()->TextColor(TextRender()->DefaultTextColor());
+						Line.m_MapDownloadBtnRect.m_X = BtnX;
+						Line.m_MapDownloadBtnRect.m_Y = BtnY;
+						Line.m_MapDownloadBtnRect.m_W = Btn;
+						Line.m_MapDownloadBtnRect.m_H = Btn;
+						Line.m_MapDownloadBtnRectValid = true;
+					}
+
+					if(ChatInteractionActive)
+					{
+						Line.m_MapCardRect.m_X = CardX;
+						Line.m_MapCardRect.m_Y = CardY;
+						Line.m_MapCardRect.m_W = CardW;
+						Line.m_MapCardRect.m_H = CardH;
+						Line.m_MapCardRectValid = true;
 					}
 				}
 		}
@@ -9443,3 +9630,318 @@ void CChat::UpdateMediaSave()
 	Echo(Localize("Asset saved."));
 }
 
+
+// ---------------------------------------------------------------------------
+// UClient: shared background .map attachment card in chat
+// ---------------------------------------------------------------------------
+
+bool CChat::ExtractMapUrlFromText(const char *pText, char *pOutUrl, int UrlSize, char *pOutName, int NameSize)
+{
+	if(pOutUrl && UrlSize > 0)
+		pOutUrl[0] = '\0';
+	if(pOutName && NameSize > 0)
+		pOutName[0] = '\0';
+	if(!pText || !pOutUrl || UrlSize <= 0)
+		return false;
+
+	const char *pCur = pText;
+	while(*pCur)
+	{
+		if(!IsUrlStart(pCur))
+		{
+			++pCur;
+			continue;
+		}
+
+		const char *pEnd = pCur;
+		while(!IsTokenEnd(*pEnd))
+			++pEnd;
+
+		std::string Url(pCur, pEnd - pCur);
+		while(!Url.empty() && IsTrimmedUrlChar(Url.back()))
+			Url.pop_back();
+
+		const std::string Ext = ExtractUrlExtensionLower(Url);
+		const std::string Host = ExtractUrlHostLower(Url);
+		bool IsMap = Ext == "map";
+		if(!IsMap && HostIsOrEndsWith(Host, "media.under1111.com"))
+		{
+			const size_t NamePos = Url.find("name=");
+			if(NamePos != std::string::npos)
+			{
+				std::string NamePart = Url.substr(NamePos + 5);
+				const size_t Amp = NamePart.find('&');
+				if(Amp != std::string::npos)
+					NamePart = NamePart.substr(0, Amp);
+				const size_t Hash = NamePart.find('#');
+				if(Hash != std::string::npos)
+					NamePart = NamePart.substr(0, Hash);
+				std::string Lower = NamePart;
+				std::transform(Lower.begin(), Lower.end(), Lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+				if(Lower.size() >= 4 && Lower.compare(Lower.size() - 4, 4, ".map") == 0)
+					IsMap = true;
+			}
+		}
+
+		if(IsMap && (int)Url.size() < UrlSize)
+		{
+			str_copy(pOutUrl, Url.c_str(), UrlSize);
+			if(pOutName && NameSize > 0)
+			{
+				MediaExtractUrlFileName(Url.c_str(), pOutName, NameSize);
+				if(pOutName[0] == '\0')
+					str_copy(pOutName, "map.map", NameSize);
+				else if(!str_endswith(pOutName, ".map") && !str_endswith(pOutName, ".MAP"))
+				{
+					char aTmp[128];
+					str_copy(aTmp, pOutName, sizeof(aTmp));
+					str_format(pOutName, NameSize, "%s.map", aTmp);
+				}
+			}
+			return true;
+		}
+
+		pCur = pEnd;
+	}
+	return false;
+}
+
+void CChat::SetMapAttachment(CLine &Line, const char *pUrl, const char *pFileName)
+{
+	if(!pUrl || pUrl[0] == '\0')
+		return;
+
+	str_copy(Line.m_aMapUrl, pUrl, sizeof(Line.m_aMapUrl));
+	if(pFileName && pFileName[0] != '\0')
+		str_copy(Line.m_aMapFileName, pFileName, sizeof(Line.m_aMapFileName));
+	else
+		MediaExtractUrlFileName(pUrl, Line.m_aMapFileName, sizeof(Line.m_aMapFileName));
+	if(Line.m_aMapFileName[0] == '\0')
+		str_copy(Line.m_aMapFileName, "map.map");
+
+	Line.m_MapFileSize = -1;
+	Line.m_aMapCardHeight[0] = 0.0f;
+	Line.m_aMapCardHeight[1] = 0.0f;
+	Line.m_MapCardRectValid = false;
+	Line.m_MapDownloadBtnRectValid = false;
+	Line.m_aYOffset[0] = -1.0f;
+	Line.m_aYOffset[1] = -1.0f;
+
+	if(Line.m_pMapSizeRequest)
+	{
+		Line.m_pMapSizeRequest->Abort();
+		Line.m_pMapSizeRequest = nullptr;
+	}
+
+	std::shared_ptr<CHttpRequest> pHead = HttpHead(Line.m_aMapUrl);
+	pHead->Timeout(CTimeout{5000, 0, 1024, 4});
+	pHead->FailOnErrorStatus(false);
+	pHead->LogProgress(HTTPLOG::NONE);
+	pHead->MaxResponseSize(1024);
+	Line.m_pMapSizeRequest = pHead;
+	Http()->Run(pHead);
+}
+
+bool CChat::HasMapAttachment(const CLine &Line) const
+{
+	return Line.m_aMapUrl[0] != '\0';
+}
+
+void CChat::UpdateMapSizeRequests()
+{
+	for(auto &Line : m_aLines)
+	{
+		if(!Line.m_pMapSizeRequest || !Line.m_pMapSizeRequest->Done())
+			continue;
+		std::shared_ptr<CHttpRequest> pReq = Line.m_pMapSizeRequest;
+		Line.m_pMapSizeRequest = nullptr;
+		if(pReq->State() == EHttpState::DONE)
+		{
+			const double Size = pReq->Size();
+			if(Size > 0.0)
+			{
+				Line.m_MapFileSize = (int64_t)Size;
+				Line.m_aYOffset[0] = -1.0f;
+				Line.m_aYOffset[1] = -1.0f;
+			}
+		}
+	}
+}
+
+void CChat::OpenMapContextMenu(int LineIndex, float X, float Y)
+{
+	if(LineIndex < 0 || LineIndex >= MAX_LINES)
+		return;
+	CLine &Line = m_aLines[LineIndex];
+	if(!Line.m_Initialized || !HasMapAttachment(Line))
+		return;
+
+	m_MapContextLineIndex = LineIndex;
+	str_copy(m_aMapContextUrl, Line.m_aMapUrl, sizeof(m_aMapContextUrl));
+	str_copy(m_aMapContextFileName, Line.m_aMapFileName, sizeof(m_aMapContextFileName));
+
+	const float RowHeight = 18.0f;
+	const float Spacing = 2.0f;
+	const float PopupW = 140.0f;
+	const float PopupH = 2 * RowHeight + Spacing + 10.0f;
+	Ui()->DoPopupMenu(&m_MapContextPopupId, X, Y, PopupW, PopupH, this, PopupMapContext, {}, CUi::EButtonSoundType::DEFAULT);
+}
+
+CUi::EPopupMenuFunctionResult CChat::PopupMapContext(void *pContext, CUIRect View, bool Active)
+{
+	CChat *pChat = static_cast<CChat *>(pContext);
+	(void)Active;
+	CMenus &Menus = pChat->GameClient()->m_Menus;
+	const float RowHeight = 18.0f;
+	const float Spacing = 2.0f;
+	CUIRect Row;
+
+	View.HSplitTop(RowHeight, &Row, &View);
+	if(Menus.DoButton_Menu(&pChat->m_aMapContextButtons[0], Localize("Download"), 0, &Row))
+	{
+		if(pChat->m_aMapContextUrl[0] != '\0')
+		{
+			Menus.PopupConfirmOpenLink(
+				Localize("Download"),
+				Localize("Are you sure you want to download?"),
+				Localize("Yes"),
+				Localize("Cancel"),
+				pChat->m_aMapContextUrl,
+				false);
+		}
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(RowHeight, &Row, &View);
+	if(Menus.DoButton_Menu(&pChat->m_aMapContextButtons[1], Localize("Add to map"), 0, &Row))
+	{
+		char aName[128], aClean[64];
+		str_copy(aName, pChat->m_aMapContextFileName, sizeof(aName));
+		MediaSanitizeAssetName(aName, aClean, sizeof(aClean));
+		if(aClean[0] == '\0')
+			str_copy(aClean, "shared_map");
+		pChat->m_MapAddNameInput.Set(aClean);
+		pChat->m_MapAddUseAsBackground = true;
+		pChat->Ui()->DoPopupMenu(&pChat->m_MapAddPopupId, View.x, Row.y, 220.0f, 110.0f, pChat, PopupMapAdd, {}, CUi::EButtonSoundType::DEFAULT);
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+CUi::EPopupMenuFunctionResult CChat::PopupMapAdd(void *pContext, CUIRect View, bool Active)
+{
+	CChat *pChat = static_cast<CChat *>(pContext);
+	(void)Active;
+	CMenus &Menus = pChat->GameClient()->m_Menus;
+	const float FontSize = 11.0f;
+	const float Spacing = 4.0f;
+	CUIRect Row;
+
+	View.HSplitTop(14.0f, &Row, &View);
+	pChat->Ui()->DoLabel(&Row, Localize("Add to map"), 12.0f, TEXTALIGN_ML);
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(20.0f, &Row, &View);
+	CUIRect NameLabel, NameBox;
+	Row.VSplitLeft(45.0f, &NameLabel, &NameBox);
+	pChat->Ui()->DoLabel(&NameLabel, Localize("Name"), FontSize, TEXTALIGN_ML);
+	pChat->m_MapAddNameInput.SetEmptyText(Localize("map name"));
+	pChat->Ui()->DoClearableEditBox(&pChat->m_MapAddNameInput, &NameBox, 12.0f);
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(18.0f, &Row, &View);
+	if(Menus.DoButton_CheckBox(&pChat->m_MapAddUseBgButton, Localize("Use this map as background"), pChat->m_MapAddUseAsBackground ? 1 : 0, &Row))
+		pChat->m_MapAddUseAsBackground = !pChat->m_MapAddUseAsBackground;
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(20.0f, &Row, &View);
+	CUIRect CancelRect, ConfirmRect;
+	Row.VSplitMid(&CancelRect, &ConfirmRect, 4.0f);
+	if(Menus.DoButton_Menu(&pChat->m_MapAddCancelButton, Localize("Cancel"), 0, &CancelRect))
+		return CUi::POPUP_CLOSE_CURRENT;
+	if(Menus.DoButton_Menu(&pChat->m_MapAddConfirmButton, Localize("Confirm"), 0, &ConfirmRect))
+	{
+		pChat->BeginMapAddDownload();
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+void CChat::BeginMapAddDownload()
+{
+	if(m_aMapContextUrl[0] == '\0' || m_pMapSaveRequest)
+		return;
+
+	char aName[64];
+	MediaSanitizeAssetName(m_MapAddNameInput.GetString(), aName, sizeof(aName));
+	if(aName[0] == '\0')
+	{
+		Echo(Localize("Please enter a valid name."));
+		return;
+	}
+
+	str_copy(m_aMapSaveName, aName, sizeof(m_aMapSaveName));
+	m_MapSaveApplyBackground = m_MapAddUseAsBackground;
+
+	const int64_t MaxBytes = g_Config.m_UcMapShareMaxBytes > 0 ? g_Config.m_UcMapShareMaxBytes : (32 * 1024 * 1024);
+	std::shared_ptr<CHttpRequest> pGet = HttpGet(m_aMapContextUrl);
+	pGet->Timeout(CTimeout{15000, 0, 4096, 16});
+	pGet->MaxResponseSize(MaxBytes);
+	pGet->FailOnErrorStatus(true);
+	pGet->LogProgress(HTTPLOG::NONE);
+	m_pMapSaveRequest = pGet;
+	Http()->Run(pGet);
+	Echo(Localize("Downloading map..."));
+}
+
+void CChat::UpdateMapSave()
+{
+	if(!m_pMapSaveRequest || !m_pMapSaveRequest->Done())
+		return;
+
+	std::shared_ptr<CHttpRequest> pRequest = m_pMapSaveRequest;
+	m_pMapSaveRequest = nullptr;
+
+	if(pRequest->State() != EHttpState::DONE)
+	{
+		Echo(Localize("Failed to download the map."));
+		return;
+	}
+
+	unsigned char *pResult = nullptr;
+	size_t ResultSize = 0;
+	pRequest->Result(&pResult, &ResultSize);
+	if(pResult == nullptr || ResultSize == 0)
+	{
+		Echo(Localize("Failed to download the map."));
+		return;
+	}
+
+	Storage()->CreateFolder("maps", IStorage::TYPE_SAVE);
+	char aPath[192];
+	str_format(aPath, sizeof(aPath), "maps/%s.map", m_aMapSaveName);
+
+	IOHANDLE File = Storage()->OpenFile(aPath, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+	if(!File)
+	{
+		Echo(Localize("Failed to save the map."));
+		return;
+	}
+	io_write(File, pResult, ResultSize);
+	io_close(File);
+
+	if(m_MapSaveApplyBackground)
+	{
+		str_copy(g_Config.m_ClBackgroundEntities, m_aMapSaveName, sizeof(g_Config.m_ClBackgroundEntities));
+		g_Config.m_ClOverlayEntities = 100;
+		GameClient()->m_Background.LoadBackground();
+		Echo(Localize("Map saved and set as background."));
+	}
+	else
+	{
+		Echo(Localize("Map saved."));
+	}
+}

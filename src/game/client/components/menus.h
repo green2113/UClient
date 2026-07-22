@@ -373,6 +373,41 @@ protected:
 	static CUi::EPopupMenuFunctionResult PopupShareSkin(void *pContext, CUIRect View, bool Active);
 	static CUi::EPopupMenuFunctionResult PopupShareSkinList(void *pContext, CUIRect View, bool Active);
 
+	class CMapListItem
+	{
+	public:
+		char m_aFilename[IO_MAX_PATH_LENGTH];
+		bool m_IsDirectory;
+	};
+
+	// UClient: share a background .map from maps/
+	SPopupMenuId m_ShareMapPopupId;
+	SPopupMenuId m_ShareMapListPopupId;
+	CUi::SDropDownState m_ShareMapUserDropDownState;
+	CButtonContainer m_ShareMapConfirmButton;
+	CButtonContainer m_ShareMapCancelButton;
+	CButtonContainer m_ShareMapSelectButton;
+	char m_aShareMapPath[IO_MAX_PATH_LENGTH] = "";
+	char m_aShareMapListFolder[IO_MAX_PATH_LENGTH] = "";
+	char m_aShareMapTargetName[64] = "";
+	bool m_ShareMapToAll = true;
+	bool m_ShareMapAgree = false;
+	std::vector<std::string> m_vShareMapUserNames;
+	std::vector<CMapListItem> m_vShareMapListItems;
+	int m_ShareMapListSelection = -1;
+	std::shared_ptr<CHttpRequest> m_pShareMapUploadRequest;
+	EShareAssetState m_ShareMapState = EShareAssetState::NONE;
+	char m_aShareMapStatus[128] = "";
+	void OpenShareMapPopup();
+	void OpenShareMapListPopup(float X, float Y);
+	void PopulateShareMapList();
+	static int ShareMapListFetchCallback(const CFsFileInfo *pInfo, int IsDir, int StorageType, void *pUser);
+	bool ResolveMapShareFile(const char *pRelPath, void **ppData, unsigned *pLen) const;
+	void BeginShareMapUpload();
+	void UpdateShareMapUpload();
+	static CUi::EPopupMenuFunctionResult PopupShareMap(void *pContext, CUIRect View, bool Active);
+	static CUi::EPopupMenuFunctionResult PopupShareMapList(void *pContext, CUIRect View, bool Active);
+
 	int m_MenuPage;
 	int m_GamePage;
 	int m_Popup;
@@ -851,12 +886,6 @@ protected:
 	std::vector<CButtonContainer> m_vButtonContainersNamePlateShow = {{}, {}, {}, {}};
 	std::vector<CButtonContainer> m_vButtonContainersNamePlateKeyPresses = {{}, {}, {}, {}};
 
-	class CMapListItem
-	{
-	public:
-		char m_aFilename[IO_MAX_PATH_LENGTH];
-		bool m_IsDirectory;
-	};
 	class CPopupMapPickerContext
 	{
 	public:

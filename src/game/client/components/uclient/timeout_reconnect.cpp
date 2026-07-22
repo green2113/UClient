@@ -36,8 +36,13 @@ void CTimeoutReconnect::OnReset()
 
 void CTimeoutReconnect::OnStateChange(int NewState, int OldState)
 {
+	// Quit/restart never go through STATE_OFFLINE — clear the session file here.
 	if(NewState == IClient::STATE_QUITTING || NewState == IClient::STATE_RESTARTING)
+	{
 		m_IntentionalLeave = true;
+		EndOnlineSession(true);
+		return;
+	}
 
 	if(NewState == IClient::STATE_ONLINE && OldState < IClient::STATE_ONLINE)
 	{
@@ -76,23 +81,43 @@ void CTimeoutReconnect::RenderHud()
 	if(Remaining <= 0)
 		return;
 
+	// Always draw in HUD screen space so camera/world mapping cannot pin this to the map.
+	float PrevScreenX0, PrevScreenY0, PrevScreenX1, PrevScreenY1;
+	Graphics()->GetScreen(&PrevScreenX0, &PrevScreenY0, &PrevScreenX1, &PrevScreenY1);
+
+	const float Width = 300.0f * Graphics()->ScreenAspect();
+	const float Height = 300.0f;
+	Graphics()->MapScreen(0.0f, 0.0f, Width, Height);
+
 	char aBuf[128];
 	str_format(aBuf, sizeof(aBuf), "Timeout in: %ds remaining", Remaining);
 
-	const float FontSize = 7.0f;
-	const float TextX = 6.0f;
-	const float TextY = 300.0f - FontSize - 8.0f;
+	const float FontSize = 5.5f;
+	const float Margin = 6.0f;
+	const float TextX = Margin;
+	const float TextY = Height - FontSize - Margin;
 
 	TextRender()->TextColor(1.0f, 0.35f, 0.1f, 1.0f);
 	TextRender()->TextOutlineColor(0.0f, 0.0f, 0.0f, 0.75f);
 	TextRender()->Text(TextX, TextY, FontSize, aBuf, -1.0f);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
 	TextRender()->TextOutlineColor(TextRender()->DefaultTextOutlineColor());
+
+	Graphics()->MapScreen(PrevScreenX0, PrevScreenY0, PrevScreenX1, PrevScreenY1);
 }
 
 void CTimeoutReconnect::MarkIntentionalLeave()
 {
 	m_IntentionalLeave = true;
+	// Clear immediately so a delayed quit cannot rewrite the file via heartbeat.
+	ClearSession();
+	m_HasCrashSnapshot = false;
+	m_aCrashServerAddr[0] = '\0';
+	m_CrashLastUnix = 0;
+	m_HasMemoryDisconnect = false;
+	m_aMemoryServerAddr[0] = '\0';
+	m_MemoryDisconnectUnix = 0;
+	ClearPending();
 }
 
 bool CTimeoutReconnect::TryConsumeTimeoutSettingsMessage(int ClientId, const char *pMessage)
@@ -375,6 +400,9 @@ void CTimeoutReconnect::TrySendTimeoutQuery()
 
 void CTimeoutReconnect::PersistHeartbeat()
 {
+	if(m_IntentionalLeave)
+		return;
+
 	if(m_aServerAddr[0] == '\0')
 	{
 		CurrentServerAddr(m_aServerAddr, sizeof(m_aServerAddr));
