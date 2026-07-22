@@ -30,7 +30,7 @@ MACRO_CONFIG_INT(UcShareAgreed, uc_share_agreed, 0, 0, 1, CFGFLAG_CLIENT | CFGFL
 MACRO_CONFIG_INT(UcMapShareMaxBytes, uc_map_share_max_bytes, 33554432, 0, 67108864, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum .map size in bytes for background map sharing uploads")
 MACRO_CONFIG_INT(UcBindPresetActive, uc_bind_preset_active, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Currently active bind preset slot (0-2)")
 MACRO_CONFIG_INT(UcShowSharedCursors, uc_show_shared_cursors, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show shared cursors from other UClient players and the sharing indicator")
-MACRO_CONFIG_INT(UcChat, uc_chat, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable UClient chat channel (relayed via UClient presence UDP)")
+MACRO_CONFIG_INT(UcChat, uc_chat, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable UClient chat channel (relayed via UClient presence UDP)")
 MACRO_CONFIG_INT(UcChatSendSameServerOnly, uc_chat_send_same_server_only, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Only send UClient chat to users on the same game server")
 MACRO_CONFIG_INT(UcChatShowSameServerOnly, uc_chat_show_same_server_only, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Only show UClient chat from users on the same game server")
 MACRO_CONFIG_COL(UcMessageColor, uc_message_color, 10027007, CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient chat message color")

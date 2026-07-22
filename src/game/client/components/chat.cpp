@@ -956,7 +956,13 @@ void CChat::ConChat(IConsole::IResult *pResult, void *pUserData)
 	{
 		if(!g_Config.m_UcChat)
 		{
-			pChat->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "console", "UClient chat is disabled (enable it in Settings > UClient)");
+			const int PrevShowClient = g_Config.m_TcShowChatClient;
+			g_Config.m_TcShowChatClient = 1;
+			pChat->Echo("UClient chat is disabled.");
+			g_Config.m_TcShowChatClient = PrevShowClient;
+			CLine &Line = pChat->m_aLines[pChat->m_CurrentLine];
+			if(Line.m_Initialized && Line.m_ClientId == CLIENT_MSG)
+				Line.m_CustomColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
 			return;
 		}
 		pChat->EnableMode(TEAM_UCLIENT);
@@ -4839,12 +4845,12 @@ void CChat::RenderTextLine(CLine &Line, float y, float FontSize, float LineWidth
 		Color = *CustomColor;
 	else if(Line.m_ClientId == SERVER_MSG)
 		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageSystemColor));
+	else if(Line.m_UClient)
+		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
 	else if(Line.m_ClientId == CLIENT_MSG)
 		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
 	else if(Line.m_Highlighted)
 		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageHighlightColor));
-	else if(Line.m_UClient)
-		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
 	else if(Line.m_Team)
 		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageTeamColor));
 	else
@@ -7233,12 +7239,12 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			Color = *Line.m_CustomColor;
 		else if(Line.m_ClientId == SERVER_MSG)
 			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageSystemColor));
+		else if(Line.m_UClient)
+			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
 		else if(Line.m_ClientId == CLIENT_MSG)
 			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
 		else if(Line.m_Highlighted)
 			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageHighlightColor));
-		else if(Line.m_UClient)
-			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
 		else if(Line.m_Team)
 			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageTeamColor));
 		else // regular message
