@@ -1112,15 +1112,31 @@ void CUClientChatPasteImage::PendingUploadPreviewSize(CChat *pChat, float Width,
 	const float MaxPreviewW = minimum(Width, 120.0f);
 	const float MaxPreviewH = maximum(56.0f, FontSize * 5.0f);
 	const float Aspect = m_PendingUploadImage.m_Height > 0 ? (float)m_PendingUploadImage.m_Width / (float)m_PendingUploadImage.m_Height : 1.0f;
+	const float SafeAspect = maximum(0.1f, Aspect);
+
+	// Fit inside the max box while preserving aspect ratio.
 	PreviewW = MaxPreviewW;
-	PreviewH = PreviewW / maximum(0.1f, Aspect);
+	PreviewH = PreviewW / SafeAspect;
 	if(PreviewH > MaxPreviewH)
 	{
 		PreviewH = MaxPreviewH;
-		PreviewW = PreviewH * maximum(0.1f, Aspect);
+		PreviewW = PreviewH * SafeAspect;
 	}
-	PreviewW = maximum(56.0f, PreviewW);
-	PreviewH = maximum(40.0f, PreviewH);
+
+	// Grow toward a readable minimum size only when both axes still fit.
+	const float MinW = 56.0f;
+	const float MinH = 40.0f;
+	if(PreviewW < MinW || PreviewH < MinH)
+	{
+		const float Upscale = maximum(MinW / maximum(1.0f, PreviewW), MinH / maximum(1.0f, PreviewH));
+		const float GrownW = PreviewW * Upscale;
+		const float GrownH = PreviewH * Upscale;
+		if(GrownW <= MaxPreviewW + 0.01f && GrownH <= MaxPreviewH + 0.01f)
+		{
+			PreviewW = GrownW;
+			PreviewH = GrownH;
+		}
+	}
 }
 
 float CUClientChatPasteImage::PreviewHeight(CChat *pChat, float Width, float FontSize) const

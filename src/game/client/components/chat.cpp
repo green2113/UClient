@@ -2693,6 +2693,19 @@ static float ReplyQuoteTextStartOffset(float TeeSize, float FontSize)
 	return TeeSize * 0.5f + ReplyQuoteDashLength(FontSize) + FontSize * REPLY_QUOTE_TEXT_GAP_FACTOR;
 }
 
+// Remote UClient lines use CLIENT_MSG but still show a tee + "Name: text" like normal chat.
+static bool LineNeedsNameColon(const CChat::CLine &Line)
+{
+	return Line.m_aName[0] != '\0' && (Line.m_ClientId >= 0 || Line.m_UClient);
+}
+
+static bool LineNeedsTeePadding(const CChat::CLine &Line)
+{
+	if(g_Config.m_ClChatOld || Line.m_aName[0] == '\0')
+		return false;
+	return Line.m_ClientId >= 0 || (Line.m_UClient && Line.m_pManagedTeeRenderInfo != nullptr);
+}
+
 static void RenderReplyQuoteConnector(IGraphics *pGraphics, float TeeCenterX, float QuoteY, float QuoteLineH, float QuoteBlockH, float FontSize, float Blend)
 {
 	const float DashLength = ReplyQuoteDashLength(FontSize);
@@ -4682,12 +4695,12 @@ std::string CChat::BuildPlainTextLine(const CLine &Line) const
 	}
 
 	std::string Result;
-	if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0' && ShouldShowFriendMarker(Line))
+	if(LineNeedsNameColon(Line) && ShouldShowFriendMarker(Line))
 		Result += "♥ ";
 	Result += aClientId;
 	Result += Line.m_aName;
 	Result += aCount;
-	if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
+	if(LineNeedsNameColon(Line))
 		Result += ": ";
 	if(pTranslatedText)
 	{
@@ -4791,7 +4804,7 @@ void CChat::RenderTextLine(CLine &Line, float y, float FontSize, float LineWidth
 		LineCursor.m_ReleaseMouse = m_MouseRelease;
 	}
 
-	if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
+	if(LineNeedsTeePadding(Line))
 	{
 		LineCursor.m_X += RealMsgPaddingTee;
 		if(ShouldShowFriendMarker(Line))
@@ -4834,7 +4847,7 @@ void CChat::RenderTextLine(CLine &Line, float y, float FontSize, float LineWidth
 		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.3f * Blend);
 		TextRender()->TextEx(&LineCursor, aCount);
 	}
-	if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
+	if(LineNeedsNameColon(Line))
 	{
 		TextRender()->TextColor(NameColor);
 		TextRender()->TextEx(&LineCursor, ": ");
@@ -6466,7 +6479,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 
 	auto &&FChatMsgCheckAndPrint = [this](const CLine &Line) {
 		char aBuf[1024];
-		str_format(aBuf, sizeof(aBuf), "%s%s%s", Line.m_aName, Line.m_ClientId >= 0 ? ": " : "", Line.m_aText);
+		str_format(aBuf, sizeof(aBuf), "%s%s%s", Line.m_aName, LineNeedsNameColon(Line) ? ": " : "", Line.m_aText);
 
 		ColorRGBA ChatLogColor = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
 		if(Line.m_Highlighted)
@@ -7088,7 +7101,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			if(Line.m_HasReply && !pDisplayedTranslatedText && !pTranslatedError)
 				Line.m_ReplyQuoteHeight = AppendReplyQuoteToMeasure(TextRender(), MeasureCursor, true, Line.m_aReplyToName, pReplyQuoteText, FontSize, QuoteTextStart, QuoteMaxWidth);
 
-			if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
+			if(LineNeedsTeePadding(Line))
 			{
 				MeasureCursor.m_X += RealMsgPaddingTee;
 
@@ -7103,7 +7116,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			if(Line.m_TimesRepeated > 0)
 				TextRender()->TextEx(&MeasureCursor, aCount);
 
-			if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
+			if(LineNeedsNameColon(Line))
 			{
 				TextRender()->TextEx(&MeasureCursor, ": ");
 			}
@@ -7257,8 +7270,8 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			AppendReplyQuoteToContainer(TextRender(), Line.m_TextContainerIndex, LineCursor, true, Line.m_aReplyToName, pReplyQuoteText, FontSize, Color, QuoteTextStart, QuoteMaxWidth, Line.m_ReplyQuoteRect.m_X, Line.m_ReplyQuoteRect.m_Y, Line.m_ReplyQuoteRect.m_W, Line.m_ReplyQuoteRect.m_H, Line.m_ReplyQuoteRectValid);
 		}
 
-		// Message is from valid player
-		if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
+		// Message is from a player, or a remote UClient sender with a tee/name.
+		if(LineNeedsTeePadding(Line))
 		{
 			LineCursor.m_X += RealMsgPaddingTee;
 
@@ -7304,7 +7317,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &LineCursor, aCount);
 		}
 
-		if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
+		if(LineNeedsNameColon(Line))
 		{
 			TextRender()->TextColor(NameColor);
 			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &LineCursor, ": ");
@@ -8065,13 +8078,15 @@ void CChat::OnRender()
 			}
 
 			bool HoveredName = false;
-			if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
+			if(LineNeedsNameColon(Line))
 			{
 				char aClientId[16] = "";
-				if(g_Config.m_ClShowIds)
+				if(g_Config.m_ClShowIds && Line.m_ClientId >= 0)
 					GameClient()->FormatClientId(Line.m_ClientId, aClientId, EClientIdFormat::INDENT_AUTO);
 
-				float NameRectX = LineRenderX + RealMsgPaddingX / 2.0f + RealMsgPaddingTee;
+				float NameRectX = LineRenderX + RealMsgPaddingX / 2.0f;
+				if(LineNeedsTeePadding(Line))
+					NameRectX += RealMsgPaddingTee;
 				if(ShouldShowFriendMarker(Line))
 					NameRectX += TextRender()->TextWidth(FontSize(), "♥ ");
 				NameRectX += TextRender()->TextWidth(FontSize(), aClientId);
