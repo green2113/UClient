@@ -1,3 +1,4 @@
+/* Copyright © 2026 BestProject Team */
 #include "source.h"
 
 #include "analyzer.h"
@@ -229,18 +230,9 @@ class CPulseVisualizerSource final : public IVisualizerSource
 		return DoneFlag;
 	}
 
-	static bool ContainsI(std::string Haystack, std::string Needle)
-	{
-		if(Haystack.empty() || Needle.empty())
-			return false;
-		std::transform(Haystack.begin(), Haystack.end(), Haystack.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-		std::transform(Needle.begin(), Needle.end(), Needle.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-		return Haystack.find(Needle) != std::string::npos;
-	}
-
 	static bool LooksLikeMediaRole(const std::string &Role)
 	{
-		return ContainsI(Role, "music") || ContainsI(Role, "video") || ContainsI(Role, "movie") || ContainsI(Role, "multimedia");
+		return MediaSourceContainsI(Role, "music") || MediaSourceContainsI(Role, "video") || MediaSourceContainsI(Role, "movie") || MediaSourceContainsI(Role, "multimedia");
 	}
 
 	static std::vector<SPulseCaptureTarget> ResolveCaptureTargets(const SVisualizerPlaybackHint &Hint)
@@ -250,7 +242,7 @@ class CPulseVisualizerSource final : public IVisualizerSource
 		if(!pMainloop)
 			return vTargets;
 
-		pa_context *pContext = pa_context_new(pa_mainloop_get_api(pMainloop), "DDNet music visualizer");
+		pa_context *pContext = pa_context_new(pa_mainloop_get_api(pMainloop), "BestClient music visualizer");
 		if(!pContext)
 		{
 			pa_mainloop_free(pMainloop);
@@ -463,7 +455,7 @@ class CPulseVisualizerSource final : public IVisualizerSource
 				vMonoBuffer.resize(FramesPerRead);
 				Attr.fragsize = (uint32_t)(sizeof(float) * vReadBuffer.size());
 				int Error = 0;
-				pSimple = pa_simple_new(nullptr, "DDNet", PA_STREAM_RECORD, Candidate.m_MonitorSource.c_str(), "music visualizer", &Spec, nullptr, &Attr, &Error);
+				pSimple = pa_simple_new(nullptr, "BestClient", PA_STREAM_RECORD, Candidate.m_MonitorSource.c_str(), "music visualizer", &Spec, nullptr, &Attr, &Error);
 				if(!pSimple)
 					continue;
 

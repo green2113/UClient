@@ -82,6 +82,8 @@ void NormalizeLanguageCode(const char *pLanguage, char *pOut, size_t Size)
 		{"french", "fr"},
 		{"es", "es"},
 		{"spanish", "es"},
+		{"pl", "pl"},
+		{"polish", "pl"},
 		{"zh", "zh"},
 		{"cn", "zh"},
 		{"chinese", "zh"},
@@ -171,6 +173,17 @@ void NormalizeTranslatedText(char *pText, size_t Size)
 	str_copy(pText, Decoded.c_str(), Size);
 }
 
+void StripCommasAndPeriods(char *pText)
+{
+	char *pWrite = pText;
+	for(const char *pRead = pText; *pRead != '\0'; ++pRead)
+	{
+		if(*pRead != ',' && *pRead != '.')
+			*pWrite++ = *pRead;
+	}
+	*pWrite = '\0';
+}
+
 bool IsAutoLanguage(const char *pLanguage)
 {
 	return pLanguage == nullptr || pLanguage[0] == '\0' || str_comp_nocase(pLanguage, "auto") == 0;
@@ -208,6 +221,9 @@ bool SanitizeOutgoingTranslatedText(const char *pOriginalText, const char *pTran
 		if(str_comp(aNormalized, aBefore) == 0)
 			break;
 	}
+
+	if(g_Config.m_BcTranslateOutgoingStripPunctuation)
+		StripCommasAndPeriods(aNormalized);
 
 	if(!str_utf8_check(aNormalized) || *str_utf8_skip_whitespaces(aNormalized) == '\0' || HasUrlEncodedSequence(aNormalized))
 		return false;
@@ -282,44 +298,86 @@ bool IsWhisperCommandToken(const char *pToken)
 	return pToken != nullptr && (str_comp_nocase(pToken, "w") == 0 || str_comp_nocase(pToken, "whisper") == 0);
 }
 
+bool IsConverseCommandToken(const char *pToken)
+{
+	return pToken != nullptr && (str_comp_nocase(pToken, "c") == 0 || str_comp_nocase(pToken, "converse") == 0);
+}
+
+bool ExtractOutgoingCommand(const char *pText, char *pCommand, size_t CommandSize, const char **ppArguments)
+{
+	if(!pText || pText[0] != '/' || !pCommand || CommandSize == 0 || !ppArguments)
+		return false;
+
+	const char *pCommandStart = pText + 1;
+	while(*pCommandStart != '\0' && std::isspace((unsigned char)*pCommandStart))
+		++pCommandStart;
+	if(*pCommandStart == '\0')
+		return false;
+
+	const char *pCommandEnd = pCommandStart;
+	while(*pCommandEnd != '\0' && !std::isspace((unsigned char)*pCommandEnd))
+		++pCommandEnd;
+	str_truncate(pCommand, CommandSize, pCommandStart, pCommandEnd - pCommandStart);
+
+	const char *pArguments = pCommandEnd;
+	while(*pArguments != '\0' && std::isspace((unsigned char)*pArguments))
+		++pArguments;
+	*ppArguments = pArguments;
+	return true;
+}
+
 bool ExtractOutgoingWhisperPrefix(const CGameClient &GameClient, const char *pText, char *pPrefix, size_t PrefixSize, char *pBody, size_t BodySize)
 {
 	if(!pPrefix || PrefixSize == 0 || !pBody || BodySize == 0)
 		return false;
 	pPrefix[0] = '\0';
 	pBody[0] = '\0';
-	if(!pText || pText[0] != '/')
-		return false;
-
-	const char *pCommand = pText + 1;
-	while(*pCommand != '\0' && std::isspace((unsigned char)*pCommand))
-		++pCommand;
-	if(*pCommand == '\0')
-		return false;
-
-	const char *pCommandEnd = pCommand;
-	while(*pCommandEnd != '\0' && !std::isspace((unsigned char)*pCommandEnd))
-		++pCommandEnd;
 	char aCommand[32] = "";
-	str_copy(aCommand, std::string(pCommand, pCommandEnd - pCommand).c_str(), sizeof(aCommand));
+	const char *pNameStart = nullptr;
+	if(!ExtractOutgoingCommand(pText, aCommand, sizeof(aCommand), &pNameStart))
+		return false;
 	if(!IsWhisperCommandToken(aCommand))
 		return false;
-
-	const char *pNameStart = pCommandEnd;
-	while(*pNameStart != '\0' && std::isspace((unsigned char)*pNameStart))
-		++pNameStart;
 	if(*pNameStart == '\0')
 		return false;
 
+	if(*pNameStart == '"')
+	{
+		const char *pNameEnd = pNameStart + 1;
+		while(*pNameEnd != '\0' && *pNameEnd != '"')
+		{
+			if(*pNameEnd == '\\' && (pNameEnd[1] == '\\' || pNameEnd[1] == '"'))
+				pNameEnd += 2;
+			else
+				++pNameEnd;
+		}
+		if(*pNameEnd != '"')
+			return false;
+
+		const char *pBodyStart = pNameEnd + 1;
+		if(*pBodyStart == '\0' || !std::isspace((unsigned char)*pBodyStart))
+			return false;
+		while(*pBodyStart != '\0' && std::isspace((unsigned char)*pBodyStart))
+			++pBodyStart;
+		if(*pBodyStart == '\0')
+			return false;
+
+		const int PrefixLength = (int)(pBodyStart - pText);
+		str_copy(pPrefix, std::string(pText, PrefixLength).c_str(), PrefixSize);
+		str_copy(pBody, pBodyStart, BodySize);
+		return true;
+	}
+
 	const char *pBestBodyStart = nullptr;
 	int BestNameLength = -1;
+	const int RemainingLength = str_length(pNameStart);
 	for(const auto &Client : GameClient.m_aClients)
 	{
 		if(!Client.m_Active || Client.m_aName[0] == '\0')
 			continue;
 
 		const int NameLength = str_length(Client.m_aName);
-		if(NameLength <= 0 || NameLength <= BestNameLength)
+		if(NameLength <= 0 || NameLength <= BestNameLength || NameLength >= RemainingLength)
 			continue;
 		char aNamePrefix[MAX_NAME_LENGTH] = "";
 		str_copy(aNamePrefix, std::string(pNameStart, NameLength).c_str(), sizeof(aNamePrefix));
@@ -349,10 +407,32 @@ bool ExtractOutgoingWhisperPrefix(const CGameClient &GameClient, const char *pTe
 	return true;
 }
 
+bool ExtractOutgoingConversePrefix(const char *pText, char *pPrefix, size_t PrefixSize, char *pBody, size_t BodySize)
+{
+	if(!pPrefix || PrefixSize == 0 || !pBody || BodySize == 0)
+		return false;
+	pPrefix[0] = '\0';
+	pBody[0] = '\0';
+
+	char aCommand[32] = "";
+	const char *pBodyStart = nullptr;
+	if(!ExtractOutgoingCommand(pText, aCommand, sizeof(aCommand), &pBodyStart) || !IsConverseCommandToken(aCommand) || *pBodyStart == '\0')
+		return false;
+
+	const int PrefixLength = (int)(pBodyStart - pText);
+	str_copy(pPrefix, std::string(pText, PrefixLength).c_str(), PrefixSize);
+	str_copy(pBody, pBodyStart, BodySize);
+	return true;
+}
+
 bool ExtractOutgoingTranslatableText(const CGameClient &GameClient, const char *pText, char *pPrefix, size_t PrefixSize, char *pBody, size_t BodySize)
 {
 	if(ExtractOutgoingWhisperPrefix(GameClient, pText, pPrefix, PrefixSize, pBody, BodySize))
 		return true;
+	if(ExtractOutgoingConversePrefix(pText, pPrefix, PrefixSize, pBody, BodySize))
+		return true;
+	if(pText && pText[0] == '/')
+		return false;
 	return ExtractOutgoingChatPrefix(GameClient, pText, pPrefix, PrefixSize, pBody, BodySize);
 }
 }
@@ -731,7 +811,7 @@ void CTranslate::ConToggleTranslate(IConsole::IResult *pResult, void *pUserData)
 	const int NewValue = g_Config.m_TcTranslateAutoIncoming ^ 1;
 	g_Config.m_TcTranslateAutoIncoming = NewValue;
 	g_Config.m_TcTranslateAutoOutgoing = NewValue;
-	pThis->GameClient()->m_Chat.Echo(NewValue ? "translate on" : "translate off");
+	pThis->GameClient()->m_Chat.Echo(NewValue ? Localize("Translation enabled") : Localize("Translation disabled"));
 }
 
 void CTranslate::OnConsoleInit()
@@ -836,7 +916,7 @@ bool CTranslate::ShouldTranslateOutgoingChat(const char *pText) const
 	{
 		char aPrefix[MAX_LINE_LENGTH] = "";
 		char aBody[MAX_LINE_LENGTH] = "";
-		if(!ExtractOutgoingWhisperPrefix(*GameClient(), pText, aPrefix, sizeof(aPrefix), aBody, sizeof(aBody)))
+		if(!ExtractOutgoingTranslatableText(*GameClient(), pText, aPrefix, sizeof(aPrefix), aBody, sizeof(aBody)))
 			return false;
 	}
 	if(IsAutoLanguage(OutgoingTargetLanguage()))
@@ -855,13 +935,13 @@ void CTranslate::Translate(int Id, bool ShowProgress)
 {
 	if(Id < 0 || Id >= (int)std::size(GameClient()->m_aClients))
 	{
-		GameClient()->m_Chat.Echo("Not a valid ID");
+		GameClient()->m_Chat.Echo(Localize("Not a valid ID"));
 		return;
 	}
 	const auto &Player = GameClient()->m_aClients[Id];
 	if(!Player.m_Active)
 	{
-		GameClient()->m_Chat.Echo("ID not connected");
+		GameClient()->m_Chat.Echo(Localize("ID not connected"));
 		return;
 	}
 	Translate(Player.m_aName, ShowProgress);
@@ -880,9 +960,17 @@ void CTranslate::Translate(const char *pName, bool ShowProgress)
 				continue;
 			if(pLine->m_ClientId == CChat::CLIENT_MSG)
 				continue;
+			bool IsLocalLine = false;
 			for(int Id : GameClient()->m_aLocalIds)
+			{
 				if(pLine->m_ClientId == Id)
-					continue;
+				{
+					IsLocalLine = true;
+					break;
+				}
+			}
+			if(IsLocalLine)
+				continue;
 			int Score = 0;
 			if(pName)
 			{
@@ -904,7 +992,7 @@ void CTranslate::Translate(const char *pName, bool ShowProgress)
 	}
 	if(!pLineBest || pLineBest->m_aText[0] == '\0')
 	{
-		GameClient()->m_Chat.Echo("No message to translate");
+		GameClient()->m_Chat.Echo(Localize("No message to translate"));
 		return;
 	}
 
@@ -932,13 +1020,13 @@ void CTranslate::TranslateLine(CChat::CLine &Line, bool ShowProgress, bool Respe
 	Job.m_pBackend = CreateBackend(Job.m_pLine->m_aText, IncomingSourceLanguage(), IncomingTargetLanguage());
 	if(!Job.m_pBackend)
 	{
-		GameClient()->m_Chat.Echo("Invalid translate backend");
+		GameClient()->m_Chat.Echo(Localize("Invalid translate backend"));
 		return;
 	}
 
 	if(ShowProgress)
 	{
-		str_format(Job.m_pTranslateResponse->m_Text, sizeof(Job.m_pTranslateResponse->m_Text), TCLocalize("%s translating to %s", "translate"), Job.m_pBackend->Name(), IncomingTargetLanguage());
+		str_format(Job.m_pTranslateResponse->m_Text, sizeof(Job.m_pTranslateResponse->m_Text), Localize("%s translating to %s"), Job.m_pBackend->Name(), IncomingTargetLanguage());
 		Job.m_pLine->m_Time = time();
 	}
 	else
@@ -1026,7 +1114,7 @@ void CTranslate::OnRender()
 		else
 		{
 			char aBuf[sizeof(Job.m_pTranslateResponse->m_Text)];
-			str_format(aBuf, sizeof(aBuf), TCLocalize("%s to %s failed: %s", "translate"), Job.m_pBackend->Name(), IncomingTargetLanguage(), Job.m_pTranslateResponse->m_Text);
+			str_format(aBuf, sizeof(aBuf), Localize("%s to %s failed: %s"), Job.m_pBackend->Name(), IncomingTargetLanguage(), Job.m_pTranslateResponse->m_Text);
 			Job.m_pTranslateResponse->m_Error = true;
 			str_copy(Job.m_pTranslateResponse->m_Text, aBuf);
 		}

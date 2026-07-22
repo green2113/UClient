@@ -51,6 +51,8 @@ decltype(CBindChat::BIND_DEFAULTS) CBindChat::BIND_DEFAULTS = {
 					 {TCLocalizable("Translate ID:"), {"!translateid", "translate_id"}},
 					 {TCLocalizable("Mute:"), {"!mute", "add_foe"}},
 					 {TCLocalizable("Unmute:"), {"!unmute", "remove_foe"}},
+					 {TCLocalizable("Add censor word:"), {".addcensor", "add_censor_list"}},
+					 {TCLocalizable("Add filter whitelist:"), {".addwhitelist", "add_white_list"}},
 				 }},
 };
 
@@ -261,7 +263,7 @@ bool CBindChat::ChatDoAutocomplete(bool ShiftPressed)
 	// insert the command
 	if(pCompletionBind)
 	{
-		char aBuf[CChat::CHAT_LINE_LENGTH];
+		char aBuf[CChat::MAX_LINE_LENGTH];
 		// add part before the name
 		str_truncate(aBuf, sizeof(aBuf), Chat.m_Input.GetString(), Chat.m_PlaceholderOffset);
 

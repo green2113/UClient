@@ -45,8 +45,7 @@ struct CVoice
 	CSample *m_pSample;
 	CChannel *m_pChannel;
 	int m_Age; // increases when reused
-	float m_Tick;
-	float m_Pitch;
+	int m_Tick;
 	int m_Vol; // 0 - 255
 	int m_Flags;
 	vec2 m_Position;
@@ -124,7 +123,6 @@ public:
 
 	void SetVoiceVolume(CVoiceHandle Voice, float Volume) override REQUIRES(!m_SoundLock);
 	void SetVoiceFalloff(CVoiceHandle Voice, float Falloff) override REQUIRES(!m_SoundLock);
-	void SetVoicePitch(CVoiceHandle Voice, float Pitch) override REQUIRES(!m_SoundLock);
 	void SetVoicePosition(CVoiceHandle Voice, vec2 Position) override REQUIRES(!m_SoundLock);
 	void SetVoiceTimeOffset(CVoiceHandle Voice, float TimeOffset) override REQUIRES(!m_SoundLock); // in s
 

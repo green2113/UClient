@@ -536,6 +536,8 @@ void CInput::StartTextInput()
 {
 	// enable system messages for IME
 	SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
+	// Avoid restarting an already-active text input — on Android that rapidly
+	// opens/closes the soft keyboard (especially with Vulkan).
 	if(SDL_IsTextInputActive())
 		return;
 	SDL_StartTextInput();
@@ -560,7 +562,14 @@ void CInput::EnsureScreenKeyboardShown()
 	{
 		return;
 	}
-	SDL_StopTextInput();
+	// SDL_IsScreenKeyboardShown can lag behind while the keyboard is animating
+	// (common on Android/Vulkan). Throttle restarts so we don't open/close forever.
+	const int64_t Now = time_get();
+	if(m_LastEnsureKeyboardTime != 0 && Now - m_LastEnsureKeyboardTime < time_freq() / 2)
+		return;
+	m_LastEnsureKeyboardTime = Now;
+	if(SDL_IsTextInputActive())
+		SDL_StopTextInput();
 	SDL_StartTextInput();
 }
 
@@ -797,6 +806,7 @@ void CInput::SetCompositionWindowPosition(float X, float Y, float H)
 	Rect.y = Y / m_pGraphics->ScreenHiDPIScale();
 	Rect.h = H / m_pGraphics->ScreenHiDPIScale();
 	Rect.w = 0;
+	// Redundant SetTextInputRect calls restart the Android soft keyboard.
 	if(m_TextInputRectValid &&
 		m_TextInputRect.x == Rect.x &&
 		m_TextInputRect.y == Rect.y &&

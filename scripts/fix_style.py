@@ -85,12 +85,8 @@ def warn(filenames):
 def main():
 	p = argparse.ArgumentParser(description="Check and fix style of changed files")
 	p.add_argument("-n", "--dry-run", action="store_true", help="Don't fix, only warn")
-	p.add_argument("filenames", nargs="*", help="Optional file list to process instead of scanning src/")
 	args = p.parse_args()
-	if args.filenames:
-		filenames = filter_ignored(filter_cpp(args.filenames))
-	else:
-		filenames = filter_ignored(filter_cpp(recursive_file_list("src")))
+	filenames = filter_ignored(filter_cpp(recursive_file_list("src")))
 	if not args.dry_run:
 		reformat(filenames)
 	else:

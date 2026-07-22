@@ -387,7 +387,7 @@ bool CMenuMediaBackground::LoadStaticMedia(const char *pPath, int StorageType)
 	}
 
 	m_IsLoaded = true;
-	SetStatus(m_Animated ? "Loaded animated image." : "Loaded image.");
+	SetStatus(m_Animated ? Localize("Loaded animated image.") : Localize("Loaded image."));
 	return true;
 }
 

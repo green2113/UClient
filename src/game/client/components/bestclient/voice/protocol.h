@@ -12,7 +12,6 @@ namespace BestClientVoice
 {
 constexpr uint32_t PROTOCOL_MAGIC = 0x42564331u; // BVC1
 constexpr uint8_t PROTOCOL_VERSION = 4;
-constexpr uint16_t CLIENT_BUILD_MIN = 101;
 
 constexpr int SAMPLE_RATE = 48000;
 constexpr int CHANNELS = 1;
@@ -21,7 +20,6 @@ constexpr int MAX_OPUS_PACKET_SIZE = 400;
 constexpr int DEFAULT_PORT = 8777;
 constexpr int MAX_ROOM_KEY_LENGTH = 128;
 constexpr int INVALID_GAME_CLIENT_ID = -1;
-constexpr int HELLO_AUTH_PROOF_SIZE = 32;
 constexpr int CHALLENGE_NONCE_SIZE = 16;
 constexpr int MAX_VOICE_PEERS = 128;
 

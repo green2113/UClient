@@ -55,6 +55,7 @@ void CMapLayers::OnRender()
 {
 	if(m_OnlineOnly && Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
 		return;
+
 	// dynamic parameters for ingame rendering
 	m_Params.m_EntityOverlayVal = m_Type == RENDERTYPE_FULL_DESIGN ? 0 : g_Config.m_ClOverlayEntities;
 	m_Params.m_Center = GetCurCamera()->m_Center;
@@ -64,6 +65,7 @@ void CMapLayers::OnRender()
 	m_Params.m_DebugRenderQuadClips = g_Config.m_DbgRenderQuadClips;
 	m_Params.m_DebugRenderClusterClips = g_Config.m_DbgRenderClusterClips;
 	m_Params.m_DebugRenderTileClips = g_Config.m_DbgRenderTileClips;
+
 	const bool OptimizerFpsFogEnabled = GameClient()->OptimizerFpsFogEnabled();
 	m_Params.m_FpsFogEnabled = OptimizerFpsFogEnabled;
 	m_Params.m_FpsFogMode = g_Config.m_BcOptimizerFpsFogMode;

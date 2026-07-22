@@ -170,12 +170,12 @@ void CLayerSpeedup::BrushDraw(CLayer *pBrush, vec2 WorldPos)
 
 			RecordStateChange(fx, fy, Previous, Current);
 
-			if(Editor()->m_DuoSession.IsLive())
+			if(Editor()->m_MultiMappingSession.IsLive())
 			{
 				int GroupIdx = -1, LayerIdx = -1;
-				Editor()->m_DuoSession.FindGroupAndLayer(this, GroupIdx, LayerIdx);
+				Editor()->m_MultiMappingSession.FindGroupAndLayer(this, GroupIdx, LayerIdx);
 				if(GroupIdx >= 0)
-					Editor()->m_DuoSession.NotifyTileEditSpeedup(GroupIdx, LayerIdx, fx, fy,
+					Editor()->m_MultiMappingSession.NotifyTileEditSpeedup(GroupIdx, LayerIdx, fx, fy,
 						m_pTiles[TgtIndex].m_Index,
 						m_pSpeedupTile[TgtIndex].m_Force,
 						m_pSpeedupTile[TgtIndex].m_MaxSpeed,
@@ -223,7 +223,7 @@ void CLayerSpeedup::BrushFlipY()
 
 void CLayerSpeedup::BrushRotate(float Amount)
 {
-	int Rotation = (round_to_int(360.0f * Amount / (pi * 2)) / 90) % 4; // 0=0°, 1=90°, 2=180°, 3=270°
+	int Rotation = (round_to_int(360.0f * Amount / (pi * 2)) / 90) % 4; // 0=0В°, 1=90В°, 2=180В°, 3=270В°
 	if(Rotation < 0)
 		Rotation += 4;
 
@@ -235,7 +235,7 @@ void CLayerSpeedup::BrushRotate(float Amount)
 
 	if(Rotation == 1 || Rotation == 3)
 	{
-		// 90° rotation
+		// 90В° rotation
 		CSpeedupTile *pTempData1 = new CSpeedupTile[m_Width * m_Height];
 		CTile *pTempData2 = new CTile[m_Width * m_Height];
 		mem_copy(pTempData1, m_pSpeedupTile, (size_t)m_Width * m_Height * sizeof(CSpeedupTile));
@@ -352,6 +352,18 @@ void CLayerSpeedup::FillSelection(bool Empty, CLayer *pBrush, CUIRect Rect)
 				m_pTiles[TgtIndex].m_Index};
 
 			RecordStateChange(fx, fy, Previous, Current);
+
+			if(Editor()->m_MultiMappingSession.IsLive())
+			{
+				int GroupIdx = -1, LayerIdx = -1;
+				Editor()->m_MultiMappingSession.FindGroupAndLayer(this, GroupIdx, LayerIdx);
+				if(GroupIdx >= 0)
+					Editor()->m_MultiMappingSession.NotifyTileEditSpeedup(GroupIdx, LayerIdx, fx, fy,
+						m_pTiles[TgtIndex].m_Index,
+						m_pSpeedupTile[TgtIndex].m_Force,
+						m_pSpeedupTile[TgtIndex].m_MaxSpeed,
+						m_pSpeedupTile[TgtIndex].m_Angle);
+			}
 		}
 	}
 	FlagModified(sx, sy, w, h);

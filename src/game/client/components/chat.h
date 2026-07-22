@@ -5,6 +5,7 @@
 #include <base/str.h>
 
 #include <engine/console.h>
+#include <engine/external/regex.h>
 #include <engine/shared/config.h>
 #include <engine/shared/jobs.h>
 #include <engine/shared/protocol.h>
@@ -44,6 +45,9 @@ constexpr auto SAVES_FILE = "ddnet-saves.txt";
 
 constexpr int MAX_LINE_LENGTH = 256; // Global constant for chat line length
 class CHttpRequest;
+
+// Shared with CGifBubbles so the above-head bubble matches the chat preview's rounded style.
+void DrawRoundedMediaPreview(IGraphics *pGraphics, const IGraphics::CTextureHandle &Texture, float X, float Y, float W, float H, float Rounding, float Alpha);
 
 class CChat : public CComponent
 {
@@ -198,6 +202,10 @@ class CChat : public CComponent
 		std::vector<SRenderRect> m_vReactionRects; // one per reaction, screen-space, for click hit testing
 		bool m_ReactionRectsValid;
 		float m_aReactionRowHeight[2];
+
+		// Set when the whole line is a single allowed gif-bubble-domain media link; drives the
+		// floating gif bubble rendered above the sender's head (see CGifBubbles).
+		bool m_ShowAboveHead;
 	};
 
 	bool m_PrevScoreBoardShowed;
@@ -313,15 +321,26 @@ class CChat : public CComponent
 	};
 	std::vector<STypingGlyphAnim> m_vTypingGlyphAnims;
 
+	// smoothly animated position of the chat input's blinking caret, replacing the input's own
+	// instantly-teleporting one while typing animation is enabled
+	vec2 m_CaretVisualPos = vec2(0.0f, 0.0f);
+	vec2 m_CaretAnimFromPos = vec2(0.0f, 0.0f);
+	vec2 m_CaretAnimTargetPos = vec2(0.0f, 0.0f);
+	int64_t m_CaretAnimStartTime = 0;
+	bool m_CaretAnimValid = false;
+	int64_t m_CaretBlinkAnchor = 0;
+
 	bool m_ServerSupportsCommandInfo;
 
 	CButtonContainer m_TranslateSettingsButton;
 	CButtonContainer m_TranslateSettingsEnableButton;
 	CButtonContainer m_TranslateSettingsEnableOutgoingButton;
+	CButtonContainer m_TranslateSettingsStripPunctuationButton;
 	SPopupMenuId m_TranslateSettingsPopupId;
 	bool m_TranslateButtonPressed;
 	bool m_TranslateButtonRectValid;
-	SRenderRect m_TranslateButtonRect;
+	SRenderRect m_TranslateButtonRect; // chat-space, for ChatMousePos() click detection
+	CUIRect m_TranslateButtonUiRect = {0, 0, 0, 0}; // UI-space, for DoPopupMenu
 	int m_HoveredTranslateLineIndex = -1;
 	std::string m_HoveredPlayerName;
 	std::string m_HoveredLink;
@@ -431,6 +450,10 @@ class CChat : public CComponent
 	bool HasAllowedMediaCandidates(const CLine &Line) const;
 	bool ShouldDisplayMediaSlot(const CLine &Line) const;
 	bool ShouldHideMediaPreview(const CLine &Line) const;
+	// Unlike ShouldHideMediaPreview (a spoiler toggle the user can click through), this is a hard
+	// block: if we know a link is nsfw and the browser's "show NSFW" setting is off, there is no
+	// click-to-reveal - the only way to see it is to enable that setting.
+	bool ShouldHideNsfwMedia(const CLine &Line) const;
 	std::string MediaPlaceholderText(const CLine &Line) const;
 	std::string BuildVisibleMessageText(const CLine &Line, bool UseMediaLabelWhenEmpty) const;
 	std::string BuildPlainTextLine(const CLine &Line) const;
@@ -452,10 +475,16 @@ class CChat : public CComponent
 	static void ConEcho(IConsole::IResult *pResult, void *pUserData);
 	static void ConClearChat(IConsole::IResult *pResult, void *pUserData);
 	static void ConToggleHideChatMedia(IConsole::IResult *pResult, void *pUserData);
+	static void ConAddCensorList(IConsole::IResult *pResult, void *pUserData);
+	static void ConAddWhiteList(IConsole::IResult *pResult, void *pUserData);
 
 	static void ConchainChatOld(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainChatFontSize(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainChatWidth(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
+	static void ConchainRegexPlayerWhitelist(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
+
+	static std::vector<std::string> SplitWords(const char *pMessage);
+	Regex m_RegexPlayerWhitelist;
 
 	bool LineShouldHighlight(const char *pLine, const char *pName);
 	const char *GetLineDisplayText(const CLine &Line) const;
@@ -618,6 +647,8 @@ class CChat : public CComponent
 	friend class CTClient;
 	friend class CUClientChatPasteImage;
 	friend class CMenus;
+	friend class CGifBubbles;
+	friend class CChatBubbles;
 
 public:
 	CChat();
@@ -627,6 +658,7 @@ public:
 
 	bool IsActive() const { return m_Mode != MODE_NONE; }
 	void AddLine(int ClientId, int Team, const char *pLine);
+	const char *FilterText(const char *pMessage, int ClientId = -2, bool IsChat = false);
 	void EnableMode(int Team);
 	void DisableMode();
 	void RegisterCommand(const char *pName, const char *pParams, const char *pHelpText);

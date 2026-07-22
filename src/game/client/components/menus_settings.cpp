@@ -22,10 +22,9 @@
 #include <generated/protocol.h>
 
 #include <game/client/animstate.h>
-#include <game/client/bc_ui_animations.h>
+#include <game/client/components/background.h>
 #include <game/client/components/chat.h>
 #include <game/client/components/media_decoder.h>
-#include <game/client/components/background.h>
 #include <game/client/components/menu_background.h>
 #include <game/client/components/sounds.h>
 #include <game/client/gameclient.h>
@@ -38,7 +37,6 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cmath>
 #include <memory>
 #include <numeric>
 #include <string>
@@ -363,7 +361,17 @@ void CMenus::RenderSettingsPlayer(CUIRect MainView)
 	Button.VSplitLeft(150.0f, &Button, nullptr);
 	str_format(aBuf, sizeof(aBuf), "%s:", Localize("Clan"));
 	Ui()->DoLabel(&Label, aBuf, 14.0f, TEXTALIGN_ML);
-	if(Ui()->DoEditBox(&s_ClanInput, &Button, 14.0f))
+	if(!m_Dummy && GameClient()->m_Clans.IsPlayerClanLocked())
+	{
+		Ui()->DoLabel(&Button, g_Config.m_PlayerClan, 14.0f, TEXTALIGN_ML);
+		CUIRect LockHint;
+		MainView.HSplitTop(3.0f, nullptr, &MainView);
+		MainView.HSplitTop(14.0f, &LockHint, &MainView);
+		TextRender()->TextColor(0.8f, 0.8f, 0.4f, 1.0f);
+		Ui()->DoLabel(&LockHint, Localize("Locked by Clans"), 11.0f, TEXTALIGN_ML);
+		TextRender()->TextColor(TextRender()->DefaultTextColor());
+	}
+	else if(Ui()->DoEditBox(&s_ClanInput, &Button, 14.0f))
 	{
 		SetNeedSendInfo();
 	}
@@ -601,15 +609,11 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 	CustomColorsButton.VSplitRight(110.0f, &CustomColorsButton, &RandomColorsButton);
 
 	CustomColorsButton.VSplitRight(5.0f, &CustomColorsButton, nullptr);
-	CSkins::CSkinList &SkinList = GameClient()->m_Skins.SkinList();
 	YourSkin.VSplitLeft(65.0f, &YourSkin, &Button);
 	Button.VSplitLeft(5.0f, nullptr, &Button);
-
 	const float NameClanSkinHeight = 3.0f * 20.0f + 2.0f * 5.0f;
 	if(Button.h > NameClanSkinHeight)
-	{
 		Button.HMargin((Button.h - NameClanSkinHeight) / 2.0f, &Button);
-	}
 
 	CUIRect NameRow, ClanRow, SkinRow;
 	Button.HSplitTop(20.0f, &NameRow, &Button);
@@ -630,48 +634,13 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 	Ui()->DoLabel(&SkinLabel, Localize("Skin"), 14.0f, TEXTALIGN_ML);
 
 	if(Ui()->DoEditBox(&s_NameInput, &NameInput, 14.0f))
-	{
 		SetNeedSendInfo();
-	}
-
-	if(Ui()->DoEditBox(&s_ClanInput, &ClanInput, 14.0f))
-	{
+	if(!m_Dummy && GameClient()->m_Clans.IsPlayerClanLocked())
+		Ui()->DoLabel(&ClanInput, g_Config.m_PlayerClan, 14.0f, TEXTALIGN_ML);
+	else if(Ui()->DoEditBox(&s_ClanInput, &ClanInput, 14.0f))
 		SetNeedSendInfo();
-	}
 
-	static CLineInput s_SkinInput;
-	s_SkinInput.SetBuffer(pSkinName, SkinNameSize);
-	s_SkinInput.SetEmptyText("default");
-	if(Ui()->DoClearableEditBox(&s_SkinInput, &SkinInput, 14.0f))
-	{
-		SetNeedSendInfo();
-		m_SkinListScrollToSelected = true;
-		SkinList.ForceRefresh();
-	}
-
-	static CButtonContainer s_FlagButton;
-	if(DoButton_Menu(&s_FlagButton, "", 0, &FlagButton))
-	{
-		static SPopupMenuId s_PopupCountryId;
-		static SPopupSettingsCountrySelectionContext s_PopupCountryContext;
-		s_PopupCountryContext.m_pMenus = this;
-		s_PopupCountryContext.m_pCountry = pCountry;
-		s_PopupCountryContext.m_Selection = *pCountry;
-		s_PopupCountryContext.m_New = true;
-		Ui()->DoPopupMenu(&s_PopupCountryId, FlagButton.x, FlagButton.y + FlagButton.h, 490.0f, 210.0f, &s_PopupCountryContext, PopupSettingsCountrySelection);
-	}
-	GameClient()->m_Tooltips.DoToolTip(&s_FlagButton, &FlagButton, Localize("Choose country flag"));
-
-	CUIRect FlagIcon = FlagButton;
-	const float OldWidth = FlagIcon.w;
-	FlagIcon.w = FlagIcon.h * 2.0f;
-	FlagIcon.x += (OldWidth - FlagIcon.w) / 2.0f;
-	GameClient()->m_CountryFlags.Render(*pCountry, ColorRGBA(1.0f, 1.0f, 1.0f, Ui()->HotItem() == &s_FlagButton ? 1.0f : 0.85f), FlagIcon.x, FlagIcon.y, FlagIcon.w, FlagIcon.h);
-
-	char aBuf[128 + IO_MAX_PATH_LENGTH];
-	str_format(aBuf, sizeof(aBuf), "%s:", Localize("Your skin"));
-	Ui()->DoLabel(&Label, aBuf, 14.0f, TEXTALIGN_ML);
-
+	CSkins::CSkinList &SkinList = GameClient()->m_Skins.SkinList();
 	const CSkin *pDefaultSkin = GameClient()->m_Skins.Find("default");
 	const CSkins::CSkinContainer *pOwnSkinContainer = GameClient()->m_Skins.FindContainerOrNullptr(pSkinName[0] == '\0' ? "default" : pSkinName);
 	if(pOwnSkinContainer != nullptr && pOwnSkinContainer->IsSpecial())
@@ -725,7 +694,7 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 			TextRender()->SetRenderFlags(0);
 			TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 			TextRender()->TextColor(TextRender()->DefaultTextColor());
-			Ui()->DoButtonLogic(pStatusTooltipId, 0, &StatusIcon, BUTTONFLAG_NONE, CUi::EButtonSoundType::SILENT);
+			Ui()->DoButtonLogic(pStatusTooltipId, 0, &StatusIcon, BUTTONFLAG_NONE);
 			const char *pErrorTooltip;
 			if(pSkinContainer == nullptr)
 			{
@@ -744,6 +713,36 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 	};
 	static char s_StatusTooltipId;
 	RenderSkinStatus(YourSkin, pOwnSkinContainer, &s_StatusTooltipId);
+
+	// Skin name
+	static CLineInput s_SkinInput;
+	s_SkinInput.SetBuffer(pSkinName, SkinNameSize);
+	s_SkinInput.SetEmptyText("default");
+	if(Ui()->DoClearableEditBox(&s_SkinInput, &SkinInput, 14.0f))
+	{
+		SetNeedSendInfo();
+		m_SkinListScrollToSelected = true;
+		SkinList.ForceRefresh();
+	}
+
+	static CButtonContainer s_FlagButton;
+	if(DoButton_Menu(&s_FlagButton, "", 0, &FlagButton))
+	{
+		static SPopupMenuId s_PopupCountryId;
+		static SPopupSettingsCountrySelectionContext s_PopupCountryContext;
+		s_PopupCountryContext.m_pMenus = this;
+		s_PopupCountryContext.m_pCountry = pCountry;
+		s_PopupCountryContext.m_Selection = *pCountry;
+		s_PopupCountryContext.m_New = true;
+		Ui()->DoPopupMenu(&s_PopupCountryId, FlagButton.x, FlagButton.y + FlagButton.h, 490.0f, 210.0f, &s_PopupCountryContext, PopupSettingsCountrySelection);
+	}
+	GameClient()->m_Tooltips.DoToolTip(&s_FlagButton, &FlagButton, Localize("Choose country flag"));
+
+	CUIRect FlagIcon = FlagButton;
+	const float OldFlagWidth = FlagIcon.w;
+	FlagIcon.w = FlagIcon.h * 2.0f;
+	FlagIcon.x += (OldFlagWidth - FlagIcon.w) / 2.0f;
+	GameClient()->m_CountryFlags.Render(*pCountry, ColorRGBA(1.0f, 1.0f, 1.0f, Ui()->HotItem() == &s_FlagButton ? 1.0f : 0.85f), FlagIcon.x, FlagIcon.y, FlagIcon.w, FlagIcon.h);
 
 	// Random skin button
 	static CButtonContainer s_RandomSkinButton;
@@ -897,7 +896,6 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 		{
 			CTeeRenderInfo Info = OwnSkinInfo;
 			Info.Apply(pSkin);
-			Info.m_Size = 50.0f;
 			vec2 OffsetToMid;
 			CRenderTools::GetRenderTeeOffsetToRenderedTee(CAnimState::GetIdle(), &Info, OffsetToMid);
 			const vec2 TeeRenderPos = vec2(Button.x + Button.w / 2.0f, Button.y + Button.h / 2 + OffsetToMid.y);
@@ -990,6 +988,7 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 	}
 	GameClient()->m_Tooltips.DoToolTip(&s_ShareSkinButton, &ShareButton, Localize("Share one of your skins with a player on this server"));
 
+	char aBuf[128 + IO_MAX_PATH_LENGTH];
 	static CButtonContainer s_DirectoryButton;
 	if(DoButton_Menu(&s_DirectoryButton, Localize("Skins directory"), 0, &DirectoryButton))
 	{
@@ -2374,16 +2373,6 @@ void CMenus::RenderSettingsSound(CUIRect MainView)
 	if(DoButton_CheckBox(&g_Config.m_SndHighlight, Localize("Enable highlighted chat sound"), g_Config.m_SndHighlight, &Button))
 		g_Config.m_SndHighlight ^= 1;
 
-	MainView.HSplitTop(20.0f, &Button, &MainView);
-	if(DoButton_CheckBox(&g_Config.m_BcMenuSfx, Localize("Enable menu UI sounds (from osu!)"), g_Config.m_BcMenuSfx, &Button))
-		g_Config.m_BcMenuSfx ^= 1;
-
-	{
-		MainView.HSplitTop(5.0f, nullptr, &MainView);
-		MainView.HSplitTop(20.0f, &Button, &MainView);
-		Ui()->DoScrollbarOption(&g_Config.m_BcMenuSfxVolume, &g_Config.m_BcMenuSfxVolume, &Button, Localize("SFX sound volume"), 0, 100, &CUi::ms_LogarithmicScrollbarScale, 0u, "%");
-	}
-
 	// volume slider
 	{
 		MainView.HSplitTop(5.0f, nullptr, &MainView);
@@ -2530,169 +2519,167 @@ void CMenus::RenderSettings(CUIRect MainView)
 		return;
 	}
 
-	const bool NeedRestart = m_NeedRestartGraphics || m_NeedRestartSound || m_NeedRestartUpdate;
-	auto RenderSettingsPage = [&](CUIRect PageView) {
-		if(g_Config.m_UiSettingsPage == SETTINGS_LANGUAGE)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_LANGUAGE);
-			RenderLanguageSettings(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_GENERAL)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GENERAL);
-			RenderSettingsGeneral(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_PLAYER)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_PLAYER);
-			RenderSettingsPlayer(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_TEE)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_TEE);
-			if(Client()->IsSixup())
-				RenderSettingsTee7(PageView);
-			else
-				RenderSettingsTee(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_APPEARANCE)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_APPEARANCE);
-			RenderSettingsAppearance(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_CONTROLS)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_CONTROLS);
-			m_MenusSettingsControls.Render(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_GRAPHICS)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GRAPHICS);
-			RenderSettingsGraphics(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_SOUND)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_SOUND);
-			RenderSettingsSound(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_DDNET)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_DDNET);
-			RenderSettingsDDNet(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_ASSETS)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_ASSETS);
-			RenderSettingsCustom(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_TCLIENT)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(13);
-			RenderSettingsTClient(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_BESTCLIENT)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_RESERVED0);
-			RenderSettingsBestClient(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_UCLIENT)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_RESERVED0);
-			RenderSettingsUClient(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_PROFILES)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(14);
-			if(GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_TCLIENT_PROFILES_PAGE))
-				g_Config.m_UiSettingsPage = SETTINGS_TCLIENT;
-			else
-				RenderSettingsTClientProfiles(PageView);
-		}
-		else if(g_Config.m_UiSettingsPage == SETTINGS_CONFIGS)
-		{
-			GameClient()->m_MenuBackground.ChangePosition(15);
-			if(GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_TCLIENT_CONFIGS_PAGE))
-				g_Config.m_UiSettingsPage = SETTINGS_TCLIENT;
-			else
-				RenderSettingsTClientConfigs(PageView);
-		}
-		else
-		{
-			dbg_assert_failed("ui_settings_page invalid");
-		}
-	};
-
-	auto RenderRestartWarning = [&](CUIRect RestartBar) {
-		CUIRect RestartWarning, RestartButton;
-		RestartBar.VSplitRight(125.0f, &RestartWarning, &RestartButton);
-		RestartWarning.VSplitRight(10.0f, &RestartWarning, nullptr);
-		if(m_NeedRestartUpdate)
-		{
-			TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
-			Ui()->DoLabel(&RestartWarning, Localize("DDNet Client needs to be restarted to complete update!"), 14.0f, TEXTALIGN_ML);
-			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
-		}
-		else
-		{
-			Ui()->DoLabel(&RestartWarning, Localize("You must restart the game for all settings to take effect."), 14.0f, TEXTALIGN_ML);
-		}
-
-		static CButtonContainer s_RestartButton;
-		if(DoButton_Menu(&s_RestartButton, Localize("Restart"), 0, &RestartButton))
-		{
-			if(Client()->State() == IClient::STATE_ONLINE || GameClient()->Editor()->HasUnsavedData())
-				m_Popup = POPUP_RESTART;
-			else
-				Client()->Restart();
-		}
-	};
-
-	auto RenderSettingsPageNewLayout = [&](CUIRect PageView) {
-		const int Page = g_Config.m_UiSettingsPage;
-		const bool NeedsAutoScroll =
-			Page == SETTINGS_GENERAL ||
-			Page == SETTINGS_APPEARANCE;
-
-		if(!NeedsAutoScroll)
-		{
-			RenderSettingsPage(PageView);
-			return;
-		}
-
-		static CScrollRegion s_aNewLayoutScrollRegions[SETTINGS_LENGTH];
-		CScrollRegionParams ScrollParams;
-		ScrollParams.m_ScrollUnit = 60.0f;
-		ScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
-		ScrollParams.m_ScrollbarMargin = 5.0f;
-
-		vec2 ScrollOffset(0.0f, 0.0f);
-		CScrollRegion &ScrollRegion = s_aNewLayoutScrollRegions[Page];
-		ScrollRegion.Begin(&PageView, &ScrollOffset, &ScrollParams);
-
-		CUIRect ContentView = PageView;
-		ContentView.y += ScrollOffset.y;
-		const float ContentStartY = ContentView.y;
-		const float VirtualHeightBoost = Page == SETTINGS_GENERAL ? 120.0f : 96.0f;
-		ContentView.h = PageView.h + VirtualHeightBoost;
-
-		RenderSettingsPage(ContentView);
-
-		CUIRect ContentRect = ContentView;
-		ContentRect.y = ContentStartY;
-		ContentRect.h = ContentView.h;
-		ScrollRegion.AddRect(ContentRect);
-		ScrollRegion.End();
-	};
-
 	if(g_Config.m_UiSettingsPage == SETTINGS_LANGUAGE)
 		g_Config.m_UiSettingsPage = SETTINGS_GENERAL;
 	if(g_Config.m_UiSettingsPage == SETTINGS_PLAYER)
 		g_Config.m_UiSettingsPage = SETTINGS_TEE;
 
+	// Must short-circuit here, before any of the root/sub tab bar buttons below are given a
+	// chance to run their click logic this frame - otherwise clicks on the fullscreen editor
+	// can also land on whatever tab button used to be underneath it.
+	if(m_GifWheelEditorOpen)
+	{
+		RenderSettingsBestClientGifWheelFullscreen(*Ui()->Screen());
+		return;
+	}
+
 	g_Config.m_BcSettingsLayout = minimum(maximum(g_Config.m_BcSettingsLayout, 0), 1);
 
 	if(g_Config.m_BcSettingsLayout == 0)
 	{
+		const bool NeedRestart = m_NeedRestartGraphics || m_NeedRestartSound || m_NeedRestartUpdate;
+
+		auto RenderSettingsPage = [&](CUIRect PageView) {
+			if(g_Config.m_UiSettingsPage == SETTINGS_GENERAL)
+			{
+				GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GENERAL);
+				RenderSettingsGeneral(PageView);
+			}
+			else if(g_Config.m_UiSettingsPage == SETTINGS_TEE)
+			{
+				GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_TEE);
+				if(Client()->IsSixup())
+					RenderSettingsTee7(PageView);
+				else
+					RenderSettingsTee(PageView);
+			}
+			else if(g_Config.m_UiSettingsPage == SETTINGS_APPEARANCE)
+			{
+				GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_APPEARANCE);
+				RenderSettingsAppearance(PageView);
+			}
+			else if(g_Config.m_UiSettingsPage == SETTINGS_CONTROLS)
+			{
+				GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_CONTROLS);
+				m_MenusSettingsControls.Render(PageView);
+			}
+			else if(g_Config.m_UiSettingsPage == SETTINGS_GRAPHICS)
+			{
+				GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GRAPHICS);
+				RenderSettingsGraphics(PageView);
+			}
+			else if(g_Config.m_UiSettingsPage == SETTINGS_SOUND)
+			{
+				GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_SOUND);
+				RenderSettingsSound(PageView);
+			}
+			else if(g_Config.m_UiSettingsPage == SETTINGS_DDNET)
+			{
+				GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_DDNET);
+				RenderSettingsDDNet(PageView);
+			}
+			else if(g_Config.m_UiSettingsPage == SETTINGS_ASSETS)
+			{
+				GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_ASSETS);
+				RenderSettingsCustom(PageView);
+			}
+			else if(g_Config.m_UiSettingsPage == SETTINGS_TCLIENT)
+			{
+				GameClient()->m_MenuBackground.ChangePosition(13);
+				RenderSettingsTClient(PageView);
+			}
+			else if(g_Config.m_UiSettingsPage == SETTINGS_PROFILES)
+			{
+				GameClient()->m_MenuBackground.ChangePosition(14);
+				RenderSettingsTClientProfiles(PageView);
+			}
+			else if(g_Config.m_UiSettingsPage == SETTINGS_CONFIGS)
+			{
+				GameClient()->m_MenuBackground.ChangePosition(15);
+				RenderSettingsTClientConfigs(PageView);
+			}
+			else if(g_Config.m_UiSettingsPage == SETTINGS_BESTCLIENT)
+			{
+				GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_RESERVED0);
+				RenderSettingsBestClient(PageView);
+			}
+			else
+			{
+				dbg_assert_failed("ui_settings_page invalid");
+			}
+		};
+
+		auto RenderRestartWarning = [&](CUIRect RestartBar) {
+			CUIRect RestartWarning, RestartButton;
+			RestartBar.VSplitRight(125.0f, &RestartWarning, &RestartButton);
+			RestartWarning.VSplitRight(10.0f, &RestartWarning, nullptr);
+			if(m_NeedRestartUpdate)
+			{
+				TextRender()->TextColor(0.7f, 1.0f, 0.7f, 1.0f);
+				Ui()->DoLabel(&RestartWarning, Localize("BestClient update downloaded! Restart to apply."), 14.0f, TEXTALIGN_ML);
+				TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+			}
+			else
+			{
+				Ui()->DoLabel(&RestartWarning, Localize("You must restart the game for all settings to take effect."), 14.0f, TEXTALIGN_ML);
+			}
+
+			static CButtonContainer s_RestartButton;
+			if(DoButton_Menu(&s_RestartButton, Localize("Restart"), 0, &RestartButton))
+			{
+#if defined(CONF_AUTOUPDATE)
+				if(m_NeedRestartUpdate)
+				{
+					Updater()->ApplyUpdateAndRestart();
+				}
+				else
+#endif
+				if(Client()->State() == IClient::STATE_ONLINE || GameClient()->Editor()->HasUnsavedData())
+				{
+					m_Popup = POPUP_RESTART;
+				}
+				else
+				{
+					Client()->Restart();
+				}
+			}
+		};
+
+		auto RenderSettingsPageNewLayout = [&](CUIRect PageView) {
+			const int Page = g_Config.m_UiSettingsPage;
+			const bool NeedsAutoScroll = Page == SETTINGS_GENERAL || Page == SETTINGS_APPEARANCE;
+
+			if(!NeedsAutoScroll)
+			{
+				RenderSettingsPage(PageView);
+				return;
+			}
+
+			static CScrollRegion s_aNewLayoutScrollRegions[SETTINGS_LENGTH];
+			CScrollRegionParams ScrollParams;
+			ScrollParams.m_ScrollUnit = 60.0f;
+			ScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
+			ScrollParams.m_ScrollbarMargin = 5.0f;
+
+			vec2 ScrollOffset(0.0f, 0.0f);
+			CScrollRegion &ScrollRegion = s_aNewLayoutScrollRegions[Page];
+			ScrollRegion.Begin(&PageView, &ScrollOffset, &ScrollParams);
+
+			CUIRect ContentView = PageView;
+			ContentView.y += ScrollOffset.y;
+			const float ContentStartY = ContentView.y;
+			const float VirtualHeightBoost = Page == SETTINGS_GENERAL ? 120.0f : 96.0f;
+			ContentView.h = PageView.h + VirtualHeightBoost;
+
+			RenderSettingsPage(ContentView);
+
+			CUIRect ContentRect = ContentView;
+			ContentRect.y = ContentStartY;
+			ContentRect.h = ContentView.h;
+			ScrollRegion.AddRect(ContentRect);
+			ScrollRegion.End();
+		};
+
 		CUIRect ContentView, RootTabBar, RestartBar;
 		MainView.Draw(ms_ColorTabbarActive, IGraphics::CORNER_B, 10.0f);
 		MainView.Margin(20.0f, &MainView);
@@ -2830,12 +2817,13 @@ void CMenus::RenderSettings(CUIRect MainView)
 		return;
 	}
 
-	// old settings layout
+	// render background
 	CUIRect Button, TabBar, RestartBar;
 	MainView.VSplitRight(120.0f, &MainView, &TabBar);
 	MainView.Draw(ms_ColorTabbarActive, IGraphics::CORNER_B, 10.0f);
 	MainView.Margin(20.0f, &MainView);
 
+	const bool NeedRestart = m_NeedRestartGraphics || m_NeedRestartSound || m_NeedRestartUpdate;
 	if(NeedRestart)
 	{
 		MainView.HSplitBottom(20.0f, &MainView, &RestartBar);
@@ -2845,24 +2833,10 @@ void CMenus::RenderSettings(CUIRect MainView)
 	TabBar.HSplitTop(50.0f, &Button, &TabBar);
 	Button.Draw(ms_ColorTabbarActive, IGraphics::CORNER_BR, 10.0f);
 
-	static const int s_aVisibleSettingsPages[] = {
-		SETTINGS_GENERAL,
-		SETTINGS_TEE,
-		SETTINGS_APPEARANCE,
-		SETTINGS_CONTROLS,
-		SETTINGS_GRAPHICS,
-		SETTINGS_SOUND,
-		SETTINGS_DDNET,
-		SETTINGS_ASSETS,
-		SETTINGS_TCLIENT,
-		SETTINGS_BESTCLIENT,
-		SETTINGS_UCLIENT,
-		SETTINGS_PROFILES,
-		SETTINGS_CONFIGS,
-	};
-
-	const char *apTabs[] = {
+	const char *apTabs[SETTINGS_LENGTH] = {
+		Localize("Language"),
 		Localize("General"),
+		Localize("Player"),
 		Client()->IsSixup() ? "Tee 0.7" : Localize("Tee"),
 		Localize("Appearance"),
 		Localize("Controls"),
@@ -2872,25 +2846,141 @@ void CMenus::RenderSettings(CUIRect MainView)
 		Localize("Assets"),
 		TCLocalize("TClient"),
 		"BestClient",
-		"UClient",
 		Localize("Profiles"),
-		Localize("Configs")};
+		Localize("Configs"),
+		"UClient"};
 
-	static_assert(std::size(s_aVisibleSettingsPages) == std::size(apTabs));
-	static CButtonContainer s_aTabButtons[std::size(s_aVisibleSettingsPages)];
+	if(g_Config.m_UiSettingsPage == SETTINGS_LANGUAGE)
+		g_Config.m_UiSettingsPage = SETTINGS_GENERAL;
+	if(g_Config.m_UiSettingsPage == SETTINGS_PLAYER)
+		g_Config.m_UiSettingsPage = SETTINGS_TEE;
 
-	for(size_t i = 0; i < std::size(s_aVisibleSettingsPages); i++)
+	static CButtonContainer s_aTabButtons[SETTINGS_LENGTH];
+
+	for(int i = 0; i < SETTINGS_LENGTH; i++)
 	{
-		const int Page = s_aVisibleSettingsPages[i];
+		if(i == SETTINGS_LANGUAGE || i == SETTINGS_PLAYER)
+			continue;
 		TabBar.HSplitTop(10.0f, nullptr, &TabBar);
 		TabBar.HSplitTop(26.0f, &Button, &TabBar);
-		if(DoButton_MenuTab(&s_aTabButtons[i], apTabs[i], g_Config.m_UiSettingsPage == Page, &Button, IGraphics::CORNER_R, &m_aAnimatorsSettingsTab[Page]))
-			g_Config.m_UiSettingsPage = Page;
+		if(DoButton_MenuTab(&s_aTabButtons[i], apTabs[i], g_Config.m_UiSettingsPage == i, &Button, IGraphics::CORNER_R, &m_aAnimatorsSettingsTab[i]))
+			g_Config.m_UiSettingsPage = i;
 	}
 
-	RenderSettingsPage(MainView);
+	if(g_Config.m_UiSettingsPage == SETTINGS_LANGUAGE)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_LANGUAGE);
+		RenderLanguageSettings(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_GENERAL)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GENERAL);
+		RenderSettingsGeneral(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_PLAYER)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_PLAYER);
+		RenderSettingsPlayer(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_TEE)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_TEE);
+		if(Client()->IsSixup())
+			RenderSettingsTee7(MainView);
+		else
+			RenderSettingsTee(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_APPEARANCE)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_APPEARANCE);
+		RenderSettingsAppearance(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_CONTROLS)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_CONTROLS);
+		m_MenusSettingsControls.Render(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_GRAPHICS)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GRAPHICS);
+		RenderSettingsGraphics(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_SOUND)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_SOUND);
+		RenderSettingsSound(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_DDNET)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_DDNET);
+		RenderSettingsDDNet(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_ASSETS)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_ASSETS);
+		RenderSettingsCustom(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_TCLIENT)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(13);
+		RenderSettingsTClient(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_PROFILES)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(14);
+		RenderSettingsTClientProfiles(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_CONFIGS)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(15);
+		RenderSettingsTClientConfigs(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_BESTCLIENT)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_RESERVED0);
+		RenderSettingsBestClient(MainView);
+	}
+	else
+	{
+		dbg_assert_failed("ui_settings_page invalid");
+	}
+
 	if(NeedRestart)
-		RenderRestartWarning(RestartBar);
+	{
+		CUIRect RestartWarning, RestartButton;
+		RestartBar.VSplitRight(125.0f, &RestartWarning, &RestartButton);
+		RestartWarning.VSplitRight(10.0f, &RestartWarning, nullptr);
+		if(m_NeedRestartUpdate)
+		{
+			TextRender()->TextColor(0.7f, 1.0f, 0.7f, 1.0f);
+			Ui()->DoLabel(&RestartWarning, Localize("BestClient update downloaded! Restart to apply."), 14.0f, TEXTALIGN_ML);
+			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+		}
+		else
+		{
+			Ui()->DoLabel(&RestartWarning, Localize("You must restart the game for all settings to take effect."), 14.0f, TEXTALIGN_ML);
+		}
+
+		static CButtonContainer s_RestartButton;
+		if(DoButton_Menu(&s_RestartButton, Localize("Restart"), 0, &RestartButton))
+		{
+#if defined(CONF_AUTOUPDATE)
+			if(m_NeedRestartUpdate)
+			{
+				Updater()->ApplyUpdateAndRestart();
+			}
+			else
+#endif
+			if(Client()->State() == IClient::STATE_ONLINE || GameClient()->Editor()->HasUnsavedData())
+			{
+				m_Popup = POPUP_RESTART;
+			}
+			else
+			{
+				Client()->Restart();
+			}
+		}
+	}
 }
 
 bool CMenus::RenderHslaScrollbars(CUIRect *pRect, unsigned int *pColor, bool Alpha, float DarkestLight)
@@ -2912,7 +3002,7 @@ bool CMenus::RenderHslaScrollbars(CUIRect *pRect, unsigned int *pColor, bool Alp
 
 	Preview.Draw(ColorRGBA(0.15f, 0.15f, 0.15f, 1.0f), IGraphics::CORNER_ALL, 4.0f + PreviewMargin);
 	Preview.Margin(PreviewMargin, &Preview);
-	DoButton_ColorPicker(&Preview, pColor, Alpha);
+	Preview.Draw(color_cast<ColorRGBA>(Color.UnclampLighting(DarkestLight)), IGraphics::CORNER_ALL, 4.0f + PreviewMargin);
 
 	auto &&RenderHueRect = [&](CUIRect *pColorRect) {
 		float CurXOff = pColorRect->x;
@@ -3805,7 +3895,7 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		Ui()->DoLabel_AutoLineSize(Localize("Colors of the hook collision line:"), 13.0f,
 			TEXTALIGN_ML, &LeftView, HeadlineHeight);
 
-		Ui()->DoButtonLogic(&s_HookCollToolTip, 0, &LeftView, BUTTONFLAG_NONE, CUi::EButtonSoundType::SILENT); // Just for the tooltip, result ignored
+		Ui()->DoButtonLogic(&s_HookCollToolTip, 0, &LeftView, BUTTONFLAG_NONE); // Just for the tooltip, result ignored
 		GameClient()->m_Tooltips.DoToolTip(&s_HookCollToolTip, &LeftView, Localize("Your movements are not taken into account when calculating the line colors"));
 		DoLine_ColorPicker(&s_HookCollNoCollResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("When nothing is hookable", "Hook collision line color"), &g_Config.m_ClHookCollColorNoColl, ColorRGBA(1.0f, 0.0f, 0.0f, 1.0f), false);
 		DoLine_ColorPicker(&s_HookCollHookableCollResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("When something is hookable", "Hook collision line color"), &g_Config.m_ClHookCollColorHookableColl, ColorRGBA(130.0f / 255.0f, 232.0f / 255.0f, 160.0f / 255.0f, 1.0f), false);
@@ -4194,7 +4284,7 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 		GameClient()->m_Camera.SetZoom(CCamera::ZoomStepsToValue(g_Config.m_ClDefaultZoom - 10), g_Config.m_ClSmoothZoomTime, true);
 
 	Left.HSplitTop(20.0f, &Button, &Left);
-	Ui()->DoScrollbarOption(&g_Config.m_ClMouseMaxDistance, &g_Config.m_ClMouseMaxDistance, &Button, Localize("Max cursor distance"), 1, 1000);
+	Ui()->DoScrollbarOption(&g_Config.m_ClMouseMaxDistance, &g_Config.m_ClMouseMaxDistance, &Button, Localize("Mouse max distance"), 1, 1000);
 
 	Right.HSplitTop(20.0f, &Button, &Right);
 	Ui()->DoScrollbarOption(&g_Config.m_ClPredictionMargin, &g_Config.m_ClPredictionMargin, &Button, Localize("Prediction margin"), 1, 300);
@@ -4338,14 +4428,12 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 	// Updater
 #if defined(CONF_AUTOUPDATE)
 	{
-		const bool NeedUpdate = GameClient()->m_BestClient.NeedUpdate();
 		IUpdater::EUpdaterState State = Updater()->GetCurrentState();
 
-		// Update Button
 		char aBuf[256];
-		if(NeedUpdate && State <= IUpdater::CLEAN)
+		if(State == IUpdater::VERSION_AVAILABLE)
 		{
-			str_format(aBuf, sizeof(aBuf), "BestClient %s Is release", GameClient()->m_BestClient.m_aVersionStr);
+			str_format(aBuf, sizeof(aBuf), Localize("BestClient %s is out!"), Updater()->GetLatestVersionString());
 			UpdaterRect.VSplitLeft(TextRender()->TextWidth(14.0f, aBuf, -1, -1.0f) + 10.0f, &UpdaterRect, &Button);
 			Button.VSplitLeft(100.0f, &Button, nullptr);
 			static CButtonContainer s_ButtonUpdate;
@@ -4354,11 +4442,11 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 				Updater()->InitiateUpdate();
 			}
 		}
-		else if(State >= IUpdater::GETTING_MANIFEST && State < IUpdater::NEED_RESTART)
+		else if(State == IUpdater::DOWNLOADING)
 			str_copy(aBuf, Localize("Updating…"));
 		else if(State == IUpdater::NEED_RESTART)
 		{
-			str_copy(aBuf, Localize("BestClient Client updated!"));
+			str_copy(aBuf, Localize("BestClient updated!"));
 			m_NeedRestartUpdate = true;
 		}
 		else
@@ -4369,7 +4457,7 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 			static CButtonContainer s_ButtonUpdate;
 			if(DoButton_Menu(&s_ButtonUpdate, Localize("Check now"), 0, &Button))
 			{
-				GameClient()->m_BestClient.FetchBestClientInfo();
+				Updater()->CheckForUpdate();
 			}
 		}
 		Ui()->DoLabel(&UpdaterRect, aBuf, 14.0f, TEXTALIGN_ML);

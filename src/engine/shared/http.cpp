@@ -660,11 +660,8 @@ void CHttp::RunLoop()
 	while(m_State == CHttp::RUNNING)
 	{
 		static int s_NextTimeout = std::numeric_limits<int>::max();
-		// Keep poll intervals short only while requests are running so external aborts
-		// are handled quickly without busy-waking the thread while idle.
-		const int PollTimeoutMs = m_RunningRequests.empty() ? s_NextTimeout : minimum(s_NextTimeout, 100);
 		int Events = 0;
-		const CURLMcode PollCode = curl_multi_poll(m_pMultiH, nullptr, 0, PollTimeoutMs, &Events);
+		const CURLMcode PollCode = curl_multi_poll(m_pMultiH, nullptr, 0, s_NextTimeout, &Events);
 
 		// We may have been woken up for a shutdown
 		if(m_Shutdown)
@@ -717,24 +714,6 @@ void CHttp::RunLoop()
 			}
 		}
 
-		for(auto RequestIt = m_RunningRequests.begin(); RequestIt != m_RunningRequests.end();)
-		{
-			if(!RequestIt->second->m_Abort.load(std::memory_order_relaxed))
-			{
-				++RequestIt;
-				continue;
-			}
-
-			void *pHandle = RequestIt->first;
-			auto pRequest = std::move(RequestIt->second);
-			RequestIt = m_RunningRequests.erase(RequestIt);
-
-			str_copy(pRequest->m_aErr, "Aborted");
-			pRequest->OnCompletionInternal(pHandle, CURLE_ABORTED_BY_CALLBACK);
-			curl_multi_remove_handle(m_pMultiH, pHandle);
-			curl_easy_cleanup(pHandle);
-		}
-
 		decltype(m_PendingRequests) NewRequests = {};
 		Lock.lock();
 		std::swap(m_PendingRequests, NewRequests);
@@ -745,14 +724,6 @@ void CHttp::RunLoop()
 			auto &pRequest = NewRequests.front();
 			if(g_Config.m_DbgCurl)
 				log_debug("http", "task: %s %s", CHttpRequest::GetRequestType(pRequest->m_Type), pRequest->m_aUrl);
-
-			if(pRequest->m_Abort.load(std::memory_order_relaxed))
-			{
-				str_copy(pRequest->m_aErr, "Aborted");
-				pRequest->OnCompletionInternal(nullptr, CURLE_ABORTED_BY_CALLBACK);
-				NewRequests.pop_front();
-				continue;
-			}
 
 			if(pRequest->ShouldSkipRequest())
 			{

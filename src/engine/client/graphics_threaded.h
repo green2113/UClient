@@ -131,8 +131,6 @@ public:
 		CMD_CLEAR,
 		CMD_RENDER,
 		CMD_RENDER_TEX3D,
-		CMD_RENDER_GLOW_RECT,
-		CMD_RENDER_BLUR_RECT,
 
 		// opengl 2.0+ commands (some are just emulated and only exist in opengl 3.3+)
 		CMD_CREATE_BUFFER_OBJECT, // create vbo
@@ -239,29 +237,6 @@ public:
 		EPrimitiveType m_PrimType;
 		unsigned m_PrimCount;
 		SVertexTex3DStream *m_pVertices; // you should use the command buffer data to allocate vertices for this command
-	};
-
-	struct SCommand_RenderGlowRect : public SCommand
-	{
-		SCommand_RenderGlowRect() :
-			SCommand(CMD_RENDER_GLOW_RECT) {}
-		SState m_State;
-		SVertex *m_pVertices; // expanded quad, local coords are stored in texcoords
-		vec2 m_RectSize;
-		float m_GlowRadius;
-		float m_GlowStrength;
-	};
-
-	struct SCommand_RenderBlurRect : public SCommand
-	{
-		SCommand_RenderBlurRect() :
-			SCommand(CMD_RENDER_BLUR_RECT) {}
-		SState m_State;
-		SVertex *m_pVertices; // expanded quad, local coords are stored in texcoords
-		vec2 m_RectSize;
-		float m_Rounding;
-		float m_BlurRadius;
-		float m_BlurStrength;
 	};
 
 	struct SCommand_CreateBufferObject : public SCommand
@@ -806,14 +781,6 @@ class CGraphics_Threaded : public IEngineGraphics
 	EDrawing m_Drawing;
 	bool m_DoScreenshot;
 	char m_aScreenshotName[IO_MAX_PATH_LENGTH];
-	// Deferred screenshot readback: avoids blocking WaitForIdle() in ScreenshotDirect().
-	// The image pointer is stable (member address), so the backend can write into it
-	// across frames. On the next Swap() we check IsIdle() and schedule the save job.
-	// m_aPendingScreenshotName captures the name at enqueue time so a subsequent
-	// TakeScreenshot() call cannot overwrite it before the save job is dispatched.
-	CImageInfo m_PendingScreenshotImage;
-	char m_aPendingScreenshotName[IO_MAX_PATH_LENGTH] = {};
-	bool m_HasPendingScreenshot = false;
 
 	CTextureHandle m_NullTexture;
 
@@ -829,10 +796,6 @@ class CGraphics_Threaded : public IEngineGraphics
 	// is a non full windowed (in a sense that the viewport won't include the whole window),
 	// forced viewport, so that it justifies our UI ratio needs
 	bool m_IsForcedViewport = false;
-
-	// deferred resize: set by GotResized() so WaitForIdle() runs at frame boundary (Swap)
-	// instead of blocking the main thread in the event handler
-	bool m_PendingResizeListenerNotify = false;
 
 	struct SVertexArrayInfo
 	{
@@ -1116,8 +1079,6 @@ public:
 	}
 
 	void QuadsDrawTL(const CQuadItem *pArray, int Num) override;
-	void DrawGlowRect(const SGlowRectRenderInfo &Info) override;
-	void DrawBlurRect(const SBlurRectRenderInfo &Info) override;
 
 	void QuadsTex3DDrawTL(const CQuadItem *pArray, int Num) override;
 
@@ -1312,8 +1273,8 @@ public:
 	TGLBackendReadPresentedImageData &GetReadPresentedImageDataFuncUnsafe() override;
 
 	// TClient
-	void SetScreenAspectOverrideEnabled(bool Enabled) override;
 	void SetForcedAspect(bool Force, bool ApplyCustomAspect = true) override;
+	void SetScreenAspectOverrideEnabled(bool Enabled) override;
 };
 
 extern bool g_GraphicsForcedAspect;

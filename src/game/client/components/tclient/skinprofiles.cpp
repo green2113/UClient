@@ -12,7 +12,7 @@ static void EscapeParam(char *pDst, const char *pSrc, int Size)
 }
 
 CProfile::CProfile(int BodyColor, int FeetColor, int CountryFlag, int Emote, const char *pSkinName, const char *pName, const char *pClan,
-	const char *pAssetEntities, const char *pAssetGame, const char *pAssetEmoticons, const char *pAssetParticles,
+	const char *pAssetEntities, const char *pAssetGame, const char *pAssetParticles,
 	const char *pAssetHud, const char *pAssetExtras, const char *pAssetCursor, const char *pAssetArrow)
 {
 	m_BodyColor = BodyColor;
@@ -24,7 +24,6 @@ CProfile::CProfile(int BodyColor, int FeetColor, int CountryFlag, int Emote, con
 	str_copy(m_Clan, pClan);
 	str_copy(m_AssetEntities, pAssetEntities);
 	str_copy(m_AssetGame, pAssetGame);
-	str_copy(m_AssetEmoticons, pAssetEmoticons);
 	str_copy(m_AssetParticles, pAssetParticles);
 	str_copy(m_AssetHud, pAssetHud);
 	str_copy(m_AssetExtras, pAssetExtras);
@@ -38,7 +37,7 @@ void CSkinProfiles::OnConsoleInit()
 	if(pConfigManager)
 		pConfigManager->RegisterCallback(ConfigSaveCallback, this, ConfigDomain::TCLIENTPROFILES);
 
-	Console()->Register("add_profile", "i[body] i[feet] i[flag] i[emote] s[skin] s[name] s[clan] ?s[entities] ?s[game] ?s[emoticons] ?s[particles] ?s[hud] ?s[extras] ?s[cursor] ?s[arrow]", CFGFLAG_CLIENT, ConAddProfile, this, "Add a profile");
+	Console()->Register("add_profile", "i[body] i[feet] i[flag] i[emote] s[skin] s[name] s[clan] ?s[entities] ?s[game] ?s[particles] ?s[hud] ?s[extras] ?s[cursor] ?s[arrow]", CFGFLAG_CLIENT, ConAddProfile, this, "Add a profile");
 }
 
 void CSkinProfiles::ConAddProfile(IConsole::IResult *pResult, void *pUserData)
@@ -47,16 +46,16 @@ void CSkinProfiles::ConAddProfile(IConsole::IResult *pResult, void *pUserData)
 	pSelf->AddProfile(
 		pResult->GetInteger(0), pResult->GetInteger(1), pResult->GetInteger(2), pResult->GetInteger(3),
 		pResult->GetString(4), pResult->GetString(5), pResult->GetString(6),
-		pResult->GetString(7), pResult->GetString(8), pResult->GetString(9), pResult->GetString(10),
-		pResult->GetString(11), pResult->GetString(12), pResult->GetString(13), pResult->GetString(14));
+		pResult->GetString(7), pResult->GetString(8), pResult->GetString(9),
+		pResult->GetString(10), pResult->GetString(11), pResult->GetString(12), pResult->GetString(13));
 }
 
 void CSkinProfiles::AddProfile(int BodyColor, int FeetColor, int CountryFlag, int Emote, const char *pSkinName, const char *pName, const char *pClan,
-	const char *pAssetEntities, const char *pAssetGame, const char *pAssetEmoticons, const char *pAssetParticles,
+	const char *pAssetEntities, const char *pAssetGame, const char *pAssetParticles,
 	const char *pAssetHud, const char *pAssetExtras, const char *pAssetCursor, const char *pAssetArrow)
 {
 	CProfile Profile = CProfile(BodyColor, FeetColor, CountryFlag, Emote, pSkinName, pName, pClan,
-		pAssetEntities, pAssetGame, pAssetEmoticons, pAssetParticles, pAssetHud, pAssetExtras, pAssetCursor, pAssetArrow);
+		pAssetEntities, pAssetGame, pAssetParticles, pAssetHud, pAssetExtras, pAssetCursor, pAssetArrow);
 	m_Profiles.push_back(Profile);
 }
 
@@ -158,9 +157,8 @@ void CSkinProfiles::ConfigSaveCallback(IConfigManager *pConfigManager, void *pUs
 
 		const char *apAssets[] = {
 			Profile.m_AssetEntities, Profile.m_AssetGame,
-			Profile.m_AssetEmoticons, Profile.m_AssetParticles,
-			Profile.m_AssetHud, Profile.m_AssetExtras,
-			Profile.m_AssetCursor, Profile.m_AssetArrow,
+			Profile.m_AssetParticles, Profile.m_AssetHud,
+			Profile.m_AssetExtras, Profile.m_AssetCursor, Profile.m_AssetArrow,
 		};
 		for(const char *pAsset : apAssets)
 		{

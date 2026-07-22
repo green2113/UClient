@@ -63,7 +63,7 @@ void CQuadEditTracker::EndQuadTrack()
 		if(QuadPointChanged(vCurrentPoints, QuadIndex))
 		{
 			vpActions.push_back(std::make_shared<CEditorActionEditQuadPoint>(Map(), m_GroupIndex, m_LayerIndex, QuadIndex, m_InitialPoints[QuadIndex], vCurrentPoints));
-			Editor()->m_DuoSession.NotifyQuadPoints(m_GroupIndex, m_LayerIndex, QuadIndex, pQuad.m_aPoints);
+			Editor()->m_MultiMappingSession.NotifyQuadPoints(m_GroupIndex, m_LayerIndex, QuadIndex, pQuad.m_aPoints);
 		}
 	}
 
@@ -150,13 +150,13 @@ void CQuadEditTracker::EndQuadPropTrack(EQuadProp Prop)
 		{
 			auto vCurrentPoints = std::vector<CPoint>(std::begin(Quad.m_aPoints), std::end(Quad.m_aPoints));
 			if(QuadPointChanged(vCurrentPoints, QuadIndex))
-				Editor()->m_DuoSession.NotifyQuadPoints(m_GroupIndex, m_LayerIndex, QuadIndex, Quad.m_aPoints);
+				Editor()->m_MultiMappingSession.NotifyQuadPoints(m_GroupIndex, m_LayerIndex, QuadIndex, Quad.m_aPoints);
 		}
 		else if(Prop == EQuadProp::COLOR)
 		{
 			auto vCurrentColors = std::vector<CColor>(std::begin(Quad.m_aColors), std::end(Quad.m_aColors));
 			if(QuadColorChanged(vCurrentColors, QuadIndex))
-				Editor()->m_DuoSession.NotifyQuadColors(m_GroupIndex, m_LayerIndex, QuadIndex, Quad.m_aColors);
+				Editor()->m_MultiMappingSession.NotifyQuadColors(m_GroupIndex, m_LayerIndex, QuadIndex, Quad.m_aColors);
 		}
 		else
 		{
@@ -171,7 +171,7 @@ void CQuadEditTracker::EndQuadPropTrack(EQuadProp Prop)
 				Value = Quad.m_ColorEnvOffset;
 
 			if(Value != m_PreviousValues[QuadIndex])
-				Editor()->m_DuoSession.NotifyQuadProp(m_GroupIndex, m_LayerIndex, QuadIndex, (int)Prop, Value);
+				Editor()->m_MultiMappingSession.NotifyQuadProp(m_GroupIndex, m_LayerIndex, QuadIndex, (int)Prop, Value);
 		}
 	}
 }
@@ -288,7 +288,7 @@ void CQuadEditTracker::EndQuadPointPropTrack(EQuadPointProp Prop)
 	if(!vpActions.empty())
 		Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionBulk>(Map(), vpActions));
 
-	// Sync to partner — RecordAction doesn't call Redo, so action Notify won't fire
+	// Sync to partner вЂ” RecordAction doesn't call Redo, so action Notify won't fire
 	for(auto QuadIndex : m_vSelectedQuads)
 	{
 		auto &Quad = m_pLayer->m_vQuads[QuadIndex];
@@ -296,7 +296,7 @@ void CQuadEditTracker::EndQuadPointPropTrack(EQuadPointProp Prop)
 		{
 			auto vCurrentPoints = std::vector<CPoint>(std::begin(Quad.m_aPoints), std::end(Quad.m_aPoints));
 			if(QuadPointChanged(vCurrentPoints, QuadIndex))
-				Editor()->m_DuoSession.NotifyQuadPoints(m_GroupIndex, m_LayerIndex, QuadIndex, Quad.m_aPoints);
+				Editor()->m_MultiMappingSession.NotifyQuadPoints(m_GroupIndex, m_LayerIndex, QuadIndex, Quad.m_aPoints);
 		}
 		else
 		{
@@ -313,7 +313,7 @@ void CQuadEditTracker::EndQuadPointPropTrack(EQuadPointProp Prop)
 						Value = Quad.m_aTexcoords[v].y;
 
 					if(Value != m_PreviousValuesPoint[QuadIndex][v][Prop])
-						Editor()->m_DuoSession.NotifyQuadPointProp(m_GroupIndex, m_LayerIndex, QuadIndex, v, (int)Prop, Value);
+						Editor()->m_MultiMappingSession.NotifyQuadPointProp(m_GroupIndex, m_LayerIndex, QuadIndex, v, (int)Prop, Value);
 				}
 			}
 		}
@@ -334,7 +334,7 @@ void CQuadEditTracker::EndQuadPointPropTrackAll()
 				if(QuadPointChanged(vCurrentPoints, QuadIndex))
 				{
 					vpActions.push_back(std::make_shared<CEditorActionEditQuadPoint>(Map(), m_GroupIndex, m_LayerIndex, QuadIndex, m_InitialPoints[QuadIndex], vCurrentPoints));
-					Editor()->m_DuoSession.NotifyQuadPoints(m_GroupIndex, m_LayerIndex, QuadIndex, Quad.m_aPoints);
+					Editor()->m_MultiMappingSession.NotifyQuadPoints(m_GroupIndex, m_LayerIndex, QuadIndex, Quad.m_aPoints);
 				}
 			}
 			else
@@ -345,16 +345,22 @@ void CQuadEditTracker::EndQuadPointPropTrackAll()
 					if(m_SelectedQuadPoints & (1 << v))
 					{
 						if(Prop == EQuadPointProp::COLOR)
+						{
 							Value = PackColor(Quad.m_aColors[v]);
+						}
 						else if(Prop == EQuadPointProp::TEX_U)
+						{
 							Value = Quad.m_aTexcoords[v].x;
+						}
 						else if(Prop == EQuadPointProp::TEX_V)
+						{
 							Value = Quad.m_aTexcoords[v].y;
+						}
 
 						if(Value != m_PreviousValuesPoint[QuadIndex][v][Prop])
 						{
 							vpActions.push_back(std::make_shared<CEditorActionEditQuadPointProp>(Map(), m_GroupIndex, m_LayerIndex, QuadIndex, v, Prop, m_PreviousValuesPoint[QuadIndex][v][Prop], Value));
-							Editor()->m_DuoSession.NotifyQuadPointProp(m_GroupIndex, m_LayerIndex, QuadIndex, v, (int)Prop, Value);
+							Editor()->m_MultiMappingSession.NotifyQuadPointProp(m_GroupIndex, m_LayerIndex, QuadIndex, v, (int)Prop, Value);
 						}
 					}
 				}
@@ -494,8 +500,8 @@ void CSoundSourceOperationTracker::End()
 			Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionMoveSoundSource>(
 				Map(), Map()->m_SelectedGroup, m_LayerIndex, Map()->m_SelectedSoundSource, m_Data.m_OriginalPoint, m_pSource->m_Position));
 			// sync final position to partner (RecordAction doesn't call Redo)
-			Editor()->m_DuoSession.NotifyEditSoundSource(Map()->m_SelectedGroup, m_LayerIndex, Map()->m_SelectedSoundSource, (int)ESoundProp::POS_X, m_pSource->m_Position.x);
-			Editor()->m_DuoSession.NotifyEditSoundSource(Map()->m_SelectedGroup, m_LayerIndex, Map()->m_SelectedSoundSource, (int)ESoundProp::POS_Y, m_pSource->m_Position.y);
+			Editor()->m_MultiMappingSession.NotifyEditSoundSource(Map()->m_SelectedGroup, m_LayerIndex, Map()->m_SelectedSoundSource, (int)ESoundProp::POS_X, m_pSource->m_Position.x);
+			Editor()->m_MultiMappingSession.NotifyEditSoundSource(Map()->m_SelectedGroup, m_LayerIndex, Map()->m_SelectedSoundSource, (int)ESoundProp::POS_Y, m_pSource->m_Position.y);
 		}
 	}
 
@@ -526,18 +532,18 @@ void CLayerPropTracker::OnEnd(ELayerProp Prop, int Value)
 			m_CurrentLayerIndex >= 0 && m_CurrentLayerIndex < (int)Map()->m_vpGroups[m_CurrentGroupIndex]->m_vpLayers.size())
 		{
 			auto pLayer = Map()->m_vpGroups[m_CurrentGroupIndex]->m_vpLayers[m_CurrentLayerIndex];
-			Editor()->m_DuoSession.NotifyDelLayer(m_OriginalGroupIndex, m_OriginalLayerIndex);
-			Editor()->m_DuoSession.NotifyAddLayer(m_CurrentGroupIndex, m_CurrentLayerIndex, pLayer->m_Type, pLayer->m_aName, GetLayerSubType(pLayer));
-			Editor()->m_DuoSession.SyncLayerContents(m_CurrentGroupIndex, m_CurrentLayerIndex);
+			Editor()->m_MultiMappingSession.NotifyDelLayer(m_OriginalGroupIndex, m_OriginalLayerIndex);
+			Editor()->m_MultiMappingSession.NotifyAddLayer(m_CurrentGroupIndex, m_CurrentLayerIndex, pLayer->m_Type, pLayer->m_aName, GetLayerSubType(pLayer));
+			Editor()->m_MultiMappingSession.SyncLayerContents(m_CurrentGroupIndex, m_CurrentLayerIndex);
 		}
 	}
 	else
 	{
 		Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionEditLayerProp>(Map(), m_CurrentGroupIndex, m_CurrentLayerIndex, Prop, m_OriginalValue, Value));
 		if(Prop == ELayerProp::HQ)
-			Editor()->m_DuoSession.NotifyLayerFlags(m_CurrentGroupIndex, m_CurrentLayerIndex, m_pObject->m_Flags);
+			Editor()->m_MultiMappingSession.NotifyLayerFlags(m_CurrentGroupIndex, m_CurrentLayerIndex, m_pObject->m_Flags);
 		else if(Prop == ELayerProp::ORDER)
-			Editor()->m_DuoSession.NotifyLayerProp(m_CurrentGroupIndex, m_OriginalValue, (int)ELayerProp::ORDER, Value);
+			Editor()->m_MultiMappingSession.NotifyLayerProp(m_CurrentGroupIndex, m_OriginalValue, (int)ELayerProp::ORDER, Value);
 	}
 }
 
@@ -597,15 +603,15 @@ void CLayerTilesPropTracker::OnEnd(ETilesProp Prop, int Value)
 
 	// RecordAction doesn't call Redo, so sync live edit to partner here
 	if(Prop == ETilesProp::WIDTH)
-		Editor()->m_DuoSession.NotifyLayerProp(m_OriginalGroupIndex, m_OriginalLayerIndex, (int)ETilesProp::WIDTH, Value);
+		Editor()->m_MultiMappingSession.NotifyLayerProp(m_OriginalGroupIndex, m_OriginalLayerIndex, (int)ETilesProp::WIDTH, Value);
 	else if(Prop == ETilesProp::HEIGHT)
-		Editor()->m_DuoSession.NotifyLayerProp(m_OriginalGroupIndex, m_OriginalLayerIndex, (int)ETilesProp::HEIGHT, Value);
+		Editor()->m_MultiMappingSession.NotifyLayerProp(m_OriginalGroupIndex, m_OriginalLayerIndex, (int)ETilesProp::HEIGHT, Value);
 	else if(Prop == ETilesProp::SHIFT)
-		Editor()->m_DuoSession.NotifyFullSync();
+		Editor()->m_MultiMappingSession.NotifyFullSync();
 	else if(Prop == ETilesProp::IMAGE)
-		Editor()->m_DuoSession.NotifySetImage(m_OriginalGroupIndex, m_OriginalLayerIndex, m_pObject->m_Image);
+		Editor()->m_MultiMappingSession.NotifySetImage(m_OriginalGroupIndex, m_OriginalLayerIndex, m_pObject->m_Image);
 	else if(Prop == ETilesProp::COLOR || Prop == ETilesProp::COLOR_ENV || Prop == ETilesProp::COLOR_ENV_OFFSET || Prop == ETilesProp::AUTOMAPPER || Prop == ETilesProp::SEED || Prop == ETilesProp::LIVE_GAMETILES)
-		Editor()->m_DuoSession.NotifyLayerProp(m_OriginalGroupIndex, m_OriginalLayerIndex, (int)Prop, Value);
+		Editor()->m_MultiMappingSession.NotifyLayerProp(m_OriginalGroupIndex, m_OriginalLayerIndex, (int)Prop, Value);
 }
 
 int CLayerTilesPropTracker::PropToValue(ETilesProp Prop)
@@ -688,9 +694,9 @@ void CLayerGroupPropTracker::OnEnd(EGroupProp Prop, int Value)
 {
 	Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionEditGroupProp>(Map(), Map()->m_SelectedGroup, Prop, m_OriginalValue, Value));
 	if(Prop == EGroupProp::ORDER)
-		Editor()->m_DuoSession.NotifyGroupProp(m_OriginalValue, (int)Prop, Value);
+		Editor()->m_MultiMappingSession.NotifyGroupProp(m_OriginalValue, (int)Prop, Value);
 	else
-		Editor()->m_DuoSession.NotifyGroupProp(Map()->m_SelectedGroup, (int)Prop, Value);
+		Editor()->m_MultiMappingSession.NotifyGroupProp(Map()->m_SelectedGroup, (int)Prop, Value);
 }
 
 int CLayerGroupPropTracker::PropToValue(EGroupProp Prop)
@@ -718,7 +724,7 @@ void CLayerQuadsPropTracker::OnEnd(ELayerQuadsProp Prop, int Value)
 	auto pAction = std::make_shared<CEditorActionEditLayerQuadsProp>(Map(), m_OriginalGroupIndex, m_OriginalLayerIndex, Prop, m_OriginalValue, Value);
 	Map()->m_EditorHistory.RecordAction(pAction);
 	if(Prop == ELayerQuadsProp::IMAGE)
-		Editor()->m_DuoSession.NotifySetImage(m_OriginalGroupIndex, m_OriginalLayerIndex, m_pObject->m_Image);
+		Editor()->m_MultiMappingSession.NotifySetImage(m_OriginalGroupIndex, m_OriginalLayerIndex, m_pObject->m_Image);
 }
 
 int CLayerQuadsPropTracker::PropToValue(ELayerQuadsProp Prop)
@@ -748,7 +754,7 @@ int CLayerSoundsPropTracker::PropToValue(ELayerSoundsProp Prop)
 void CSoundSourcePropTracker::OnEnd(ESoundProp Prop, int Value)
 {
 	Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionEditSoundSourceProp>(Map(), m_OriginalGroupIndex, m_OriginalLayerIndex, Map()->m_SelectedSoundSource, Prop, m_OriginalValue, Value));
-	Editor()->m_DuoSession.NotifyEditSoundSource(m_OriginalGroupIndex, m_OriginalLayerIndex, Map()->m_SelectedSoundSource, (int)Prop, Value);
+	Editor()->m_MultiMappingSession.NotifyEditSoundSource(m_OriginalGroupIndex, m_OriginalLayerIndex, Map()->m_SelectedSoundSource, (int)Prop, Value);
 }
 
 int CSoundSourcePropTracker::PropToValue(ESoundProp Prop)
@@ -775,7 +781,7 @@ void CSoundSourceRectShapePropTracker::OnEnd(ERectangleShapeProp Prop, int Value
 {
 	Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionEditRectSoundSourceShapeProp>(Map(), m_OriginalGroupIndex, m_OriginalLayerIndex, Map()->m_SelectedSoundSource, Prop, m_OriginalValue, Value));
 	int PropId = (Prop == ERectangleShapeProp::RECTANGLE_WIDTH) ? 21 : 22;
-	Editor()->m_DuoSession.NotifyEditSoundSource(m_OriginalGroupIndex, m_OriginalLayerIndex, Map()->m_SelectedSoundSource, PropId, Value);
+	Editor()->m_MultiMappingSession.NotifyEditSoundSource(m_OriginalGroupIndex, m_OriginalLayerIndex, Map()->m_SelectedSoundSource, PropId, Value);
 }
 
 int CSoundSourceRectShapePropTracker::PropToValue(ERectangleShapeProp Prop)
@@ -791,7 +797,7 @@ int CSoundSourceRectShapePropTracker::PropToValue(ERectangleShapeProp Prop)
 void CSoundSourceCircleShapePropTracker::OnEnd(ECircleShapeProp Prop, int Value)
 {
 	Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionEditCircleSoundSourceShapeProp>(Map(), m_OriginalGroupIndex, m_OriginalLayerIndex, Map()->m_SelectedSoundSource, Prop, m_OriginalValue, Value));
-	Editor()->m_DuoSession.NotifyEditSoundSource(m_OriginalGroupIndex, m_OriginalLayerIndex, Map()->m_SelectedSoundSource, 21, Value);
+	Editor()->m_MultiMappingSession.NotifyEditSoundSource(m_OriginalGroupIndex, m_OriginalLayerIndex, Map()->m_SelectedSoundSource, 21, Value);
 }
 
 int CSoundSourceCircleShapePropTracker::PropToValue(ECircleShapeProp Prop)

@@ -39,6 +39,7 @@ public:
 
 	void LoadBackground();
 	const char *MapName() const { return m_aMapName; }
+	const CMenuMediaBackground &MediaBackground() const { return m_MediaBackground; }
 };
 
 #endif

@@ -20,7 +20,6 @@
 
 #include <generated/client_data.h>
 
-#include <game/client/components/bestclient/version.h>
 #include <game/client/components/tclient/colored_parts.h>
 #include <game/client/gameclient.h>
 #include <game/client/ui.h>
@@ -1454,7 +1453,7 @@ void CGameConsole::OnRender()
 			const float LogTop = RowHeight;
 			const float LogBottom = y;
 			const float LogHeight = maximum(0.0f, LogBottom - LogTop);
-			const float RailMargin = 5.0f; // keep in sync with CUi::DoScrollbarV
+			const float RailMargin = 5.0f;
 			const float RailWidth = maximum(0.0f, CONSOLE_SCROLLBAR_WIDTH - 2.0f * RailMargin);
 			const float MinRailHeight = RailWidth * 3.0f;
 			const float MinScrollbarHeight = MinRailHeight + 2.0f * RailMargin;
@@ -1597,7 +1596,7 @@ void CGameConsole::OnRender()
 			CTextCursor EntryCursor;
 			EntryCursor.SetPosition(vec2(0.0f, y - OffsetY));
 			EntryCursor.m_FontSize = FONT_SIZE;
-			EntryCursor.m_LineWidth = pConsole->LogLineWidth();
+			EntryCursor.m_LineWidth = Screen.w - 10.0f;
 			EntryCursor.m_MaxLines = pEntry->m_LineCount;
 			EntryCursor.m_LineSpacing = LINE_SPACING;
 			EntryCursor.m_CalculateSelectionMode = (m_ConsoleState == CONSOLE_OPEN && pConsole->m_MousePress.y < pConsole->m_BoundingBox.m_Y && (pConsole->m_MouseIsPress || (pConsole->m_CurSelStart != pConsole->m_CurSelEnd) || pConsole->m_HasSelection)) ? TEXT_CURSOR_SELECTION_MODE_CALCULATE : TEXT_CURSOR_SELECTION_MODE_NONE;
@@ -1724,19 +1723,18 @@ void CGameConsole::OnRender()
 		str_copy(aBuf, "v" GAME_VERSION " on " CONF_PLATFORM_STRING " " CONF_ARCH_STRING);
 		TextRender()->Text(Screen.w - TextRender()->TextWidth(FONT_SIZE, aBuf) - 10.0f, FONT_SIZE / 2.f, FONT_SIZE, aBuf);
 
-		// UClient: render primary client version
-		const char *pClientVersion = "UClient " UCLIENT_VERSION;
+		// BestClient: render primary client version
+		const char *pClientVersion = CLIENT_NAME " " CLIENT_RELEASE_VERSION;
 		TextRender()->Text(Screen.w - TextRender()->TextWidth(FONT_SIZE, pClientVersion) - 10.0f, FONT_SIZE / 2.0f + FONT_SIZE * 1.5f, FONT_SIZE, pClientVersion);
+
+		// UClient: render underlying base client version
+		const char *pBaseClientVersion = "UClient " UCLIENT_VERSION;
+		TextRender()->Text(Screen.w - TextRender()->TextWidth(FONT_SIZE, pBaseClientVersion) - 10.0f, FONT_SIZE / 2.0f + FONT_SIZE * 3.0f, FONT_SIZE, pBaseClientVersion);
 	}
 }
 
 void CGameConsole::OnMessage(int MsgType, void *pRawMsg)
 {
-}
-
-bool CGameConsole::OnCursorMove(float, float, IInput::ECursorType)
-{
-	return IsActive();
 }
 
 bool CGameConsole::OnInput(const IInput::CEvent &Event)
@@ -1747,16 +1745,15 @@ bool CGameConsole::OnInput(const IInput::CEvent &Event)
 	if((Event.m_Key >= KEY_F1 && Event.m_Key <= KEY_F12) || (Event.m_Key >= KEY_F13 && Event.m_Key <= KEY_F24))
 		return false;
 
-	#if defined(CONF_PLATFORM_ANDROID)
+#if defined(CONF_PLATFORM_ANDROID)
 	if(Event.m_Key == KEY_ESCAPE && (Event.m_Flags & IInput::FLAG_PRESS) &&
 		(Graphics()->IsScreenKeyboardShown() || Client()->GlobalTime() < m_IgnoreAndroidEscapeUntil))
 	{
-		// The Android back key is translated to escape globally. Ignore it while
-		// the software keyboard is visible or has just been requested, as SDL may
-		// report the keyboard as hidden for a few frames while it is opening.
+		// Android back → ESC. Ignore while the soft keyboard is visible or has just been
+		// requested — SDL may report it as hidden for a few frames while it is opening.
 		return true;
 	}
-	#endif
+#endif
 
 	if(Event.m_Key == KEY_ESCAPE && (Event.m_Flags & IInput::FLAG_PRESS) && !CurrentConsole()->m_Searching)
 		Toggle(m_ConsoleType);
@@ -1792,13 +1789,10 @@ void CGameConsole::Toggle(int Type)
 		if(m_ConsoleState == CONSOLE_CLOSED || m_ConsoleState == CONSOLE_CLOSING)
 		{
 			Ui()->SetEnabled(false);
-			Ui()->SetHotItem(nullptr);
-			Ui()->SetActiveItem(nullptr);
-			Ui()->ClearHotkeys();
 			m_ConsoleState = CONSOLE_OPENING;
-			#if defined(CONF_PLATFORM_ANDROID)
+#if defined(CONF_PLATFORM_ANDROID)
 			m_IgnoreAndroidEscapeUntil = Client()->GlobalTime() + m_StateChangeDuration + 0.25f;
-			#endif
+#endif
 		}
 		else
 		{

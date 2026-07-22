@@ -100,32 +100,6 @@ class CGLSLPrimitiveProgram : public CGLSLTWProgram
 public:
 };
 
-class CGLSLGlowProgram : public CGLSLTWProgram
-{
-public:
-	int m_LocRectSize;
-	int m_LocGlowRadius;
-	int m_LocGlowStrength;
-};
-
-class CGLSLBlurProgram : public CGLSLTWProgram
-{
-public:
-	int m_LocTextureSize;
-	int m_LocRectSize;
-	int m_LocRounding;
-	int m_LocBlurRadius;
-	int m_LocBlurStrength;
-};
-
-class CGLSLBlurKawaseProgram : public CGLSLProgram
-{
-public:
-	int m_LocTextureSampler;
-	int m_LocTexelSize;
-	int m_LocOffset;
-};
-
 class CGLSLPrimitiveExProgram : public CGLSLTWProgram
 {
 public:

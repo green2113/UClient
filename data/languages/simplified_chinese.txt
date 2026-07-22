@@ -2510,7 +2510,7 @@ Start and connect to local server
 Add clan
 == 添加战队
 
-info
+Info
 == 信息
 
 Button browser

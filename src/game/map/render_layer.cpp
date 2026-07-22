@@ -14,7 +14,6 @@
 #include <game/localization.h>
 #include <game/mapitems.h>
 
-#include <algorithm>
 #include <array>
 #include <chrono>
 
@@ -162,16 +161,6 @@ bool CRenderLayerTile::CTileLayerVisuals::Init(unsigned int Width, unsigned int 
 	if constexpr(sizeof(unsigned int) >= sizeof(ptrdiff_t))
 		if(Width >= std::numeric_limits<std::ptrdiff_t>::max() || Height >= std::numeric_limits<std::ptrdiff_t>::max())
 			return false;
-
-	// Guard against multiplication overflow before computing the total tile count.
-	// Both Width and Height are unsigned int, so the product can silently wrap on
-	// 32-bit targets or produce an enormous allocation on 64-bit ones.
-	static constexpr size_t s_MaxTiles = (size_t)4096 * 4096; // 16M tiles ~64 MB worst case
-	if((size_t)Width > s_MaxTiles / (size_t)Height)
-	{
-		log_warn("render_layer", "tile layer too large (%ux%u, max %zu tiles), skipping", Width, Height, s_MaxTiles);
-		return false;
-	}
 
 	m_vTilesOfLayer.resize((size_t)Height * (size_t)Width);
 
@@ -326,7 +315,7 @@ void CRenderLayerTile::RenderTileLayer(const ColorRGBA &Color, const CRenderLaye
 		}
 		else
 		{
-			const float Percent = std::clamp(Params.m_FpsFogZoomPercent, 1, 100) / 100.0f;
+			const float Percent = std::clamp(Params.m_FpsFogZoomPercent, 1, 120) / 100.0f;
 			HalfW = (ScreenX1 - ScreenX0) * Percent * 0.5f;
 			HalfH = (ScreenY1 - ScreenY0) * Percent * 0.5f;
 		}

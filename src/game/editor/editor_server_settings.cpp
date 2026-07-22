@@ -1,4 +1,4 @@
-﻿#include "editor_server_settings.h"
+#include "editor_server_settings.h"
 
 #include "editor.h"
 
@@ -79,7 +79,7 @@ void CEditor::RenderServerSettingsEditor(CUIRect View, bool ShowServerSettingsEd
 	{
 		Map()->m_ServerSettingsHistory.RecordAction(std::make_shared<CEditorCommandAction>(Map(), CEditorCommandAction::EType::DELETE, &s_CommandSelectedIndex, s_CommandSelectedIndex, Map()->m_vSettings[s_CommandSelectedIndex].m_aCommand));
 
-		m_DuoSession.NotifySettingDel(s_CommandSelectedIndex);
+		m_MultiMappingSession.NotifySettingDel(s_CommandSelectedIndex);
 		Map()->m_vSettings.erase(Map()->m_vSettings.begin() + s_CommandSelectedIndex);
 		if(s_CommandSelectedIndex >= (int)Map()->m_vSettings.size())
 			s_CommandSelectedIndex = Map()->m_vSettings.size() - 1;
@@ -100,7 +100,7 @@ void CEditor::RenderServerSettingsEditor(CUIRect View, bool ShowServerSettingsEd
 	{
 		Map()->m_ServerSettingsHistory.RecordAction(std::make_shared<CEditorCommandAction>(Map(), CEditorCommandAction::EType::MOVE_DOWN, &s_CommandSelectedIndex, s_CommandSelectedIndex));
 
-		m_DuoSession.NotifySettingMove(s_CommandSelectedIndex, 1);
+		m_MultiMappingSession.NotifySettingMove(s_CommandSelectedIndex, 1);
 		std::swap(Map()->m_vSettings[s_CommandSelectedIndex], Map()->m_vSettings[s_CommandSelectedIndex + 1]);
 		s_CommandSelectedIndex++;
 		Map()->OnModify();
@@ -116,7 +116,7 @@ void CEditor::RenderServerSettingsEditor(CUIRect View, bool ShowServerSettingsEd
 	{
 		Map()->m_ServerSettingsHistory.RecordAction(std::make_shared<CEditorCommandAction>(Map(), CEditorCommandAction::EType::MOVE_UP, &s_CommandSelectedIndex, s_CommandSelectedIndex));
 
-		m_DuoSession.NotifySettingMove(s_CommandSelectedIndex, -1);
+		m_MultiMappingSession.NotifySettingMove(s_CommandSelectedIndex, -1);
 		std::swap(Map()->m_vSettings[s_CommandSelectedIndex], Map()->m_vSettings[s_CommandSelectedIndex - 1]);
 		s_CommandSelectedIndex--;
 		Map()->OnModify();
@@ -172,7 +172,7 @@ void CEditor::RenderServerSettingsEditor(CUIRect View, bool ShowServerSettingsEd
 			if(Found)
 			{
 				Map()->m_ServerSettingsHistory.RecordAction(std::make_shared<CEditorCommandAction>(Map(), CEditorCommandAction::EType::DELETE, &s_CommandSelectedIndex, s_CommandSelectedIndex, Map()->m_vSettings[s_CommandSelectedIndex].m_aCommand));
-				m_DuoSession.NotifySettingDel(s_CommandSelectedIndex);
+				m_MultiMappingSession.NotifySettingDel(s_CommandSelectedIndex);
 				Map()->m_vSettings.erase(Map()->m_vSettings.begin() + s_CommandSelectedIndex);
 				s_CommandSelectedIndex = i > s_CommandSelectedIndex ? i - 1 : i;
 			}
@@ -181,7 +181,7 @@ void CEditor::RenderServerSettingsEditor(CUIRect View, bool ShowServerSettingsEd
 				const char *pStr = m_SettingsCommandInput.GetString();
 				Map()->m_ServerSettingsHistory.RecordAction(std::make_shared<CEditorCommandAction>(Map(), CEditorCommandAction::EType::EDIT, &s_CommandSelectedIndex, s_CommandSelectedIndex, Map()->m_vSettings[s_CommandSelectedIndex].m_aCommand, pStr));
 				str_copy(Map()->m_vSettings[s_CommandSelectedIndex].m_aCommand, pStr);
-				m_DuoSession.NotifySettingEdit(s_CommandSelectedIndex, pStr);
+				m_MultiMappingSession.NotifySettingEdit(s_CommandSelectedIndex, pStr);
 			}
 		}
 		else
@@ -191,7 +191,7 @@ void CEditor::RenderServerSettingsEditor(CUIRect View, bool ShowServerSettingsEd
 				const char *pStr = m_SettingsCommandInput.GetString();
 				Map()->m_ServerSettingsHistory.RecordAction(std::make_shared<CEditorCommandAction>(Map(), CEditorCommandAction::EType::EDIT, &s_CommandSelectedIndex, s_CommandSelectedIndex, Map()->m_vSettings[s_CommandSelectedIndex].m_aCommand, pStr));
 				str_copy(Map()->m_vSettings[s_CommandSelectedIndex].m_aCommand, pStr);
-				m_DuoSession.NotifySettingEdit(s_CommandSelectedIndex, pStr);
+				m_MultiMappingSession.NotifySettingEdit(s_CommandSelectedIndex, pStr);
 			}
 			else
 			{ // If not, then editing the current selected line will result in the deletion of the colliding line, and the editing of the selected line
@@ -203,13 +203,13 @@ void CEditor::RenderServerSettingsEditor(CUIRect View, bool ShowServerSettingsEd
 				Map()->m_ServerSettingsHistory.BeginBulk();
 				// Delete the colliding command
 				Map()->m_ServerSettingsHistory.RecordAction(std::make_shared<CEditorCommandAction>(Map(), CEditorCommandAction::EType::DELETE, &s_CommandSelectedIndex, CollidingCommandIndex, Map()->m_vSettings[CollidingCommandIndex].m_aCommand));
-				m_DuoSession.NotifySettingDel(CollidingCommandIndex);
+				m_MultiMappingSession.NotifySettingDel(CollidingCommandIndex);
 				Map()->m_vSettings.erase(Map()->m_vSettings.begin() + CollidingCommandIndex);
 				// Edit the selected command
 				s_CommandSelectedIndex = s_CommandSelectedIndex > CollidingCommandIndex ? s_CommandSelectedIndex - 1 : s_CommandSelectedIndex;
 				Map()->m_ServerSettingsHistory.RecordAction(std::make_shared<CEditorCommandAction>(Map(), CEditorCommandAction::EType::EDIT, &s_CommandSelectedIndex, s_CommandSelectedIndex, Map()->m_vSettings[s_CommandSelectedIndex].m_aCommand, pStr));
 				str_copy(Map()->m_vSettings[s_CommandSelectedIndex].m_aCommand, pStr);
-				m_DuoSession.NotifySettingEdit(s_CommandSelectedIndex, pStr);
+				m_MultiMappingSession.NotifySettingEdit(s_CommandSelectedIndex, pStr);
 
 				Map()->m_ServerSettingsHistory.EndBulk(aBuf);
 			}
@@ -237,14 +237,14 @@ void CEditor::RenderServerSettingsEditor(CUIRect View, bool ShowServerSettingsEd
 			const char *pStr = m_SettingsCommandInput.GetString();
 			Map()->m_ServerSettingsHistory.RecordAction(std::make_shared<CEditorCommandAction>(Map(), CEditorCommandAction::EType::EDIT, &s_CommandSelectedIndex, s_CommandSelectedIndex, Map()->m_vSettings[s_CommandSelectedIndex].m_aCommand, pStr));
 			str_copy(Map()->m_vSettings[s_CommandSelectedIndex].m_aCommand, pStr);
-			m_DuoSession.NotifySettingEdit(s_CommandSelectedIndex, pStr);
+			m_MultiMappingSession.NotifySettingEdit(s_CommandSelectedIndex, pStr);
 		}
 		else if(CanAdd)
 		{
 			Map()->m_vSettings.emplace_back(m_SettingsCommandInput.GetString());
 			s_CommandSelectedIndex = Map()->m_vSettings.size() - 1;
 			Map()->m_ServerSettingsHistory.RecordAction(std::make_shared<CEditorCommandAction>(Map(), CEditorCommandAction::EType::ADD, &s_CommandSelectedIndex, s_CommandSelectedIndex, Map()->m_vSettings[s_CommandSelectedIndex].m_aCommand));
-			m_DuoSession.NotifySettingAdd(Map()->m_vSettings[s_CommandSelectedIndex].m_aCommand);
+			m_MultiMappingSession.NotifySettingAdd(Map()->m_vSettings[s_CommandSelectedIndex].m_aCommand);
 		}
 
 		Map()->OnModify();

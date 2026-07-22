@@ -2,8 +2,6 @@
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
 #ifndef GAME_CLIENT_COMPONENTS_INFOMESSAGES_H
 #define GAME_CLIENT_COMPONENTS_INFOMESSAGES_H
-#include <cstdint>
-
 #include <engine/textrender.h>
 
 #include <game/client/component.h>

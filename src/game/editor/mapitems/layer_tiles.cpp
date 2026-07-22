@@ -87,12 +87,12 @@ void CLayerTiles::SetTile(int x, int y, CTile Tile)
 	SetTileIgnoreHistory(x, y, Tile);
 	RecordStateChange(x, y, CurrentTile, Tile);
 
-	if(Editor()->m_DuoSession.IsLive())
+	if(Editor()->m_MultiMappingSession.IsLive())
 	{
 		int GroupIdx = -1, LayerIdx = -1;
-		Editor()->m_DuoSession.FindGroupAndLayer(this, GroupIdx, LayerIdx);
+		Editor()->m_MultiMappingSession.FindGroupAndLayer(this, GroupIdx, LayerIdx);
 		if(GroupIdx >= 0 && LayerIdx >= 0)
-			Editor()->m_DuoSession.NotifyTileEdit(GroupIdx, LayerIdx, x, y, Tile.m_Index, Tile.m_Flags);
+			Editor()->m_MultiMappingSession.NotifyTileEdit(GroupIdx, LayerIdx, x, y, Tile.m_Index, Tile.m_Flags);
 	}
 
 	if(m_FillGameTile != -1 && m_LiveGameTiles)
@@ -286,7 +286,7 @@ void CLayerTiles::BrushSelecting(CUIRect Rect)
 	Graphics()->QuadsDrawTL(&QuadItem, 1);
 	Graphics()->QuadsEnd();
 	char aBuf[16];
-	str_format(aBuf, sizeof(aBuf), "%d⨯%d", ConvertX(Rect.w), ConvertY(Rect.h));
+	str_format(aBuf, sizeof(aBuf), "%d×%d", ConvertX(Rect.w), ConvertY(Rect.h));
 	TextRender()->Text(Rect.x + 3.0f, Rect.y + 3.0f, Editor()->m_ShowPicker ? 15.0f : Editor()->MapView()->ScaleLength(15.0f), aBuf, -1.0f);
 }
 
@@ -638,13 +638,13 @@ void CLayerTiles::BrushFlipY()
 
 void CLayerTiles::BrushRotate(float Amount)
 {
-	int Rotation = (round_to_int(360.0f * Amount / (pi * 2)) / 90) % 4; // 0=0°, 1=90°, 2=180°, 3=270°
+	int Rotation = (round_to_int(360.0f * Amount / (pi * 2)) / 90) % 4; // 0=0В°, 1=90В°, 2=180В°, 3=270В°
 	if(Rotation < 0)
 		Rotation += 4;
 
 	if(Rotation == 1 || Rotation == 3)
 	{
-		// 90° rotation
+		// 90В° rotation
 		CTile *pTempData = new CTile[m_Width * m_Height];
 		mem_copy(pTempData, m_pTiles, (size_t)m_Width * m_Height * sizeof(CTile));
 		CTile *pDst = m_pTiles;
@@ -1123,7 +1123,7 @@ CUi::EPopupMenuFunctionResult CLayerTiles::RenderProperties(CUIRect *pToolBox)
 			}
 		}
 		if(!Map()->m_vSelectedLayers.empty())
-			Editor()->m_DuoSession.NotifySetImage(Map()->m_SelectedGroup, Map()->m_vSelectedLayers[0], m_Image);
+			Editor()->m_MultiMappingSession.NotifySetImage(Map()->m_SelectedGroup, Map()->m_vSelectedLayers[0], m_Image);
 	}
 	else if(Prop == ETilesProp::COLOR)
 	{
@@ -1189,7 +1189,7 @@ CUi::EPopupMenuFunctionResult CLayerTiles::RenderProperties(CUIRect *pToolBox)
 	// Since we may also squeeze a tile changes action, we want both to appear as one, thus using a bulk
 	Map()->m_EditorHistory.EndBulk(0);
 
-	// Duo sync: notify partner of property change (only on final state, not during drag)
+	// MultiMapping sync: notify partner of property change (only on final state, not during drag)
 	if((State == EEditState::END || State == EEditState::ONE_GO) && !Map()->m_vSelectedLayers.empty())
 	{
 		if(Prop == ETilesProp::WIDTH || Prop == ETilesProp::HEIGHT ||
@@ -1197,7 +1197,7 @@ CUi::EPopupMenuFunctionResult CLayerTiles::RenderProperties(CUIRect *pToolBox)
 			Prop == ETilesProp::SEED || Prop == ETilesProp::COLOR_ENV ||
 			Prop == ETilesProp::COLOR_ENV_OFFSET || Prop == ETilesProp::LIVE_GAMETILES)
 		{
-			Editor()->m_DuoSession.NotifyLayerProp(Map()->m_SelectedGroup, Map()->m_vSelectedLayers[0], (int)Prop, NewVal);
+			Editor()->m_MultiMappingSession.NotifyLayerProp(Map()->m_SelectedGroup, Map()->m_vSelectedLayers[0], (int)Prop, NewVal);
 		}
 	}
 

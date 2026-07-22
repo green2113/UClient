@@ -586,6 +586,7 @@ void CSpectator::OnRender()
 			else
 				RenderBestClientIcon(Graphics(), IconRect, Indicator.IsPlayerDeveloper(pInfo->m_ClientId));
 		}
+
 		if(g_Config.m_ClShowIds)
 		{
 			char aClientId[16];

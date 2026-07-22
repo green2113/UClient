@@ -85,11 +85,7 @@ void CCustomCommunities::LoadCustomCommunitiesDDNetInfo()
 
 void CCustomCommunities::OnInit()
 {
-#if defined(CONF_HEADLESS_CLIENT)
-	LoadCustomCommunitiesDDNetInfo();
-#else
 	DownloadCustomCommunitiesDDNetInfo();
-#endif
 }
 
 void CCustomCommunities::OnConsoleInit()

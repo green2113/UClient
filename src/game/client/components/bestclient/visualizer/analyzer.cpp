@@ -1,6 +1,5 @@
+/* Copyright © 2026 BestProject Team */
 #include "analyzer.h"
-
-#include "source_priority.h"
 
 #include <base/math.h>
 

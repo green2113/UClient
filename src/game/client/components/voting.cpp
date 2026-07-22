@@ -9,11 +9,13 @@
 
 #include <generated/protocol.h>
 
-#include <game/client/components/scoreboard.h>
 #include <game/client/components/hud_layout.h>
+#include <game/client/components/scoreboard.h>
 #include <game/client/components/sounds.h>
 #include <game/client/gameclient.h>
 #include <game/localization.h>
+
+#include <algorithm>
 
 void CVoting::ConCallvote(IConsole::IResult *pResult, void *pUserData)
 {
@@ -335,48 +337,32 @@ void CVoting::OnMessage(int MsgType, void *pRawMsg)
 	}
 }
 
-void CVoting::Render()
-{
-	RenderHud(false);
-}
-
 CUIRect CVoting::GetHudRect(float HudWidth, float HudHeight, bool ForcePreview) const
 {
-	(void)HudHeight;
 	if(!ForcePreview && !HudLayout::IsEnabled(HudLayout::MODULE_VOTES))
-		return CUIRect{0.0f, 0.0f, 0.0f, 0.0f};
-
+		return {0.0f, 0.0f, 0.0f, 0.0f};
 	if(g_Config.m_TcMiniVoteHud > 0)
-	{
-		const auto Layout = HudLayout::Get(HudLayout::MODULE_VOTES, HudWidth, HudLayout::CANVAS_HEIGHT);
-		const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
-		CUIRect Rect = {Layout.m_X, Layout.m_Y, 70.0f * Scale, 35.0f * Scale};
-		Rect.x = std::clamp(Rect.x, 0.0f, maximum(0.0f, HudWidth - Rect.w));
-		Rect.y = std::clamp(Rect.y, 0.0f, maximum(0.0f, HudLayout::CANVAS_HEIGHT - Rect.h));
-		if(!ForcePreview && !IsVoting())
-			Rect.h = 0.0f;
-		return Rect;
-	}
-
-	const auto Layout = HudLayout::Get(HudLayout::MODULE_VOTES, HudWidth, HudLayout::CANVAS_HEIGHT);
-	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
-	CUIRect Rect = {Layout.m_X, Layout.m_Y, 120.0f * Scale, 38.0f * Scale};
-	Rect.x = std::clamp(Rect.x, 0.0f, maximum(0.0f, HudWidth - Rect.w));
-	Rect.y = std::clamp(Rect.y, 0.0f, maximum(0.0f, HudLayout::CANVAS_HEIGHT - Rect.h));
+		return {0.0f, 0.0f, 0.0f, 0.0f};
 	if(!ForcePreview && !IsVoting())
-		Rect.h = 0.0f;
+		return {0.0f, 0.0f, 0.0f, 0.0f};
+
+	const auto Layout = HudLayout::Get(HudLayout::MODULE_VOTES, HudWidth, HudHeight);
+	const bool HasOverride = HudLayout::HasRuntimeOverride(HudLayout::MODULE_VOTES);
+	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
+	CUIRect Rect = {HasOverride ? Layout.m_X : 0.0f, HasOverride ? Layout.m_Y : 60.0f, 120.0f * Scale, 38.0f * Scale};
+	Rect.x = std::clamp(Rect.x, 0.0f, std::max(0.0f, HudWidth - Rect.w));
+	Rect.y = std::clamp(Rect.y, 0.0f, std::max(0.0f, HudHeight - Rect.h));
 	return Rect;
 }
 
-void CVoting::RenderHud(bool ForcePreview)
+void CVoting::Render(bool ForcePreview)
 {
 	if(!ForcePreview && !HudLayout::IsEnabled(HudLayout::MODULE_VOTES))
 		return;
-
 	if(!ForcePreview && ((!g_Config.m_ClShowVotesAfterVoting && !GameClient()->m_Scoreboard.IsActive() && TakenChoice()) || !IsVoting()))
 		return;
 	const int Seconds = ForcePreview ? 12 : SecondsLeft();
-	if(Seconds < 0)
+	if(!ForcePreview && Seconds < 0)
 	{
 		OnReset();
 		return;
@@ -385,18 +371,20 @@ void CVoting::RenderHud(bool ForcePreview)
 	// TClient
 	if(g_Config.m_TcMiniVoteHud > 0)
 	{
-		GameClient()->m_TClient.RenderMiniVoteHud();
+		if(!ForcePreview)
+			GameClient()->m_TClient.RenderMiniVoteHud();
 		return;
 	}
 
-	const float HudHeight = HudLayout::CANVAS_HEIGHT;
+	const float HudHeight = 300.0f;
 	const float HudWidth = HudHeight * Graphics()->ScreenAspect();
+	CUIRect View = GetHudRect(HudWidth, HudHeight, ForcePreview);
+	if(View.w <= 0.0f || View.h <= 0.0f)
+		return;
 	const auto Layout = HudLayout::Get(HudLayout::MODULE_VOTES, HudWidth, HudHeight);
 	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
-	CUIRect Outer = GetHudRect(HudWidth, HudHeight, true);
-	const int Corners = HudLayout::BackgroundCorners(IGraphics::CORNER_ALL, Outer.x, Outer.y, Outer.w, Outer.h, HudWidth, HudHeight);
-	Outer.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.34f), Corners, 2.35f * Scale);
-	CUIRect View = Outer;
+	const int Corners = HudLayout::BackgroundCorners(IGraphics::CORNER_ALL, View.x, View.y, View.w, View.h, HudWidth, HudHeight);
+	View.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.4f), Corners, 3.0f * Scale);
 	View.Margin(3.0f * Scale, &View);
 
 	SLabelProperties Props;

@@ -153,7 +153,7 @@ void CLayerSounds::BrushPlace(CLayer *pBrush, vec2 WorldPos)
 		m_vSources.push_back(NewSource);
 		vAddedSources.push_back(NewSource);
 		int SourceIdx = (int)m_vSources.size() - 1;
-		Editor()->m_DuoSession.NotifyAddSoundSource(Map()->m_SelectedGroup, Map()->m_vSelectedLayers[0], SourceIdx);
+		Editor()->m_MultiMappingSession.NotifyAddSoundSource(Map()->m_SelectedGroup, Map()->m_vSelectedLayers[0], SourceIdx);
 	}
 	Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionSoundPlace>(Map(), Map()->m_SelectedGroup, Map()->m_vSelectedLayers[0], vAddedSources));
 	Map()->OnModify();
@@ -183,7 +183,7 @@ CUi::EPopupMenuFunctionResult CLayerSounds::RenderProperties(CUIRect *pToolBox)
 		else
 			m_Sound = -1;
 		if(State == EEditState::END || State == EEditState::ONE_GO)
-			Editor()->m_DuoSession.NotifySetSound(Map()->m_SelectedGroup, Map()->m_vSelectedLayers[0], m_Sound);
+			Editor()->m_MultiMappingSession.NotifySetSound(Map()->m_SelectedGroup, Map()->m_vSelectedLayers[0], m_Sound);
 	}
 
 	Map()->m_LayerSoundsPropTracker.End(Prop, State);

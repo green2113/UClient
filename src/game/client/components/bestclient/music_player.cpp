@@ -387,7 +387,7 @@ namespace
 		if(!ForcePreview && (pGameInfo->m_GameStateFlags & GAMESTATEFLAG_SUDDENDEATH))
 		{
 			Result.m_Valid = true;
-			Result.m_Text = BCLocalize("Sudden Death");
+			Result.m_Text = Localize("Sudden Death");
 			return Result;
 		}
 
@@ -1412,7 +1412,7 @@ namespace
 
 	static std::string MusicPlayerPrimaryText(const SNowPlayingSnapshot &Snapshot)
 	{
-		return Snapshot.m_Title.empty() ? BCLocalize("No media") : Snapshot.m_Title;
+		return Snapshot.m_Title.empty() ? Localize("No media") : Snapshot.m_Title;
 	}
 
 	static std::string MusicPlayerMiniText(const SNowPlayingSnapshot &Snapshot, const SGameTimerDisplay &GameTimer)
@@ -2135,6 +2135,9 @@ public:
 	CMusicPlayer::SHudReservation m_HudReservation;
 	SMusicPlayerPalette m_Palette = DefaultMusicPlayerPalette();
 	ColorRGBA m_Accent = DefaultMusicPlayerAccent();
+	SArtworkColorAnalysis m_LastArtAnalysis;
+	int m_LastAppliedColorMode = -1;
+	unsigned m_LastAppliedStaticColor = 0;
 	bool m_DebugLastProviderValid = false;
 	std::string m_DebugLastProviderTrackKey;
 	EMusicPlaybackState m_DebugLastProviderPlaybackState = EMusicPlaybackState::STOPPED;
@@ -2298,20 +2301,6 @@ public:
 		}
 	}
 
-	void UpdatePaletteFromBytes(IGraphics *pGraphics, const unsigned char *pData, size_t DataSize, const char *pContextName)
-	{
-		m_Palette = DefaultMusicPlayerPalette();
-		m_Accent = DefaultMusicPlayerAccent();
-		CImageInfo Image;
-		if(!MediaDecoder::DecodeImageToRgba(pGraphics, pData, DataSize, pContextName, Image))
-			return;
-
-		const SArtworkColorAnalysis Analysis = AnalyzeArtworkBaseColor(Image);
-		m_Accent = SelectMusicPlayerAccent(Analysis);
-		m_Palette = BuildPaletteFromAccent(m_Accent);
-		Image.Free();
-	}
-
 	void ResetArtwork(IGraphics *pGraphics)
 	{
 		if(m_pArtRequest)
@@ -2332,8 +2321,26 @@ public:
 		m_ArtWidth = 0;
 		m_ArtHeight = 0;
 		m_ArtAnimationStart = 0;
+		m_LastArtAnalysis = SArtworkColorAnalysis();
 		m_Palette = DefaultMusicPlayerPalette();
 		m_Accent = DefaultMusicPlayerAccent();
+	}
+
+	// Re-applies the current color mode / static color config to the cached
+	// artwork analysis, so tweaking those settings updates the HUD immediately
+	// instead of waiting for the next track/art change to recompute the palette.
+	void RefreshPaletteForConfig()
+	{
+		if(m_LastArtAnalysis.m_Valid)
+		{
+			m_Accent = SelectMusicPlayerAccent(m_LastArtAnalysis);
+			m_Palette = BuildPaletteFromAccent(m_Accent);
+		}
+		else
+		{
+			m_Accent = DefaultMusicPlayerAccent();
+			m_Palette = DefaultMusicPlayerPalette();
+		}
 	}
 
 	void Reset(IGraphics *pGraphics)
@@ -2393,11 +2400,13 @@ public:
 				if(!m_OptArtDecodedFrames->m_vFrames.empty())
 				{
 					const SArtworkColorAnalysis Analysis = AnalyzeArtworkBaseColor(m_OptArtDecodedFrames->m_vFrames.front().m_Image);
+					m_LastArtAnalysis = Analysis;
 					m_Accent = SelectMusicPlayerAccent(Analysis);
 					m_Palette = BuildPaletteFromAccent(m_Accent);
 				}
 				else
 				{
+					m_LastArtAnalysis = SArtworkColorAnalysis();
 					m_Palette = DefaultMusicPlayerPalette();
 					m_Accent = DefaultMusicPlayerAccent();
 				}
@@ -2410,6 +2419,7 @@ public:
 				m_ArtHeight = 0;
 				m_ArtAnimated = false;
 				m_ArtAnimationStart = 0;
+				m_LastArtAnalysis = SArtworkColorAnalysis();
 				m_Palette = DefaultMusicPlayerPalette();
 				m_Accent = DefaultMusicPlayerAccent();
 				MediaDecoder::UnloadFrames(pOwner->Graphics(), m_vArtFrames);
@@ -2452,6 +2462,7 @@ public:
 				m_ArtAnimationStart = 0;
 				m_ArtWidth = 0;
 				m_ArtHeight = 0;
+				m_LastArtAnalysis = SArtworkColorAnalysis();
 				m_Palette = DefaultMusicPlayerPalette();
 				m_Accent = DefaultMusicPlayerAccent();
 				return;
@@ -2489,6 +2500,7 @@ public:
 		m_ArtWidth = 0;
 		m_ArtHeight = 0;
 		m_ArtAnimationStart = 0;
+		m_LastArtAnalysis = SArtworkColorAnalysis();
 		m_Palette = DefaultMusicPlayerPalette();
 		m_Accent = DefaultMusicPlayerAccent();
 		m_LastArtKey = m_Snapshot.m_Art.m_Key;
@@ -3009,10 +3021,14 @@ void CMusicPlayer::RenderHudEditor(bool ForcePreview)
 
 void CMusicPlayer::OnUpdate()
 {
-	if(GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_VISUALS_MUSIC_PLAYER))
-		return;
-
 	EnsureImpl();
+	if(m_pImpl->m_LastAppliedColorMode != g_Config.m_BcMusicPlayerColorMode ||
+		m_pImpl->m_LastAppliedStaticColor != g_Config.m_BcMusicPlayerStaticColor)
+	{
+		m_pImpl->m_LastAppliedColorMode = g_Config.m_BcMusicPlayerColorMode;
+		m_pImpl->m_LastAppliedStaticColor = g_Config.m_BcMusicPlayerStaticColor;
+		m_pImpl->RefreshPaletteForConfig();
+	}
 	const int64_t Now = time_get();
 	if(m_pImpl->m_pVisualizer &&
 		(m_pImpl->m_LastVisualizerPollTick == 0 || Now - m_pImpl->m_LastVisualizerPollTick >= time_freq() / 60))
@@ -3062,9 +3078,6 @@ void CMusicPlayer::OnUpdate()
 
 void CMusicPlayer::OnRender()
 {
-	if(GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_VISUALS_MUSIC_PLAYER))
-		return;
-
 	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
 		return;
 	if(!m_pImpl)
@@ -3251,7 +3264,7 @@ void CMusicPlayer::RenderMusicPlayer(bool ForcePreview)
 	const std::string TrackTitle = MusicPlayerPrimaryText(Snapshot);
 	const bool ShowGameTimer = GameTimer.m_Valid && (RenderMiniLayout || !PlayerHovered);
 	const std::string Title = ShowGameTimer ? GameTimer.m_Text : TrackTitle;
-	const std::string Artist = Snapshot.m_Artist.empty() ? BCLocalize("Unknown artist") : Snapshot.m_Artist;
+	const std::string Artist = Snapshot.m_Artist.empty() ? Localize("Unknown artist") : Snapshot.m_Artist;
 	const float TitleFont = (RenderMiniLayout ? 5.8f : (ShowGameTimer ? 6.6f : 5.25f)) * Scale * TextScale;
 	const float ArtistFont = 3.45f * Scale * TextScale;
 	const bool ShowArtist = !RenderMiniLayout && TextT > 0.38f && ExpandT > 0.42f;

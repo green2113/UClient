@@ -17,7 +17,6 @@
 
 #include <game/client/animstate.h>
 #include <game/client/components/bestclient/r_jelly.h>
-#include <game/client/components/bestclient/r_trail.h>
 #include <game/client/components/controls.h>
 #include <game/client/components/effects.h>
 #include <game/client/components/flow.h>
@@ -479,6 +478,7 @@ void CPlayers::RenderHookCollLine(
 
 	float Alpha = GameClient()->IsOtherTeam(ClientId) ? g_Config.m_ClShowOthersAlpha / 100.0f : 1.0f;
 	Alpha *= (float)g_Config.m_ClHookCollAlpha / 100;
+	// BestClient: dim non-participants while fast practice is active
 	if(ClientId >= 0 && GameClient()->m_FastPractice.Enabled() && !GameClient()->m_Snap.m_SpecInfo.m_Active && !GameClient()->m_FastPractice.IsPracticeParticipant(ClientId))
 		Alpha = std::min(Alpha, 0.5f);
 	if(Alpha <= 0.0f)
@@ -558,7 +558,7 @@ void CPlayers::RenderHook(
 	if(pPlayerChar->m_HookedPlayer != -1 && !GameClient()->m_Snap.m_aCharacters[pPlayerChar->m_HookedPlayer].m_Active)
 		return;
 
-	// in fast practice, hide hooks from non-participants that target a practice participant
+	// BestClient: in fast practice, hide hooks from non-participants that target a practice participant
 	// (server-side hook to the real tee position looks wrong in the practice world)
 	if(GameClient()->m_FastPractice.Enabled() && !GameClient()->m_Snap.m_SpecInfo.m_Active &&
 		ClientId >= 0 && !GameClient()->m_FastPractice.IsPracticeParticipant(ClientId) &&
@@ -573,6 +573,7 @@ void CPlayers::RenderHook(
 	float Alpha = (OtherTeam || ClientId < 0) ? g_Config.m_ClShowOthersAlpha / 100.0f : 1.0f;
 	if(ClientId == -2) // ghost
 		Alpha = g_Config.m_ClRaceGhostAlpha / 100.0f;
+	// BestClient: dim non-participants while fast practice is active
 	if(ClientId >= 0 && GameClient()->m_FastPractice.Enabled() && !GameClient()->m_Snap.m_SpecInfo.m_Active && !GameClient()->m_FastPractice.IsPracticeParticipant(ClientId))
 		Alpha = std::min(Alpha, 0.5f);
 
@@ -594,10 +595,12 @@ void CPlayers::RenderHook(
 
 	if(in_range(pPlayerChar->m_HookedPlayer, MAX_CLIENTS - 1))
 	{
-		const bool HookedPlayerIsParticipant = GameClient()->m_FastPractice.Enabled() &&
+		// BestClient: a practice participant hooking a non-participant uses the snap hook position,
+		// because the hooked tee's render position lives in the real world, not the practice world
+		const bool HookTargetOutsidePractice = GameClient()->m_FastPractice.Enabled() &&
 			GameClient()->m_FastPractice.IsPracticeParticipant(ClientId) &&
 			!GameClient()->m_FastPractice.IsPracticeParticipant(pPlayerChar->m_HookedPlayer);
-		if(HookedPlayerIsParticipant)
+		if(HookTargetOutsidePractice)
 			HookPos = mix(vec2(Prev.m_HookX, Prev.m_HookY), vec2(Player.m_HookX, Player.m_HookY), Intra);
 		else
 		{
@@ -687,6 +690,7 @@ void CPlayers::RenderPlayer(
 
 	if(ClientId == -2) // ghost
 		Alpha = g_Config.m_ClRaceGhostAlpha / 100.0f;
+	// BestClient: dim non-participants while fast practice is active
 	if(ClientId >= 0 && GameClient()->m_FastPractice.Enabled() && !GameClient()->m_Snap.m_SpecInfo.m_Active && !GameClient()->m_FastPractice.IsPracticeParticipant(ClientId))
 		Alpha = std::min(Alpha, 0.5f);
 	// TODO: snd_game_volume_others
@@ -786,11 +790,10 @@ void CPlayers::RenderPlayer(
 	bool Running = Player.m_VelX >= 5000 || Player.m_VelX <= -5000;
 	bool WantOtherDir = (Player.m_Direction == -1 && Vel.x > 0) || (Player.m_Direction == 1 && Vel.x < 0);
 	bool Inactive = ClientId >= 0 && (GameClient()->m_aClients[ClientId].m_Afk || GameClient()->m_aClients[ClientId].m_Paused);
-	const bool JellyEnabled = !GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_VISUALS_JELLY_TEE);
 	vec2 JellyExtraDeformImpulse;
 	float JellyExtraCompression = 0.0f;
 	BuildJellyExtraImpulse(GameClient(), Collision(), ClientId, Position, PrevVel, Vel, Direction, InAir, JellyExtraDeformImpulse, JellyExtraCompression);
-	const JellyTee JellyDeform = (JellyEnabled && rJelly) ? rJelly->GetDeform(ClientId, PrevVel, Vel, Direction, InAir, WantOtherDir, Client()->RenderFrameTime(), JellyExtraDeformImpulse, JellyExtraCompression) : JellyTee();
+	const JellyTee JellyDeform = rJelly ? rJelly->GetDeform(ClientId, PrevVel, Vel, Direction, InAir, WantOtherDir, Client()->RenderFrameTime(), JellyExtraDeformImpulse, JellyExtraCompression) : JellyTee();
 
 	// evaluate animation
 	float WalkTime = std::fmod(Position.x, 100.0f) / 100.0f;
@@ -1079,7 +1082,7 @@ void CPlayers::RenderPlayer(
 		}
 	}
 
-	// In fast practice override emote from snap with practice world state.
+	// BestClient: in fast practice override emote from snap with practice world state
 	if(ClientId >= 0 && GameClient()->m_FastPractice.Enabled() && GameClient()->m_FastPractice.IsPracticeParticipant(ClientId))
 	{
 		const CGameClient::CClientData &CD = GameClient()->m_aClients[ClientId];
@@ -1088,7 +1091,7 @@ void CPlayers::RenderPlayer(
 	}
 
 	// render the "shadow" tee — skip for practice participants, their snap position is meaningless
-	const bool IsPracticeParticipant = ClientId >= 0 && GameClient()->m_FastPractice.Enabled() && GameClient()->m_FastPractice.IsPracticeParticipant(ClientId);
+	const bool IsPracticeParticipant = ClientId >= 0 && GameClient()->m_FastPractice.Enabled() && GameClient()->m_FastPractice.IsPracticeParticipant(ClientId); // BestClient
 	if(!IsPracticeParticipant && (g_Config.m_ClUnpredictedShadow == 3 || (Local && g_Config.m_ClUnpredictedShadow == 1) || (!Local && g_Config.m_ClUnpredictedShadow == 2)))
 	{
 		vec2 ShadowPosition = Position;
@@ -1118,8 +1121,6 @@ void CPlayers::RenderPlayer(
 	float TeeAnimScale, TeeBaseSize;
 	CRenderTools::GetRenderTeeAnimScaleAndBaseSize(&RenderInfo, TeeAnimScale, TeeBaseSize);
 	vec2 BodyPos = Position + vec2(State.GetBody()->m_X, State.GetBody()->m_Y) * TeeAnimScale;
-	if(rTrail)
-		rTrail->RenderPlayerTrail(ClientId, Position, BodyPos, Vel, Alpha, Client()->RenderFrameTime());
 	if(RenderInfo.m_TeeRenderFlags & TEE_EFFECT_FROZEN)
 	{
 		GameClient()->m_Effects.FreezingFlakes(BodyPos, vec2(32, 32), Alpha);
@@ -1133,19 +1134,11 @@ void CPlayers::RenderPlayer(
 		return;
 
 	int QuadOffsetToEmoticon = NUM_WEAPONS * 2 + 2 + 2;
-	constexpr float EmoticonShadowOpacity = 0.75f;
-	constexpr float EmoticonShadowOffsetX = 2.0f;
-	constexpr float EmoticonShadowOffsetY = 2.0f;
 	if((Player.m_PlayerFlags & PLAYERFLAG_CHATTING) && !GameClient()->m_aClients[ClientId].m_Afk)
 	{
 		int CurEmoticon = (SPRITE_DOTDOT - SPRITE_OOP);
 		Graphics()->TextureSet(GameClient()->m_EmoticonsSkin.m_aSpriteEmoticons[CurEmoticon]);
 		int QuadOffset = QuadOffsetToEmoticon + CurEmoticon;
-		if(g_Config.m_BcEmoticonShadow)
-		{
-			Graphics()->SetColor(0.0f, 0.0f, 0.0f, Alpha * EmoticonShadowOpacity);
-			Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, Position.x + 24.f + EmoticonShadowOffsetX, Position.y - 40.f + EmoticonShadowOffsetY);
-		}
 		Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
 		Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, Position.x + 24.f, Position.y - 40.f);
 
@@ -1158,11 +1151,6 @@ void CPlayers::RenderPlayer(
 		int CurEmoticon = (SPRITE_ZZZ - SPRITE_OOP);
 		Graphics()->TextureSet(GameClient()->m_EmoticonsSkin.m_aSpriteEmoticons[CurEmoticon]);
 		int QuadOffset = QuadOffsetToEmoticon + CurEmoticon;
-		if(g_Config.m_BcEmoticonShadow)
-		{
-			Graphics()->SetColor(0.0f, 0.0f, 0.0f, Alpha * EmoticonShadowOpacity);
-			Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, Position.x + 24.f + EmoticonShadowOffsetX, Position.y - 40.f + EmoticonShadowOffsetY);
-		}
 		Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
 		Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, Position.x + 24.f, Position.y - 40.f);
 
@@ -1198,12 +1186,6 @@ void CPlayers::RenderPlayer(
 			// client_datas::emoticon is an offset from the first emoticon
 			int QuadOffset = QuadOffsetToEmoticon + GameClient()->m_aClients[ClientId].m_Emoticon;
 			Graphics()->TextureSet(GameClient()->m_EmoticonsSkin.m_aSpriteEmoticons[GameClient()->m_aClients[ClientId].m_Emoticon]);
-			if(g_Config.m_BcEmoticonShadow)
-			{
-				Graphics()->SetColor(0.0f, 0.0f, 0.0f, a * Alpha * EmoticonShadowOpacity);
-				Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, Position.x + EmoticonShadowOffsetX * h, Position.y - 23.f - 32.f * h + EmoticonShadowOffsetY * h, 1.f, (64.f * h) / 64.f);
-			}
-			Graphics()->SetColor(1.0f, 1.0f, 1.0f, a * Alpha);
 			Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, Position.x, Position.y - 23.f - 32.f * h, 1.f, (64.f * h) / 64.f);
 
 			Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
@@ -1333,11 +1315,10 @@ void CPlayers::RenderPlayerGhost(
 	bool Running = Player.m_VelX >= 5000 || Player.m_VelX <= -5000;
 	bool WantOtherDir = (Player.m_Direction == -1 && Vel.x > 0) || (Player.m_Direction == 1 && Vel.x < 0);
 	bool Inactive = GameClient()->m_aClients[ClientId].m_Afk || GameClient()->m_aClients[ClientId].m_Paused;
-	const bool JellyEnabled = !GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_VISUALS_JELLY_TEE);
 	vec2 JellyExtraDeformImpulse;
 	float JellyExtraCompression = 0.0f;
 	BuildJellyExtraImpulse(GameClient(), Collision(), ClientId, Position, PrevVel, Vel, Direction, InAir, JellyExtraDeformImpulse, JellyExtraCompression);
-	const JellyTee JellyDeform = (JellyEnabled && rJelly) ? rJelly->GetDeform(ClientId, PrevVel, Vel, Direction, InAir, WantOtherDir, Client()->RenderFrameTime(), JellyExtraDeformImpulse, JellyExtraCompression) : JellyTee();
+	const JellyTee JellyDeform = rJelly ? rJelly->GetDeform(ClientId, PrevVel, Vel, Direction, InAir, WantOtherDir, Client()->RenderFrameTime(), JellyExtraDeformImpulse, JellyExtraCompression) : JellyTee();
 
 	// evaluate animation
 	float WalkTime = std::fmod(Position.x, 100.0f) / 100.0f;
@@ -1575,19 +1556,11 @@ void CPlayers::RenderPlayerGhost(
 	}
 
 	int QuadOffsetToEmoticon = NUM_WEAPONS * 2 + 2 + 2;
-	constexpr float EmoticonShadowOpacity = 0.75f;
-	constexpr float EmoticonShadowOffsetX = 2.0f;
-	constexpr float EmoticonShadowOffsetY = 2.0f;
 	if((Player.m_PlayerFlags & PLAYERFLAG_CHATTING) && !GameClient()->m_aClients[ClientId].m_Afk)
 	{
 		int CurEmoticon = (SPRITE_DOTDOT - SPRITE_OOP);
 		Graphics()->TextureSet(GameClient()->m_EmoticonsSkin.m_aSpriteEmoticons[CurEmoticon]);
 		int QuadOffset = QuadOffsetToEmoticon + CurEmoticon;
-		if(g_Config.m_BcEmoticonShadow)
-		{
-			Graphics()->SetColor(0.0f, 0.0f, 0.0f, Alpha * EmoticonShadowOpacity);
-			Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, Position.x + 24.f + EmoticonShadowOffsetX, Position.y - 40.f + EmoticonShadowOffsetY);
-		}
 		Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
 		Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, Position.x + 24.f, Position.y - 40.f);
 
@@ -1603,11 +1576,6 @@ void CPlayers::RenderPlayerGhost(
 		int CurEmoticon = (SPRITE_ZZZ - SPRITE_OOP);
 		Graphics()->TextureSet(GameClient()->m_EmoticonsSkin.m_aSpriteEmoticons[CurEmoticon]);
 		int QuadOffset = QuadOffsetToEmoticon + CurEmoticon;
-		if(g_Config.m_BcEmoticonShadow)
-		{
-			Graphics()->SetColor(0.0f, 0.0f, 0.0f, Alpha * EmoticonShadowOpacity);
-			Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, Position.x + 24.f + EmoticonShadowOffsetX, Position.y - 40.f + EmoticonShadowOffsetY);
-		}
 		Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
 		Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, Position.x + 24.f, Position.y - 40.f);
 
@@ -1643,12 +1611,6 @@ void CPlayers::RenderPlayerGhost(
 			// client_datas::emoticon is an offset from the first emoticon
 			int QuadOffset = QuadOffsetToEmoticon + GameClient()->m_aClients[ClientId].m_Emoticon;
 			Graphics()->TextureSet(GameClient()->m_EmoticonsSkin.m_aSpriteEmoticons[GameClient()->m_aClients[ClientId].m_Emoticon]);
-			if(g_Config.m_BcEmoticonShadow)
-			{
-				Graphics()->SetColor(0.0f, 0.0f, 0.0f, a * Alpha * EmoticonShadowOpacity);
-				Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, Position.x + EmoticonShadowOffsetX * h, Position.y - 23.f - 32.f * h + EmoticonShadowOffsetY * h, 1.f, (64.f * h) / 64.f);
-			}
-			Graphics()->SetColor(1.0f, 1.0f, 1.0f, a * Alpha);
 			Graphics()->RenderQuadContainerAsSprite(m_WeaponEmoteQuadContainerIndex, QuadOffset, Position.x, Position.y - 23.f - 32.f * h, 1.f, (64.f * h) / 64.f);
 
 			Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
@@ -1690,7 +1652,7 @@ void CPlayers::OnRender()
 			Frozen = GameClient()->m_aClients[i].m_Predicted.m_FreezeEnd != 0;
 			// TClient: fast input uses RegularPredicted for freeze, but in fast practice
 			// the practice world state must take priority over the real server state.
-			if(g_Config.m_TcFastInput && !GameClient()->m_FastPractice.IsPracticeParticipant(i))
+			if(g_Config.m_BcInputs != BC_INPUTS_OFF && !GameClient()->m_FastPractice.IsPracticeParticipant(i))
 				Frozen = GameClient()->m_aClients[i].m_RegularPredicted.m_FreezeEnd != 0;
 		}
 		else
@@ -1797,6 +1759,7 @@ void CPlayers::OnRender()
 		{
 			Alpha = g_Config.m_ClRaceGhostAlpha / 100.f;
 		}
+		// BestClient: dim non-participants while fast practice is active
 		if(ClientId >= 0 && GameClient()->m_FastPractice.Enabled() && !GameClient()->m_Snap.m_SpecInfo.m_Active && !GameClient()->m_FastPractice.IsPracticeParticipant(ClientId))
 			Alpha = std::min(Alpha, 0.5f);
 		RenderTools()->RenderTee(CAnimState::GetIdle(), &SpectatorTeeRenderInfo()->TeeRenderInfo(), EMOTE_BLINK, vec2(1, 0), Client.m_SpecChar, Alpha);

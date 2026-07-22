@@ -21,7 +21,7 @@
 
 #include <game/client/ui.h>
 #include <game/client/ui_listbox.h>
-#include <game/editor/duo/duo_session.h>
+#include <game/editor/multimapping/multimapping_session.h>
 #include <game/editor/enums.h>
 #include <game/editor/file_browser.h>
 #include <game/editor/mapitems/envelope.h>
@@ -168,7 +168,7 @@ public:
 	const CMapView *MapView() const { return &m_MapView; }
 	CLayerSelector *LayerSelector() { return &m_LayerSelector; }
 
-	CDuoSession m_DuoSession;
+	CMultiMappingSession m_MultiMappingSession;
 
 	void FillGameTiles(EGameTileOp FillTile) const;
 	bool CanFillGameTiles() const;
@@ -391,9 +391,9 @@ public:
 		POPEVENT_REMOVE_USED_SOUND,
 		POPEVENT_RESTART_SERVER,
 		POPEVENT_RESTARTING_SERVER,
-		POPEVENT_DUO_LOAD,
-		POPEVENT_DUO_NOT_OWNER,
-		POPEVENT_DUO_NEW,
+		POPEVENT_MULTIMAPPING_LOAD,
+		POPEVENT_MULTIMAPPING_NOT_OWNER,
+		POPEVENT_MULTIMAPPING_NEW,
 	};
 
 	int m_PopupEventType;

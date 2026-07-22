@@ -1,3 +1,4 @@
+/* Copyright © 2026 BestProject Team */
 #include "smoother.h"
 
 #include <base/math.h>

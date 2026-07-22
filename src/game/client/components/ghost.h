@@ -77,6 +77,7 @@ private:
 
 		void Add(const CGhostCharacter &Char);
 		CGhostCharacter *Get(int Index);
+		const CGhostCharacter *Get(int Index) const;
 	};
 
 	class CGhostItem
@@ -159,6 +160,9 @@ public:
 	int Load(const char *pFilename);
 	void Unload(int Slot);
 	void UnloadAll();
+
+	// Returns race time (seconds) when the own active ghost first reaches WorldX.
+	bool TryGetOwnGhostTimeAtX(float WorldX, float *pTimeSeconds);
 
 	void SaveGhost(CMenus::CGhostItem *pItem);
 

@@ -16,6 +16,17 @@
 
 static constexpr LOG_COLOR BIND_PRINT_COLOR{255, 255, 204};
 
+static void ApplyGoresModeSuffix(CGameClient *pGameClient, char *pBind, int Size)
+{
+	if(g_Config.m_BcGoresMode &&
+		!pGameClient->m_Controls.m_WeaponsGot &&
+		str_find(pBind, "+fire") &&
+		!str_find(pBind, "+prevweapon"))
+	{
+		str_append(pBind, ";+prevweapon", Size);
+	}
+}
+
 bool CBinds::CBindsSpecial::OnInput(const IInput::CEvent &Event)
 {
 	if((Event.m_Flags & (IInput::FLAG_PRESS | IInput::FLAG_RELEASE)) == 0)
@@ -141,15 +152,7 @@ bool CBinds::OnInput(const IInput::CEvent &Event)
 						m_MouseOnAction = true;
 					}
 				}
-				if(g_Config.m_BcGoresMode &&
-					!GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_GORES_MODE) &&
-					!GameClient()->m_Controls.m_WeaponsGot &&
-					str_find(aBind, "+fire") &&
-					!str_find(aBind, "+prevweapon"))
-				{
-					str_append(aBind, ";+prevweapon", sizeof(aBind));
-				}
-
+				ApplyGoresModeSuffix(GameClient(), aBind, sizeof(aBind));
 				Console()->ExecuteLineStroked(1, aBind, IConsole::CLIENT_ID_UNSPECIFIED);
 				m_vActiveBinds.emplace_back(Event.m_Key, Mask);
 			};
@@ -175,15 +178,7 @@ bool CBinds::OnInput(const IInput::CEvent &Event)
 			{
 				char aBind[512];
 				str_copy(aBind, m_aapKeyBindings[ActiveBind->m_ModifierMask][ActiveBind->m_Key], sizeof(aBind));
-				if(g_Config.m_BcGoresMode &&
-					!GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_GORES_MODE) &&
-					!GameClient()->m_Controls.m_WeaponsGot &&
-					str_find(aBind, "+fire") &&
-					!str_find(aBind, "+prevweapon"))
-				{
-					str_append(aBind, ";+prevweapon", sizeof(aBind));
-				}
-
+				ApplyGoresModeSuffix(GameClient(), aBind, sizeof(aBind));
 				Console()->ExecuteLineStroked(1, aBind, IConsole::CLIENT_ID_UNSPECIFIED);
 			}
 			Handled = true;
@@ -208,15 +203,7 @@ bool CBinds::OnInput(const IInput::CEvent &Event)
 			}
 			char aBind[512];
 			str_copy(aBind, m_aapKeyBindings[Bind.m_ModifierMask][Bind.m_Key], sizeof(aBind));
-			if(g_Config.m_BcGoresMode &&
-				!GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_GORES_MODE) &&
-				!GameClient()->m_Controls.m_WeaponsGot &&
-				str_find(aBind, "+fire") &&
-				!str_find(aBind, "+prevweapon"))
-			{
-				str_append(aBind, ";+prevweapon", sizeof(aBind));
-			}
-
+			ApplyGoresModeSuffix(GameClient(), aBind, sizeof(aBind));
 			Console()->ExecuteLineStroked(0, aBind, IConsole::CLIENT_ID_UNSPECIFIED);
 		};
 
@@ -303,7 +290,7 @@ void CBinds::SetDefaults()
 	Bind(KEY_F2, "toggle_remote_console");
 	Bind(KEY_TAB, "+scoreboard");
 	Bind(KEY_EQUALS, "+statboard");
-		Bind(KEY_F10, "screenshot");
+	Bind(KEY_F10, "screenshot");
 
 	Bind(KEY_A, "+left");
 	Bind(KEY_D, "+right");
@@ -335,10 +322,10 @@ void CBinds::SetDefaults()
 	Bind(KEY_F3, "vote yes");
 	Bind(KEY_F4, "vote no");
 
-		Bind(KEY_K, "kill");
-Bind(KEY_J, "toggle_admin_panel");
-		Bind(KEY_Q, "say /spec");
-		Bind(KEY_P, "say /pause");
+	Bind(KEY_K, "kill");
+	Bind(KEY_J, "toggle_admin_panel");
+	Bind(KEY_Q, "say /spec");
+	Bind(KEY_P, "say /pause");
 
 	g_Config.m_ClDDRaceBindsSet = 0;
 	SetDDRaceBinds(false);

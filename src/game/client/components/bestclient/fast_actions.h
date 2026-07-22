@@ -16,17 +16,14 @@ enum
 {
 	FAST_ACTIONS_MAX_NAME = 64,
 	FAST_ACTIONS_MAX_CMD = 1024,
-	FAST_ACTIONS_MAX_BINDS = 64,
 	FAST_ACTIONS_FIXED_SLOTS = 6
 };
 
 class CFastActions : public CComponent
 {
 	float m_AnimationTime = 0.0f;
-	float m_aAnimationTimeItems[FAST_ACTIONS_MAX_BINDS] = {0};
 
 	bool m_Active = false;
-	bool m_WasActive = false;
 
 	int m_SelectedBind;
 	int m_DisplayBind;

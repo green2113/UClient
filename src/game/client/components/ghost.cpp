@@ -3,6 +3,7 @@
 #include "ghost.h"
 
 #include <base/log.h>
+#include <base/math.h>
 #include <base/process.h>
 #include <base/time.h>
 
@@ -15,6 +16,8 @@
 #include <game/client/components/skins.h>
 #include <game/client/gameclient.h>
 #include <game/client/race.h>
+
+#include <limits>
 
 const char *CGhost::ms_pGhostDir = "ghosts";
 
@@ -122,6 +125,76 @@ CGhostCharacter *CGhost::CGhostPath::Get(int Index)
 	int Chunk = Index / m_ChunkSize;
 	int Pos = Index % m_ChunkSize;
 	return &m_vpChunks[Chunk][Pos];
+}
+
+const CGhostCharacter *CGhost::CGhostPath::Get(int Index) const
+{
+	if(Index < 0 || Index >= m_NumItems)
+		return nullptr;
+
+	int Chunk = Index / m_ChunkSize;
+	int Pos = Index % m_ChunkSize;
+	return &m_vpChunks[Chunk][Pos];
+}
+
+bool CGhost::TryGetOwnGhostTimeAtX(float WorldX, float *pTimeSeconds)
+{
+	if(!pTimeSeconds)
+		return false;
+
+	const CMenus::CGhostItem *pOwnGhost = GameClient()->m_Menus.GetOwnGhost();
+	if(!pOwnGhost || !pOwnGhost->Active() || pOwnGhost->m_Slot < 0 || pOwnGhost->m_Slot >= MAX_ACTIVE_GHOSTS)
+		return false;
+
+	const CGhostItem &Ghost = m_aActiveGhosts[pOwnGhost->m_Slot];
+	if(Ghost.Empty() || Ghost.m_StartTick < 0 || Ghost.m_Path.Size() < 2)
+		return false;
+
+	const int TickSpeed = maximum(1, Client()->GameTickSpeed());
+	int BestIndex = -1;
+	float BestDist = std::numeric_limits<float>::max();
+
+	for(int i = 0; i < Ghost.m_Path.Size(); ++i)
+	{
+		const CGhostCharacter *pChar = Ghost.m_Path.Get(i);
+		if(!pChar)
+			continue;
+
+		const float Dist = absolute((float)pChar->m_X - WorldX);
+		if(Dist < BestDist)
+		{
+			BestDist = Dist;
+			BestIndex = i;
+		}
+
+		// Prefer the first time the ghost actually crosses this X column.
+		if(i > 0)
+		{
+			const CGhostCharacter *pPrev = Ghost.m_Path.Get(i - 1);
+			if(!pPrev)
+				continue;
+			const float PrevX = (float)pPrev->m_X;
+			const float CurX = (float)pChar->m_X;
+			if((PrevX <= WorldX && CurX >= WorldX) || (PrevX >= WorldX && CurX <= WorldX))
+			{
+				const float Span = CurX - PrevX;
+				const float Alpha = absolute(Span) > 0.001f ? std::clamp((WorldX - PrevX) / Span, 0.0f, 1.0f) : 0.0f;
+				const float Tick = mix((float)pPrev->m_Tick, (float)pChar->m_Tick, Alpha);
+				*pTimeSeconds = maximum(0.0f, (Tick - Ghost.m_StartTick) / (float)TickSpeed);
+				return true;
+			}
+		}
+	}
+
+	if(BestIndex < 0 || BestDist > 32.0f * 4.0f)
+		return false;
+
+	const CGhostCharacter *pBest = Ghost.m_Path.Get(BestIndex);
+	if(!pBest)
+		return false;
+
+	*pTimeSeconds = maximum(0.0f, (pBest->m_Tick - Ghost.m_StartTick) / (float)TickSpeed);
+	return true;
 }
 
 void CGhost::GetPath(char *pBuf, int Size, const char *pPlayerName, int Time) const

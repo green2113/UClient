@@ -241,7 +241,8 @@ JNI_EXPORTED_FUNCTION(ANDROID_PACKAGE_NAME_JNI, NativeServer, runServer, jint, J
 	// Set working directory to external storage location. This is not possible
 	// in Java so we pass the intended working directory to the native code.
 	const char *pWorkingDirectory = pEnv->GetStringUTFChars(WorkingDirectory, nullptr);
-	const bool WorkingDirectoryError = fs_chdir(pWorkingDirectory) != 0;
+	const std::string WorkingDirectoryString(pWorkingDirectory);
+	const bool WorkingDirectoryError = fs_chdir(WorkingDirectoryString.c_str()) != 0;
 	pEnv->ReleaseStringUTFChars(WorkingDirectory, pWorkingDirectory);
 	if(WorkingDirectoryError)
 	{
@@ -252,13 +253,14 @@ JNI_EXPORTED_FUNCTION(ANDROID_PACKAGE_NAME_JNI, NativeServer, runServer, jint, J
 
 	std::vector<std::string> vArguments;
 	vArguments.reserve(NumArguments + 1);
-	vArguments.push_back(std::string(pWorkingDirectory) + "/" + GAME_NAME "-Server");
+	vArguments.push_back(WorkingDirectoryString + "/" + GAME_NAME "-Server");
 	for(jsize ArgumentIndex = 0; ArgumentIndex < NumArguments; ArgumentIndex++)
 	{
 		jstring ArgumentString = (jstring)pEnv->GetObjectArrayElement(ArgumentsArray, ArgumentIndex);
 		const char *pArgumentString = pEnv->GetStringUTFChars(ArgumentString, nullptr);
 		vArguments.emplace_back(pArgumentString);
 		pEnv->ReleaseStringUTFChars(ArgumentString, pArgumentString);
+		pEnv->DeleteLocalRef(ArgumentString);
 	}
 
 	std::vector<const char *> vpArguments;

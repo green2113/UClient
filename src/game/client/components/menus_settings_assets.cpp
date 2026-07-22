@@ -1,9 +1,13 @@
 #include "menus.h"
 
 #include <base/log.h>
+#include <base/str.h>
 #include <base/system.h>
 
+#include <game/mapitems.h>
+
 #include <engine/font_icons.h>
+#include <engine/config.h>
 #include <engine/shared/config.h>
 #include <engine/shared/http.h>
 #include <engine/shared/json.h>
@@ -46,56 +50,6 @@ enum
 	NUMBER_OF_ASSETS_TABS = 9,
 };
 
-static int FavoriteAssetTabFromString(const char *pTab)
-{
-	if(str_comp_nocase(pTab, "entities") == 0)
-		return ASSETS_TAB_ENTITIES;
-	if(str_comp_nocase(pTab, "game") == 0)
-		return ASSETS_TAB_GAME;
-	if(str_comp_nocase(pTab, "emoticons") == 0)
-		return ASSETS_TAB_EMOTICONS;
-	if(str_comp_nocase(pTab, "particles") == 0)
-		return ASSETS_TAB_PARTICLES;
-	if(str_comp_nocase(pTab, "hud") == 0)
-		return ASSETS_TAB_HUD;
-	if(str_comp_nocase(pTab, "extras") == 0)
-		return ASSETS_TAB_EXTRAS;
-	if(str_comp_nocase(pTab, "cursor") == 0)
-		return ASSETS_TAB_CURSOR;
-	if(str_comp_nocase(pTab, "arrow") == 0)
-		return ASSETS_TAB_ARROW;
-	if(str_comp_nocase(pTab, "audio") == 0)
-		return ASSETS_TAB_AUDIO;
-	return -1;
-}
-
-static const char *FavoriteAssetTabToString(int Tab)
-{
-	switch(Tab)
-	{
-	case ASSETS_TAB_ENTITIES:
-		return "entities";
-	case ASSETS_TAB_GAME:
-		return "game";
-	case ASSETS_TAB_EMOTICONS:
-		return "emoticons";
-	case ASSETS_TAB_PARTICLES:
-		return "particles";
-	case ASSETS_TAB_HUD:
-		return "hud";
-	case ASSETS_TAB_EXTRAS:
-		return "extras";
-	case ASSETS_TAB_CURSOR:
-		return "cursor";
-	case ASSETS_TAB_ARROW:
-		return "arrow";
-	case ASSETS_TAB_AUDIO:
-		return "audio";
-	default:
-		return "";
-	}
-}
-
 void CMenus::LoadEntities(SCustomEntities *pEntitiesItem, void *pUser)
 {
 	auto *pRealUser = (SMenuAssetScanUser *)pUser;
@@ -114,14 +68,22 @@ void CMenus::LoadEntities(SCustomEntities *pEntitiesItem, void *pUser)
 	}
 	else
 	{
+		// Cache the flat-file fallback so packs without per-gametype variants don't get re-uploaded to the GPU MAP_IMAGE_MOD_TYPE_COUNT times.
+		IGraphics::CTextureHandle FallbackTexture;
+		bool FallbackAttempted = false;
 		for(int i = 0; i < MAP_IMAGE_MOD_TYPE_COUNT; ++i)
 		{
 			str_format(aPath, sizeof(aPath), "assets/entities/%s/%s.png", pEntitiesItem->m_aName, gs_apModEntitiesNames[i]);
 			pEntitiesItem->m_aImages[i].m_Texture = pThis->Graphics()->LoadTexture(aPath, IStorage::TYPE_ALL);
 			if(pEntitiesItem->m_aImages[i].m_Texture.IsNullTexture())
 			{
-				str_format(aPath, sizeof(aPath), "assets/entities/%s.png", pEntitiesItem->m_aName);
-				pEntitiesItem->m_aImages[i].m_Texture = pThis->Graphics()->LoadTexture(aPath, IStorage::TYPE_ALL);
+				if(!FallbackAttempted)
+				{
+					str_format(aPath, sizeof(aPath), "assets/entities/%s.png", pEntitiesItem->m_aName);
+					FallbackTexture = pThis->Graphics()->LoadTexture(aPath, IStorage::TYPE_ALL);
+					FallbackAttempted = true;
+				}
+				pEntitiesItem->m_aImages[i].m_Texture = FallbackTexture;
 			}
 			if(!pEntitiesItem->m_RenderTexture.IsValid() || pEntitiesItem->m_RenderTexture.IsNullTexture())
 				pEntitiesItem->m_RenderTexture = pEntitiesItem->m_aImages[i].m_Texture;
@@ -268,6 +230,56 @@ int CMenus::ExtrasScan(const char *pName, int IsDir, int DirType, void *pUser)
 	auto *pThis = (CMenus *)pRealUser->m_pUser;
 	IGraphics *pGraphics = pThis->Graphics();
 	return AssetScan(pName, IsDir, DirType, pThis->m_vExtrasList, "extras", pGraphics, pUser);
+}
+
+static int FavoriteAssetTabFromString(const char *pTab)
+{
+	if(str_comp_nocase(pTab, "entities") == 0)
+		return ASSETS_TAB_ENTITIES;
+	if(str_comp_nocase(pTab, "game") == 0)
+		return ASSETS_TAB_GAME;
+	if(str_comp_nocase(pTab, "emoticons") == 0)
+		return ASSETS_TAB_EMOTICONS;
+	if(str_comp_nocase(pTab, "particles") == 0)
+		return ASSETS_TAB_PARTICLES;
+	if(str_comp_nocase(pTab, "hud") == 0)
+		return ASSETS_TAB_HUD;
+	if(str_comp_nocase(pTab, "extras") == 0)
+		return ASSETS_TAB_EXTRAS;
+	if(str_comp_nocase(pTab, "cursor") == 0)
+		return ASSETS_TAB_CURSOR;
+	if(str_comp_nocase(pTab, "arrow") == 0)
+		return ASSETS_TAB_ARROW;
+	if(str_comp_nocase(pTab, "audio") == 0)
+		return ASSETS_TAB_AUDIO;
+	return -1;
+}
+
+static const char *FavoriteAssetTabToString(int Tab)
+{
+	switch(Tab)
+	{
+	case ASSETS_TAB_ENTITIES:
+		return "entities";
+	case ASSETS_TAB_GAME:
+		return "game";
+	case ASSETS_TAB_EMOTICONS:
+		return "emoticons";
+	case ASSETS_TAB_PARTICLES:
+		return "particles";
+	case ASSETS_TAB_HUD:
+		return "hud";
+	case ASSETS_TAB_EXTRAS:
+		return "extras";
+	case ASSETS_TAB_CURSOR:
+		return "cursor";
+	case ASSETS_TAB_ARROW:
+		return "arrow";
+	case ASSETS_TAB_AUDIO:
+		return "audio";
+	default:
+		return "";
+	}
 }
 
 static void LoadCursorPreview(CMenus::SCustomCursor *pCursorItem, IGraphics *pGraphics)
@@ -453,6 +465,99 @@ static void ClearArrowAssetList(std::vector<CMenus::SCustomArrow> &vList, IGraph
 	vList.clear();
 }
 
+void CMenus::ConAddFavoriteAsset(IConsole::IResult *pResult, void *pUserData)
+{
+	auto *pSelf = static_cast<CMenus *>(pUserData);
+	pSelf->AddFavoriteAsset(pResult->GetString(0), pResult->GetString(1));
+}
+
+void CMenus::ConRemoveFavoriteAsset(IConsole::IResult *pResult, void *pUserData)
+{
+	auto *pSelf = static_cast<CMenus *>(pUserData);
+	pSelf->RemoveFavoriteAsset(pResult->GetString(0), pResult->GetString(1));
+}
+
+void CMenus::ConfigSaveCallback(IConfigManager *pConfigManager, void *pUserData)
+{
+	auto *pSelf = static_cast<CMenus *>(pUserData);
+	pSelf->OnConfigSave(pConfigManager);
+}
+
+void CMenus::OnConfigSave(IConfigManager *pConfigManager)
+{
+	for(int Tab = 0; Tab < NUMBER_OF_ASSETS_TABS; ++Tab)
+	{
+		const char *pTabName = FavoriteAssetTabToString(Tab);
+		for(const auto &Favorite : m_aAssetFavorites[Tab])
+		{
+			char aBuffer[IO_MAX_PATH_LENGTH + 64];
+			const char *pEnd = aBuffer + sizeof(aBuffer) - 2;
+
+			str_copy(aBuffer, "add_favorite_asset \"");
+			char *pDst = aBuffer + str_length(aBuffer);
+			str_escape(&pDst, pTabName, pEnd);
+			str_append(aBuffer, "\" \"");
+			pDst = aBuffer + str_length(aBuffer);
+			str_escape(&pDst, Favorite.c_str(), pEnd);
+			str_append(aBuffer, "\"");
+
+			pConfigManager->WriteLine(aBuffer, ConfigDomain::TCLIENT);
+		}
+	}
+}
+
+static bool gs_aInitCustomList[NUMBER_OF_ASSETS_TABS] = {
+	true,
+};
+
+void CMenus::AddFavoriteAsset(const char *pTab, const char *pName)
+{
+	AddFavoriteAsset(FavoriteAssetTabFromString(pTab), pName);
+}
+
+void CMenus::RemoveFavoriteAsset(const char *pTab, const char *pName)
+{
+	RemoveFavoriteAsset(FavoriteAssetTabFromString(pTab), pName);
+}
+
+void CMenus::AddFavoriteAsset(int Tab, const char *pName)
+{
+	if(Tab < 0 || Tab >= NUMBER_OF_ASSETS_TABS)
+	{
+		log_error("menus", "Invalid favorite asset tab '%d'", Tab);
+		return;
+	}
+	if(pName[0] == '\0')
+		return;
+
+	const auto &[_, Inserted] = m_aAssetFavorites[Tab].emplace(pName);
+	if(Inserted)
+	{
+		gs_aInitCustomList[Tab] = true;
+	}
+}
+
+void CMenus::RemoveFavoriteAsset(int Tab, const char *pName)
+{
+	if(Tab < 0 || Tab >= NUMBER_OF_ASSETS_TABS)
+	{
+		log_error("menus", "Invalid favorite asset tab '%d'", Tab);
+		return;
+	}
+
+	const auto FavoriteIt = m_aAssetFavorites[Tab].find(pName);
+	if(FavoriteIt != m_aAssetFavorites[Tab].end())
+	{
+		m_aAssetFavorites[Tab].erase(FavoriteIt);
+		gs_aInitCustomList[Tab] = true;
+	}
+}
+
+bool CMenus::IsFavoriteAsset(int Tab, const char *pName) const
+{
+	return Tab >= 0 && Tab < NUMBER_OF_ASSETS_TABS && m_aAssetFavorites[Tab].contains(pName);
+}
+
 static std::vector<const CMenus::SCustomEntities *> gs_vpSearchEntitiesList;
 static std::vector<const CMenus::SCustomGame *> gs_vpSearchGamesList;
 static std::vector<const CMenus::SCustomEmoticon *> gs_vpSearchEmoticonsList;
@@ -462,10 +567,6 @@ static std::vector<const CMenus::SCustomExtras *> gs_vpSearchExtrasList;
 static std::vector<const CMenus::SCustomCursor *> gs_vpSearchCursorList;
 static std::vector<const CMenus::SCustomArrow *> gs_vpSearchArrowList;
 static std::vector<const CMenus::SCustomAudioPack *> gs_vpSearchAudioPackList;
-
-static bool gs_aInitCustomList[NUMBER_OF_ASSETS_TABS] = {
-	true,
-};
 
 static size_t gs_aCustomListSize[NUMBER_OF_ASSETS_TABS] = {
 	0,
@@ -507,97 +608,6 @@ static void ClearAssetList(std::vector<TName> &vList, IGraphics *pGraphics)
 		pGraphics->UnloadTexture(&Asset.m_RenderTexture);
 	}
 	vList.clear();
-}
-
-void CMenus::ConAddFavoriteAsset(IConsole::IResult *pResult, void *pUserData)
-{
-	auto *pSelf = static_cast<CMenus *>(pUserData);
-	pSelf->AddFavoriteAsset(pResult->GetString(0), pResult->GetString(1));
-}
-
-void CMenus::ConRemoveFavoriteAsset(IConsole::IResult *pResult, void *pUserData)
-{
-	auto *pSelf = static_cast<CMenus *>(pUserData);
-	pSelf->RemoveFavoriteAsset(pResult->GetString(0), pResult->GetString(1));
-}
-
-void CMenus::ConfigSaveCallback(IConfigManager *pConfigManager, void *pUserData)
-{
-	auto *pSelf = static_cast<CMenus *>(pUserData);
-	pSelf->OnConfigSave(pConfigManager);
-}
-
-void CMenus::OnConfigSave(IConfigManager *pConfigManager)
-{
-	for(int Tab = 0; Tab < NUMBER_OF_ASSETS_TABS; ++Tab)
-	{
-		const char *pTabName = FavoriteAssetTabToString(Tab);
-		for(const auto &Favorite : m_aAssetFavorites[Tab])
-		{
-			char aBuffer[IO_MAX_PATH_LENGTH + 64];
-			const char *pEnd = aBuffer + sizeof(aBuffer) - 2;
-
-			str_copy(aBuffer, "add_favorite_asset \"");
-			char *pDst = aBuffer + str_length(aBuffer);
-			str_escape(&pDst, pTabName, pEnd);
-			str_append(aBuffer, "\" \"");
-			pDst = aBuffer + str_length(aBuffer);
-			str_escape(&pDst, Favorite.c_str(), pEnd);
-			str_append(aBuffer, "\"");
-
-			pConfigManager->WriteLine(aBuffer, ConfigDomain::BESTCLIENT);
-		}
-	}
-}
-
-void CMenus::AddFavoriteAsset(const char *pTab, const char *pName)
-{
-	AddFavoriteAsset(FavoriteAssetTabFromString(pTab), pName);
-}
-
-void CMenus::RemoveFavoriteAsset(const char *pTab, const char *pName)
-{
-	RemoveFavoriteAsset(FavoriteAssetTabFromString(pTab), pName);
-}
-
-void CMenus::AddFavoriteAsset(int Tab, const char *pName)
-{
-	if(Tab < 0 || Tab >= NUMBER_OF_ASSETS_TABS)
-	{
-		log_error("menus", "Invalid favorite asset tab '%d'", Tab);
-		return;
-	}
-	if(pName[0] == '\0')
-	{
-		return;
-	}
-
-	const auto &[_, Inserted] = m_aAssetFavorites[Tab].emplace(pName);
-	if(Inserted)
-	{
-		gs_aInitCustomList[Tab] = true;
-	}
-}
-
-void CMenus::RemoveFavoriteAsset(int Tab, const char *pName)
-{
-	if(Tab < 0 || Tab >= NUMBER_OF_ASSETS_TABS)
-	{
-		log_error("menus", "Invalid favorite asset tab '%d'", Tab);
-		return;
-	}
-
-	const auto FavoriteIt = m_aAssetFavorites[Tab].find(pName);
-	if(FavoriteIt != m_aAssetFavorites[Tab].end())
-	{
-		m_aAssetFavorites[Tab].erase(FavoriteIt);
-		gs_aInitCustomList[Tab] = true;
-	}
-}
-
-bool CMenus::IsFavoriteAsset(int Tab, const char *pName) const
-{
-	return Tab >= 0 && Tab < NUMBER_OF_ASSETS_TABS && m_aAssetFavorites[Tab].contains(pName);
 }
 
 void CMenus::ClearCustomItems(int CurTab)
@@ -714,15 +724,13 @@ void CMenus::RenderSettingsCustom(CUIRect MainView)
 			const bool LeftFavorite = IsFavoriteAsset(s_CurCustomTab, pLeft->m_aName);
 			const bool RightFavorite = IsFavoriteAsset(s_CurCustomTab, pRight->m_aName);
 			if(LeftFavorite != RightFavorite)
-			{
 				return LeftFavorite;
-			}
 			return str_comp(pLeft->m_aName, pRight->m_aName) < 0;
 		});
 	};
 
 	MainView.HSplitTop(20.0f, &TabBar, &MainView);
-	const float TabWidth = TabBar.w / static_cast<float>(NUMBER_OF_ASSETS_TABS);
+	const float TabWidth = TabBar.w / (float)NUMBER_OF_ASSETS_TABS;
 	static CButtonContainer s_aPageTabs[NUMBER_OF_ASSETS_TABS] = {};
 	const char *apTabNames[NUMBER_OF_ASSETS_TABS] = {
 		Localize("Entities"),
@@ -952,7 +960,6 @@ void CMenus::RenderSettingsCustom(CUIRect MainView)
 		const SCustomItem *pItem = GetCustomItem(s_CurCustomTab, i);
 		if(pItem == nullptr)
 			continue;
-		const bool Favorite = IsFavoriteAsset(s_CurCustomTab, pItem->m_aName);
 
 		if(s_CurCustomTab == ASSETS_TAB_ENTITIES)
 		{
@@ -1000,6 +1007,7 @@ void CMenus::RenderSettingsCustom(CUIRect MainView)
 				OldSelected = i;
 		}
 
+		const bool Favorite = IsFavoriteAsset(s_CurCustomTab, pItem->m_aName);
 		const CListboxItem Item = s_ListBox.DoNextItem(pItem, OldSelected >= 0 && (size_t)OldSelected == i);
 		CUIRect ItemRect = Item.m_Rect;
 		ItemRect.Margin(Margin / 2, &ItemRect);
@@ -1018,90 +1026,83 @@ void CMenus::RenderSettingsCustom(CUIRect MainView)
 		}
 		else
 		{
-			CUIRect TextureRect;
-			ItemRect.HSplitTop(15, &ItemRect, &TextureRect);
-			TextureRect.HSplitTop(10, nullptr, &TextureRect);
-			Ui()->DoLabel(&ItemRect, pItem->m_aName, ItemRect.h - 2, TEXTALIGN_MC);
-			if(s_CurCustomTab == ASSETS_TAB_ENTITIES && s_EntityGamePreview)
+		CUIRect TextureRect;
+		ItemRect.HSplitTop(15, &ItemRect, &TextureRect);
+		TextureRect.HSplitTop(10, nullptr, &TextureRect);
+		Ui()->DoLabel(&ItemRect, pItem->m_aName, ItemRect.h - 2, TEXTALIGN_MC);
+		if(s_CurCustomTab == ASSETS_TAB_ENTITIES && s_EntityGamePreview)
+		{
+			const auto *pEntitiesItem = static_cast<const SCustomEntities *>(pItem);
+			IGraphics::CTextureHandle Tex;
+			for(int m = 0; m < MAP_IMAGE_MOD_TYPE_COUNT && !Tex.IsValid(); m++)
+				Tex = pEntitiesItem->m_aImages[m].m_Texture;
+			if(!Tex.IsValid())
+				Tex = pItem->m_RenderTexture;
+
+			if(Tex.IsValid())
 			{
-				const auto *pEntitiesItem = static_cast<const SCustomEntities *>(pItem);
-				IGraphics::CTextureHandle Tex;
-				for(int m = 0; m < MAP_IMAGE_MOD_TYPE_COUNT && !Tex.IsValid(); m++)
-					Tex = pEntitiesItem->m_aImages[m].m_Texture;
-				if(!Tex.IsValid())
-					Tex = pItem->m_RenderTexture;
+				static const int COLS = 7, ROWS = 7;
+				static const unsigned char aLayout[ROWS][COLS] = {
+					{TILE_SOLID, TILE_SOLID, TILE_SOLID, TILE_SOLID, TILE_SOLID, TILE_SOLID, TILE_SOLID},
+					{TILE_SOLID, 0, 0, 0, 0, 0, TILE_NOHOOK},
+					{TILE_SOLID, TILE_FREEZE, 0, 0, 0, 0, TILE_NOHOOK},
+					{TILE_SOLID, 0, TILE_DEATH, 0, TILE_UNFREEZE, 0, TILE_NOHOOK},
+					{TILE_SOLID, 0, 0, 0, 0, TILE_DFREEZE, TILE_NOHOOK},
+					{TILE_SOLID, 0, 0, 0, 0, 0, TILE_NOHOOK},
+					{TILE_NOHOOK, TILE_NOHOOK, TILE_NOHOOK, TILE_NOHOOK, TILE_NOHOOK, TILE_NOHOOK, TILE_NOHOOK},
+				};
 
-				if(Tex.IsValid())
-				{
-					// Game-like preview: hookable/unhookable walls + freeze/death/unfreeze tiles
-					static const int COLS = 7, ROWS = 7;
-					static const unsigned char aLayout[ROWS][COLS] = {
-						{TILE_SOLID, TILE_SOLID, TILE_SOLID, TILE_SOLID, TILE_SOLID, TILE_SOLID, TILE_SOLID},
-						{TILE_SOLID, 0, 0, 0, 0, 0, TILE_NOHOOK},
-						{TILE_SOLID, TILE_FREEZE, 0, 0, 0, 0, TILE_NOHOOK},
-						{TILE_SOLID, 0, TILE_DEATH, 0, TILE_UNFREEZE, 0, TILE_NOHOOK},
-						{TILE_SOLID, 0, 0, 0, 0, TILE_DFREEZE, TILE_NOHOOK},
-						{TILE_SOLID, 0, 0, 0, 0, 0, TILE_NOHOOK},
-						{TILE_NOHOOK, TILE_NOHOOK, TILE_NOHOOK, TILE_NOHOOK, TILE_NOHOOK, TILE_NOHOOK, TILE_NOHOOK},
-					};
+				const float TileSize = TextureWidth / (float)COLS;
+				const float OffX = TextureRect.x + (TextureRect.w - TextureWidth) / 2.0f;
+				const float OffY = TextureRect.y + (TextureRect.h - ROWS * TileSize) / 2.0f;
+				const float KInset = 1.5f / 1024.0f;
+				const float KTile = 1.0f / 16.0f;
 
-					float TileSize = TextureWidth / (float)COLS;
-					float OffX = TextureRect.x + (TextureRect.w - TextureWidth) / 2.0f;
-					float OffY = TextureRect.y + (TextureRect.h - ROWS * TileSize) / 2.0f;
-
-					// inset UVs by ~1.5px to avoid bilinear bleeding at tile boundaries
-					const float KInset = 1.5f / 1024.0f;
-					const float KTile = 1.0f / 16.0f;
-
-					Graphics()->WrapClamp();
-					Graphics()->TextureSet(Tex);
-					Graphics()->QuadsBegin();
-					Graphics()->SetColor(1, 1, 1, 1);
-					for(int r = 0; r < ROWS; r++)
-					{
-						for(int c = 0; c < COLS; c++)
-						{
-							unsigned char Tile = aLayout[r][c];
-							if(Tile == 0)
-								continue;
-							int Tx = Tile % 16;
-							int Ty = Tile / 16;
-							float U0 = Tx * KTile + KInset;
-							float V0 = Ty * KTile + KInset;
-							float U1 = U0 + KTile - KInset * 2;
-							float V1 = V0 + KTile - KInset * 2;
-							Graphics()->QuadsSetSubset(U0, V0, U1, V1);
-							IGraphics::CQuadItem Q(OffX + c * TileSize, OffY + r * TileSize, TileSize, TileSize);
-							Graphics()->QuadsDrawTL(&Q, 1);
-						}
-					}
-					Graphics()->QuadsEnd();
-					Graphics()->WrapNormal();
-				}
-			}
-			else if(pItem->m_RenderTexture.IsValid())
-			{
 				Graphics()->WrapClamp();
-				Graphics()->TextureSet(pItem->m_RenderTexture);
+				Graphics()->TextureSet(Tex);
 				Graphics()->QuadsBegin();
 				Graphics()->SetColor(1, 1, 1, 1);
-				IGraphics::CQuadItem QuadItem(TextureRect.x + (TextureRect.w - TextureWidth) / 2, TextureRect.y + (TextureRect.h - TextureHeight) / 2, TextureWidth, TextureHeight);
-				Graphics()->QuadsDrawTL(&QuadItem, 1);
+				for(int r = 0; r < ROWS; r++)
+				{
+					for(int c = 0; c < COLS; c++)
+					{
+						const unsigned char Tile = aLayout[r][c];
+						if(Tile == 0)
+							continue;
+						const int Tx = Tile % 16;
+						const int Ty = Tile / 16;
+						const float U0 = Tx * KTile + KInset;
+						const float V0 = Ty * KTile + KInset;
+						const float U1 = U0 + KTile - KInset * 2;
+						const float V1 = V0 + KTile - KInset * 2;
+						Graphics()->QuadsSetSubset(U0, V0, U1, V1);
+						IGraphics::CQuadItem Q(OffX + c * TileSize, OffY + r * TileSize, TileSize, TileSize);
+						Graphics()->QuadsDrawTL(&Q, 1);
+					}
+				}
 				Graphics()->QuadsEnd();
 				Graphics()->WrapNormal();
 			}
 		}
+		else if(pItem->m_RenderTexture.IsValid())
+		{
+			Graphics()->WrapClamp();
+			Graphics()->TextureSet(pItem->m_RenderTexture);
+			Graphics()->QuadsBegin();
+			Graphics()->SetColor(1, 1, 1, 1);
+			IGraphics::CQuadItem QuadItem(TextureRect.x + (TextureRect.w - TextureWidth) / 2, TextureRect.y + (TextureRect.h - TextureHeight) / 2, TextureWidth, TextureHeight);
+			Graphics()->QuadsDrawTL(&QuadItem, 1);
+			Graphics()->QuadsEnd();
+			Graphics()->WrapNormal();
+		}
+		} // end else (non-audio rendering)
 
 		if(DoButton_Favorite(&pItem->m_FavoriteButtonId, pItem, Favorite, &FavoriteButton))
 		{
 			if(Favorite)
-			{
 				RemoveFavoriteAsset(s_CurCustomTab, pItem->m_aName);
-			}
 			else
-			{
 				AddFavoriteAsset(s_CurCustomTab, pItem->m_aName);
-			}
 		}
 		GameClient()->m_Tooltips.DoToolTip(&pItem->m_FavoriteButtonId, &FavoriteButton,
 			Favorite ? Localize("Click to remove this item from your favorites.") : Localize("Click to add this item to your favorites."));
@@ -1224,6 +1225,8 @@ void CMenus::RenderSettingsCustom(CUIRect MainView)
 			str_copy(aBufFull, "assets/arrow");
 		else if(s_CurCustomTab == ASSETS_TAB_AUDIO)
 			str_copy(aBufFull, "assets/audio");
+		else
+			str_copy(aBufFull, "assets");
 		Storage()->GetCompletePath(IStorage::TYPE_SAVE, aBufFull, aBuf, sizeof(aBuf));
 		Storage()->CreateFolder("assets", IStorage::TYPE_SAVE);
 		Storage()->CreateFolder(aBufFull, IStorage::TYPE_SAVE);

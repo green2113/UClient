@@ -364,6 +364,27 @@ int net_tcp_connect(NETSOCKET sock, const NETADDR *addr);
 int net_tcp_connect_non_blocking(NETSOCKET sock, NETADDR bindaddr);
 
 /**
+ * Checks whether a non-blocking TCP connection has completed.
+ *
+ * @return `1` when connected, `0` while pending, and `-1` on failure.
+ */
+int net_tcp_connect_poll(NETSOCKET sock);
+
+/**
+ * Connects a socket to a TCP address, blocking for at most `TimeoutMs`
+ * milliseconds instead of the OS-default connect timeout.
+ *
+ * @ingroup Network-TCP
+ *
+ * @param sock Socket to connect.
+ * @param addr Address to connect to.
+ * @param TimeoutMs Maximum time to wait for the connection to complete, in milliseconds.
+ *
+ * @return `0` on success, `-1` on failure or timeout.
+ */
+int net_tcp_connect_timeout(NETSOCKET sock, const NETADDR *addr, int TimeoutMs);
+
+/**
  * Sends data to a TCP stream.
  *
  * @ingroup Network-TCP

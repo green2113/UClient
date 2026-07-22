@@ -84,7 +84,6 @@ void CScrollRegion::End()
 	// scroll wheel
 	CUIRect RegionRect = m_ClipRect;
 	RegionRect.w += m_Params.m_ScrollbarWidth;
-	const float PreviousScrollY = m_ScrollY;
 
 	if(m_ScrollDirection != SCROLLRELATIVE_NONE || Ui()->HotScrollRegion() == this)
 	{
@@ -176,14 +175,10 @@ void CScrollRegion::End()
 	else if(InsideSlider)
 	{
 		if(!Ui()->MouseButton(0))
-		{
-			Ui()->EmitHoverSound(pId, &Slider);
 			Ui()->SetHotItem(pId);
-		}
 
 		if(!Ui()->CheckActiveItem(pId) && Ui()->MouseButtonClicked(0))
 		{
-			Ui()->EmitSoundEvent(CUi::EUiSoundEvent::CLICK);
 			Ui()->SetActiveItem(pId);
 			m_SliderGrabPos = Ui()->MouseY() - Slider.y;
 			m_AnimTargetScrollY = m_ScrollY;
@@ -192,7 +187,6 @@ void CScrollRegion::End()
 	}
 	else if(InsideRail && Ui()->MouseButtonClicked(0))
 	{
-		Ui()->EmitSoundEvent(CUi::EUiSoundEvent::CLICK);
 		m_ScrollY += (Ui()->MouseY() - (Slider.y + Slider.h / 2.0f)) / MaxSlider * MaxScroll;
 		Ui()->SetHotItem(pId);
 		Ui()->SetActiveItem(pId);
@@ -207,8 +201,6 @@ void CScrollRegion::End()
 	}
 
 	m_ScrollY = std::clamp(m_ScrollY, 0.0f, MaxScroll);
-	if(Grabbed && absolute(m_ScrollY - PreviousScrollY) > maximum(1.0f, m_Params.m_ScrollUnit * 0.5f))
-		Ui()->EmitSoundEvent(CUi::EUiSoundEvent::SLIDER_TICK);
 	m_ContentScrollOff.y = -m_ScrollY;
 
 	Slider.Draw(m_Params.SliderColor(Grabbed, Ui()->HotItem() == pId), IGraphics::CORNER_ALL, Slider.w / 2.0f);

@@ -45,7 +45,6 @@ struct NewUrlLaunchParameters_t
 struct ISteamApps;
 struct ISteamFriends;
 
-STEAMAPI bool SteamAPI_RestartAppIfNecessary(uint32_t unOwnAppID);
 STEAMAPI bool SteamAPI_Init(); // Returns true on success.
 STEAMAPI HSteamPipe SteamAPI_GetHSteamPipe();
 STEAMAPI void SteamAPI_Shutdown();

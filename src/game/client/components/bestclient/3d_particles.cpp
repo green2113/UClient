@@ -22,9 +22,8 @@ enum
 
 constexpr float MAX_DELTA = 0.1f;
 constexpr float PROJ_DIST = 600.0f;
-constexpr float ZOOM_CHANGE_THRESHOLD = 0.02f;
-constexpr float MIN_SPAWN_RESCALE_SPAN = 0.001f;
 constexpr int PARTICLE_MAX_RENDERED = 200;
+constexpr int MAX_COLLISION_PARTICLES = 96;
 
 const std::array<vec3, 8> g_aCubeVertices = { {
 	vec3(-1.0f, -1.0f, -1.0f),
@@ -153,30 +152,12 @@ void C3DParticles::ResetParticles()
 	m_vParticles.clear();
 	m_Time = 0.0f;
 	m_HasLastLocalPos = false;
-	m_HasLastSpawnBounds = false;
-	m_HasLastScreenSize = false;
 	m_LastLocalPos = vec2(0.0f, 0.0f);
-	m_LastSpawnMin = vec2(0.0f, 0.0f);
-	m_LastSpawnMax = vec2(0.0f, 0.0f);
-	m_LastScreenWidth = 0.0f;
-	m_LastScreenHeight = 0.0f;
-}
-
-bool C3DParticles::ShouldRender() const
-{
-	return !(g_Config.m_ClFocusMode && g_Config.m_ClFocusModeHideEffects);
 }
 
 void C3DParticles::OnRender()
 {
-	if(GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_VISUALS_3D_PARTICLES))
-	{
-		if(!m_vParticles.empty())
-			ResetParticles();
-		return;
-	}
-
-	if(!ShouldRender())
+	if(g_Config.m_ClFocusMode && g_Config.m_ClFocusModeHideEffects)
 	{
 		if(!m_vParticles.empty())
 			ResetParticles();
@@ -285,8 +266,10 @@ void C3DParticles::OnRender()
 
 	float ScreenX0, ScreenY0, ScreenX1, ScreenY1;
 	Graphics()->GetScreen(&ScreenX0, &ScreenY0, &ScreenX1, &ScreenY1);
-	const float CurScreenWidth = maximum(1.0f, std::abs(ScreenX1 - ScreenX0));
-	const float CurScreenHeight = maximum(1.0f, std::abs(ScreenY1 - ScreenY0));
+	const float ScreenMinX = std::min(ScreenX0, ScreenX1);
+	const float ScreenMaxX = std::max(ScreenX0, ScreenX1);
+	const float ScreenMinY = std::min(ScreenY0, ScreenY1);
+	const float ScreenMaxY = std::max(ScreenY0, ScreenY1);
 
 	const float MapMinX = 0.0f;
 	const float MapMinY = 0.0f;
@@ -296,54 +279,16 @@ void C3DParticles::OnRender()
 		return;
 
 	const float ViewMargin = std::clamp((float)g_Config.m_Bc3dParticlesViewMargin, 0.0f, 1000.0f);
-	const float ViewMinX = std::max(ScreenX0 - ViewMargin, MapMinX);
-	const float ViewMaxX = std::min(ScreenX1 + ViewMargin, MapMaxX);
-	const float ViewMinY = std::max(ScreenY0 - ViewMargin, MapMinY);
-	const float ViewMaxY = std::min(ScreenY1 + ViewMargin, MapMaxY);
+	const float ViewMinX = std::max(ScreenMinX - ViewMargin, MapMinX);
+	const float ViewMaxX = std::min(ScreenMaxX + ViewMargin, MapMaxX);
+	const float ViewMinY = std::max(ScreenMinY - ViewMargin, MapMinY);
+	const float ViewMaxY = std::min(ScreenMaxY + ViewMargin, MapMaxY);
 
-	float SpawnMinX = std::clamp(ScreenX0, MapMinX, MapMaxX);
-	float SpawnMaxX = std::clamp(ScreenX1, MapMinX, MapMaxX);
-	float SpawnMinY = std::clamp(ScreenY0, MapMinY, MapMaxY);
-	float SpawnMaxY = std::clamp(ScreenY1, MapMinY, MapMaxY);
-	if(SpawnMinX > SpawnMaxX)
-		std::swap(SpawnMinX, SpawnMaxX);
-	if(SpawnMinY > SpawnMaxY)
-		std::swap(SpawnMinY, SpawnMaxY);
-
-	bool ZoomChanged = false;
-	if(m_HasLastScreenSize)
-	{
-		const float ScaleX = CurScreenWidth / maximum(1.0f, m_LastScreenWidth);
-		const float ScaleY = CurScreenHeight / maximum(1.0f, m_LastScreenHeight);
-		const float DeltaScale = maximum(std::abs(1.0f - ScaleX), std::abs(1.0f - ScaleY));
-		ZoomChanged = DeltaScale > ZOOM_CHANGE_THRESHOLD;
-	}
-
-	if(ZoomChanged && m_HasLastSpawnBounds && !m_vParticles.empty())
-	{
-		const float OldW = m_LastSpawnMax.x - m_LastSpawnMin.x;
-		const float OldH = m_LastSpawnMax.y - m_LastSpawnMin.y;
-		const float NewW = SpawnMaxX - SpawnMinX;
-		const float NewH = SpawnMaxY - SpawnMinY;
-		const float OldCenterX = (m_LastSpawnMin.x + m_LastSpawnMax.x) * 0.5f;
-		const float OldCenterY = (m_LastSpawnMin.y + m_LastSpawnMax.y) * 0.5f;
-		const float NewCenterX = (SpawnMinX + SpawnMaxX) * 0.5f;
-		const float NewCenterY = (SpawnMinY + SpawnMaxY) * 0.5f;
-		const bool CanRescaleX = std::abs(OldW) > MIN_SPAWN_RESCALE_SPAN;
-		const bool CanRescaleY = std::abs(OldH) > MIN_SPAWN_RESCALE_SPAN;
-		const float ScaleX = CanRescaleX ? NewW / OldW : 1.0f;
-		const float ScaleY = CanRescaleY ? NewH / OldH : 1.0f;
-		for(auto &Part : m_vParticles)
-		{
-			Part.m_Pos.x = CanRescaleX ? NewCenterX + (Part.m_Pos.x - OldCenterX) * ScaleX : NewCenterX;
-			Part.m_Pos.y = CanRescaleY ? NewCenterY + (Part.m_Pos.y - OldCenterY) * ScaleY : NewCenterY;
-			if(Part.m_FadingOut)
-			{
-				Part.m_FadingOut = false;
-				Part.m_FadeOutStart = 0.0f;
-			}
-		}
-	}
+	const float SpawnMinX = std::max(ScreenMinX, MapMinX);
+	const float SpawnMaxX = std::min(ScreenMaxX, MapMaxX);
+	const float SpawnMinY = std::max(ScreenMinY, MapMinY);
+	const float SpawnMaxY = std::min(ScreenMaxY, MapMaxY);
+	const bool HasSpawnArea = SpawnMaxX > SpawnMinX && SpawnMaxY > SpawnMinY;
 
 	int TargetCount = std::clamp(g_Config.m_Bc3dParticlesCount, 0, PARTICLE_MAX_RENDERED);
 	if(GameClient()->OptimizerDisableParticles())
@@ -355,7 +300,7 @@ void C3DParticles::OnRender()
 	const float PushStrength = std::clamp((float)g_Config.m_Bc3dParticlesPushStrength, 0.0f, 2000.0f);
 	const float MaxSpeed = maximum(40.0f, (float)g_Config.m_Bc3dParticlesSpeed * 4.0f);
 	const float PushRadiusSq = PushRadius * PushRadius;
-	const bool EnableParticleCollisions = g_Config.m_Bc3dParticlesCollide != 0 && TargetCount <= 96;
+	const bool EnableParticleCollisions = g_Config.m_Bc3dParticlesCollide != 0 && TargetCount <= MAX_COLLISION_PARTICLES;
 
 	for(auto &Part : m_vParticles)
 	{
@@ -382,10 +327,16 @@ void C3DParticles::OnRender()
 		Part.m_Vel *= 0.995f;
 
 		Part.m_Pos.z = std::clamp(Part.m_Pos.z, -Depth, Depth);
-		if((Part.m_Pos.x < ViewMinX || Part.m_Pos.x > ViewMaxX || Part.m_Pos.y < ViewMinY || Part.m_Pos.y > ViewMaxY) && !Part.m_FadingOut)
+		const bool OutsideView = Part.m_Pos.x < ViewMinX || Part.m_Pos.x > ViewMaxX || Part.m_Pos.y < ViewMinY || Part.m_Pos.y > ViewMaxY;
+		if(OutsideView && !Part.m_FadingOut)
 		{
 			Part.m_FadingOut = true;
 			Part.m_FadeOutStart = m_Time;
+		}
+		else if(!OutsideView && Part.m_FadingOut)
+		{
+			Part.m_FadingOut = false;
+			Part.m_FadeOutStart = 0.0f;
 		}
 	}
 
@@ -448,7 +399,7 @@ void C3DParticles::OnRender()
 	}
 
 	const int Missing = TargetCount - (int)m_vParticles.size();
-	const int SpawnNow = std::min(Missing, 10);
+	const int SpawnNow = HasSpawnArea ? std::min(Missing, 10) : 0;
 	const float SpawnWidth = maximum(1.0f, SpawnMaxX - SpawnMinX);
 	const float SpawnHeight = maximum(1.0f, SpawnMaxY - SpawnMinY);
 	const float SpawnArea = SpawnWidth * SpawnHeight;
@@ -536,13 +487,6 @@ void C3DParticles::OnRender()
 
 		m_vParticles.push_back(P);
 	}
-
-	m_LastSpawnMin = vec2(SpawnMinX, SpawnMinY);
-	m_LastSpawnMax = vec2(SpawnMaxX, SpawnMaxY);
-	m_HasLastSpawnBounds = true;
-	m_LastScreenWidth = CurScreenWidth;
-	m_LastScreenHeight = CurScreenHeight;
-	m_HasLastScreenSize = true;
 
 	RenderParticles(ViewMinX, ViewMaxX, ViewMinY, ViewMaxY, BaseAlpha, FadeIn, FadeOut);
 }

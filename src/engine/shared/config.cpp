@@ -321,11 +321,6 @@ void CConfigManager::Init()
 #undef MACRO_CONFIG_COL
 #undef MACRO_CONFIG_STR
 
-	// Legacy aliases (keep old cfgs working after renames).
-	m_pConsole->Register("tc_fast_input_mode", "?i", CFGFLAG_CLIENT, Con_TcFastInputModeLegacy, this, "Alias for bc_fast_input_mode");
-	m_pConsole->Register("tc_fast_input_delta_input", "?i", CFGFLAG_CLIENT, Con_TcFastInputDeltaInputLegacy, this, "Alias for bc_fast_input_delta_input");
-	m_pConsole->Register("tc_delta_input_others", "?i", CFGFLAG_CLIENT, Con_TcDeltaInputOthersLegacy, this, "Alias for bc_delta_input_others");
-
 	m_pConsole->Register("reset", "s[config-name]", CFGFLAG_SERVER | CFGFLAG_CLIENT | CFGFLAG_STORE, Con_Reset, this, "Reset a config to its default value");
 	m_pConsole->Register("toggle", "s[config-option] s[value 1] s[value 2]", CFGFLAG_SERVER | CFGFLAG_CLIENT, Con_Toggle, this, "Toggle config value");
 	m_pConsole->Register("+toggle", "s[config-option] s[value 1] s[value 2]", CFGFLAG_CLIENT, Con_ToggleStroke, this, "Toggle config value via keypress");
@@ -508,51 +503,6 @@ void CConfigManager::PossibleConfigVariables(const char *pStr, int FlagMask, POS
 				pfnCallback(pVariable, pUserData);
 			}
 		}
-	}
-}
-
-void CConfigManager::Con_TcFastInputModeLegacy(IConsole::IResult *pResult, void *pUserData)
-{
-	CConfigManager *pConfigManager = static_cast<CConfigManager *>(pUserData);
-	if(pResult->NumArguments())
-	{
-		char aCmd[64];
-		str_format(aCmd, sizeof(aCmd), "bc_fast_input_mode %d", pResult->GetInteger(0));
-		pConfigManager->m_pConsole->ExecuteLine(aCmd, pResult->m_ClientId);
-	}
-	else
-	{
-		pConfigManager->m_pConsole->ExecuteLine("bc_fast_input_mode", pResult->m_ClientId);
-	}
-}
-
-void CConfigManager::Con_TcFastInputDeltaInputLegacy(IConsole::IResult *pResult, void *pUserData)
-{
-	CConfigManager *pConfigManager = static_cast<CConfigManager *>(pUserData);
-	if(pResult->NumArguments())
-	{
-		char aCmd[64];
-		str_format(aCmd, sizeof(aCmd), "bc_fast_input_delta_input %d", pResult->GetInteger(0));
-		pConfigManager->m_pConsole->ExecuteLine(aCmd, pResult->m_ClientId);
-	}
-	else
-	{
-		pConfigManager->m_pConsole->ExecuteLine("bc_fast_input_delta_input", pResult->m_ClientId);
-	}
-}
-
-void CConfigManager::Con_TcDeltaInputOthersLegacy(IConsole::IResult *pResult, void *pUserData)
-{
-	CConfigManager *pConfigManager = static_cast<CConfigManager *>(pUserData);
-	if(pResult->NumArguments())
-	{
-		char aCmd[64];
-		str_format(aCmd, sizeof(aCmd), "bc_delta_input_others %d", pResult->GetInteger(0));
-		pConfigManager->m_pConsole->ExecuteLine(aCmd, pResult->m_ClientId);
-	}
-	else
-	{
-		pConfigManager->m_pConsole->ExecuteLine("bc_delta_input_others", pResult->m_ClientId);
 	}
 }
 

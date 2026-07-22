@@ -85,6 +85,7 @@ private:
 	int m_CandidateSelectedIndex;
 	bool m_TextInputRectValid = false;
 	SDL_Rect m_TextInputRect = {0, 0, 0, 0};
+	int64_t m_LastEnsureKeyboardTime = 0;
 
 	// events
 	std::vector<CEvent> m_vInputEvents;

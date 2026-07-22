@@ -5,14 +5,10 @@
 
 #include <engine/console.h>
 #include <engine/graphics.h>
-#include <engine/shared/http.h>
 
 #include <game/client/component.h>
 #include <game/client/ui.h>
 #include <game/client/ui_rect.h>
-
-#include <array>
-#include <memory>
 
 class CScoreboard : public CComponent
 {
@@ -33,10 +29,6 @@ class CScoreboard : public CComponent
 	void RenderSpectators(CUIRect Spectators);
 	void RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart, int CountEnd, CScoreboardRenderState &State);
 	void RenderRecordingNotification(float x);
-	void ResetTabPlayerPoints();
-	void UpdateTabPlayerPoints();
-	void StartTabPlayerPointsRequest(int ClientId, const char *pName);
-	bool TryGetTabPlayerPointsText(int ClientId, const char *pName, char *pBuf, int BufSize);
 
 	static void ConKeyScoreboard(IConsole::IResult *pResult, void *pUserData);
 	static void ConToggleScoreboardCursor(IConsole::IResult *pResult, void *pUserData);
@@ -134,6 +126,7 @@ public:
 	bool OnInput(const IInput::CEvent &Event) override;
 
 	bool IsActive() const;
+	bool IsShown() const;
 	bool IsMouseUnlocked() const { return IsActive() && m_MouseUnlocked; }
 	void OpenPlayerPopup(int ClientId, bool IsSpectating, float PopupX, float PopupY);
 };

@@ -75,7 +75,7 @@ void CGraphicsBackend_Threaded::ThreadFunc(void *pUser)
 			pSelf->m_pProcessor->RunBuffer(pSelf->m_pBuffer);
 
 			pSelf->m_pBuffer = nullptr;
-			pSelf->m_BufferInProcess.store(false, std::memory_order_release);
+			pSelf->m_BufferInProcess.store(false, std::memory_order_relaxed);
 			pSelf->m_BufferSwapCond.notify_all();
 
 #if defined(CONF_VIDEORECORDER)
@@ -148,7 +148,7 @@ void CGraphicsBackend_Threaded::RunBuffer(CCommandBuffer *pBuffer)
 		if(Error.m_ErrorType == GFX_ERROR_TYPE_NONE)
 		{
 			m_pBuffer = pBuffer;
-			m_BufferInProcess.store(true, std::memory_order_release);
+			m_BufferInProcess.store(true, std::memory_order_relaxed);
 			m_BufferSwapCond.notify_all();
 		}
 	}
@@ -171,7 +171,7 @@ bool CGraphicsBackend_Threaded::IsIdle() const
 #if defined(CONF_PLATFORM_EMSCRIPTEN)
 	return true;
 #else
-	return !m_BufferInProcess.load(std::memory_order_acquire);
+	return !m_BufferInProcess.load(std::memory_order_relaxed);
 #endif
 }
 
@@ -185,40 +185,16 @@ void CGraphicsBackend_Threaded::WaitForIdle()
 
 void CGraphicsBackend_Threaded::ProcessError(const SGfxErrorContainer &Error)
 {
-	std::string VerboseStr;
+	std::string VerboseStr = "Graphics Assertion:";
 	for(const auto &ErrStr : Error.m_vErrors)
 	{
-		if(!VerboseStr.empty())
-			VerboseStr.append("\n");
+		VerboseStr.append("\n");
 		if(ErrStr.m_RequiresTranslation)
 			VerboseStr.append(m_TranslateFunc(ErrStr.m_Err.c_str(), ""));
 		else
 			VerboseStr.append(ErrStr.m_Err);
 	}
-
-	// Some errors are expected, user-recoverable conditions, not internal bugs.
-	// Show a plain message box and exit cleanly instead of triggering the crash report dialog.
-	const bool IsOutOfMemory =
-		Error.m_ErrorType == GFX_ERROR_TYPE_OUT_OF_MEMORY_IMAGE ||
-		Error.m_ErrorType == GFX_ERROR_TYPE_OUT_OF_MEMORY_BUFFER ||
-		Error.m_ErrorType == GFX_ERROR_TYPE_OUT_OF_MEMORY_STAGING;
-	// VK_ERROR_DEVICE_LOST (e.g. caused by Discord overlay) triggers RENDER_SUBMIT_FAILED.
-	// This is an external condition, not an internal bug — handle it gracefully.
-	const bool IsGpuDeviceError = Error.m_ErrorType == GFX_ERROR_TYPE_RENDER_SUBMIT_FAILED;
-	if(IsOutOfMemory || IsGpuDeviceError)
-	{
-		log_error("gfx", "%s", VerboseStr.c_str());
-		IGraphics::CMessageBox MessageBox;
-		MessageBox.m_pTitle = m_TranslateFunc(IsOutOfMemory ? "Out of VRAM" : "Graphics Error", "Graphics error");
-		MessageBox.m_pMessage = VerboseStr.c_str();
-		MessageBox.m_Type = IGraphics::EMessageBoxType::ERROR;
-		ShowMessageBoxWithoutGraphics(MessageBox);
-		// Keep the error state set so no further frames are processed; exit cleanly
-		// (flushing logs and running atexit handlers) rather than aborting.
-		exit(1);
-	}
-
-	dbg_assert_failed("Graphics Assertion:\n%s", VerboseStr.c_str());
+	dbg_assert_failed("%s", VerboseStr.c_str());
 }
 
 bool CGraphicsBackend_Threaded::GetWarning(std::vector<std::string> &WarningStrings)
@@ -350,7 +326,7 @@ void CCommandProcessor_SDL_GL::HandleError()
 		m_Error.m_vErrors.emplace_back(SGfxErrorContainer::SError{true, Localizable("A render command failed. Try to update your GPU drivers.", "Graphics error")});
 		break;
 	case GFX_ERROR_TYPE_RENDER_SUBMIT_FAILED:
-		m_Error.m_vErrors.emplace_back(SGfxErrorContainer::SError{true, Localizable("Submitting the render commands failed. If Discord is running, try disabling the Discord overlay (Discord Settings > Overlay). Otherwise, try to update your GPU drivers.", "Graphics error")});
+		m_Error.m_vErrors.emplace_back(SGfxErrorContainer::SError{true, Localizable("Submitting the render commands failed. Try to update your GPU drivers.", "Graphics error")});
 		break;
 	case GFX_ERROR_TYPE_SWAP_FAILED:
 		m_Error.m_vErrors.emplace_back(SGfxErrorContainer::SError{true, Localizable("Failed to swap framebuffers. Try to update your GPU drivers.", "Graphics error")});

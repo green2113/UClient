@@ -85,7 +85,7 @@ class CHttpRequest : public IHttpRequest
 		dbg_assert_failed("unreachable");
 	}
 
-	char m_aUrl[2048] = {0};
+	char m_aUrl[256] = {0};
 
 	void *m_pHeaders = nullptr;
 	unsigned char *m_pBody = nullptr;
@@ -93,6 +93,8 @@ class CHttpRequest : public IHttpRequest
 
 	bool m_ValidateBeforeOverwrite = false;
 	bool m_SkipByFileTime = true;
+	bool m_VerifyPeer = true;
+	bool m_CloseConnection = false;
 
 	CTimeout m_Timeout = CTimeout{0, 0, 0, 0};
 	int64_t m_MaxResponseSize = -1;
@@ -124,8 +126,6 @@ class CHttpRequest : public IHttpRequest
 	std::atomic<int> m_Progress{0};
 	HTTPLOG m_LogProgress = HTTPLOG::ALL;
 	IPRESOLVE m_IpResolve = IPRESOLVE::WHATEVER;
-	bool m_VerifyPeer = true;
-	bool m_CloseConnection = false;
 
 	bool m_FailOnErrorStatus = true;
 

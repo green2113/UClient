@@ -13,9 +13,6 @@
 #include "backend_opengl.h"
 
 class CGLSLPrimitiveExProgram;
-class CGLSLBlurProgram;
-class CGLSLBlurKawaseProgram;
-class CGLSLGlowProgram;
 class CGLSLQuadProgram;
 class CGLSLSpriteMultipleProgram;
 class CGLSLTextProgram;
@@ -31,9 +28,6 @@ protected:
 
 	CGLSLPrimitiveProgram *m_pPrimitiveProgram;
 	CGLSLPrimitiveProgram *m_pPrimitiveProgramTextured;
-	CGLSLGlowProgram *m_pGlowProgram;
-	CGLSLBlurProgram *m_pBlurProgram;
-	CGLSLBlurKawaseProgram *m_pBlurKawaseProgram;
 	CGLSLQuadProgram *m_pQuadProgram;
 	CGLSLQuadProgram *m_pQuadProgramTextured;
 	CGLSLQuadProgram *m_pQuadProgramGrouped;
@@ -46,15 +40,6 @@ protected:
 	CGLSLSpriteMultipleProgram *m_pSpriteProgramMultiple;
 
 	TWGLuint m_LastProgramId;
-
-	TWGLuint m_BlurScreenTexture = 0;
-	TWGLuint m_aBlurTextures[2] = {0, 0};
-	TWGLuint m_aBlurFramebuffers[2] = {0, 0};
-	TWGLuint m_BlurSampler = 0;
-	uint32_t m_BlurCanvasWidth = 0;
-	uint32_t m_BlurCanvasHeight = 0;
-	uint32_t m_BlurTextureWidth = 0;
-	uint32_t m_BlurTextureHeight = 0;
 
 	TWGLuint m_aPrimitiveDrawVertexId[MAX_STREAM_BUFFER_COUNT];
 	TWGLuint m_PrimitiveDrawVertexIdTex3D;
@@ -93,9 +78,6 @@ protected:
 	void UseProgram(CGLSLTWProgram *pProgram);
 	void UploadStreamBufferData(EPrimitiveType PrimitiveType, const void *pVertices, size_t VertSize, unsigned int PrimitiveCount, bool AsTex3D = false);
 	void RenderText(const CCommandBuffer::SState &State, int DrawNum, int TextTextureIndex, int TextOutlineTextureIndex, int TextureSize, const ColorRGBA &TextColor, const ColorRGBA &TextOutlineColor);
-	bool EnsureBlurResources();
-	void DestroyBlurResources();
-	void RenderBlurKawasePass(TWGLuint SourceTexture, int TargetIndex, float Offset);
 
 	TWGLuint m_MotionBlurTexture = 0;
 	uint32_t m_MotionBlurTexWidth = 0;
@@ -120,8 +102,6 @@ protected:
 	void Cmd_Clear(const CCommandBuffer::SCommand_Clear *pCommand) override;
 	void Cmd_Render(const CCommandBuffer::SCommand_Render *pCommand) override;
 	void Cmd_RenderTex3D(const CCommandBuffer::SCommand_RenderTex3D *pCommand) override;
-	void Cmd_RenderGlowRect(const CCommandBuffer::SCommand_RenderGlowRect *pCommand) override;
-	void Cmd_RenderBlurRect(const CCommandBuffer::SCommand_RenderBlurRect *pCommand) override;
 	void Cmd_BeforeSwap() override;
 
 	void Cmd_CreateBufferObject(const CCommandBuffer::SCommand_CreateBufferObject *pCommand) override;

@@ -119,6 +119,8 @@ class CGameConsole : public CComponent
 		void PrintLine(const char *pLine, int Len, ColorRGBA PrintColor) REQUIRES(!m_BacklogPendingLock);
 		int GetLinesToScroll(int Direction, int LinesToScroll);
 		void ScrollToCenter(int StartLine, int EndLine);
+		int TotalBacklogLines();
+		float LogLineWidth() const;
 		void Dump() REQUIRES(!m_BacklogPendingLock);
 
 		const char *GetString() const { return m_Input.GetString(); }
@@ -139,8 +141,6 @@ class CGameConsole : public CComponent
 		static void PossibleArgumentsCompleteCallback(int Index, const char *pStr, void *pUser);
 
 		void UpdateEntryTextAttributes(CBacklogEntry *pEntry) const;
-		int TotalBacklogLines();
-		float LogLineWidth() const;
 
 		bool IsInputHidden() const;
 		void UpdateCompletionSuggestions();
@@ -211,7 +211,6 @@ public:
 	void OnReset() override;
 	void OnRender() override;
 	void OnMessage(int MsgType, void *pRawMsg) override;
-	bool OnCursorMove(float x, float y, IInput::ECursorType CursorType) override;
 	bool OnInput(const IInput::CEvent &Event) override;
 	void Prompt(char (&aPrompt)[32]);
 

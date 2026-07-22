@@ -116,7 +116,8 @@ static void QuadsSetSubsetFreeRelative(IGraphics *pGraphics,
 		NormalizeMediaPreviewCoord(Y3, OriginY, OriginH));
 }
 
-static void DrawRoundedMediaPreview(IGraphics *pGraphics, const IGraphics::CTextureHandle &Texture, float X, float Y, float W, float H, float Rounding, float Alpha)
+// Shared with CGifBubbles so the above-head bubble matches the chat preview's rounded style.
+void DrawRoundedMediaPreview(IGraphics *pGraphics, const IGraphics::CTextureHandle &Texture, float X, float Y, float W, float H, float Rounding, float Alpha)
 {
 	if(!Texture.IsValid() || W <= 0.0f || H <= 0.0f)
 		return;
@@ -478,6 +479,7 @@ CChat::CLine::CLine()
 	m_ReactionRectsValid = false;
 	m_aReactionRowHeight[0] = 0.0f;
 	m_aReactionRowHeight[1] = 0.0f;
+	m_ShowAboveHead = false;
 }
 
 void CChat::CLine::Reset(CChat &This)
@@ -534,6 +536,7 @@ void CChat::CLine::Reset(CChat &This)
 	m_ReactionRectsValid = false;
 	m_aReactionRowHeight[0] = 0.0f;
 	m_aReactionRowHeight[1] = 0.0f;
+	m_ShowAboveHead = false;
 }
 
 CChat::CChat()
@@ -1018,6 +1021,8 @@ void CChat::OnConsoleInit()
 	Console()->Register("echo", "r[message]", CFGFLAG_CLIENT | CFGFLAG_STORE, ConEcho, this, "Echo the text in chat window");
 	Console()->Register("clear_chat", "", CFGFLAG_CLIENT | CFGFLAG_STORE, ConClearChat, this, "Clear chat messages");
 	Console()->Register("toggle_chat_media_hidden", "", CFGFLAG_CLIENT, ConToggleHideChatMedia, this, "Toggle hidden media mode in chat");
+	Console()->Register("add_censor_list", "r[word]", CFGFLAG_CLIENT, ConAddCensorList, this, "Add a word to the chat filter regex");
+	Console()->Register("add_white_list", "s[nickname]", CFGFLAG_CLIENT, ConAddWhiteList, this, "Add a player to the chat filter whitelist");
 }
 
 void CChat::OnInit()
@@ -1026,6 +1031,20 @@ void CChat::OnInit()
 	Console()->Chain("cl_chat_old", ConchainChatOld, this);
 	Console()->Chain("cl_chat_size", ConchainChatFontSize, this);
 	Console()->Chain("cl_chat_width", ConchainChatWidth, this);
+	Console()->Chain("bc_regex_player_whitelist", ConchainRegexPlayerWhitelist, this);
+
+	if(g_Config.m_BcRegexPlayerWhitelist[0])
+	{
+		auto Re = Regex(g_Config.m_BcRegexPlayerWhitelist);
+		if(Re.error().empty())
+			m_RegexPlayerWhitelist = std::move(Re);
+	}
+	if(g_Config.m_TcRegexChatIgnore[0])
+	{
+		auto Re = Regex(g_Config.m_TcRegexChatIgnore);
+		if(Re.error().empty())
+			GameClient()->m_TClient.m_RegexChatIgnore = std::move(Re);
+	}
 }
 
 namespace
@@ -1084,7 +1103,7 @@ void ApplyTranslateLanguage(char *pConfig, size_t ConfigSize, int Index, const S
 
 void CChat::OpenTranslateSettingsPopup(const CUIRect &ButtonRect)
 {
-	Ui()->DoPopupMenu(&m_TranslateSettingsPopupId, ButtonRect.x, ButtonRect.y, 300.0f, 283.0f, this, PopupTranslateSettings);
+	Ui()->DoPopupMenu(&m_TranslateSettingsPopupId, ButtonRect.x, ButtonRect.y, 300.0f, 306.0f, this, PopupTranslateSettings);
 }
 
 CUi::EPopupMenuFunctionResult CChat::PopupTranslateSettings(void *pContext, CUIRect View, bool Active)
@@ -1165,6 +1184,11 @@ CUi::EPopupMenuFunctionResult CChat::PopupTranslateSettings(void *pContext, CUIR
 	s_IncomingIgnoreLanguagesInput.SetEmptyText("ru; en; zh");
 	pChat->Ui()->DoClearableEditBox(&s_IncomingIgnoreLanguagesInput, &IgnoreEditBox, 14.0f);
 	pChat->GameClient()->m_Tooltips.DoToolTip(&s_IncomingIgnoreLanguagesInput, &IgnoreEditBox, Localize("Semicolon-separated source languages to skip for auto-translation, for example: ru; en; zh"));
+
+	View.HSplitTop(Spacing, nullptr, &View);
+	View.HSplitTop(18.0f, &Row, &View);
+	if(pChat->GameClient()->m_Menus.DoButton_CheckBox(&pChat->m_TranslateSettingsStripPunctuationButton, Localize("No commas or periods"), g_Config.m_BcTranslateOutgoingStripPunctuation, &Row))
+		g_Config.m_BcTranslateOutgoingStripPunctuation ^= 1;
 
 	View.HSplitTop(Spacing, nullptr, &View);
 	static CButtonContainer s_TranslateKeyReader;
@@ -1380,6 +1404,16 @@ static bool IsAllowedChatMediaUrl(const char *pUrl)
 	if(pUrl == nullptr || pUrl[0] == '\0')
 		return false;
 	return IsAllowedChatMediaHost(ExtractUrlHostLower(pUrl));
+}
+
+// Separate, narrower allowlist than IsAllowedChatMediaUrl: only links from these domains
+// pop the above-head gif bubble, so a random tenor/imgur link someone pastes doesn't spam it.
+static bool IsGifBubbleUrl(const char *pUrl)
+{
+	if(!g_Config.m_BcGifBubbleAboveHead || pUrl == nullptr || pUrl[0] == '\0')
+		return false;
+	bool HasDomains = false;
+	return IsAllowedChatMediaHostByDomainList(ExtractUrlHostLower(pUrl), g_Config.m_BcGifBubbleDomains, HasDomains);
 }
 
 static bool IsYouTubeUrl(const std::string &Url)
@@ -3441,6 +3475,17 @@ bool CChat::ShouldHideMediaPreview(const CLine &Line) const
 	return m_HideMediaByBind && !Line.m_MediaRevealed && ShouldDisplayMediaSlot(Line);
 }
 
+// Unlike ShouldHideMediaPreview (a spoiler toggle the user can click through), this is a hard
+// block: if we know a link is nsfw and the browser's "show NSFW" setting is off, there is no
+// click-to-reveal - the only way to see it is to enable that setting.
+bool CChat::ShouldHideNsfwMedia(const CLine &Line) const
+{
+	if(g_Config.m_BcCherryGifsShowNsfw || Line.m_aMediaUrl[0] == '\0')
+		return false;
+	bool Nsfw = false;
+	return GameClient()->m_CherryGifs.TryGetNsfw(Line.m_aMediaUrl, Nsfw) && Nsfw;
+}
+
 void CChat::ResetHiddenMediaReveals()
 {
 	for(auto &Line : m_aLines)
@@ -4016,6 +4061,284 @@ void CChat::ConToggleHideChatMedia(IConsole::IResult *pResult, void *pUserData)
 	pThis->ResetHiddenMediaReveals();
 	pThis->RebuildChat();
 	pThis->Echo(pThis->m_HideMediaByBind ? "Chat media hidden" : "Chat media visible");
+}
+
+std::vector<std::string> CChat::SplitWords(const char *pMessage)
+{
+	std::vector<std::string> Parts;
+	if(!pMessage)
+		return Parts;
+
+	std::string Str(pMessage);
+	size_t Start = 0;
+	size_t End = 0;
+	while((End = Str.find(' ', Start)) != std::string::npos)
+	{
+		Parts.push_back(Str.substr(Start, End - Start));
+		Start = End + 1;
+	}
+	Parts.push_back(Str.substr(Start));
+	return Parts;
+}
+
+void CChat::ConchainRegexPlayerWhitelist(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
+{
+	if(pResult->NumArguments() == 1)
+	{
+		auto Re = Regex(pResult->GetString(0));
+		if(!Re.error().empty())
+		{
+			log_error("chat", "Invalid whitelist regex: %s", Re.error().c_str());
+			return;
+		}
+		static_cast<CChat *>(pUserData)->m_RegexPlayerWhitelist = std::move(Re);
+	}
+	pfnCallback(pResult, pCallbackUserData);
+}
+
+void CChat::ConAddWhiteList(IConsole::IResult *pResult, void *pUserData)
+{
+	CChat *pSelf = static_cast<CChat *>(pUserData);
+	const char *pInput = pResult->GetString(0);
+	char aInput[256];
+	str_copy(aInput, pInput, sizeof(aInput));
+	str_utf8_trim_right(aInput);
+	char aBuf[256];
+	if(!aInput[0])
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "Regex", "No nickname given");
+		return;
+	}
+
+	const bool HadExistingRegex = g_Config.m_BcRegexPlayerWhitelist[0] != '\0';
+	char aOldRegex[sizeof(g_Config.m_BcRegexPlayerWhitelist)];
+	str_copy(aOldRegex, g_Config.m_BcRegexPlayerWhitelist, sizeof(aOldRegex));
+	const char *pNewRegex = aInput;
+	char aNewRegex[sizeof(g_Config.m_BcRegexPlayerWhitelist)];
+	if(HadExistingRegex)
+	{
+		str_format(aNewRegex, sizeof(aNewRegex), "%s|%s", g_Config.m_BcRegexPlayerWhitelist, aInput);
+		pNewRegex = aNewRegex;
+	}
+
+	str_copy(g_Config.m_BcRegexPlayerWhitelist, pNewRegex, sizeof(g_Config.m_BcRegexPlayerWhitelist));
+
+	auto Re = Regex(g_Config.m_BcRegexPlayerWhitelist);
+	if(!Re.error().empty())
+	{
+		str_copy(g_Config.m_BcRegexPlayerWhitelist, aOldRegex, sizeof(g_Config.m_BcRegexPlayerWhitelist));
+		str_format(aBuf, sizeof(aBuf), "Invalid regex, list not updated: %s", Re.error().c_str());
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "Regex", aBuf);
+		return;
+	}
+
+	pSelf->m_RegexPlayerWhitelist = std::move(Re);
+	if(!HadExistingRegex)
+		str_format(aBuf, sizeof(aBuf), "New regex added: %s", aInput);
+	else
+		str_format(aBuf, sizeof(aBuf), "Added to existing regex: %s", aInput);
+	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "Regex", aBuf);
+}
+
+void CChat::ConAddCensorList(IConsole::IResult *pResult, void *pUserData)
+{
+	CChat *pSelf = static_cast<CChat *>(pUserData);
+	const char *pInput = pResult->GetString(0);
+	char aInput[256];
+	str_copy(aInput, pInput, sizeof(aInput));
+	str_utf8_trim_right(aInput);
+	char aBuf[256];
+	if(!aInput[0])
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "Regex", "No word given");
+		return;
+	}
+
+	const bool HadExistingRegex = g_Config.m_TcRegexChatIgnore[0] != '\0';
+	char aOldRegex[sizeof(g_Config.m_TcRegexChatIgnore)];
+	str_copy(aOldRegex, g_Config.m_TcRegexChatIgnore, sizeof(aOldRegex));
+	const char *pNewRegex = aInput;
+	char aNewRegex[sizeof(g_Config.m_TcRegexChatIgnore)];
+	if(HadExistingRegex)
+	{
+		str_format(aNewRegex, sizeof(aNewRegex), "%s|%s", g_Config.m_TcRegexChatIgnore, aInput);
+		pNewRegex = aNewRegex;
+	}
+
+	str_copy(g_Config.m_TcRegexChatIgnore, pNewRegex, sizeof(g_Config.m_TcRegexChatIgnore));
+
+	auto Re = Regex(g_Config.m_TcRegexChatIgnore);
+	if(!Re.error().empty())
+	{
+		str_copy(g_Config.m_TcRegexChatIgnore, aOldRegex, sizeof(g_Config.m_TcRegexChatIgnore));
+		str_format(aBuf, sizeof(aBuf), "Invalid regex, list not updated: %s", Re.error().c_str());
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "Regex", aBuf);
+		return;
+	}
+
+	pSelf->GameClient()->m_TClient.m_RegexChatIgnore = std::move(Re);
+	if(!HadExistingRegex)
+		str_format(aBuf, sizeof(aBuf), "New regex added: %s", aInput);
+	else
+		str_format(aBuf, sizeof(aBuf), "Added to existing regex: %s", aInput);
+	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "Regex", aBuf);
+}
+
+const char *CChat::FilterText(const char *pMessage, int ClientId, bool IsChat)
+{
+	if(!pMessage || !g_Config.m_TcRegexChatIgnore[0] || !g_Config.m_BcEnableCensorList)
+		return pMessage;
+
+	static char s_aFilteredMessage[1024];
+	s_aFilteredMessage[0] = '\0';
+	if(g_Config.m_BcRegexPlayerWhitelist[0] && ClientId >= 0)
+	{
+		auto &RePlr = m_RegexPlayerWhitelist;
+		if(RePlr.error().empty() && RePlr.test(GameClient()->m_aClients[ClientId].m_aName))
+			return pMessage;
+	}
+	auto &Re = GameClient()->m_TClient.m_RegexChatIgnore;
+	if(!Re.error().empty())
+		return pMessage;
+	if(!Re.test(pMessage))
+		return pMessage;
+
+	std::vector<std::string> BlockedWords;
+	std::vector<std::string> SplitMsg = SplitWords(pMessage);
+
+	if(g_Config.m_BcShowBlockedWordInConsole && IsChat)
+	{
+		Re.match(pMessage, true, [&BlockedWords](const std::string &Match, int /*MatchIndex*/, int Group) {
+			if(Group == 0)
+			{
+				bool AlreadyBlocked = false;
+				for(const auto &BlockedWord : BlockedWords)
+				{
+					if(BlockedWord == Match)
+					{
+						AlreadyBlocked = true;
+						break;
+					}
+				}
+				if(!AlreadyBlocked)
+					BlockedWords.push_back(Match);
+			}
+		});
+	}
+
+	std::string FilteredMessage;
+	if(g_Config.m_BcFilterChangeWholeWord == 0)
+	{
+		FilteredMessage = Re.replace(pMessage, true, [](const std::string &Match, int /*MatchIndex*/, int Group) -> std::string {
+			if(Group != 0)
+				return "";
+
+			if(g_Config.m_BcMultipleReplacementChar)
+			{
+				size_t Size = 0, Count = 0;
+				str_utf8_stats(Match.c_str(), Match.length() * 4, Match.length(), &Size, &Count);
+				std::string Replacement;
+				for(size_t i = 0; i < Count; i++)
+					Replacement += g_Config.m_BcBlockedContentReplacementChar;
+				return Replacement;
+			}
+			return g_Config.m_BcBlockedContentReplacementChar;
+		});
+		str_copy(s_aFilteredMessage, FilteredMessage.c_str(), sizeof(s_aFilteredMessage));
+	}
+	else if(g_Config.m_BcFilterChangeWholeWord == 1)
+	{
+		for(size_t w = 0; w < SplitMsg.size(); w++)
+		{
+			if(Re.error().empty() && Re.test(SplitMsg[w]))
+			{
+				if(g_Config.m_BcMultipleReplacementChar)
+				{
+					if(w > 0)
+						str_append(s_aFilteredMessage, " ", sizeof(s_aFilteredMessage));
+					size_t Size = 0, Count = 0;
+					str_utf8_stats(SplitMsg[w].c_str(), SplitMsg[w].length() * 4, SplitMsg[w].length(), &Size, &Count);
+					for(size_t i = 0; i < Count; i++)
+						str_append(s_aFilteredMessage, g_Config.m_BcBlockedContentReplacementChar, sizeof(s_aFilteredMessage));
+					if(w < SplitMsg.size())
+						str_append(s_aFilteredMessage, " ", sizeof(s_aFilteredMessage));
+				}
+				else
+				{
+					str_append(s_aFilteredMessage, g_Config.m_BcBlockedContentReplacementChar, sizeof(s_aFilteredMessage));
+				}
+			}
+			else
+			{
+				str_append(s_aFilteredMessage, SplitMsg[w].c_str(), sizeof(s_aFilteredMessage));
+			}
+		}
+	}
+	else if(g_Config.m_BcFilterChangeWholeWord == 2)
+	{
+		for(size_t w = 0; w < SplitMsg.size(); w++)
+		{
+			if(w > 0)
+				str_append(s_aFilteredMessage, " ", sizeof(s_aFilteredMessage));
+
+			bool IsExactMatch = false;
+			if(Re.error().empty())
+			{
+				std::string LowerWord;
+				LowerWord.resize(SplitMsg[w].size() * 4 + 1);
+				str_utf8_tolower(SplitMsg[w].c_str(), LowerWord.data(), LowerWord.size());
+				LowerWord.resize(std::strlen(LowerWord.c_str()));
+
+				std::string MatchedWord;
+				Re.match(LowerWord, false, [&MatchedWord, &LowerWord](const std::string &Match, int /*MatchIndex*/, int Group) {
+					if(Group == 0 && Match == LowerWord)
+						MatchedWord = Match;
+				});
+				IsExactMatch = !MatchedWord.empty();
+			}
+
+			if(IsExactMatch)
+				str_append(s_aFilteredMessage, g_Config.m_BcBlockedContentReplacementChar, sizeof(s_aFilteredMessage));
+			else
+				str_append(s_aFilteredMessage, SplitMsg[w].c_str(), sizeof(s_aFilteredMessage));
+		}
+
+		FilteredMessage = Re.replace(s_aFilteredMessage, true, [](const std::string &Match, int /*MatchIndex*/, int Group) -> std::string {
+			if(Group != 0)
+				return "";
+
+			if(g_Config.m_BcMultipleReplacementChar)
+			{
+				size_t Size = 0, Count = 0;
+				str_utf8_stats(Match.c_str(), Match.length() * 4, Match.length(), &Size, &Count);
+				std::string Replacement;
+				for(size_t i = 0; i < Count; i++)
+					Replacement += g_Config.m_BcBlockedContentPartialReplacementChar;
+				return Replacement;
+			}
+			return g_Config.m_BcBlockedContentPartialReplacementChar;
+		});
+		str_copy(s_aFilteredMessage, FilteredMessage.c_str(), sizeof(s_aFilteredMessage));
+	}
+
+	if(g_Config.m_BcShowBlockedWordInConsole && IsChat && !BlockedWords.empty())
+	{
+		char aBlockedWordsStr[512];
+		aBlockedWordsStr[0] = '\0';
+		if(ClientId >= 0)
+			str_format(aBlockedWordsStr, sizeof(aBlockedWordsStr), "%s said: ", GameClient()->m_aClients[ClientId].m_aName);
+		else if(ClientId == SERVER_MSG)
+			str_copy(aBlockedWordsStr, "Server said: ", sizeof(aBlockedWordsStr));
+		for(size_t i = 0; i < BlockedWords.size(); i++)
+		{
+			if(i > 0)
+				str_append(aBlockedWordsStr, ", ", sizeof(aBlockedWordsStr));
+			str_append(aBlockedWordsStr, BlockedWords[i].c_str(), sizeof(aBlockedWordsStr));
+		}
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "Regex filter", aBlockedWordsStr, color_cast<ColorRGBA>(ColorHSLA(g_Config.m_BcBlockedWordConsoleColor)));
+	}
+
+	return s_aFilteredMessage;
 }
 
 bool CChat::ShouldHideLineFromStreamer(const CLine &Line) const
@@ -4836,7 +5159,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			CLine &Line = m_aLines[LineIndex];
 			if(!Line.m_Initialized)
 				break;
-			if(!Line.m_MediaPreviewRectValid || !ShouldHideMediaPreview(Line))
+			if(!Line.m_MediaPreviewRectValid || !ShouldHideMediaPreview(Line) || ShouldHideNsfwMedia(Line))
 				continue;
 			const SRenderRect &Rect = Line.m_MediaPreviewRect;
 			if(MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
@@ -5044,7 +5367,9 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			CLine &Line = m_aLines[LineIndex];
 			if(!Line.m_Initialized)
 				break;
-			if(!Line.m_MediaPreviewRectValid)
+			// NSFW content is a hard block (see ShouldHideNsfwMedia): never let a click open the
+			// full media viewer for it, even if the preview rect is otherwise valid.
+			if(!Line.m_MediaPreviewRectValid || ShouldHideNsfwMedia(Line))
 				continue;
 			const SRenderRect &Rect = Line.m_MediaPreviewRect;
 			if(MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
@@ -5677,6 +6002,23 @@ void CChat::OnMessage(int MsgType, void *pRawMsg)
 		if(GameClient()->m_TimeoutReconnect.TryConsumeTimeoutSettingsMessage(pMsg->m_ClientId, pMsg->m_pMessage))
 			return;
 
+		if(g_Config.m_TcRegexChatIgnore[0] && g_Config.m_BcEnableCensorList)
+		{
+			auto &Re = GameClient()->m_TClient.m_RegexChatIgnore;
+			if(Re.error().empty() && Re.test(pMsg->m_pMessage))
+			{
+				const char *pFilteredMSG = FilterText(pMsg->m_pMessage, pMsg->m_ClientId, true);
+				AddLine(pMsg->m_ClientId, pMsg->m_Team, pFilteredMSG);
+				return;
+			}
+		}
+		else
+		{
+			auto &Re = GameClient()->m_TClient.m_RegexChatIgnore;
+			if(Re.error().empty() && Re.test(pMsg->m_pMessage))
+				return;
+		}
+
 		/*
 		if(g_Config.m_ClCensorChat)
 		{
@@ -6250,6 +6592,13 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 			SetMapAttachment(CurrentLine, aMapUrl, aMapName);
 	}
 
+	// The whole message is a single recognized link from a gif-bubble domain (e.g. sent via
+	// the gif wheel, or pasted by hand) -> pop a bubble above the sender's head too.
+	CurrentLine.m_ShowAboveHead = ClientId >= 0 &&
+				       CurrentLine.m_vMediaCandidates.size() == 1 &&
+				       str_comp(CurrentLine.m_aText, CurrentLine.m_vMediaCandidates.front().c_str()) == 0 &&
+				       IsGifBubbleUrl(CurrentLine.m_aText);
+
 	if(CurrentLine.m_ClientId == SERVER_MSG)
 	{
 		str_copy(CurrentLine.m_aName, "*** ");
@@ -6261,6 +6610,9 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	else
 	{
 		const auto &LineAuthor = GameClient()->m_aClients[CurrentLine.m_ClientId];
+		// v2.0: censor-list/word filter is applied to the author's name before the UClient
+		// streamer-mode sanitizer, so both features union cleanly.
+		const char *pFilteredLineAuthor = FilterText(LineAuthor.m_aName);
 
 		if(LineAuthor.m_Active)
 		{
@@ -6282,7 +6634,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 			if(LineAuthor.m_Active)
 			{
 				char aSanitizedName[64];
-				GameClient()->m_BestClient.SanitizePlayerName(LineAuthor.m_aName, aSanitizedName, sizeof(aSanitizedName), CurrentLine.m_ClientId);
+				GameClient()->m_BestClient.SanitizePlayerName(pFilteredLineAuthor, aSanitizedName, sizeof(aSanitizedName), CurrentLine.m_ClientId);
 				str_append(CurrentLine.m_aName, " ");
 				str_append(CurrentLine.m_aName, aSanitizedName);
 			}
@@ -6296,7 +6648,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 			if(LineAuthor.m_Active)
 			{
 				char aSanitizedName[64];
-				GameClient()->m_BestClient.SanitizePlayerName(LineAuthor.m_aName, aSanitizedName, sizeof(aSanitizedName), CurrentLine.m_ClientId);
+				GameClient()->m_BestClient.SanitizePlayerName(pFilteredLineAuthor, aSanitizedName, sizeof(aSanitizedName), CurrentLine.m_ClientId);
 				str_append(CurrentLine.m_aName, " ");
 				str_append(CurrentLine.m_aName, aSanitizedName);
 			}
@@ -6306,7 +6658,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 		}
 		else
 		{
-			GameClient()->m_BestClient.SanitizePlayerName(LineAuthor.m_aName, CurrentLine.m_aName, sizeof(CurrentLine.m_aName), CurrentLine.m_ClientId);
+			GameClient()->m_BestClient.SanitizePlayerName(pFilteredLineAuthor, CurrentLine.m_aName, sizeof(CurrentLine.m_aName), CurrentLine.m_ClientId);
 		}
 
 		if(LineAuthor.m_Active)
@@ -6642,7 +6994,8 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			float TotalHeight = Line.m_aTextHeight[OffsetType] + RealMsgPaddingY;
 			const bool ShowMediaSlot = ShouldDisplayMediaSlot(Line);
 			const bool HideMediaPreview = ShouldHideMediaPreview(Line);
-			if(ShowMediaSlot && (HideMediaPreview || (Line.m_MediaState == EMediaState::READY && Line.m_MediaWidth > 0 && Line.m_MediaHeight > 0 && !Line.m_vMediaFrames.empty())))
+			const bool HideNsfwMedia = ShouldHideNsfwMedia(Line);
+			if(ShowMediaSlot && (HideMediaPreview || HideNsfwMedia || (Line.m_MediaState == EMediaState::READY && Line.m_MediaWidth > 0 && Line.m_MediaHeight > 0 && !Line.m_vMediaFrames.empty())))
 			{
 				const float MaxPreviewWidth = minimum(LineWidth, (float)g_Config.m_BcChatMediaPreviewMaxWidth) * CHAT_MEDIA_PREVIEW_SIZE_SCALE;
 				if(MaxPreviewWidth > 0.0f && MaxPreviewHeight > 0.0f)
@@ -7789,6 +8142,7 @@ void CChat::OnRender()
 
 				const bool ShowMediaSlot = ShouldDisplayMediaSlot(Line);
 				const bool HideMediaPreview = ShouldHideMediaPreview(Line);
+				const bool HideNsfwMedia = ShouldHideNsfwMedia(Line);
 				const bool HasMediaPreview = Line.m_aMediaPreviewWidth[OffsetType] > 0.0f && Line.m_aMediaPreviewHeight[OffsetType] > 0.0f;
 				const float PreviewX = LineRenderX + RealMsgPaddingX / 2.0f;
 				const float PreviewY = Line.m_TextYOffset + TextOffsetY + Line.m_aTextHeight[OffsetType] + FontSize() * 0.4f;
@@ -7815,17 +8169,18 @@ void CChat::OnRender()
 					float InnerPreviewH = PreviewH;
 					float InnerPreviewRounding = 0.0f;
 
-					if(HideMediaPreview)
+					if(HideMediaPreview || HideNsfwMedia)
 					{
+						const char *pHiddenLabel = HideNsfwMedia ? "NSFW content hidden" : "hidden media";
 						DrawMediaPreviewFrame(ColorRGBA(0.10f, 0.10f, 0.10f, 0.82f * Blend), InnerPreviewX, InnerPreviewY, InnerPreviewW, InnerPreviewH, InnerPreviewRounding);
 
 						CTextCursor HiddenCursor;
 						const float HiddenFontSize = FontSize() * 0.72f;
-						const float HiddenLabelWidth = TextRender()->TextWidth(HiddenFontSize, "hidden media");
+						const float HiddenLabelWidth = TextRender()->TextWidth(HiddenFontSize, pHiddenLabel);
 						HiddenCursor.SetPosition(vec2(InnerPreviewX + maximum(FontSize() * 0.35f, (InnerPreviewW - HiddenLabelWidth) / 2.0f), InnerPreviewY + maximum(FontSize() * 0.25f, (InnerPreviewH - HiddenFontSize) / 2.0f)));
 						HiddenCursor.m_FontSize = HiddenFontSize;
 						TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.9f * Blend);
-						TextRender()->TextEx(&HiddenCursor, "hidden media");
+						TextRender()->TextEx(&HiddenCursor, pHiddenLabel);
 						TextRender()->TextColor(TextRender()->DefaultTextColor());
 
 						Line.m_MediaRetryRectValid = false;

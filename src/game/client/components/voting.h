@@ -47,7 +47,8 @@ public:
 	void OnConsoleInit() override;
 	void OnMessage(int MsgType, void *pRawMsg) override;
 
-	void Render();
+	void Render(bool ForcePreview = false);
+	CUIRect GetHudRect(float HudWidth, float HudHeight, bool ForcePreview = false) const;
 
 	void CallvoteSpectate(int ClientId, const char *pReason, bool ForceVote = false);
 	void CallvoteKick(int ClientId, const char *pReason, bool ForceVote = false);
@@ -66,8 +67,6 @@ public:
 	bool IsReceivingOptions() const { return m_ReceivingOptions; }
 	int NumOptions() const { return m_NumVoteOptions; }
 	const CVoteOptionClient *FirstOption() const { return m_pFirst; }
-	void RenderHud(bool ForcePreview = false);
-	CUIRect GetHudRect(float HudWidth, float HudHeight, bool ForcePreview = false) const;
 };
 
 #endif

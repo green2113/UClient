@@ -4,7 +4,7 @@
 
 #include <engine/map.h>
 #include <engine/shared/config.h>
-// sin pidora
+
 #include <game/client/components/mapimages.h>
 #include <game/client/components/maplayers.h>
 #include <game/client/gameclient.h>
@@ -105,10 +105,11 @@ void CBackground::OnRender()
 		return;
 	}
 
-	const bool MediaBackgroundDisabled = GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_VISUALS_MEDIA_BACKGROUND);
-	m_MediaBackground.SyncFromConfig(MediaBackgroundDisabled ? 0 : g_Config.m_BcGameMediaBackground, g_Config.m_BcMenuMediaBackgroundPath);
+	m_MediaBackground.SyncFromConfig(g_Config.m_BcGameMediaBackground, g_Config.m_BcMenuMediaBackgroundPath);
 	m_MediaBackground.Update();
-	if(!MediaBackgroundDisabled && g_Config.m_BcGameMediaBackground)
+	// Only render with entities enabled: the map design background stays untouched,
+	// while in entities view the media replaces the plain background color.
+	if(g_Config.m_BcGameMediaBackground && g_Config.m_ClOverlayEntities > 0)
 	{
 		float ViewWidth = 0.0f;
 		float ViewHeight = 0.0f;
@@ -126,7 +127,24 @@ void CBackground::OnRender()
 			RenderContext.m_MapHeight = GameClient()->Layers()->GameLayer()->m_Height * 32.0f;
 		}
 
-		m_MediaBackground.Render(ViewWidth, ViewHeight, &RenderContext);
+		const bool Rendered = m_MediaBackground.Render(ViewWidth, ViewHeight, &RenderContext);
+
+		if(g_Config.m_Debug)
+		{
+			static int64_t s_LastLogTick = 0;
+			const int64_t Now = time_get();
+			if(s_LastLogTick == 0 || Now - s_LastLogTick >= time_freq())
+			{
+				dbg_msg("mediabg", "rendered=%d loaded=%d overlay=%d view=%.1fx%.1f zoom=%.2f offset=%d",
+					Rendered ? 1 : 0,
+					m_MediaBackground.IsLoaded() ? 1 : 0,
+					g_Config.m_ClOverlayEntities,
+					ViewWidth, ViewHeight,
+					GetCurCamera()->m_Zoom,
+					g_Config.m_BcGameMediaBackgroundOffset);
+				s_LastLogTick = Now;
+			}
+		}
 	}
 
 	if(g_Config.m_ClOverlayEntities != 100)

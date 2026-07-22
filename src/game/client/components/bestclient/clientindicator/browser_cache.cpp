@@ -183,6 +183,7 @@ bool CBrowserCache::Load(const json_value &Json)
 
 	m_vPlayers.clear();
 	m_PlayerVersionsByServer.clear();
+	m_DeveloperByServer.clear();
 	for(const auto &ServerEntry : Parsed)
 	{
 		for(const auto &Name : ServerEntry.second)
@@ -192,8 +193,8 @@ bool CBrowserCache::Load(const json_value &Json)
 			str_copy(Entry.m_aServerAddress, ServerEntry.first.c_str(), sizeof(Entry.m_aServerAddress));
 			str_copy(Entry.m_aName, Name.first.c_str(), sizeof(Entry.m_aName));
 			Entry.m_Developer = Name.second.m_Developer;
-			if(!Name.second.m_Version.empty())
-				m_PlayerVersionsByServer[ServerEntry.first][Name.first] = Name.second.m_Version;
+			m_PlayerVersionsByServer[ServerEntry.first][Name.first] = Name.second.m_Version.empty() ? "under" : Name.second.m_Version;
+			m_DeveloperByServer[ServerEntry.first][Name.first] = Name.second.m_Developer;
 			m_vPlayers.push_back(Entry);
 		}
 	}
@@ -211,19 +212,17 @@ bool CBrowserCache::HasPlayer(const char *pServerAddress, const char *pName, boo
 	if(!NormalizeServerAddress(pServerAddress, aNormalizedAddress, sizeof(aNormalizedAddress)))
 		return false;
 
-	bool Found = false;
-	bool Developer = false;
-	for(const auto &Entry : m_vPlayers)
-	{
-		if(str_comp(Entry.m_aServerAddress, aNormalizedAddress) != 0 || str_comp(Entry.m_aName, pName) != 0)
-			continue;
-		Found = true;
-		Developer = Developer || Entry.m_Developer;
-	}
+	const auto ServerIt = m_DeveloperByServer.find(aNormalizedAddress);
+	if(ServerIt == m_DeveloperByServer.end())
+		return false;
+
+	const auto PlayerIt = ServerIt->second.find(pName);
+	if(PlayerIt == ServerIt->second.end())
+		return false;
 
 	if(pDeveloper)
-		*pDeveloper = Developer;
-	return Found;
+		*pDeveloper = PlayerIt->second;
+	return true;
 }
 
 bool CBrowserCache::GetPlayerVersion(const char *pServerAddress, const char *pName, char *pVersion, int VersionSize) const

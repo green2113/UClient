@@ -18,6 +18,9 @@ class CEmoticon : public CComponent
 
 	bool m_WasActive;
 	bool m_Active;
+	// Sticky across separate wheel sessions (not reset until OnReset()/a fresh connect): if the
+	// gif wheel was the one showing last time, the next press opens straight into it again.
+	bool m_PreferGifWheel = false;
 
 	vec2 m_SelectorMouse;
 	int m_SelectedEmote;
@@ -43,9 +46,15 @@ public:
 	void Emote(int Emoticon);
 	void EyeEmote(int EyeEmote);
 
+	// Activates as if the emote key had just been pressed, without needing the key itself -
+	// used by CGifWheel's switch-back-to-emotes button, to hand control back within the same
+	// held-key session.
+	void Activate();
+
 	bool IsActive() const { return m_Active; }
 
 	friend class CBindWheel;
+	friend class CGifWheel;
 };
 
 #endif

@@ -38,13 +38,7 @@ private:
 	std::vector<SParticle> m_vParticles;
 	float m_Time = 0.0f;
 	vec2 m_LastLocalPos = vec2(0.0f, 0.0f);
-	vec2 m_LastSpawnMin = vec2(0.0f, 0.0f);
-	vec2 m_LastSpawnMax = vec2(0.0f, 0.0f);
-	float m_LastScreenWidth = 0.0f;
-	float m_LastScreenHeight = 0.0f;
 	bool m_HasLastLocalPos = false;
-	bool m_HasLastSpawnBounds = false;
-	bool m_HasLastScreenSize = false;
 	bool m_HasConfigSnapshot = false;
 
 	int m_LastType = 0;
@@ -66,7 +60,6 @@ private:
 	int m_LastViewMargin = 0;
 
 	void ResetParticles();
-	bool ShouldRender() const;
 	void RenderParticles(float ViewMinX, float ViewMaxX, float ViewMinY, float ViewMaxY, float BaseAlpha, float FadeIn, float FadeOut);
 };
 

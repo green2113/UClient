@@ -277,8 +277,8 @@ void CParticles::RenderGroup(int Group)
 				Alpha = mix(m_aParticles[i].m_StartAlpha, m_aParticles[i].m_EndAlpha, a);
 			}
 
-			// the current position, respecting the size, is inside the viewport, render it, else ignore
-			if(ParticleIsVisibleOnScreen(p, Size))
+			// the current position, respecting the size, is inside the viewport and FPS fog, render it, else ignore
+			if(ParticleIsVisibleOnScreen(p, Size) && GameClient()->OptimizerAllowRenderPos(p))
 			{
 				if((size_t)CurParticleRenderCount == GRAPHICS_MAX_PARTICLES_RENDER_COUNT || LastColor.r != m_aParticles[i].m_Color.r || LastColor.g != m_aParticles[i].m_Color.g || LastColor.b != m_aParticles[i].m_Color.b || LastColor.a != Alpha || LastQuadOffset != QuadOffset)
 				{
@@ -336,8 +336,8 @@ void CParticles::RenderGroup(int Group)
 				Alpha = mix(m_aParticles[i].m_StartAlpha, m_aParticles[i].m_EndAlpha, a);
 			}
 
-			// the current position, respecting the size, is inside the viewport, render it, else ignore
-			if(ParticleIsVisibleOnScreen(p, Size))
+			// the current position, respecting the size, is inside the viewport and FPS fog, render it, else ignore
+			if(ParticleIsVisibleOnScreen(p, Size) && GameClient()->OptimizerAllowRenderPos(p))
 			{
 				Graphics()->TextureSet(aParticles[m_aParticles[i].m_Spr - FirstParticleOffset]);
 				Graphics()->QuadsBegin();

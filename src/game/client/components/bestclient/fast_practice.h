@@ -19,6 +19,14 @@
 class CFastPractice : public CComponent
 {
 public:
+	struct SLocalRaceState
+	{
+		vec2 m_Position = vec2(0.0f, 0.0f);
+		int m_CurrentTick = -1;
+		int m_StartTick = -1;
+		bool m_Finished = false;
+	};
+
 	int Sizeof() const override { return sizeof(*this); }
 
 	bool Enabled() const { return m_Enabled; }
@@ -39,8 +47,7 @@ public:
 	void InvalidateBufferedInputState();
 	bool IsPracticeParticipant(int ClientId) const;
 	int CurrentPracticeDummyId() const;
-	bool IsPracticeDummy(int ClientId) const;
-	int PracticeDummyId() const;
+	bool GetLocalRaceState(SLocalRaceState &State) const;
 
 	void OnReset() override;
 	void OnMapLoad() override;
@@ -89,6 +96,12 @@ private:
 		std::deque<vec2> m_vSafePositions;
 	};
 
+	struct SPracticeRaceState
+	{
+		int m_StartTick = -1;
+		bool m_Finished = false;
+	};
+
 	bool m_Enabled = false;
 	bool m_RequireDummy = false;
 	int m_EnableLocalClientId = -1;
@@ -110,6 +123,7 @@ private:
 	SAnchorData m_DummyAnchor;
 	std::array<int, MAX_CLIENTS> m_aLastAttackTick{};
 	std::array<SPracticeCommandState, MAX_CLIENTS> m_aPracticeCommandState{};
+	std::array<SPracticeRaceState, MAX_CLIENTS> m_aPracticeRaceState{};
 
 	CGameWorld m_PracticeBaseWorld;
 
@@ -117,8 +131,9 @@ private:
 
 	void ResetPracticeState();
 	void ResetCommandState();
+	void ResetPracticeRaceStates();
+	void UpdatePracticeRaceState(int ClientId, const CCharacter *pChar, int Tick);
 	void SyncPracticeWorldConfig();
-	int DummyClientId() const;
 	bool ResolveParticipantInputs(int LocalClientId, int DummyClientId, int &LocalInputConn, int &DummyInputConn) const;
 	int CurrentLocalPracticeId() const;
 	bool ResolvePracticeRoles(int &LocalClientId, int &DummyClientId) const;
@@ -129,7 +144,6 @@ private:
 	bool ApplyAnchorToCharacter(CGameWorld &World, const SAnchorData &Anchor) const;
 	bool InitPracticeWorld();
 	void PrunePracticeWorld(CGameWorld &World) const;
-	bool AdvanceBaseWorldToTick(int TargetTick, int LocalClientId, int DummyClientId);
 	void ResetAttackTickHistory();
 	void TrackFireSound(int ClientId, CCharacter *pChar);
 	static int WeaponFireSound(int Weapon);
@@ -157,17 +171,16 @@ private:
 	bool IsSafeRescueTile(int Tile) const;
 	bool IsSafeRescuePosition(const vec2 &Pos, float ProximityRadius) const;
 	void TrackSafeRescuePosition(int ClientId, CCharacter *pChar);
-	bool FindNearestSafeRescuePosition(int ClientId, const vec2 &From, vec2 &OutPos) const;
 	bool ExecutePracticeMetaCommand(const std::string &Cmd);
 	bool ExecutePracticeRescueCommand(int LocalClientId, CCharacter *pChar, const std::string &Cmd, const std::vector<std::string> &vArgs);
 	bool ExecutePracticeTeleportCommand(int LocalClientId, CCharacter *pChar, const std::string &Cmd, const std::vector<std::string> &vArgs);
 	bool ExecutePracticeStateCommand(CCharacter *pChar, const std::string &Cmd);
-	bool ExecutePracticeWeaponCommand(int LocalClientId, CCharacter *pChar, const std::string &Cmd, const std::vector<std::string> &vArgs, bool &WeaponsMutated);
+	bool ExecutePracticeWeaponCommand(CCharacter *pChar, const std::string &Cmd, const std::vector<std::string> &vArgs, bool &WeaponsMutated);
 	bool ExecutePracticeMovementCommand(int LocalClientId, CCharacter *pChar, const std::string &Cmd, const std::vector<std::string> &vArgs);
 	bool ExecutePracticeInvincibleCommand(int LocalClientId, CCharacter *pChar, const std::vector<std::string> &vArgs);
 	bool ExecutePracticeCollisionCommand(CCharacter *pChar, const std::string &Cmd);
 	bool ExecutePracticeHitOthersCommand(CCharacter *pChar, const std::vector<std::string> &vArgs);
-	bool ExecutePracticeCommand(int Team, int LocalClientId, CCharacter *pChar, const std::vector<std::string> &vArgs, bool &WeaponsMutated);
+	bool ExecutePracticeCommand(int LocalClientId, CCharacter *pChar, const std::vector<std::string> &vArgs, bool &WeaponsMutated);
 	void SyncPredictedWorldAfterPracticeCommand(int LocalClientId, int DummyClientId, CCharacter *pBaseChar, bool WeaponsMutated);
 };
 

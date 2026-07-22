@@ -77,7 +77,7 @@ CFastActions::CFastActions()
 void CFastActions::ConFaExecuteHover(IConsole::IResult *pResult, void *pUserData)
 {
 	CFastActions *pThis = (CFastActions *)pUserData;
-	if(pThis->GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_FAST_ACTIONS))
+	if(!g_Config.m_BcFastActions)
 		return;
 	pThis->ExecuteHoveredBind();
 }
@@ -85,7 +85,7 @@ void CFastActions::ConFaExecuteHover(IConsole::IResult *pResult, void *pUserData
 void CFastActions::ConOpenFa(IConsole::IResult *pResult, void *pUserData)
 {
 	CFastActions *pThis = (CFastActions *)pUserData;
-	if(pThis->GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_FAST_ACTIONS))
+	if(!g_Config.m_BcFastActions)
 	{
 		pThis->m_Active = false;
 		pThis->m_SelectedBind = -1;
@@ -234,21 +234,11 @@ void CFastActions::OnConsoleInit()
 	Console()->Register("add_fa", "s[name] s[command]", CFGFLAG_CLIENT, ConAddFa, this, "Add a bind to Fast Actions");
 	Console()->Register("remove_fa", "s[name] s[command]", CFGFLAG_CLIENT, ConRemoveFa, this, "Remove a bind from Fast Actions");
 	Console()->Register("delete_all_fa_binds", "", CFGFLAG_CLIENT, ConRemoveAllFaBinds, this, "Removes all Fast Actions binds");
-
-	// Legacy aliases for old configs/scripts. They load old `bs` commands,
-	// while ConfigSaveCallback writes only `fa` commands.
-	Console()->Register("+bs", "", CFGFLAG_CLIENT, ConOpenFa, this, "Legacy alias for +fa");
-	Console()->Register("+bs_execute_hover", "", CFGFLAG_CLIENT, ConFaExecuteHover, this, "Legacy alias for +fa_execute_hover");
-	Console()->Register("bs", "i[index] s[name] s[command]", CFGFLAG_CLIENT, ConAddFaLegacy, this, "Legacy alias for fa");
-	Console()->Register("add_bs", "s[name] s[command]", CFGFLAG_CLIENT, ConAddFa, this, "Legacy alias for add_fa");
-	Console()->Register("remove_bs", "s[name] s[command]", CFGFLAG_CLIENT, ConRemoveFa, this, "Legacy alias for remove_fa");
-	Console()->Register("delete_all_bs_binds", "", CFGFLAG_CLIENT, ConRemoveAllFaBinds, this, "Legacy alias for delete_all_fa_binds");
 }
 
 void CFastActions::OnReset()
 {
 	EnsureFixedBindSlots(m_vBinds);
-	m_WasActive = false;
 	m_Active = false;
 	m_SelectedBind = -1;
 	m_DisplayBind = -1;
@@ -270,7 +260,7 @@ bool CFastActions::OnCursorMove(float x, float y, IInput::ECursorType CursorType
 
 bool CFastActions::OnInput(const IInput::CEvent &Event)
 {
-	if(GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_FAST_ACTIONS))
+	if(!g_Config.m_BcFastActions)
 	{
 		m_Active = false;
 		m_SelectedBind = -1;
@@ -298,7 +288,7 @@ bool CFastActions::OnInput(const IInput::CEvent &Event)
 
 void CFastActions::OnRender()
 {
-	if(GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_FAST_ACTIONS))
+	if(!g_Config.m_BcFastActions)
 	{
 		m_Active = false;
 		m_SelectedBind = -1;
@@ -328,14 +318,12 @@ void CFastActions::OnRender()
 	{
 		if(!ShouldBeVisible)
 		{
-			m_WasActive = false;
 			m_DisplayBind = -1;
 			m_AnimationTime = 0.0f;
 			return;
 		}
 
 		m_DisplayBind = m_SelectedBind;
-		m_WasActive = true;
 		m_AnimationTime = 0.0f;
 		aAnimationPhase.fill(1.0f);
 	}
@@ -356,15 +344,12 @@ void CFastActions::OnRender()
 
 		if(!ShouldBeVisible && m_AnimationTime <= 0.0f)
 		{
-			m_WasActive = false;
 			m_DisplayBind = -1;
 			return;
 		}
 
 		if(m_DisplayBind < 0 || m_DisplayBind >= FAST_ACTIONS_FIXED_SLOTS)
 			return;
-
-		m_WasActive = true;
 
 		const float Progress = std::clamp(m_AnimationTime / AnimationTime, 0.0f, 1.0f);
 		aAnimationPhase[0] = QuadEaseInOut(Progress);
@@ -385,7 +370,7 @@ void CFastActions::OnRender()
 	else if(SelectedBind.m_aCommand[0] != '\0')
 		str_copy(aText, SelectedBind.m_aCommand);
 	else
-		str_format(aText, sizeof(aText), TCLocalize("Slot %d is empty"), m_DisplayBind + 1);
+		str_format(aText, sizeof(aText), Localize("Slot %d is empty"), m_DisplayBind + 1);
 
 	const float TextWidth = TextRender()->TextWidth(s_FontSize, aText);
 	const float BoxW = std::clamp(TextWidth + 52.0f, 180.0f, 680.0f) * aAnimationPhase[1];
@@ -402,7 +387,7 @@ void CFastActions::OnRender()
 
 void CFastActions::ExecuteBind(int Bind)
 {
-	if(GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_FAST_ACTIONS))
+	if(!g_Config.m_BcFastActions)
 		return;
 
 	if(Bind >= 0 && Bind < FAST_ACTIONS_FIXED_SLOTS && m_vBinds[Bind].m_aCommand[0] != '\0')
@@ -428,7 +413,7 @@ void CFastActions::ExecuteBind(int Bind)
 
 void CFastActions::ExecuteHoveredBind()
 {
-	if(GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_FAST_ACTIONS))
+	if(!g_Config.m_BcFastActions)
 		return;
 
 	if(m_SelectedBind >= 0)

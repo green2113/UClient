@@ -97,6 +97,7 @@ void CMapImages::OnMapLoadImpl(class CLayers *pLayers, IMap *pMap)
 
 	const int TextureLoadFlag = Graphics()->Uses2DTextureArrays() ? IGraphics::TEXLOAD_TO_2D_ARRAY_TEXTURE : IGraphics::TEXLOAD_TO_3D_TEXTURE;
 
+	// load new textures
 	bool ShowWarning = false;
 	for(int i = 0; i < m_Count; i++)
 	{
@@ -116,7 +117,6 @@ void CMapImages::OnMapLoadImpl(class CLayers *pLayers, IMap *pMap)
 			{
 				log_error("mapimages", "Failed to load map image %d: failed to load name.", i);
 				ShowWarning = true;
-				pMap->UnloadData(pImg->m_ImageName);
 				continue;
 			}
 			pName = "(error)";
@@ -126,7 +126,6 @@ void CMapImages::OnMapLoadImpl(class CLayers *pLayers, IMap *pMap)
 		{
 			log_error("mapimages", "Failed to load map image %d '%s': invalid map image type.", i, pName);
 			ShowWarning = true;
-			pMap->UnloadData(pImg->m_ImageName);
 			continue;
 		}
 
@@ -145,13 +144,10 @@ void CMapImages::OnMapLoadImpl(class CLayers *pLayers, IMap *pMap)
 					!str_comp(pName, "easter");
 			}
 			str_format(aPath, sizeof(aPath), "mapres/%s%s.png", pName, Translated ? "_0.7" : "");
-			pMap->UnloadData(pImg->m_ImageName);
 			m_aTextures[i] = Graphics()->LoadTexture(aPath, IStorage::TYPE_ALL, LoadFlag);
-			ShowWarning = ShowWarning || m_aTextures[i].IsNullTexture();
 		}
 		else
 		{
-			// Embedded image: raw pixel data must be consumed now regardless of layer type.
 			CImageInfo ImageInfo;
 			ImageInfo.m_Width = pImg->m_Width;
 			ImageInfo.m_Height = pImg->m_Height;
@@ -169,19 +165,17 @@ void CMapImages::OnMapLoadImpl(class CLayers *pLayers, IMap *pMap)
 				pMap->UnloadData(pImg->m_ImageData);
 				log_error("mapimages", "Failed to load map image %d: failed to load data.", i);
 				ShowWarning = true;
-				pMap->UnloadData(pImg->m_ImageName);
 				continue;
 			}
-			pMap->UnloadData(pImg->m_ImageName);
-			ShowWarning = ShowWarning || m_aTextures[i].IsNullTexture();
 		}
+		pMap->UnloadData(pImg->m_ImageName);
+		ShowWarning = ShowWarning || m_aTextures[i].IsNullTexture();
 	}
 	if(ShowWarning)
 	{
 		Client()->AddWarning(SWarning(Localize("Some map images could not be loaded. Check the local console for details.")));
 	}
 }
-
 
 void CMapImages::OnMapLoad()
 {

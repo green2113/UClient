@@ -123,19 +123,22 @@ CSqlExecData::CSqlExecData(IConsole *pConsole, CDbConnectionPool::Mode m) :
 
 void CDbConnectionPool::Print(IConsole *pConsole, Mode DatabaseMode)
 {
-	TryEnqueue(std::make_unique<CSqlExecData>(pConsole, DatabaseMode));
+	m_pShared->m_aQueries[m_InsertIdx++] = std::make_unique<CSqlExecData>(pConsole, DatabaseMode);
+	m_InsertIdx %= std::size(m_pShared->m_aQueries);
 	m_pShared->m_NumBackup.Signal();
 }
 
 void CDbConnectionPool::RegisterSqliteDatabase(Mode DatabaseMode, const char aFilename[64])
 {
-	TryEnqueue(std::make_unique<CSqlExecData>(DatabaseMode, aFilename));
+	m_pShared->m_aQueries[m_InsertIdx++] = std::make_unique<CSqlExecData>(DatabaseMode, aFilename);
+	m_InsertIdx %= std::size(m_pShared->m_aQueries);
 	m_pShared->m_NumBackup.Signal();
 }
 
 void CDbConnectionPool::RegisterMysqlDatabase(Mode DatabaseMode, const CMysqlConfig *pMysqlConfig)
 {
-	TryEnqueue(std::make_unique<CSqlExecData>(DatabaseMode, pMysqlConfig));
+	m_pShared->m_aQueries[m_InsertIdx++] = std::make_unique<CSqlExecData>(DatabaseMode, pMysqlConfig);
+	m_InsertIdx %= std::size(m_pShared->m_aQueries);
 	m_pShared->m_NumBackup.Signal();
 }
 
@@ -144,7 +147,8 @@ void CDbConnectionPool::Execute(
 	std::unique_ptr<const ISqlData> pSqlRequestData,
 	const char *pName)
 {
-	TryEnqueue(std::make_unique<CSqlExecData>(pFunc, std::move(pSqlRequestData), pName));
+	m_pShared->m_aQueries[m_InsertIdx++] = std::make_unique<CSqlExecData>(pFunc, std::move(pSqlRequestData), pName);
+	m_InsertIdx %= std::size(m_pShared->m_aQueries);
 	m_pShared->m_NumBackup.Signal();
 }
 
@@ -153,29 +157,9 @@ void CDbConnectionPool::ExecuteWrite(
 	std::unique_ptr<const ISqlData> pSqlRequestData,
 	const char *pName)
 {
-	TryEnqueue(std::make_unique<CSqlExecData>(pFunc, std::move(pSqlRequestData), pName));
+	m_pShared->m_aQueries[m_InsertIdx++] = std::make_unique<CSqlExecData>(pFunc, std::move(pSqlRequestData), pName);
+	m_InsertIdx %= std::size(m_pShared->m_aQueries);
 	m_pShared->m_NumBackup.Signal();
-}
-
-bool CDbConnectionPool::TryEnqueue(std::unique_ptr<CSqlExecData> pData)
-{
-	const int QueueSize = (int)std::size(m_pShared->m_aQueries);
-	if(m_pShared->m_NumUsedSlots.load(std::memory_order_relaxed) >= QueueSize)
-	{
-		dbg_msg("sql", "ERROR: query queue overflow (>= %d slots used), dropping query '%s'",
-			QueueSize, pData->m_pName);
-		// Mark the result as completed-but-failed so callers don't hang waiting.
-		if(pData->m_pThreadData != nullptr && pData->m_pThreadData->m_pResult != nullptr)
-		{
-			pData->m_pThreadData->m_pResult->m_Success = false;
-			pData->m_pThreadData->m_pResult->m_Completed.store(true);
-		}
-		return false;
-	}
-	m_pShared->m_NumUsedSlots.fetch_add(1, std::memory_order_relaxed);
-	m_pShared->m_aQueries[m_InsertIdx] = std::move(pData);
-	m_InsertIdx = (m_InsertIdx + 1) % QueueSize;
-	return true;
 }
 
 void CDbConnectionPool::OnShutdown()
@@ -318,10 +302,6 @@ void CWorker::ProcessQueries()
 			m_pShared->m_Shutdown.store(false);
 			return;
 		}
-		// A real query slot is now free; let the main thread know it can enqueue
-		// again. Only decrement for actual queries, not the shutdown sentinel
-		// (which was never counted by TryEnqueue).
-		m_pShared->m_NumUsedSlots.fetch_sub(1, std::memory_order_relaxed);
 		bool Success = false;
 		switch(pThreadData->m_Mode)
 		{

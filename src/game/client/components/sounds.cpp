@@ -164,13 +164,6 @@ void CSounds::OnRender()
 	}
 }
 
-void CSounds::ClearQueue()
-{
-	mem_zero(m_aQueue, sizeof(m_aQueue));
-	m_QueuePos = 0;
-	m_QueueWaitTime = time();
-}
-
 void CSounds::Clear()
 {
 	Sound()->StopAll();
@@ -199,6 +192,13 @@ void CSounds::Clear()
 		CSoundLoading(GameClient(), false).Run();
 		m_WaitForSoundJob = false;
 	}
+}
+
+void CSounds::ClearQueue()
+{
+	mem_zero(m_aQueue, sizeof(m_aQueue));
+	m_QueuePos = 0;
+	m_QueueWaitTime = time();
 }
 
 void CSounds::Enqueue(int Channel, int SetId)

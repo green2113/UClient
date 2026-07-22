@@ -34,13 +34,11 @@ inline float EaseInOutQuad(float t)
 	return 1.0f - std::pow(-2.0f * t + 2.0f, 2.0f) / 2.0f;
 }
 
-inline float EaseInOutQuart(float t)
+inline float EaseOutCubic(float t)
 {
 	t = Clamp01(t);
-	if(t < 0.5f)
-		return 8.0f * t * t * t * t;
-	const float Inv = -2.0f * t + 2.0f;
-	return 1.0f - (Inv * Inv * Inv * Inv) / 2.0f;
+	const float Inv = 1.0f - t;
+	return 1.0f - Inv * Inv * Inv;
 }
 
 inline float UpdatePhase(float &Phase, float Target, float Dt, float DurationSeconds)

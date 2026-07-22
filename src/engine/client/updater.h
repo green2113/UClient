@@ -1,3 +1,4 @@
+/* Copyright © 2026 BestProject Team */
 #ifndef ENGINE_CLIENT_UPDATER_H
 #define ENGINE_CLIENT_UPDATER_H
 
@@ -61,6 +62,7 @@ class CUpdater : public IUpdater
 
 	std::shared_ptr<CHttpRequest> m_pCurrentTask;
 	ETaskKind m_TaskKind = ETaskKind::NONE;
+	bool m_bAutoCheckPending = false;
 
 	char m_aLatestVersion[64];
 	char m_aArchiveName[128];
@@ -70,7 +72,7 @@ class CUpdater : public IUpdater
 
 	void ResetTask() REQUIRES(!m_Lock);
 	void StartReleaseFetch() REQUIRES(!m_Lock);
-	bool ParseReleaseTask() REQUIRES(!m_Lock);
+	void ParseReleaseTask() REQUIRES(!m_Lock);
 	void StartArchiveDownload() REQUIRES(!m_Lock);
 	bool ValidateDownloadedArchive() REQUIRES(!m_Lock);
 	bool WriteApplyScript(char *pScriptPath, int ScriptPathSize, char *pInstallDir, int InstallDirSize, char *pExePath, int ExePathSize);
@@ -87,8 +89,10 @@ public:
 	void GetCurrentFile(char *pBuf, int BufSize) override REQUIRES(!m_Lock);
 	int GetCurrentPercent() override REQUIRES(!m_Lock);
 
+	void CheckForUpdate() REQUIRES(!m_Lock) override;
 	void InitiateUpdate() REQUIRES(!m_Lock) override;
 	void ApplyUpdateAndRestart() REQUIRES(!m_Lock) override;
+	const char *GetLatestVersionString() override REQUIRES(!m_Lock);
 	void Init(CHttp *pHttp);
 	void Update() REQUIRES(!m_Lock) override;
 };

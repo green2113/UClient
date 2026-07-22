@@ -257,46 +257,24 @@ static void CheckMetrics(CSkin::CSkinMetricVariable &Metrics, const uint8_t *pIm
 	int MaxX = -1;
 	int MinX = CheckWidth + 1;
 
-	// ImgWidth is pitch in bytes (pixels * 4). ImgX is in pixels, so offset by ImgX*4.
-	const int BaseOffset = ImgY * ImgWidth + ImgX * 4;
-
 	for(int y = 0; y < CheckHeight; y++)
 	{
-		const int RowOffset = BaseOffset + y * ImgWidth;
-		// Scan left-to-right to find leftmost non-transparent pixel in this row
-		int RowMinX = CheckWidth;
 		for(int x = 0; x < CheckWidth; x++)
 		{
-			if(pImg[RowOffset + x * 4 + 3] > 0)
+			int OffsetAlpha = (y + ImgY) * ImgWidth + (x + ImgX) * 4 + 3;
+			uint8_t AlphaValue = pImg[OffsetAlpha];
+			if(AlphaValue > 0)
 			{
-				RowMinX = x;
-				break;
+				if(MaxY < y)
+					MaxY = y;
+				if(MinY > y)
+					MinY = y;
+				if(MaxX < x)
+					MaxX = x;
+				if(MinX > x)
+					MinX = x;
 			}
 		}
-		// Row is fully transparent — skip right-to-left scan
-		if(RowMinX == CheckWidth)
-			continue;
-
-		// Scan right-to-left to find rightmost non-transparent pixel in this row
-		int RowMaxX = RowMinX;
-		for(int x = CheckWidth - 1; x > RowMinX; x--)
-		{
-			if(pImg[RowOffset + x * 4 + 3] > 0)
-			{
-				RowMaxX = x;
-				break;
-			}
-		}
-
-		// Update global bounds
-		if(y > MaxY)
-			MaxY = y;
-		if(y < MinY)
-			MinY = y;
-		if(RowMinX < MinX)
-			MinX = RowMinX;
-		if(RowMaxX > MaxX)
-			MaxX = RowMaxX;
 	}
 
 	Metrics.m_Width = std::clamp((MaxX - MinX) + 1, 1, CheckWidth);

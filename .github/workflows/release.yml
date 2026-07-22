@@ -2,6 +2,9 @@
 name: Create Release
 
 on:
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       tag_name:
@@ -13,9 +16,6 @@ on:
       body:
         description: 'Release description'
         required: false
-      run_id:
-        description: 'Run ID of the build workflow to download artifacts from'
-        required: true
       r2_bucket:
         description: 'Cloudflare R2 bucket name'
         required: false
@@ -27,244 +27,314 @@ on:
 
 permissions:
   contents: write
-  actions: read
+
+env:
+  CLIENT_NAME: UClient
 
 jobs:
-  release:
+  build-cmake:
+    name: Build Release (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_HTTP_MULTIPLEXING: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: linux
+          os: ubuntu-24.04
+          cmake-args: -G Ninja -DCMAKE_BUILD_TYPE=Release -DPREFER_BUNDLED_LIBS=ON -DDISCORD_DYNAMIC=ON -DVULKAN=ON
+          cmake-init-env: CXXFLAGS="-Werror -Wno-unused-function"
+          package-file: "*-linux_x86_64.tar.xz"
+          artifact-name: release-linux
+          asset-name: UClient-ubuntu-linux_x86_64.tar.xz
+        - name: windows
+          os: windows-latest
+          cmake-args: -A x64 -DTOOLS=OFF -DDOWNLOAD_GTEST=OFF -DVULKAN=ON
+          cmake-init-env: CXXFLAGS= LDFLAGS=
+          package-file: "*-win64.zip"
+          artifact-name: release-windows
+          asset-name: UClient-windows.zip
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Prepare Linux
+      if: contains(matrix.os, 'ubuntu')
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install pkg-config ninja-build libcurl4-openssl-dev libfreetype6-dev libnotify-dev libogg-dev libopus-dev libopusfile-dev libsdl2-dev libsqlite3-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libx264-dev libpng-dev libvulkan-dev libglew-dev -y
+
+    - name: Install Vulkan SDK
+      uses: humbletim/install-vulkan-sdk@v1.2
+      with:
+        version: 1.3.296.0
+        cache: true
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          ./
+
+    - name: Package release build
+      run: |
+        cmake -S . -B build-release ${{ matrix.cmake-args }}
+        cmake --build build-release --config Release --target package_default
+        mkdir artifacts
+        mv build-release/${{ matrix.package-file }} artifacts/${{ matrix.asset-name }}
+
+    - name: Upload release package
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact-name }}
+        path: artifacts/${{ matrix.asset-name }}
+
+  build-android:
+    name: Build Release (android)
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_HTTP_MULTIPLEXING: false
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Validate Gradle Wrapper
+      uses: gradle/actions/wrapper-validation@v4
+
+    - name: Prepare Linux
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install ninja-build openjdk-21-jdk openssl
+        curl -LO https://github.com/Kitware/CMake/releases/download/v3.22.1/cmake-3.22.1-Linux-x86_64.tar.gz
+        mkdir -p /home/runner/cmake
+        tar --strip-components 1 -C /home/runner/cmake -xf cmake-3.22.1-Linux-x86_64.tar.gz
+        rustup default 1.92.0
+        cargo install cargo-ndk
+        rustup target add armv7-linux-androideabi
+        rustup target add i686-linux-android
+        rustup target add aarch64-linux-android
+        rustup target add x86_64-linux-android
+        scripts/android/download_android_sdk.sh /home/runner
+
+    - name: Install Vulkan SDK
+      uses: humbletim/install-vulkan-sdk@v1.2
+      with:
+        version: 1.3.296.0
+        cache: true
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          ./
+
+    - name: Prepare Android signing key
+      env:
+        RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+        RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+        RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+      run: |
+        TW_KEY_NAME=/home/runner/DDNet.jks
+        # Release events use tag refs, while manual release builds must run from main.
+        if [ -n "$RELEASE_KEYSTORE_BASE64" ] && { [ "$GITHUB_EVENT_NAME" = "release" ] || [ "$GITHUB_REF" = "refs/heads/main" ]; }; then
+          echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$TW_KEY_NAME"
+          TW_KEY_ALIAS="$RELEASE_KEY_ALIAS"
+          TW_KEY_PW="$RELEASE_KEYSTORE_PASSWORD"
+          echo "Signed with persistent release keystore" >> "$GITHUB_STEP_SUMMARY"
+        else
+          TW_KEY_ALIAS=DDNet-Key
+          TW_KEY_PW="$(openssl rand -base64 32)"
+          keytool -genkey -v -keystore "$TW_KEY_NAME" -keyalg RSA -keysize 2048 -validity 10000 -alias "$TW_KEY_ALIAS" -storepass "$TW_KEY_PW" -dname "CN=DDNet CI, OU=DDNet, O=DDNet"
+          echo "Signed with ephemeral CI keystore" >> "$GITHUB_STEP_SUMMARY"
+        fi
+        {
+          echo "TW_KEY_NAME=$TW_KEY_NAME"
+          echo "TW_KEY_ALIAS=$TW_KEY_ALIAS"
+          echo "TW_KEY_PW=$TW_KEY_PW"
+          echo "TW_VERSION_CODE=$(date -u +%Y%m%d%H)"
+        } >> "$GITHUB_ENV"
+
+    - name: Build Android app
+      run: |
+        export ANDROID_HOME="/home/runner/Android/Sdk"
+        unset ANDROID_SDK_ROOT
+        export PATH=/home/runner/cmake/bin:$PATH
+        scripts/android/cmake_android.sh all DDNet org.ddnet.client Release build-android
+        mkdir artifacts
+        mv build-android/DDNet.apk artifacts/${{ env.CLIENT_NAME }}-android.apk
+
+    - name: Upload Android package
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-android
+        path: artifacts/${{ env.CLIENT_NAME }}-android.apk
+
+  publish:
+    name: Publish Release Assets
+    needs:
+      - build-cmake
+      - build-android
     runs-on: ubuntu-latest
 
     env:
-      BUILD_PREFIX: ddnet
-      CLIENT_NAME: UClient
-      TARGET_REPOSITORY: ${{ github.repository }}
-      R2_BUCKET: ${{ github.event.inputs.r2_bucket }}
-      R2_PUBLIC_BASE_URL: ${{ github.event.inputs.r2_public_base_url }}
+      R2_BUCKET: ${{ github.event.inputs.r2_bucket || 'download' }}
+      R2_PUBLIC_BASE_URL: ${{ github.event.inputs.r2_public_base_url || 'https://ddnet.under1111.com/uclient' }}
       CF_R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
       CF_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       CF_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Download release packages
+      uses: actions/download-artifact@v4
+      with:
+        pattern: release-*
+        path: artifacts
+        merge-multiple: true
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: ${{ env.BUILD_PREFIX }}-*
-          merge-multiple: true
-          path: ./artifacts/raw
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ env.TARGET_REPOSITORY }}
-          run-id: ${{ github.event.inputs.run_id }}
+    - name: List downloaded release packages
+      run: ls -R artifacts
 
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.event.inputs.tag_name }}
-          release_name: ${{ github.event.inputs.release_name }}
-          body: ${{ github.event.inputs.body }}
-          draft: false
-          prerelease: false
+    - name: Attach assets to published GitHub release
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ github.event.release.tag_name }}
+        files: |
+          artifacts/${{ env.CLIENT_NAME }}-ubuntu-linux_x86_64.tar.xz
+          artifacts/${{ env.CLIENT_NAME }}-windows.zip
+          artifacts/${{ env.CLIENT_NAME }}-android.apk
 
-      - name: Prepare Windows artifact
-        run: |
-          file=$(find ./artifacts/raw -type f -name "*.zip" | head -n 1)
-          if [ -z "$file" ]; then
-            echo "No windows artifact found"
-            exit 1
-          fi
-          mv "$file" "./artifacts/${CLIENT_NAME}-windows.zip"
+    - name: Create or update release manually
+      if: github.event_name == 'workflow_dispatch'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ github.event.inputs.tag_name }}
+        name: ${{ github.event.inputs.release_name }}
+        body: ${{ github.event.inputs.body }}
+        files: |
+          artifacts/${{ env.CLIENT_NAME }}-ubuntu-linux_x86_64.tar.xz
+          artifacts/${{ env.CLIENT_NAME }}-windows.zip
+          artifacts/${{ env.CLIENT_NAME }}-android.apk
 
-      - name: Prepare macOS artifact
-        run: |
-          file=$(find ./artifacts/raw -type f -name "*.dmg" | head -n 1)
-          if [ -z "$file" ]; then
-            echo "No macOS artifact found"
-            exit 1
-          fi
-          mv "$file" "./artifacts/${CLIENT_NAME}-macos.dmg"
+    - name: Derive release metadata
+      id: release_meta
+      run: |
+        VERSION="${{ github.event.inputs.tag_name || github.event.release.tag_name }}"
+        VERSION="${VERSION#v}"
+        VERSION="${VERSION#V}"
+        RELEASED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-      - name: Prepare Ubuntu artifact
-        run: |
-          file=$(find ./artifacts/raw -type f -name "*.tar.xz" | head -n 1)
-          if [ -z "$file" ]; then
-            echo "No Ubuntu artifact found"
-            exit 1
-          fi
-          mv "$file" "./artifacts/${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz"
+        WIN_FILE="${CLIENT_NAME}-windows.zip"
+        LIN_FILE="${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz"
 
-      - name: Derive release metadata
-        id: release_meta
-        run: |
-          VERSION="${{ github.event.inputs.tag_name }}"
-          VERSION="${VERSION#v}"
-          VERSION="${VERSION#V}"
-          RELEASED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        WIN_PATH="uclient/${VERSION}/windows/${WIN_FILE}"
+        LIN_PATH="uclient/${VERSION}/linux/${LIN_FILE}"
 
-          WIN_FILE="${CLIENT_NAME}-windows.zip"
-          MAC_FILE="${CLIENT_NAME}-macos.dmg"
-          LIN_FILE="${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz"
+        WIN_SHA=$(sha256sum "./artifacts/${WIN_FILE}" | awk '{print $1}')
+        LIN_SHA=$(sha256sum "./artifacts/${LIN_FILE}" | awk '{print $1}')
 
-          WIN_PATH="uclient/${VERSION}/windows/${WIN_FILE}"
-          MAC_PATH="uclient/${VERSION}/macos/${MAC_FILE}"
-          LIN_PATH="uclient/${VERSION}/linux/${LIN_FILE}"
+        WIN_SIZE=$(stat -c%s "./artifacts/${WIN_FILE}")
+        LIN_SIZE=$(stat -c%s "./artifacts/${LIN_FILE}")
 
-          WIN_SHA=$(sha256sum "./artifacts/${WIN_FILE}" | awk '{print $1}')
-          MAC_SHA=$(sha256sum "./artifacts/${MAC_FILE}" | awk '{print $1}')
-          LIN_SHA=$(sha256sum "./artifacts/${LIN_FILE}" | awk '{print $1}')
+        mkdir -p ./artifacts/update-meta
 
-          WIN_SIZE=$(stat -c%s "./artifacts/${WIN_FILE}")
-          MAC_SIZE=$(stat -c%s "./artifacts/${MAC_FILE}")
-          LIN_SIZE=$(stat -c%s "./artifacts/${LIN_FILE}")
-
-          mkdir -p ./artifacts/update-meta
-
-          cat > ./artifacts/update-meta/latest.json <<JSON
-          {
-            "version": "${VERSION}",
-            "releasedAt": "${RELEASED_AT}",
-            "platforms": {
-              "windows": {
-                "name": "${WIN_FILE}",
-                "path": "${WIN_PATH}",
-                "url": "${R2_PUBLIC_BASE_URL}/${VERSION}/windows/${WIN_FILE}",
-                "sha256": "${WIN_SHA}",
-                "size": ${WIN_SIZE}
-              },
-              "macos": {
-                "name": "${MAC_FILE}",
-                "path": "${MAC_PATH}",
-                "url": "${R2_PUBLIC_BASE_URL}/${VERSION}/macos/${MAC_FILE}",
-                "sha256": "${MAC_SHA}",
-                "size": ${MAC_SIZE}
-              },
-              "linux": {
-                "name": "${LIN_FILE}",
-                "path": "${LIN_PATH}",
-                "url": "${R2_PUBLIC_BASE_URL}/${VERSION}/linux/${LIN_FILE}",
-                "sha256": "${LIN_SHA}",
-                "size": ${LIN_SIZE}
-              }
+        cat > ./artifacts/update-meta/latest.json <<JSON
+        {
+          "version": "${VERSION}",
+          "releasedAt": "${RELEASED_AT}",
+          "platforms": {
+            "windows": {
+              "name": "${WIN_FILE}",
+              "path": "${WIN_PATH}",
+              "url": "${R2_PUBLIC_BASE_URL}/${VERSION}/windows/${WIN_FILE}",
+              "sha256": "${WIN_SHA}",
+              "size": ${WIN_SIZE}
+            },
+            "linux": {
+              "name": "${LIN_FILE}",
+              "path": "${LIN_PATH}",
+              "url": "${R2_PUBLIC_BASE_URL}/${VERSION}/linux/${LIN_FILE}",
+              "sha256": "${LIN_SHA}",
+              "size": ${LIN_SIZE}
             }
           }
-          JSON
+        }
+        JSON
 
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "released_at=${RELEASED_AT}" >> "$GITHUB_OUTPUT"
-          echo "win_path=${WIN_PATH}" >> "$GITHUB_OUTPUT"
-          echo "mac_path=${MAC_PATH}" >> "$GITHUB_OUTPUT"
-          echo "lin_path=${LIN_PATH}" >> "$GITHUB_OUTPUT"
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "released_at=${RELEASED_AT}" >> "$GITHUB_OUTPUT"
+        echo "win_path=${WIN_PATH}" >> "$GITHUB_OUTPUT"
+        echo "lin_path=${LIN_PATH}" >> "$GITHUB_OUTPUT"
 
-      - name: List artifacts directory
-        run: |
-          echo "Listing ./artifacts directory:"
-          ls -R ./artifacts
+    - name: Install rclone
+      if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
+      run: curl https://rclone.org/install.sh | sudo bash
 
-      - name: Upload Windows
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/${{ env.CLIENT_NAME }}-windows.zip
-          asset_name: ${{ env.CLIENT_NAME }}-windows.zip
-          asset_content_type: application/zip
+    - name: Upload OS artifacts to versioned Cloudflare R2 paths
+      if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
+      run: |
+        rclone copyto "./artifacts/${CLIENT_NAME}-windows.zip" \
+          ":s3:${R2_BUCKET}/${{ steps.release_meta.outputs.win_path }}" \
+          --s3-provider Cloudflare \
+          --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
+          --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
+          --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
 
-      - name: Upload macOS
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/${{ env.CLIENT_NAME }}-macos.dmg
-          asset_name: ${{ env.CLIENT_NAME }}-macos.dmg
-          asset_content_type: application/octet-stream
+        rclone copyto "./artifacts/${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz" \
+          ":s3:${R2_BUCKET}/${{ steps.release_meta.outputs.lin_path }}" \
+          --s3-provider Cloudflare \
+          --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
+          --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
+          --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
 
-      - name: Upload Ubuntu
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/${{ env.CLIENT_NAME }}-ubuntu-linux_x86_64.tar.xz
-          asset_name: ${{ env.CLIENT_NAME }}-ubuntu-linux_x86_64.tar.xz
-          asset_content_type: application/x-xz
+    - name: Publish latest/versions update metadata to Cloudflare R2
+      if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
+      run: |
+        set -e
 
-      - name: Install rclone
-        if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
-        run: curl https://rclone.org/install.sh | sudo bash
-
-      - name: Upload OS artifacts to versioned Cloudflare R2 paths
-        if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
-        run: |
-          rclone copyto "./artifacts/${CLIENT_NAME}-windows.zip" \
-            ":s3:${R2_BUCKET}/${{ steps.release_meta.outputs.win_path }}" \
-            --s3-provider Cloudflare \
-            --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-            --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-            --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
-
-          rclone copyto "./artifacts/${CLIENT_NAME}-macos.dmg" \
-            ":s3:${R2_BUCKET}/${{ steps.release_meta.outputs.mac_path }}" \
-            --s3-provider Cloudflare \
-            --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-            --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-            --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
-
-          rclone copyto "./artifacts/${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz" \
-            ":s3:${R2_BUCKET}/${{ steps.release_meta.outputs.lin_path }}" \
-            --s3-provider Cloudflare \
-            --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-            --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-            --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
-
-      - name: Publish latest/versions update metadata to Cloudflare R2
-        if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
-        run: |
-          set -e
-
-          EXISTING="[]"
-          if rclone cat ":s3:${R2_BUCKET}/uclient/versions.json" \
-            --s3-provider Cloudflare \
-            --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-            --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-            --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY} > /tmp/versions_existing.json 2>/dev/null; then
-            if [ -s /tmp/versions_existing.json ] && jq -e 'type == "array"' /tmp/versions_existing.json >/dev/null 2>&1; then
-              EXISTING=$(jq -c . /tmp/versions_existing.json)
-            else
-              echo "Existing uclient/versions.json missing or invalid; starting from empty list"
-            fi
+        EXISTING="[]"
+        if rclone cat ":s3:${R2_BUCKET}/uclient/versions.json" \
+          --s3-provider Cloudflare \
+          --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
+          --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
+          --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY} > /tmp/versions_existing.json 2>/dev/null; then
+          if [ -s /tmp/versions_existing.json ] && jq -e 'type == "array"' /tmp/versions_existing.json >/dev/null 2>&1; then
+            EXISTING=$(jq -c . /tmp/versions_existing.json)
+          else
+            echo "Existing uclient/versions.json missing or invalid; starting from empty list"
           fi
+        fi
 
-          jq --arg ver "${{ steps.release_meta.outputs.version }}" --arg released_at "${{ steps.release_meta.outputs.released_at }}" -n \
-            --argjson existing "$EXISTING" \
-            '([{"version": $ver, "releasedAt": $released_at}] + ($existing | map(select(.version != $ver))))' \
-            > ./artifacts/update-meta/versions.json
+        jq --arg ver "${{ steps.release_meta.outputs.version }}" --arg released_at "${{ steps.release_meta.outputs.released_at }}" -n \
+          --argjson existing "$EXISTING" \
+          '([{"version": $ver, "releasedAt": $released_at}] + ($existing | map(select(.version != $ver))))' \
+          > ./artifacts/update-meta/versions.json
 
-          rclone copyto ./artifacts/update-meta/latest.json \
-            ":s3:${R2_BUCKET}/uclient/latest.json" \
-            --s3-provider Cloudflare \
-            --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-            --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-            --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
+        rclone copyto ./artifacts/update-meta/latest.json \
+          ":s3:${R2_BUCKET}/uclient/latest.json" \
+          --s3-provider Cloudflare \
+          --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
+          --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
+          --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
 
-          rclone copyto ./artifacts/update-meta/latest.json \
-            ":s3:${R2_BUCKET}/uclient/${{ steps.release_meta.outputs.version }}/latest.json" \
-            --s3-provider Cloudflare \
-            --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-            --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-            --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
+        rclone copyto ./artifacts/update-meta/latest.json \
+          ":s3:${R2_BUCKET}/uclient/${{ steps.release_meta.outputs.version }}/latest.json" \
+          --s3-provider Cloudflare \
+          --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
+          --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
+          --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
 
-          rclone copyto ./artifacts/update-meta/versions.json \
-            ":s3:${R2_BUCKET}/uclient/versions.json" \
-            --s3-provider Cloudflare \
-            --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-            --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-            --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
+        rclone copyto ./artifacts/update-meta/versions.json \
+          ":s3:${R2_BUCKET}/uclient/versions.json" \
+          --s3-provider Cloudflare \
+          --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
+          --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
+          --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
 
-      - name: Skip R2 publish (missing secrets)
-        if: env.CF_R2_ACCOUNT_ID == '' || env.CF_R2_ACCESS_KEY_ID == '' || env.CF_R2_SECRET_ACCESS_KEY == ''
-        run: echo "CF_R2_* secrets are not configured. Skipping R2 publish."
+    - name: Skip R2 publish (missing secrets)
+      if: env.CF_R2_ACCOUNT_ID == '' || env.CF_R2_ACCESS_KEY_ID == '' || env.CF_R2_SECRET_ACCESS_KEY == ''
+      run: echo "CF_R2_* secrets are not configured. Skipping R2 publish."

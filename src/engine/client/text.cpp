@@ -23,6 +23,9 @@
 
 using namespace std::chrono_literals;
 
+// BestClient
+extern void (*BCGradient_ApplyEverythingHook)(CTextCursor *pCursor, const char *pText, int Length);
+
 // TClient
 static void ReplaceHyphensWithSpaces(char *pStr)
 {
@@ -915,6 +918,7 @@ struct STextContainer
 
 	bool m_HasCursor;
 	bool m_ForceCursorRendering;
+	bool m_HideCursorQuad;
 	bool m_HasSelection;
 
 	bool m_SingleTimeUse;
@@ -940,6 +944,7 @@ struct STextContainer
 
 		m_HasCursor = false;
 		m_ForceCursorRendering = false;
+		m_HideCursorQuad = false;
 		m_HasSelection = false;
 
 		m_SingleTimeUse = false;
@@ -1646,6 +1651,9 @@ public:
 		else
 			Length = minimum(Length, str_length(pText));
 
+		if(BCGradient_ApplyEverythingHook && pCursor->m_vColorSplits.empty())
+			BCGradient_ApplyEverythingHook(pCursor, pText, Length);
+
 		const char *pCurrent = pText;
 		const char *pEnd = pCurrent + Length;
 		const char *pPrevBatchEnd = nullptr;
@@ -2152,6 +2160,7 @@ public:
 			TextContainer.m_HasCursor = HasCursor;
 			TextContainer.m_HasSelection = HasSelection;
 			TextContainer.m_ForceCursorRendering = pCursor->m_ForceCursorRendering;
+			TextContainer.m_HideCursorQuad = pCursor->m_HideCursorQuad;
 
 			if(HasSelection)
 			{
@@ -2171,6 +2180,10 @@ public:
 		pCursor->m_LineCount = LineCount;
 
 		TextContainer.m_BoundingBox = pCursor->BoundingBox();
+
+		// Color splits only apply to this append. Clear so the next CreateOrAppend /
+		// TextEx on the same cursor (e.g. chat name then message) can get its own splits.
+		pCursor->m_vColorSplits.clear();
 	}
 
 	bool CreateOrAppendTextContainer(STextContainerIndex &TextContainerIndex, CTextCursor *pCursor, const char *pText, int Length = -1) override
@@ -2296,7 +2309,7 @@ public:
 				Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
 			}
 
-			if(TextContainer.m_HasCursor)
+			if(TextContainer.m_HasCursor && !TextContainer.m_HideCursorQuad)
 			{
 				const auto CurTime = time_get_nanoseconds();
 

@@ -48,16 +48,25 @@ struct SScoreInfo
 	bool m_Initialized;
 };
 
+// Width (in HUD-pixel space, i.e. already scaled by the keystrokes atlas scale) that the
+// keyboard keystrokes overlay occupies for a given bc_keystrokes_keyboard_preset value.
+// Exposed so HudLayout can offset the mouse module's default position past the keyboard
+// without drifting into it when the keyboard preset changes.
+float GetKeystrokesKeyboardPresetWidthHudPx(int Preset);
+
 class CHud : public CComponent
 {
 	float m_Width, m_Height;
 
 	int m_HudQuadContainerIndex;
 	SScoreInfo m_aScoreInfo[2];
+	float m_LastScoreHudLayoutX = 0.0f;
+	float m_LastScoreHudLayoutY = 0.0f;
 	STextContainerIndex m_FPSTextContainerIndex;
 	STextContainerIndex m_DDRaceEffectsTextContainerIndex;
 	STextContainerIndex m_PlayerAngleTextContainerIndex;
 	float m_PlayerPrevAngle;
+	float m_LastMovementInformationFontSize = -1.0f;
 	STextContainerIndex m_aPlayerSpeedTextContainers[2];
 	float m_aPlayerPrevSpeed[2];
 	int m_aPlayerSpeed[2];
@@ -70,6 +79,8 @@ class CHud : public CComponent
 	ESpeedChange m_aLastPlayerSpeedChange[2];
 	STextContainerIndex m_aPlayerPositionContainers[2];
 	float m_aPlayerPrevPosition[2];
+	int m_aLastTimeCheckpoint[MAX_CLIENTS] = {};
+	int m_TotalTimeCheckpoints = -1;
 
 	void RenderCursor();
 
@@ -84,8 +95,20 @@ class CHud : public CComponent
 	void RenderPlayerState(int ClientId);
 
 	int m_LastSpectatorCountTick;
+	class SSpectatorCountState
+	{
+	public:
+		int m_Count = 0;
+		char m_aCountBuf[16] = {};
+		char m_aaNameLines[6][MAX_NAME_LENGTH + 8] = {};
+		int m_NumNameLines = 0;
+	};
+	bool GetSpectatorCountState(SSpectatorCountState &State, bool ForcePreview);
+	CUIRect GetSpectatorCountRect(bool ForcePreview = false);
 	void RenderSpectatorCount(bool ForcePreview = false);
-	void RenderDummyActions();
+	CUIRect GetDummyActionsRect(bool ForcePreview = false) const;
+	void RenderDummyActions(bool ForcePreview = false);
+	CUIRect GetMovementInformationRect(bool ForcePreview = false) const;
 	void RenderMovementInformation(bool ForcePreview = false);
 
 	void UpdateMovementInformationTextContainer(STextContainerIndex &TextContainer, float FontSize, float Value, float &PrevValue);
@@ -104,14 +127,16 @@ class CHud : public CComponent
 		int m_ClientId = -1;
 		bool m_HasValidClientId = false;
 		bool m_PosOnly = false;
-		bool m_ShowDummyCoordIndicator = false;
 		bool m_HasDummyInfo = false;
 		bool m_ShowPosition = false;
+		bool m_ShowCheckpoint = false;
 		bool m_ShowSpeed = false;
 		bool m_ShowAngle = false;
 		bool m_ShowDummyPos = false;
 		bool m_ShowDummySpeed = false;
 		bool m_ShowDummyAngle = false;
+		int m_Checkpoint = 0;
+		int m_TotalCheckpoints = 0;
 		CMovementInformation m_Info;
 		CMovementInformation m_DummyInfo;
 	};
@@ -119,42 +144,76 @@ class CHud : public CComponent
 	bool HasPlayerBelowOnSameX(int ClientId, const CMovementInformation &Info) const;
 	bool GetMovementInformationState(SMovementInformationState &State, bool ForcePreview) const;
 	float GetMovementInformationBoxHeight(const SMovementInformationState &State, float Scale) const;
-	CUIRect GetMovementInformationRect(bool ForcePreview) const;
-	class SSpectatorCountState
-	{
-	public:
-		int m_Count = 0;
-		char m_aCountBuf[16] = {};
-		char m_aaNameLines[6][MAX_NAME_LENGTH + 8] = {};
-		int m_NumNameLines = 0;
-	};
-	bool GetSpectatorCountState(SSpectatorCountState &State, bool ForcePreview);
-	CUIRect GetSpectatorCountRect(bool ForcePreview);
+	void RenderPlayerBelowIndicator();
+	float m_PlayerBelowIndicatorPhase = 0.0f;
 
 	void RenderGameTimer();
 	void RenderPauseNotification();
 	void RenderSuddenDeath();
 
+	CUIRect GetScoreHudRect(bool ForcePreview = false) const;
 	void RenderScoreHud(bool ForcePreview = false);
-	CUIRect GetScoreHudRect(bool ForcePreview) const;
 	int m_LastLocalClientId = -1;
 
 	void RenderSpectatorHud();
 	void RenderWarmupTimer();
+	CUIRect GetLocalTimeRect(bool ForcePreview = false) const;
 	void RenderLocalTime(bool ForcePreview = false);
-	CUIRect GetLocalTimeRect(bool ForcePreview) const;
+	void RenderSpeedrunTimer();
+	int m_SpeedrunTimerExpiredTick;
+
+	CUIRect GetFinishPredictionRect(bool ForcePreview = false) const;
 	void RenderFinishPrediction(bool ForcePreview = false);
-	CUIRect GetFinishPredictionRect(bool ForcePreview) const;
-	void RenderKeystrokesKeyboard(bool ForcePreview = false);
-	CUIRect GetKeystrokesKeyboardRect(bool ForcePreview) const;
-	void RenderKeystrokesMouse(bool ForcePreview = false);
-	CUIRect GetKeystrokesMouseRect(bool ForcePreview) const;
+
+	void GetFrozenTeamCounts(int &NumInTeam, int &NumFrozen, int &LocalTeamId, int *pNumUnfreezing = nullptr) const;
+	CUIRect GetFrozenHudRect(bool ForcePreview = false) const;
 	void RenderFrozenHud(bool ForcePreview = false);
-	CUIRect GetFrozenHudRect(bool ForcePreview) const;
+
+	CUIRect GetNotifyLastRect(bool ForcePreview = false) const;
+	void RenderNotifyLast(bool ForcePreview = false);
+
+	CUIRect GetKeystrokesKeyboardRectInternal(bool IgnoreModuleEnabled) const;
+	void RenderKeystrokesKeyboardInternal(bool ForcePreview, bool IgnoreModuleEnabled);
+	CUIRect GetKeystrokesMouseRectInternal(bool IgnoreModuleEnabled) const;
+	void RenderKeystrokesMouseInternal(bool ForcePreview, bool IgnoreModuleEnabled);
+	void RenderKeystrokesKeyboard(bool ForcePreview = false) { RenderKeystrokesKeyboardInternal(ForcePreview, false); }
+	void RenderKeystrokesMouse(bool ForcePreview = false) { RenderKeystrokesMouseInternal(ForcePreview, false); }
+	int GetKeystrokesTrackedClientId() const;
+	const CNetObj_PlayerInput *GetKeystrokesTrackedInput() const;
+	IGraphics::CTextureHandle m_KeystrokesKeyboardTexture;
+	IGraphics::CTextureHandle m_KeystrokesMouseTexture;
+	int64_t m_KeystrokesMouse1EndTime = 0;
+	int64_t m_KeystrokesWheelUpEndTime = 0;
+	int64_t m_KeystrokesWheelDownEndTime = 0;
 
 	static constexpr float MOVEMENT_INFORMATION_LINE_HEIGHT = 8.0f;
 
 public:
+	// HUD editor integration (bestclient/hud_editor.h): rect getters return the
+	// current on-screen box for a module so the editor can draw a drag handle over
+	// it, and the *Preview variants render the module with placeholder data so it
+	// stays visible in the editor even without a live match to pull real data from.
+	CUIRect GetScoreHudEditorRect() const { return GetScoreHudRect(true); }
+	void RenderScoreHudPreview() { RenderScoreHud(true); }
+	CUIRect GetSpectatorCountHudEditorRect() { return GetSpectatorCountRect(true); }
+	void RenderSpectatorCountPreview() { RenderSpectatorCount(true); }
+	CUIRect GetDummyActionsHudEditorRect() const { return GetDummyActionsRect(true); }
+	void RenderDummyActionsPreview() { RenderDummyActions(true); }
+	CUIRect GetMovementInformationHudEditorRect() { return GetMovementInformationRect(true); }
+	void RenderMovementInformationPreview() { RenderMovementInformation(true); }
+	CUIRect GetLocalTimeHudEditorRect() const { return GetLocalTimeRect(true); }
+	void RenderLocalTimePreview() { RenderLocalTime(true); }
+	CUIRect GetFinishPredictionHudEditorRect() const { return GetFinishPredictionRect(true); }
+	void RenderFinishPredictionPreview() { RenderFinishPrediction(true); }
+	CUIRect GetFrozenHudEditorRect() const { return GetFrozenHudRect(true); }
+	void RenderFrozenHudPreview() { RenderFrozenHud(true); }
+	CUIRect GetNotifyLastHudEditorRect() const { return GetNotifyLastRect(true); }
+	void RenderNotifyLastPreview() { RenderNotifyLast(true); }
+	CUIRect GetKeystrokesKeyboardHudEditorRect() const;
+	void RenderKeystrokesKeyboardPreview() { RenderKeystrokesKeyboardInternal(true, true); }
+	CUIRect GetKeystrokesMouseHudEditorRect() const { return GetKeystrokesMouseRectInternal(true); }
+	void RenderKeystrokesMousePreview() { RenderKeystrokesMouseInternal(true, true); }
+
 	CHud();
 	int Sizeof() const override { return sizeof(*this); }
 
@@ -164,32 +223,26 @@ public:
 	void OnRender() override;
 	void OnInit() override;
 	void OnNewSnapshot() override;
-	CUIRect GetScoreHudEditorRect() const;
-	void RenderScoreHudPreview();
-	CUIRect GetSpectatorCountHudEditorRect();
-	void RenderSpectatorCountPreview();
-	CUIRect GetMovementInformationHudEditorRect() const;
-	void RenderMovementInformationPreview();
-	CUIRect GetLocalTimeHudEditorRect() const;
-	void RenderLocalTimePreview();
-	CUIRect GetFinishPredictionHudEditorRect() const;
-	void RenderFinishPredictionPreview();
-	CUIRect GetKeystrokesKeyboardHudEditorRect() const;
-	void RenderKeystrokesKeyboardPreview();
-	CUIRect GetKeystrokesMouseHudEditorRect() const;
-	void RenderKeystrokesMousePreview();
-	CUIRect GetFrozenHudEditorRect() const;
-	void RenderFrozenHudPreview();
 
 	// DDRace
 
 	void OnMessage(int MsgType, void *pRawMsg) override;
 	void RenderNinjaBarPos(float x, float y, float Width, float Height, float Progress, float Alpha = 1.0f);
+	void ShowTimeCpDiff(float Diff);
+	void ShowSelfTimeCpDiff(float Diff);
 
 private:
 	void RenderRecord();
 	void RenderDDRaceEffects();
-	void RenderSpeedrunTimer();
+	float m_TimeCpDiff;
+	float m_aPlayerRecord[NUM_DUMMIES];
+	float m_FinishTimeDiff;
+	int m_DDRaceTime;
+	int m_FinishTimeLastReceivedTick;
+	int m_TimeCpLastReceivedTick;
+	bool m_ShowFinishTime;
+	bool m_SelfTimeCpDiff = false;
+
 	struct SFinishPredictionState
 	{
 		bool m_Valid = false;
@@ -199,8 +252,8 @@ private:
 		int64_t m_PredictedFinishTimeMs = 0;
 		int64_t m_RemainingTimeMs = 0;
 	};
-	bool RebuildFinishPredictionPathData();
-	bool EnsureFinishPredictionPathData();
+	bool RebuildFinishPredictionPathData() const;
+	bool EnsureFinishPredictionPathData() const;
 	float GetFinishPredictionDistanceAtPos(vec2 Pos) const;
 	float GetRacePathFromStartAtPos(vec2 Pos) const;
 	float GetRacePathProgressAtPos(vec2 Pos) const;
@@ -226,12 +279,6 @@ private:
 	void RenderFinishPredictionClassic(const CUIRect &Rect, const SFinishPredictionState &State);
 	void RenderFinishPredictionBar(const CUIRect &Rect, const SFinishPredictionState &State, bool ForcePreview);
 	void ResetFinishPredictionState(bool ClearFinishedRace = true) const;
-	void RenderKeystrokesKeyboardInternal(bool ForcePreview, bool IgnoreModuleEnabled);
-	CUIRect GetKeystrokesKeyboardRectInternal(bool ForcePreview, bool IgnoreModuleEnabled) const;
-	void RenderKeystrokesMouseInternal(bool ForcePreview, bool IgnoreModuleEnabled);
-	CUIRect GetKeystrokesMouseRectInternal(bool ForcePreview, bool IgnoreModuleEnabled) const;
-	int GetKeystrokesTrackedClientId() const;
-	const CNetObj_PlayerInput *GetKeystrokesTrackedInput() const;
 	float m_TimeCpDiff;
 	float m_aPlayerRecord[NUM_DUMMIES];
 	float m_FinishTimeDiff;
@@ -246,16 +293,17 @@ private:
 	mutable std::vector<unsigned char> m_vFinishPredictionPassable;
 	mutable std::vector<ivec2> m_vFinishPredictionStartTiles;
 	mutable std::vector<ivec2> m_vFinishPredictionFinishTiles;
-	mutable int m_FinishPredictionMapWidth;
-	mutable int m_FinishPredictionMapHeight;
+	mutable int m_FinishPredictionMapWidth = 0;
+	mutable int m_FinishPredictionMapHeight = 0;
 	mutable int m_FinishPredictionFreezePenalty;
 	mutable int m_FinishPredictionRaceLength;
-	mutable int m_FinishPredictionRaceStartTick;
-	mutable float m_FinishPredictionRaceStartDistance;
-	mutable float m_FinishPredictionLastProgress;
-	mutable int64_t m_FinishPredictionSmoothedFinishTimeMs;
-	mutable int m_FinishPredictionLastPredictTick;
-	mutable int m_FinishPredictionFinishedRaceTick;
+	mutable int m_FinishPredictionRaceStartTick = -1;
+	mutable float m_FinishPredictionRaceStartDistance = -1.0f;
+	mutable float m_FinishPredictionLastProgress = 0.0f;
+	mutable int64_t m_FinishPredictionSmoothedFinishTimeMs = -1;
+	mutable int m_FinishPredictionLastPredictTick = -1;
+	mutable int m_FinishPredictionFinishedRaceTick = -1;
+	mutable bool m_FinishPredictionUsingFastPractice = false;
 	IGraphics::CTextureHandle m_KeystrokesKeyboardTexture;
 	IGraphics::CTextureHandle m_KeystrokesMouseTexture;
 	int64_t m_KeystrokesMouse1EndTime = 0;

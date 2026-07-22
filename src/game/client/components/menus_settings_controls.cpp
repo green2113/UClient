@@ -32,39 +32,6 @@ inline constexpr float MARGIN = 10.0f;
 inline constexpr float BUTTON_HEIGHT = 20.0f;
 inline constexpr float BUTTON_SPACING = 2.0f;
 inline constexpr float BIND_OPTION_SPACING = 4.0f;
-inline constexpr int MAX_SENSITIVITY = 1000000;
-inline constexpr int MAX_SENSITIVITY_SLIDER = 500;
-
-namespace
-{
-bool DoSensitivityInput(CUi *pUi, CLineInputNumber *pInput, int *pOption, const CUIRect *pRect, const char *pLabel)
-{
-	CUIRect Label, EditBox;
-	pRect->VSplitLeft(210.0f, &Label, &EditBox);
-	pUi->DoLabel(&Label, pLabel, FONT_SIZE, TEXTALIGN_ML);
-	pInput->SetEmptyText("1-1000000");
-
-	if(!pInput->IsActive())
-	{
-		pInput->SetInteger(*pOption);
-	}
-
-	if(pUi->DoEditBox(pInput, &EditBox, 14.0f))
-	{
-		if(pInput->GetLength() > 0)
-		{
-			*pOption = maximum(1, minimum(MAX_SENSITIVITY, pInput->GetInteger()));
-			if(!pInput->IsActive())
-			{
-				pInput->SetInteger(*pOption);
-			}
-		}
-		return true;
-	}
-
-	return false;
-}
-} // namespace
 
 bool CBindSlotUiElement::operator<(const CBindSlotUiElement &Other) const
 {
@@ -134,14 +101,10 @@ void CMenusSettingsControls::OnInterfacesInit(CGameClient *pClient)
 		{EBindOptionGroup::BEST_CLIENT, Localizable("Deepfly toggle"), "BC_deepfly_toggle"},
 		{EBindOptionGroup::BEST_CLIENT, Localizable("45 deg bind"), "+BC_45_degrees"},
 		{EBindOptionGroup::BEST_CLIENT, Localizable("Small sens bind"), "BC_small_sens"},
-			{EBindOptionGroup::BEST_CLIENT, Localizable("Left jump"), "+jump; +left"},
-			{EBindOptionGroup::BEST_CLIENT, Localizable("Right jump"), "+jump; +right"},
-			{EBindOptionGroup::BEST_CLIENT, Localizable("Admin Panel"), "toggle_admin_panel"},
-			{EBindOptionGroup::BEST_CLIENT_VOICE, Localizable("Voice panel"), "toggle_voice_panel"},
-			{EBindOptionGroup::BEST_CLIENT_VOICE, Localizable("Push-to-talk"), "+voicechat"},
-			{EBindOptionGroup::BEST_CLIENT_VOICE, Localizable("Mute microphone"), "toggle_voice_mic_mute"},
-			{EBindOptionGroup::BEST_CLIENT_VOICE, Localizable("Mute headphones"), "toggle_voice_headphones_mute"},
-			{EBindOptionGroup::BEST_CLIENT_PRACTICE, Localizable("say /r"), "say /r"},
+		{EBindOptionGroup::BEST_CLIENT, Localizable("Left jump"), "+jump; +left"},
+		{EBindOptionGroup::BEST_CLIENT, Localizable("Right jump"), "+jump; +right"},
+		{EBindOptionGroup::BEST_CLIENT, Localizable("Admin Panel"), "toggle_admin_panel"},
+		{EBindOptionGroup::BEST_CLIENT_PRACTICE, Localizable("say /r"), "say /r"},
 		{EBindOptionGroup::BEST_CLIENT_PRACTICE, Localizable("say /invincible"), "say /invincible"},
 		{EBindOptionGroup::BEST_CLIENT_PRACTICE, Localizable("say /telecursor"), "say /telecursor"},
 		{EBindOptionGroup::BEST_CLIENT_PRACTICE, Localizable("say /weapons"), "say /weapons"},
@@ -276,7 +239,6 @@ void CMenusSettingsControls::Render(CUIRect MainView)
 	RenderSettingsBindsBlock(EBindOptionGroup::CHAT, &RightColumn, Localize("Chat"));
 	RenderSettingsBindsBlock(EBindOptionGroup::DUMMY, &RightColumn, Localize("Dummy"));
 	RenderSettingsBindsBlock(EBindOptionGroup::BEST_CLIENT, &RightColumn, Localize("BestClient"));
-	RenderSettingsBindsBlock(EBindOptionGroup::BEST_CLIENT_VOICE, &RightColumn, Localize("BestClient Voice"));
 	RenderSettingsBindsBlock(EBindOptionGroup::BEST_CLIENT_PRACTICE, &RightColumn, Localize("BestClient Practice"));
 	RenderSettingsBindsBlock(EBindOptionGroup::MISCELLANEOUS, &RightColumn, Localize("Miscellaneous"));
 	if(std::any_of(m_vBindOptions.begin(), m_vBindOptions.end(), [](const CBindOption &Option) { return Option.m_Group == EBindOptionGroup::CUSTOM; }))
@@ -485,7 +447,7 @@ void CMenusSettingsControls::RenderSettingsBlock(float Height, CUIRect *pParentR
 			{
 				CUIRect ButtonArea;
 				Label.Margin(-MARGIN, &ButtonArea);
-				if(Ui()->DoButtonLogic(pExpandButton, 0, &ButtonArea, BUTTONFLAG_LEFT, CUi::EButtonSoundType::BUTTON))
+				if(Ui()->DoButtonLogic(pExpandButton, 0, &ButtonArea, BUTTONFLAG_LEFT))
 				{
 					*pExpanded = !*pExpanded;
 				}
@@ -594,7 +556,7 @@ void CMenusSettingsControls::RenderSettingsBinds(EBindOptionGroup Group, CUIRect
 			FONT_SIZE, TEXTALIGN_ML, LabelProps);
 		if(BindOption.m_Group != EBindOptionGroup::CUSTOM || LabelResult.m_Truncated)
 		{
-			Ui()->DoButtonLogic(&BindOption.m_TooltipButtonId, 0, &Label, BUTTONFLAG_NONE, CUi::EButtonSoundType::SILENT);
+			Ui()->DoButtonLogic(&BindOption.m_TooltipButtonId, 0, &Label, BUTTONFLAG_NONE);
 			GameClient()->m_Tooltips.DoToolTip(&BindOption.m_TooltipButtonId, &Label, BindOption.m_Command.c_str());
 		}
 
@@ -1270,30 +1232,20 @@ CUi::EPopupMenuFunctionResult CMenusSettingsControls::PopupBindEdit(void *pConte
 
 float CMenusSettingsControls::MeasureSettingsMouseHeight() const
 {
-	return 4.0f * BUTTON_HEIGHT + 3.0f * BUTTON_SPACING;
+	return 2.0f * BUTTON_HEIGHT + BUTTON_SPACING;
 }
 
 void CMenusSettingsControls::RenderSettingsMouse(CUIRect View)
 {
 	CUIRect Button;
 	View.HSplitTop(BUTTON_HEIGHT, &Button, &View);
-	DoSensitivityInput(Ui(), &m_IngameMouseSensInput, &g_Config.m_InpMousesens, &Button, Localize("Ingame mouse sens"));
-
-	View.HSplitTop(BUTTON_SPACING, nullptr, &View);
-
-	View.HSplitTop(BUTTON_HEIGHT, &Button, &View);
-	Ui()->DoScrollbarOption(&g_Config.m_InpMousesens, &g_Config.m_InpMousesens, &Button, Localize("Ingame mouse sens."), 1, MAX_SENSITIVITY_SLIDER,
+	Ui()->DoScrollbarOption(&g_Config.m_InpMousesens, &g_Config.m_InpMousesens, &Button, Localize("Ingame mouse sens."), 1, 500,
 		&CUi::ms_LogarithmicScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE);
 
 	View.HSplitTop(BUTTON_SPACING, nullptr, &View);
 
 	View.HSplitTop(BUTTON_HEIGHT, &Button, &View);
-	DoSensitivityInput(Ui(), &m_UiMouseSensInput, &g_Config.m_UiMousesens, &Button, Localize("UI mouse sens"));
-
-	View.HSplitTop(BUTTON_SPACING, nullptr, &View);
-
-	View.HSplitTop(BUTTON_HEIGHT, &Button, &View);
-	Ui()->DoScrollbarOption(&g_Config.m_UiMousesens, &g_Config.m_UiMousesens, &Button, Localize("UI mouse sens."), 1, MAX_SENSITIVITY_SLIDER,
+	Ui()->DoScrollbarOption(&g_Config.m_UiMousesens, &g_Config.m_UiMousesens, &Button, Localize("UI mouse sens."), 1, 500,
 		&CUi::ms_LogarithmicScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE | CUi::SCROLLBAR_OPTION_DELAYUPDATE);
 }
 
@@ -1305,9 +1257,9 @@ float CMenusSettingsControls::MeasureSettingsJoystickHeight() const
 		NumOptions++; // message or joystick name/selection
 		if(Input()->NumJoysticks() > 0)
 		{
-			NumOptions += 4; // mode, ui sens input, ui sens slider, tolerance
+			NumOptions += 3; // mode, ui sens, tolerance
 			if(!g_Config.m_InpControllerAbsolute)
-				NumOptions += 2; // ingame sens input + slider
+				NumOptions++; // ingame sens
 			NumOptions += Input()->GetActiveJoystick()->GetNumAxes() + 1; // axis selection + header
 		}
 	}
@@ -1378,21 +1330,13 @@ void CMenusSettingsControls::RenderSettingsJoystick(CUIRect View)
 		{
 			View.HSplitTop(BUTTON_SPACING, nullptr, &View);
 			View.HSplitTop(BUTTON_HEIGHT, &Button, &View);
-			DoSensitivityInput(Ui(), &m_IngameControllerSensInput, &g_Config.m_InpControllerSens, &Button, Localize("Ingame controller sens"));
-
-			View.HSplitTop(BUTTON_SPACING, nullptr, &View);
-			View.HSplitTop(BUTTON_HEIGHT, &Button, &View);
-			Ui()->DoScrollbarOption(&g_Config.m_InpControllerSens, &g_Config.m_InpControllerSens, &Button, Localize("Ingame controller sens."), 1, MAX_SENSITIVITY_SLIDER,
+			Ui()->DoScrollbarOption(&g_Config.m_InpControllerSens, &g_Config.m_InpControllerSens, &Button, Localize("Ingame controller sens."), 1, 500,
 				&CUi::ms_LogarithmicScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE);
 		}
 
 		View.HSplitTop(BUTTON_SPACING, nullptr, &View);
 		View.HSplitTop(BUTTON_HEIGHT, &Button, &View);
-		DoSensitivityInput(Ui(), &m_UiControllerSensInput, &g_Config.m_UiControllerSens, &Button, Localize("UI controller sens"));
-
-		View.HSplitTop(BUTTON_SPACING, nullptr, &View);
-		View.HSplitTop(BUTTON_HEIGHT, &Button, &View);
-		Ui()->DoScrollbarOption(&g_Config.m_UiControllerSens, &g_Config.m_UiControllerSens, &Button, Localize("UI controller sens."), 1, MAX_SENSITIVITY_SLIDER,
+		Ui()->DoScrollbarOption(&g_Config.m_UiControllerSens, &g_Config.m_UiControllerSens, &Button, Localize("UI controller sens."), 1, 500,
 			&CUi::ms_LogarithmicScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE);
 
 		View.HSplitTop(BUTTON_SPACING, nullptr, &View);

@@ -92,31 +92,29 @@ void CEditor::EnvelopeEval(int TimeOffsetMillis, int EnvelopeIndex, ColorRGBA &R
 bool CEditor::CallbackOpenMap(const char *pFilename, int StorageType, void *pUser)
 {
 	CEditor *pEditor = (CEditor *)pUser;
-	auto &Duo = pEditor->m_DuoSession;
+	auto &MultiMapping = pEditor->m_MultiMappingSession;
 
-	if(Duo.m_State >= CDuoSession::STATE_CONNECTING)
+	if(MultiMapping.m_State >= CMultiMappingSession::STATE_CONNECTING)
 	{
-		if(!Duo.m_IsCreator)
+		if(!MultiMapping.m_IsCreator)
 		{
-			// Joiner can't load maps — show warning with Disconnect option
+			// Joiner can't load maps вЂ” show warning with Disconnect option
 			if(pEditor->m_Dialog == DIALOG_FILE)
 				pEditor->OnDialogClose();
-			pEditor->m_PopupEventType = POPEVENT_DUO_NOT_OWNER;
+			pEditor->m_PopupEventType = POPEVENT_MULTIMAPPING_NOT_OWNER;
 			pEditor->m_PopupEventActivated = true;
 			return true;
 		}
 
-		// Owner: load the map, then push it to the partner
+		// Owner: loading a different map ends the shared session вЂ” warn and
+		// let the user confirm before disconnecting, instead of silently
+		// replacing the partner's map underneath them.
 		if(pEditor->m_Dialog == DIALOG_FILE)
 			pEditor->OnDialogClose();
-		Duo.m_OwnerLoadingMap = true;
-		bool Loaded = pEditor->Load(pFilename, StorageType);
-		Duo.m_OwnerLoadingMap = false;
-		if(Loaded)
-		{
-			pEditor->Map()->m_ValidSaveFilename = StorageType == IStorage::TYPE_SAVE && pEditor->m_FileBrowser.IsValidSaveFilename();
-			Duo.StartMapTransfer();
-		}
+		str_copy(pEditor->m_aFilenamePendingLoad, pFilename);
+		pEditor->m_PendingLoadStorageType = StorageType;
+		pEditor->m_PopupEventType = POPEVENT_MULTIMAPPING_LOAD;
+		pEditor->m_PopupEventActivated = true;
 		return true;
 	}
 
@@ -124,7 +122,9 @@ bool CEditor::CallbackOpenMap(const char *pFilename, int StorageType, void *pUse
 	{
 		pEditor->Map()->m_ValidSaveFilename = StorageType == IStorage::TYPE_SAVE && pEditor->m_FileBrowser.IsValidSaveFilename();
 		if(pEditor->m_Dialog == DIALOG_FILE)
+		{
 			pEditor->OnDialogClose();
+		}
 		return true;
 	}
 	else
@@ -518,7 +518,7 @@ void CEditor::DoToolbarLayers(CUIRect ToolBar)
 		if(DoButton_FontIcon(&s_UndoButton, FontIcon::UNDO, Map()->m_EditorHistory.CanUndo() - 1, &Button, BUTTONFLAG_LEFT, "[Ctrl+Z] Undo the last action.", IGraphics::CORNER_L))
 		{
 			Map()->m_EditorHistory.Undo();
-			m_DuoSession.NotifyFullSync();
+			m_MultiMappingSession.NotifyFullSync();
 		}
 
 		ToolbarTop.VSplitLeft(25.0f, &Button, &ToolbarTop);
@@ -526,7 +526,7 @@ void CEditor::DoToolbarLayers(CUIRect ToolBar)
 		if(DoButton_FontIcon(&s_RedoButton, FontIcon::REDO, Map()->m_EditorHistory.CanRedo() - 1, &Button, BUTTONFLAG_LEFT, "[Ctrl+Y] Redo the last action.", IGraphics::CORNER_R))
 		{
 			Map()->m_EditorHistory.Redo();
-			m_DuoSession.NotifyFullSync();
+			m_MultiMappingSession.NotifyFullSync();
 		}
 
 		ToolbarTop.VSplitLeft(5.0f, nullptr, &ToolbarTop);
@@ -725,32 +725,42 @@ void CEditor::DoToolbarLayers(CUIRect ToolBar)
 			ToolbarBottom.VSplitLeft(5.0f, &Button, &ToolbarBottom);
 		}
 
-		// Duo partner activity status
-		if(m_DuoSession.m_State == CDuoSession::STATE_LIVE || m_DuoSession.m_RemoteDisconnected)
+		// MultiMapping partner activity status
+		if(m_MultiMappingSession.m_State == CMultiMappingSession::STATE_LIVE || m_MultiMappingSession.m_RemoteDisconnected)
 		{
 			const char *pStatus = nullptr;
-			using namespace DuoProtocol;
-			if(m_DuoSession.m_RemoteDisconnected)
+			using namespace MultiMappingProtocol;
+			if(m_MultiMappingSession.m_RemoteDisconnected)
 			{
-				pStatus = "Disconnected...";
+				pStatus = "Alone in room...";
 			}
 			else
 			{
-				switch(m_DuoSession.m_RemoteActivity)
+				// show the first connected peer that isn't just mapping
+				for(int Slot = 0; Slot < MAX_MULTIMAPPING_PLAYERS; Slot++)
 				{
-				case ACTIVITY_DIALOG: pStatus = "Selecting file..."; break;
-				case ACTIVITY_ENVELOPES: pStatus = "Editing envelopes..."; break;
-				case ACTIVITY_SETTINGS: pStatus = "Server settings..."; break;
-				case ACTIVITY_TESTING: pStatus = "Local testing..."; break;
-				case ACTIVITY_AWAY: pStatus = "Left editor..."; break;
-				case ACTIVITY_PICKER: pStatus = "Selecting tileset..."; break;
-				default: break;
+					if(Slot == m_MultiMappingSession.m_LocalSlot)
+						continue;
+					const CMultiMappingSession::SPeer &Peer = m_MultiMappingSession.m_aPeers[Slot];
+					if(!Peer.m_Connected || Peer.m_Activity == ACTIVITY_MAPPING)
+						continue;
+					switch(Peer.m_Activity)
+					{
+					case ACTIVITY_DIALOG: pStatus = "Selecting file..."; break;
+					case ACTIVITY_ENVELOPES: pStatus = "Editing envelopes..."; break;
+					case ACTIVITY_SETTINGS: pStatus = "Server settings..."; break;
+					case ACTIVITY_TESTING: pStatus = "Local testing..."; break;
+					case ACTIVITY_AWAY: pStatus = "Left editor..."; break;
+					case ACTIVITY_PICKER: pStatus = "Selecting tileset..."; break;
+					default: break;
+					}
+					break;
 				}
 			}
 			if(pStatus)
 			{
 				ToolbarBottom.VSplitLeft(130.0f, &Button, &ToolbarBottom);
-				if(m_DuoSession.m_RemoteDisconnected)
+				if(m_MultiMappingSession.m_RemoteDisconnected)
 					TextRender()->TextColor(1.0f, 0.3f, 0.3f, 1.0f);
 				else
 					TextRender()->TextColor(0.2f, 0.8f, 1.0f, 1.0f);
@@ -2958,7 +2968,7 @@ void CEditor::DoMapEditor(CUIRect View)
 				if(!pAction->IsEmpty()) // Avoid recording tile draw action when placing quads only
 					Map()->m_EditorHistory.RecordAction(pAction);
 
-				m_DuoSession.NotifyStrokeEnd();
+				m_MultiMappingSession.NotifyStrokeEnd();
 			}
 
 			s_Operation = OP_NONE;
@@ -2987,9 +2997,7 @@ void CEditor::DoMapEditor(CUIRect View)
 		const std::shared_ptr<CLayer> pSelectedLayer = Map()->SelectedLayer(0);
 		if(pSelectedLayer != nullptr && pSelectedLayer->m_Type == LAYERTYPE_QUADS)
 		{
-			Ui()->ClipEnable(&View);
 			DoQuadEnvelopes(static_cast<const CLayerQuads *>(pSelectedLayer.get()));
-			Ui()->ClipDisable();
 		}
 		m_ActiveEnvelopePreview = EEnvelopePreview::NONE;
 	}
@@ -3084,7 +3092,6 @@ void CEditor::DoColorPickerButton(const void *pId, const CUIRect *pRect, ColorRG
 		m_ColorPickerPopupContext.m_HslaColor = color_cast<ColorHSLA>(Color);
 		m_ColorPickerPopupContext.m_HsvaColor = color_cast<ColorHSVA>(m_ColorPickerPopupContext.m_HslaColor);
 		m_ColorPickerPopupContext.m_Alpha = true;
-		m_ColorPickerPopupContext.m_ShowAlphaSlider = false;
 		m_pColorPickerPopupActiveId = pId;
 		Ui()->ShowPopupColorPicker(Ui()->MouseX(), Ui()->MouseY(), &m_ColorPickerPopupContext);
 	}
@@ -3781,13 +3788,26 @@ void CEditor::RenderLayers(CUIRect LayersBox)
 		{
 			s_PreviousOperation = OP_NONE;
 			Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionEditGroupProp>(Map(), Map()->m_SelectedGroup, EGroupProp::ORDER, s_InitialGroupIndex, Map()->m_SelectedGroup));
-			m_DuoSession.NotifyGroupProp(s_InitialGroupIndex, (int)EGroupProp::ORDER, Map()->m_SelectedGroup);
+			m_MultiMappingSession.NotifyGroupProp(s_InitialGroupIndex, (int)EGroupProp::ORDER, Map()->m_SelectedGroup);
 		}
 		else if(s_PreviousOperation == OP_LAYER_DRAG)
 		{
 			if(s_InitialGroupIndex != Map()->m_SelectedGroup)
 			{
 				Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionEditLayersGroupAndOrder>(Map(), s_InitialGroupIndex, s_vInitialLayerIndices, Map()->m_SelectedGroup, Map()->m_vSelectedLayers));
+
+				// RecordAction doesn't call Redo(), so mirror its MultiMapping sync here:
+				// delete from the old group (descending) then re-add into the new
+				// group (ascending) so the receiver's indices stay valid each step.
+				for(int i = (int)s_vInitialLayerIndices.size() - 1; i >= 0; --i)
+					m_MultiMappingSession.NotifyDelLayer(s_InitialGroupIndex, s_vInitialLayerIndices[i]);
+				auto &vNewLayers = Map()->m_vpGroups[Map()->m_SelectedGroup]->m_vpLayers;
+				for(int NewLayerIndex : Map()->m_vSelectedLayers)
+				{
+					auto &pLayer = vNewLayers[NewLayerIndex];
+					m_MultiMappingSession.NotifyAddLayer(Map()->m_SelectedGroup, NewLayerIndex, pLayer->m_Type, pLayer->m_aName, GetLayerSubType(pLayer));
+					m_MultiMappingSession.SyncLayerContents(Map()->m_SelectedGroup, NewLayerIndex);
+				}
 			}
 			else
 			{
@@ -3799,6 +3819,8 @@ void CEditor::RenderLayers(CUIRect LayersBox)
 				{
 					int LayerIndex = vLayerIndices[k];
 					vpActions.push_back(std::make_shared<CEditorActionEditLayerProp>(Map(), Map()->m_SelectedGroup, LayerIndex, ELayerProp::ORDER, s_vInitialLayerIndices[k], LayerIndex));
+					// RecordAction doesn't call Redo(), so mirror its MultiMapping sync here.
+					m_MultiMappingSession.NotifyLayerProp(Map()->m_SelectedGroup, s_vInitialLayerIndices[k], (int)ELayerProp::ORDER, LayerIndex);
 				}
 				Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionBulk>(Map(), vpActions, nullptr, true));
 			}
@@ -3910,16 +3932,16 @@ bool CEditor::AddImage(const char *pFilename, int StorageType, void *pUser)
 	pEditor->Map()->SortImages();
 	pEditor->Map()->SelectImage(pImg);
 
-	// Duo sync: send image to partner
+	// MultiMapping sync: send image to partner
 	if(pImg->m_External)
 	{
-		pEditor->m_DuoSession.NotifyAddImage(pImg->m_aName, true, nullptr, 0);
+		pEditor->m_MultiMappingSession.NotifyAddImage(pImg->m_aName, true, nullptr, 0);
 	}
 	else
 	{
 		CByteBufferWriter PngWriter;
 		if(CImageLoader::SavePng(PngWriter, *pImg))
-			pEditor->m_DuoSession.NotifyAddImage(pImg->m_aName, false, PngWriter.Data(), (int)PngWriter.Size());
+			pEditor->m_MultiMappingSession.NotifyAddImage(pImg->m_aName, false, PngWriter.Data(), (int)PngWriter.Size());
 	}
 
 	pEditor->OnDialogClose();
@@ -3974,7 +3996,7 @@ bool CEditor::AddSound(const char *pFilename, int StorageType, void *pUser)
 	pSound->m_pData = pData;
 	str_copy(pSound->m_aName, aBuf);
 	pEditor->Map()->m_vpSounds.push_back(pSound);
-	pEditor->m_DuoSession.NotifyAddSound(pSound->m_aName, static_cast<const uint8_t *>(pData), (int)DataSize);
+	pEditor->m_MultiMappingSession.NotifyAddSound(pSound->m_aName, static_cast<const uint8_t *>(pData), (int)DataSize);
 
 	pEditor->Map()->SelectSound(pSound);
 	pEditor->OnDialogClose();
@@ -4394,12 +4416,25 @@ void CEditor::RenderStatusbar(CUIRect View, CUIRect *pTooltipRect)
 	View.VSplitRight(110.0f, &View, &Button);
 	{
 		// highlight button when session is active
-		static SPopupMenuId s_DuoPopupId;
-		int Checked = m_DuoSession.IsLive() ? 1 : 0;
-		static int s_DuoButton = 0;
-		if(DoButton_Env(&s_DuoButton, "Duo Mapping", Checked, &Button, "Collaborate on a map in real-time.", ColorRGBA(0.62f, 0.28f, 0.95f, 1.0f), IGraphics::CORNER_ALL))
+		static SPopupMenuId s_MultiMappingPopupId;
+		int Checked = m_MultiMappingSession.IsLive() ? 1 : 0;
+		static int s_MultiMappingButton = 0;
+		if(DoButton_Env(&s_MultiMappingButton, "MultiMapping", Checked, &Button, "Collaborate on a map in real-time.", ColorRGBA(0.62f, 0.28f, 0.95f, 1.0f), IGraphics::CORNER_ALL))
 		{
-			Ui()->DoPopupMenu(&s_DuoPopupId, Button.x, Button.y - 128.0f, 220.0f, 126.0f, this, CDuoSession::PopupDuo);
+			// Exact content height for the live/waiting layout (see PopupMultiMapping):
+			// 109px of always-present rows/gaps + 12px from its own View.Margin(6.0f)
+			// + one 13px row per roster entry + a 28px block only while a map
+			// transfer is actively showing. This used to be an approximation
+			// (110 + Count*13, capped at 240) that under-shot the real layout by
+			// ~11px even with few players, and didn't budget for the transfer
+			// block at all — with 8 players (and transfers more likely to be
+			// in flight) the roster/status/disconnect button ended up pushed
+			// past the popup's bottom edge.
+			const bool ShowingTransferBar = m_MultiMappingSession.m_MapTransferActive && m_MultiMappingSession.m_MapTransferTotal > 0;
+			const float PopupHeight = m_MultiMappingSession.m_State == CMultiMappingSession::STATE_LIVE || m_MultiMappingSession.m_State == CMultiMappingSession::STATE_WAITING ?
+				121.0f + m_MultiMappingSession.m_ParticipantCount * 13.0f + (ShowingTransferBar ? 28.0f : 0.0f) :
+				(m_MultiMappingSession.m_State == CMultiMappingSession::STATE_CONNECTING ? 112.0f : 142.0f);
+			Ui()->DoPopupMenu(&s_MultiMappingPopupId, Button.x, Button.y - PopupHeight - 2.0f, 240.0f, PopupHeight, this, CMultiMappingSession::PopupMultiMapping);
 		}
 	}
 
@@ -5340,12 +5375,9 @@ void CEditor::RenderEnvelopeEditor(CUIRect View)
 						Final.w = 4.0f;
 						Final.h = 4.0f;
 
-						const bool PointInView = Final.y + Final.h >= View.y && Final.y <= View.y + View.h &&
-							Final.x + Final.w >= View.x && Final.x <= View.x + View.w;
-
 						const void *pId = &pEnvelope->m_vPoints[i].m_aValues[c];
 
-						if(PointInView && Map()->IsEnvPointSelected(i, c))
+						if(Map()->IsEnvPointSelected(i, c))
 						{
 							Graphics()->SetColor(1, 1, 1, 1);
 							CUIRect Background = {
@@ -5527,11 +5559,8 @@ void CEditor::RenderEnvelopeEditor(CUIRect View)
 						else
 							Graphics()->SetColor(aColors[c].r, aColors[c].g, aColors[c].b, 1.0f);
 
-						if(PointInView)
-						{
-							IGraphics::CQuadItem QuadItem(Final.x, Final.y, Final.w, Final.h);
-							Graphics()->QuadsDrawTL(&QuadItem, 1);
-						}
+						IGraphics::CQuadItem QuadItem(Final.x, Final.y, Final.w, Final.h);
+						Graphics()->QuadsDrawTL(&QuadItem, 1);
 					}
 
 					// tangent handles for bezier curves
@@ -6238,7 +6267,7 @@ void CEditor::RenderEditorHistory(CUIRect View)
 			}
 		}
 		s_ActionSelectedIndex = NewSelected;
-		m_DuoSession.NotifyFullSync();
+		m_MultiMappingSession.NotifyFullSync();
 	}
 }
 
@@ -6318,7 +6347,7 @@ void CEditor::RenderMenubar(CUIRect MenuBar)
 	if(DoButton_Ex(&s_ToolsButton, "Tools", 0, &ToolsButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_T, EditorFontSizes::MENU, TEXTALIGN_ML))
 	{
 		static SPopupMenuId s_PopupMenuToolsId;
-		Ui()->DoPopupMenu(&s_PopupMenuToolsId, ToolsButton.x, ToolsButton.y + ToolsButton.h - 1.0f, 200.0f, 92.0f, this, PopupMenuTools, PopupProperties);
+		Ui()->DoPopupMenu(&s_PopupMenuToolsId, ToolsButton.x, ToolsButton.y + ToolsButton.h - 1.0f, 200.0f, 78.0f, this, PopupMenuTools, PopupProperties);
 	}
 
 	MenuBar.VSplitLeft(5.0f, nullptr, &MenuBar);
@@ -6353,14 +6382,14 @@ void CEditor::RenderMenubar(CUIRect MenuBar)
 		DoButtonLogic(&s_ChangedIndicator, 0, &ChangedIndicator, BUTTONFLAG_NONE, "This map has unsaved changes."); // just for the tooltip, result unused
 	}
 
-		// Duo status log in menubar — show most recent entry
-	if(m_DuoSession.m_State >= CDuoSession::STATE_CONNECTING || m_DuoSession.m_LogCount > 0)
+		// MultiMapping status log in menubar вЂ” show most recent entry
+	if(m_MultiMappingSession.m_State >= CMultiMappingSession::STATE_CONNECTING || m_MultiMappingSession.m_LogCount > 0)
 	{
-		if(m_DuoSession.m_LogCount > 0)
+		if(m_MultiMappingSession.m_LogCount > 0)
 		{
 			CUIRect LogRect;
 			MenuBar.VSplitLeft(200.0f, &LogRect, &MenuBar);
-			const char *pMsg = m_DuoSession.m_aLog[0].m_aText;
+			const char *pMsg = m_MultiMappingSession.m_aLog[0].m_aText;
 			bool IsError = str_find(pMsg, "lost") != nullptr || str_find(pMsg, "disconnected") != nullptr || str_find(pMsg, "full") != nullptr || str_find(pMsg, "not found") != nullptr;
 			bool IsMap = str_find(pMsg, "Map loaded") != nullptr;
 			bool IsSession = str_find(pMsg, "Session") != nullptr || str_find(pMsg, "reconnected") != nullptr || str_find(pMsg, "created") != nullptr;
@@ -6378,16 +6407,16 @@ void CEditor::RenderMenubar(CUIRect MenuBar)
 		}
 	}
 
-	// Duo ping indicator — always visible while STATE_LIVE
-	if(m_DuoSession.m_State == CDuoSession::STATE_LIVE)
+	// MultiMapping ping indicator вЂ” always visible while STATE_LIVE
+	if(m_MultiMappingSession.m_State == CMultiMappingSession::STATE_LIVE)
 	{
 		CUIRect PingRect;
 		MenuBar.VSplitLeft(55.0f, &PingRect, &MenuBar);
 		char aPingBuf[32];
-		if(m_DuoSession.m_PingMs >= 0)
+		if(m_MultiMappingSession.m_PingMs >= 0)
 		{
-			str_format(aPingBuf, sizeof(aPingBuf), "%d ms", m_DuoSession.m_PingMs);
-			int Ms = m_DuoSession.m_PingMs;
+			str_format(aPingBuf, sizeof(aPingBuf), "%d ms", m_MultiMappingSession.m_PingMs);
+			int Ms = m_MultiMappingSession.m_PingMs;
 			if(Ms < 100)
 				TextRender()->TextColor(0.3f, 1.0f, 0.5f, 1.0f);
 			else if(Ms < 300)
@@ -6489,9 +6518,9 @@ void CEditor::Render()
 		if(Ui()->CheckActiveItem(nullptr))
 		{
 			if(Input()->KeyPress(KEY_Z) && Input()->ModifierIsPressed() && !Input()->ShiftIsPressed())
-			{ ActiveHistory().Undo(); m_DuoSession.NotifyFullSync(); }
+			{ ActiveHistory().Undo(); m_MultiMappingSession.NotifyFullSync(); }
 		if((Input()->KeyPress(KEY_Y) && Input()->ModifierIsPressed()) || (Input()->KeyPress(KEY_Z) && Input()->ModifierIsPressed() && Input()->ShiftIsPressed()))
-			{ ActiveHistory().Redo(); m_DuoSession.NotifyFullSync(); }
+			{ ActiveHistory().Redo(); m_MultiMappingSession.NotifyFullSync(); }
 		}
 
 		// handle brush save/load hotkeys
@@ -6559,23 +6588,23 @@ void CEditor::Render()
 		// ctrl+n to create new map
 		if(Input()->KeyPress(KEY_N) && ModPressed)
 		{
-			auto &Duo = m_DuoSession;
-			if(Duo.m_State >= CDuoSession::STATE_CONNECTING)
+			auto &MultiMapping = m_MultiMappingSession;
+			if(MultiMapping.m_State >= CMultiMappingSession::STATE_CONNECTING)
 			{
-				if(!Duo.m_IsCreator)
+				if(!MultiMapping.m_IsCreator)
 				{
 					if(!m_PopupEventWasActivated)
 					{
-						m_PopupEventType = POPEVENT_DUO_NEW;
+						m_PopupEventType = POPEVENT_MULTIMAPPING_NEW;
 						m_PopupEventActivated = true;
 					}
 				}
 				else
 				{
-					Duo.m_OwnerLoadingMap = true;
+					MultiMapping.m_OwnerLoadingMap = true;
 					Reset();
-					Duo.m_OwnerLoadingMap = false;
-					Duo.SendMapNew();
+					MultiMapping.m_OwnerLoadingMap = false;
+					MultiMapping.SendMapNew();
 				}
 			}
 			else if(HasUnsavedData())
@@ -7160,9 +7189,9 @@ void CEditor::RenderSwitchEntities(const std::shared_ptr<CLayerTiles> &pTiles)
 
 void CEditor::Reset(bool CreateDefault)
 {
-	// Keep the Duo popup open while a remotely-received map is being loaded;
+	// Keep the MultiMapping popup open while a remotely-received map is being loaded;
 	// otherwise the joiner's session window closes the moment the map arrives.
-	if(!m_DuoSession.m_ApplyingRemote)
+	if(!m_MultiMappingSession.m_ApplyingRemote)
 		Ui()->ClosePopupMenus();
 	Map()->Clean();
 
@@ -7261,7 +7290,7 @@ void CEditor::Init()
 	m_vComponents.emplace_back(m_FileBrowser);
 	m_vComponents.emplace_back(m_Prompt);
 	m_vComponents.emplace_back(m_FontTyper);
-	m_vComponents.emplace_back(m_DuoSession);
+	m_vComponents.emplace_back(m_MultiMappingSession);
 	for(CEditorComponent &Component : m_vComponents)
 		Component.OnInit(this);
 
@@ -7489,7 +7518,7 @@ void CEditor::HandleWriterFinishJobs()
 
 void CEditor::OnBackgroundUpdate()
 {
-	m_DuoSession.OnBackgroundUpdate();
+	m_MultiMappingSession.OnBackgroundUpdate();
 }
 
 void CEditor::OnUpdate()
@@ -7497,7 +7526,7 @@ void CEditor::OnUpdate()
 	CUIElementBase::Init(Ui()); // update static pointer because game and editor use separate UI
 
 	// returning to editor means testing/away session ended
-	m_DuoSession.m_LocalTestingActive = false;
+	m_MultiMappingSession.m_LocalTestingActive = false;
 
 	if(!m_EditorWasUsedBefore)
 	{

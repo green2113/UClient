@@ -43,7 +43,7 @@ CKeyBinder::CKeyReaderResult CKeyBinder::DoKeyReader(CButtonContainer *pReaderBu
 		Result.m_Bind == CBindSlot(KEY_UNKNOWN, KeyModifier::NONE) ? 1 : 0,
 		&ClearButton, BUTTONFLAG_LEFT, IGraphics::CORNER_R);
 
-	const int ButtonResult = Ui()->DoButtonLogic(pReaderButton, 0, &KeyReaderButton, BUTTONFLAG_LEFT | BUTTONFLAG_RIGHT, CUi::EButtonSoundType::BUTTON);
+	const int ButtonResult = Ui()->DoButtonLogic(pReaderButton, 0, &KeyReaderButton, BUTTONFLAG_LEFT | BUTTONFLAG_RIGHT);
 	if(ButtonResult == 1 || Activate)
 	{
 		m_pKeyReaderId = pReaderButton;

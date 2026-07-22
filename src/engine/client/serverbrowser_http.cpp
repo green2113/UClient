@@ -26,6 +26,8 @@
 
 using namespace std::chrono_literals;
 
+static const char *BESTCLIENT_SERVERLIST_URL = "https://master.bestclient.fun/servers.json";
+
 static int SanitizeAge(std::optional<int64_t> Age)
 {
 	// A year is of course pi*10**7 seconds.
@@ -47,15 +49,6 @@ static int ClassifyAge(int AgeSeconds)
 	       + (AgeSeconds >= 300) // 5 minutes
 	       + (AgeSeconds / 3600); // 1 hour
 }
-
-static const char *DEFAULT_SERVERLIST_URLS[] = {
-	"https://master1.ddnet.org/ddnet/15/servers.json",
-	"https://master2.ddnet.org/ddnet/15/servers.json",
-	"https://master3.ddnet.org/ddnet/15/servers.json",
-	"https://master4.ddnet.org/ddnet/15/servers.json",
-};
-
-static const char *BESTCLIENT_SERVERLIST_URL = "https://master.bestclient.fun/servers.json";
 
 class CChooseMaster
 {
@@ -371,57 +364,6 @@ CServerBrowserHttp::CServerBrowserHttp(IEngine *pEngine, IStorage *pStorage, IHt
 	Refresh();
 }
 
-void CServerBrowserHttp::ResetMasterChooser(const char *pPreviousBestUrl)
-{
-	const bool UseBestClientMaster = g_Config.m_BcMastersrv != 0;
-	char aaUrls[CChooseMaster::MAX_URLS][256];
-	const char *apUrls[CChooseMaster::MAX_URLS] = {nullptr};
-	int NumUrls = 0;
-	if(UseBestClientMaster)
-	{
-		apUrls[0] = BESTCLIENT_SERVERLIST_URL;
-		NumUrls = 1;
-	}
-	else
-	{
-		CLineReader LineReader;
-		if(LineReader.OpenFile(m_pStorage->OpenFile("ddnet-serverlist-urls.cfg", IOFLAG_READ, IStorage::TYPE_ALL)))
-		{
-			while(const char *pLine = LineReader.Get())
-			{
-				if(NumUrls == CChooseMaster::MAX_URLS)
-				{
-					break;
-				}
-				str_copy(aaUrls[NumUrls], pLine);
-				apUrls[NumUrls] = aaUrls[NumUrls];
-				NumUrls += 1;
-			}
-		}
-		if(NumUrls == 0)
-		{
-			for(size_t i = 0; i < std::size(DEFAULT_SERVERLIST_URLS); i++)
-			{
-				apUrls[i] = DEFAULT_SERVERLIST_URLS[i];
-			}
-			NumUrls = std::size(DEFAULT_SERVERLIST_URLS);
-		}
-	}
-
-	int PreviousBestIndex = -1;
-	for(int i = 0; i < NumUrls; i++)
-	{
-		if(pPreviousBestUrl != nullptr && str_comp(apUrls[i], pPreviousBestUrl) == 0)
-		{
-			PreviousBestIndex = i;
-			break;
-		}
-	}
-
-	m_UseBestClientMaster = UseBestClientMaster;
-	m_pChooseMaster = std::make_unique<CChooseMaster>(m_pEngine, m_pHttp, Validate, apUrls, NumUrls, PreviousBestIndex);
-}
-
 CServerBrowserHttp::~CServerBrowserHttp()
 {
 	if(m_pGetServers != nullptr)
@@ -602,10 +544,65 @@ bool CServerBrowserHttp::Parse(json_value *pJson, std::vector<CServerInfo> *pvSe
 	return false;
 }
 
+static const char *DEFAULT_SERVERLIST_URLS[] = {
+	"https://master1.ddnet.org/ddnet/15/servers.json",
+	"https://master2.ddnet.org/ddnet/15/servers.json",
+	"https://master3.ddnet.org/ddnet/15/servers.json",
+	"https://master4.ddnet.org/ddnet/15/servers.json",
+};
+
+void CServerBrowserHttp::ResetMasterChooser(const char *pPreviousBestUrl)
+{
+	const bool UseBestClientMaster = g_Config.m_BcMastersrv != 0;
+	char aaUrls[CChooseMaster::MAX_URLS][256];
+	const char *apUrls[CChooseMaster::MAX_URLS] = {nullptr};
+	const char **ppUrls = apUrls;
+	int NumUrls = 0;
+	if(UseBestClientMaster)
+	{
+		apUrls[0] = BESTCLIENT_SERVERLIST_URL;
+		NumUrls = 1;
+	}
+	else
+	{
+		CLineReader LineReader;
+		if(LineReader.OpenFile(m_pStorage->OpenFile("ddnet-serverlist-urls.cfg", IOFLAG_READ, IStorage::TYPE_ALL)))
+		{
+			while(const char *pLine = LineReader.Get())
+			{
+				if(NumUrls == CChooseMaster::MAX_URLS)
+					break;
+				str_copy(aaUrls[NumUrls], pLine);
+				apUrls[NumUrls] = aaUrls[NumUrls];
+				NumUrls += 1;
+			}
+		}
+		if(NumUrls == 0)
+		{
+			ppUrls = DEFAULT_SERVERLIST_URLS;
+			NumUrls = std::size(DEFAULT_SERVERLIST_URLS);
+		}
+	}
+
+	int PreviousBestIndex = -1;
+	for(int i = 0; i < NumUrls; i++)
+	{
+		if(pPreviousBestUrl != nullptr && str_comp(ppUrls[i], pPreviousBestUrl) == 0)
+		{
+			PreviousBestIndex = i;
+			break;
+		}
+	}
+
+	m_UseBestClientMaster = UseBestClientMaster;
+	m_pChooseMaster = std::make_unique<CChooseMaster>(m_pEngine, m_pHttp, Validate, ppUrls, NumUrls, PreviousBestIndex);
+}
+
 IServerBrowserHttp *CreateServerBrowserHttp(IEngine *pEngine, IStorage *pStorage, IHttp *pHttp, const char *pPreviousBestUrl)
 {
 	char aaUrls[CChooseMaster::MAX_URLS][256];
 	const char *apUrls[CChooseMaster::MAX_URLS] = {nullptr};
+	const char **ppUrls = apUrls;
 	int NumUrls = 0;
 	if(g_Config.m_BcMastersrv != 0)
 	{
@@ -620,9 +617,7 @@ IServerBrowserHttp *CreateServerBrowserHttp(IEngine *pEngine, IStorage *pStorage
 			while(const char *pLine = LineReader.Get())
 			{
 				if(NumUrls == CChooseMaster::MAX_URLS)
-				{
 					break;
-				}
 				str_copy(aaUrls[NumUrls], pLine);
 				apUrls[NumUrls] = aaUrls[NumUrls];
 				NumUrls += 1;
@@ -630,21 +625,18 @@ IServerBrowserHttp *CreateServerBrowserHttp(IEngine *pEngine, IStorage *pStorage
 		}
 		if(NumUrls == 0)
 		{
-			for(size_t i = 0; i < std::size(DEFAULT_SERVERLIST_URLS); i++)
-			{
-				apUrls[i] = DEFAULT_SERVERLIST_URLS[i];
-			}
+			ppUrls = DEFAULT_SERVERLIST_URLS;
 			NumUrls = std::size(DEFAULT_SERVERLIST_URLS);
 		}
 	}
 	int PreviousBestIndex = -1;
 	for(int i = 0; i < NumUrls; i++)
 	{
-		if(str_comp(apUrls[i], pPreviousBestUrl) == 0)
+		if(pPreviousBestUrl != nullptr && str_comp(ppUrls[i], pPreviousBestUrl) == 0)
 		{
 			PreviousBestIndex = i;
 			break;
 		}
 	}
-	return new CServerBrowserHttp(pEngine, pStorage, pHttp, apUrls, NumUrls, PreviousBestIndex);
+	return new CServerBrowserHttp(pEngine, pStorage, pHttp, ppUrls, NumUrls, PreviousBestIndex);
 }

@@ -915,22 +915,22 @@ int CDataFileReader::NumItems() const
 
 const char *CDataFileReader::FullName() const
 {
-	if(m_pDataFile == nullptr)
-		return "";
+	dbg_assert(m_pDataFile != nullptr, "File not open");
+
 	return m_pDataFile->m_aFullName;
 }
 
 const char *CDataFileReader::BaseName() const
 {
-	if(m_pDataFile == nullptr)
-		return "";
+	dbg_assert(m_pDataFile != nullptr, "File not open");
+
 	return m_pDataFile->m_pBaseName;
 }
 
 const char *CDataFileReader::Path() const
 {
-	if(m_pDataFile == nullptr)
-		return "";
+	dbg_assert(m_pDataFile != nullptr, "File not open");
+
 	return m_pDataFile->m_aPath;
 }
 

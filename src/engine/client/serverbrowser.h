@@ -14,8 +14,6 @@
 #include <map>
 #include <optional>
 #include <set>
-#include <string>
-#include <unordered_map>
 
 typedef struct _json_value json_value;
 class CNetClient;
@@ -322,6 +320,7 @@ public:
 	CServerEntry *Find(const NETADDR &Addr) override;
 	int GetCurrentType() override { return m_ServerlistType; }
 	bool IsRegistered(const NETADDR &Addr);
+	void SetBestClientPlayers(const std::vector<CBestClientPlayerEntry> &vPlayers) override;
 
 private:
 	CNetClient *m_pNetClient = nullptr;
@@ -346,6 +345,7 @@ private:
 
 	std::vector<CCommunity> m_vCommunities;
 	std::unordered_map<NETADDR, CCommunityServer> m_CommunityServersByAddr;
+
 	std::unordered_map<std::string, std::unordered_map<std::string, bool>> m_BestClientPlayersByServer;
 	std::unordered_map<std::string, std::unordered_set<std::string>> m_UcClientPlayersByServer;
 

@@ -48,6 +48,7 @@ private:
 	void ScaleZoom(float Factor);
 	void ChangeZoom(float Target, int Smoothness, bool IsUser);
 	float ZoomProgress(float CurrentTime) const;
+	void RemoveDemoDynamicFov();
 
 	float MinZoomLevel();
 	float MaxZoomLevel();
@@ -58,6 +59,13 @@ private:
 	bool m_UsingAutoSpecCamera;
 
 	char m_aAutoSpecCameraTooltip[512];
+
+	vec2 m_DemoCameraDriftTargetOffset;
+	vec2 m_DemoCameraDriftCurrentOffset;
+	float m_DemoDynamicFovTarget;
+	float m_DemoDynamicFovCurrent;
+	float m_DemoDynamicFovAppliedFactor;
+	void UpdateDemoCameraEffects(float DeltaTime);
 
 	bool m_CinematicCameraSmoothing;
 	vec2 m_CinematicCameraPosition;
@@ -123,6 +131,7 @@ private:
 	static void ConSetViewRelative(IConsole::IResult *pResult, void *pUserData);
 	static void ConGotoSwitch(IConsole::IResult *pResult, void *pUserData);
 	static void ConGotoTele(IConsole::IResult *pResult, void *pUserData);
+	static void ConToggleCinematicCamera(IConsole::IResult *pResult, void *pUserData);
 
 	bool m_ForceFreeview;
 	vec2 m_ForceFreeviewPos;

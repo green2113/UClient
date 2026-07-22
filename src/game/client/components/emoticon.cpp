@@ -13,6 +13,12 @@
 #include <game/client/gameclient.h>
 #include <game/client/ui.h>
 
+#include <algorithm>
+
+// Hit radius (and dead zone for emote/eye-emote selection) for the switch-to-gif-wheel button in
+// the middle of the wheel. Must match the s_InnerMouseLimitRadius used below in OnRender.
+static constexpr float EMOTICON_CENTER_RADIUS = 40.0f;
+
 CEmoticon::CEmoticon()
 {
 	OnReset();
@@ -25,13 +31,29 @@ void CEmoticon::ConKeyEmoticon(IConsole::IResult *pResult, void *pUserData)
 	if(pSelf->GameClient()->m_Scoreboard.IsActive())
 		return;
 
-	if(!pSelf->GameClient()->m_Snap.m_SpecInfo.m_Active && pSelf->Client()->State() != IClient::STATE_DEMOPLAYBACK)
+	if(pSelf->GameClient()->m_Snap.m_SpecInfo.m_Active || pSelf->Client()->State() == IClient::STATE_DEMOPLAYBACK)
+		return;
+
+	const bool NewActive = pResult->GetInteger(0) != 0;
+	if(!NewActive)
 	{
-		if(pSelf->GameClient()->m_BindWheel.IsActive())
-			pSelf->m_Active = false;
-		else
-			pSelf->m_Active = pResult->GetInteger(0) != 0;
+		// Key released: close whichever wheel is currently showing (the user may have switched
+		// mid-hold via the center button) and let its own close/execute logic run.
+		if(pSelf->GameClient()->m_GifWheel.IsActive())
+			pSelf->GameClient()->m_GifWheel.OnRelease();
+		pSelf->m_Active = false;
+		return;
 	}
+
+	if(pSelf->GameClient()->m_BindWheel.IsActive() || pSelf->GameClient()->m_GifWheel.IsActive())
+		return;
+
+	// Remember which wheel was showing last time and open straight into it again, instead of
+	// always starting on emotes.
+	if(pSelf->m_PreferGifWheel)
+		pSelf->GameClient()->m_GifWheel.Activate();
+	else
+		pSelf->m_Active = true;
 }
 
 void CEmoticon::ConEmote(IConsole::IResult *pResult, void *pUserData)
@@ -59,6 +81,11 @@ void CEmoticon::OnRelease()
 	m_Active = false;
 }
 
+void CEmoticon::Activate()
+{
+	m_Active = true;
+}
+
 bool CEmoticon::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
 {
 	if(!m_Active)
@@ -71,11 +98,26 @@ bool CEmoticon::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
 
 bool CEmoticon::OnInput(const IInput::CEvent &Event)
 {
-	if(IsActive() && Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_ESCAPE)
+	if(!IsActive())
+		return false;
+
+	if(Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_ESCAPE)
 	{
 		OnRelease();
 		return true;
 	}
+
+	// Aiming at dead center (no emote/eye-emote selected either way) and clicking switches to
+	// the gif wheel, staying within the same held-key session.
+	const float WheelScale = std::clamp(g_Config.m_BcWheelScale / 100.0f, 0.5f, 2.0f);
+	if(Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_MOUSE_1 && length(m_SelectorMouse) < EMOTICON_CENTER_RADIUS * WheelScale)
+	{
+		m_PreferGifWheel = true;
+		GameClient()->m_GifWheel.Activate();
+		OnRelease();
+		return true;
+	}
+
 	return false;
 }
 
@@ -95,13 +137,14 @@ void CEmoticon::OnRender()
 		return std::fmod(x + y, y);
 	};
 
-	static const float s_InnerMouseLimitRadius = 40.0f;
-	static const float s_InnerOuterMouseBoundaryRadius = 110.0f;
-	static const float s_OuterMouseLimitRadius = 170.0f;
-	static const float s_InnerItemRadius = 70.0f;
-	static const float s_OuterItemRadius = 150.0f;
-	static const float s_InnerCircleRadius = 100.0f;
-	static const float s_OuterCircleRadius = 190.0f;
+	const float WheelScale = std::clamp(g_Config.m_BcWheelScale / 100.0f, 0.5f, 2.0f);
+	const float s_InnerMouseLimitRadius = EMOTICON_CENTER_RADIUS * WheelScale;
+	const float s_InnerOuterMouseBoundaryRadius = 110.0f * WheelScale;
+	const float s_OuterMouseLimitRadius = 170.0f * WheelScale;
+	const float s_InnerItemRadius = 70.0f * WheelScale;
+	const float s_OuterItemRadius = 150.0f * WheelScale;
+	const float s_InnerCircleRadius = 100.0f * WheelScale;
+	const float s_OuterCircleRadius = 190.0f * WheelScale;
 
 	const float AnimationTime = (float)g_Config.m_TcAnimateWheelTime / 1000.0f;
 	const float ItemAnimationTime = AnimationTime / 2.0f;
@@ -241,7 +284,7 @@ void CEmoticon::OnRender()
 		Graphics()->QuadsBegin();
 		const vec2 Nudge = direction(Angle) * s_OuterItemRadius * aAnimationPhase[1];
 		const float Phase = ItemAnimationTime == 0.0f ? (Emote == m_SelectedEmote ? 1.0f : 0.0f) : QuadEaseInOut(m_aAnimationTimeEmotes[Emote] / ItemAnimationTime);
-		const float Size = (50.0f + Phase * 30.0f) * aAnimationPhase[1];
+		const float Size = (50.0f + Phase * 30.0f) * WheelScale * aAnimationPhase[1];
 		IGraphics::CQuadItem QuadItem(ScreenCenter.x + Nudge.x, ScreenCenter.y + Nudge.y, Size * aAnimationPhase[1], Size * aAnimationPhase[1]);
 		Graphics()->QuadsDraw(&QuadItem, 1);
 		Graphics()->QuadsEnd();
@@ -266,20 +309,36 @@ void CEmoticon::OnRender()
 
 			const vec2 Nudge = direction(Angle) * s_InnerItemRadius * aAnimationPhase[3];
 			const float Phase = ItemAnimationTime == 0.0f ? (Emote == m_SelectedEyeEmote ? 1.0f : 0.0f) : QuadEaseInOut(m_aAnimationTimeEyeEmotes[Emote] / ItemAnimationTime);
-			TeeInfo.m_Size = (48.0f + Phase * 18.0f) * aAnimationPhase[3];
+			TeeInfo.m_Size = (48.0f + Phase * 18.0f) * WheelScale * aAnimationPhase[3];
 			RenderTools()->RenderTee(CAnimState::GetIdle(), &TeeInfo, Emote, vec2(-1.0f, 0.0f), ScreenCenter + Nudge, aAnimationPhase[3]);
 		}
 
 		Graphics()->TextureClear();
 		Graphics()->QuadsBegin();
 		Graphics()->SetColor(0.0f, 0.0f, 0.0f, 0.3f * aAnimationPhase[4]);
-		Graphics()->DrawCircle(ScreenCenter.x, ScreenCenter.y, 30.0f * aAnimationPhase[4], 64);
+		Graphics()->DrawCircle(ScreenCenter.x, ScreenCenter.y, 30.0f * WheelScale * aAnimationPhase[4], 64);
 		Graphics()->QuadsEnd();
 	}
 	else
 		m_SelectedEyeEmote = -1;
 
-	RenderTools()->RenderCursor(ScreenCenter + m_SelectorMouse, 24.0f, aAnimationPhase[0]);
+	// Switch-to-gif-wheel button, dead center - drawn on top of the eye wheel's own small
+	// center circle when that's shown, or standalone when it's not.
+	{
+		const float ButtonRadius = 22.0f * WheelScale;
+		Graphics()->TextureClear();
+		Graphics()->QuadsBegin();
+		Graphics()->SetColor(0.0f, 0.0f, 0.0f, 0.6f * aAnimationPhase[0]);
+		Graphics()->DrawCircle(ScreenCenter.x, ScreenCenter.y, ButtonRadius * aAnimationPhase[0], 32);
+		Graphics()->QuadsEnd();
+
+		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.95f * aAnimationPhase[0]);
+		CUIRect CenterButtonRect{ScreenCenter.x - ButtonRadius, ScreenCenter.y - 7.0f * WheelScale, ButtonRadius * 2.0f, 14.0f * WheelScale};
+		Ui()->DoLabel(&CenterButtonRect, "GIF", 12.0f * WheelScale * aAnimationPhase[0], TEXTALIGN_MC);
+		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+	}
+
+	RenderTools()->RenderCursor(ScreenCenter + m_SelectorMouse, 24.0f * WheelScale, aAnimationPhase[0]);
 }
 
 void CEmoticon::Emote(int Emoticon)

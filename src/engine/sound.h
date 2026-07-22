@@ -80,7 +80,6 @@ public:
 
 	virtual void SetVoiceVolume(CVoiceHandle Voice, float Volume) = 0;
 	virtual void SetVoiceFalloff(CVoiceHandle Voice, float Falloff) = 0;
-	virtual void SetVoicePitch(CVoiceHandle Voice, float Pitch) = 0;
 	virtual void SetVoicePosition(CVoiceHandle Voice, vec2 Position) = 0;
 	virtual void SetVoiceTimeOffset(CVoiceHandle Voice, float TimeOffset) = 0; // in s
 

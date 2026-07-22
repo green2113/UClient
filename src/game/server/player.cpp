@@ -412,12 +412,9 @@ void CPlayer::Snap(int SnappingClient)
 				{
 					return;
 				}
-
-				bool aSentSpectatorWatchers[MAX_CLIENTS] = {};
 				int SpectatorCount = 0;
 				for(auto &pPlayer : GameServer()->m_apPlayers)
 				{
-					bool IsCurrentPlayerSpectator = false;
 					if(!pPlayer || !pPlayer->m_EnableSpectatorCount || pPlayer->m_ClientId == TranslatedId || pPlayer->m_Afk ||
 						(Server()->IsRconAuthed(pPlayer->m_ClientId) && Server()->HasAuthHidden(pPlayer->m_ClientId)) ||
 						!(pPlayer->m_Paused || pPlayer->m_Team == TEAM_SPECTATORS))
@@ -428,7 +425,6 @@ void CPlayer::Snap(int SnappingClient)
 					if(pPlayer->m_SpectatorId == TranslatedId)
 					{
 						SpectatorCount++;
-						IsCurrentPlayerSpectator = true;
 					}
 					else if(GameServer()->m_apPlayers[TranslatedId]->GetCharacter())
 					{
@@ -436,23 +432,7 @@ void CPlayer::Snap(int SnappingClient)
 						float dx = pPlayer->m_ViewPos.x - CheckPos.x;
 						float dy = pPlayer->m_ViewPos.y - CheckPos.y;
 						if(absolute(dx) < (pPlayer->m_ShowDistance.x / 2.5f) && absolute(dy) < (pPlayer->m_ShowDistance.y / 2.3f))
-						{
 							SpectatorCount++;
-							IsCurrentPlayerSpectator = true;
-						}
-					}
-
-					if(IsCurrentPlayerSpectator)
-					{
-						int TranslatedSpectatorId = pPlayer->m_ClientId;
-						if(Server()->Translate(TranslatedSpectatorId, SnappingClient) && !aSentSpectatorWatchers[TranslatedSpectatorId])
-						{
-							CNetObj_SpectatorCount *pSpectatorWatcher = Server()->SnapNewItem<CNetObj_SpectatorCount>(TranslatedSpectatorId + 1);
-							if(!pSpectatorWatcher)
-								return;
-							pSpectatorWatcher->m_NumSpectators = 0;
-							aSentSpectatorWatchers[TranslatedSpectatorId] = true;
-						}
 					}
 				}
 				pDDNetSpectatorInfo->m_SpectatorCount = SpectatorCount;

@@ -17,7 +17,6 @@
 #include <game/client/components/scoreboard.h>
 #include <game/client/gameclient.h>
 #include <game/collision.h>
-#include <game/gamecore.h>
 
 CControls::CControls()
 {
@@ -192,107 +191,23 @@ void CControls::OnMessage(int Msg, void *pRawMsg)
 	}
 }
 
-bool CControls::IsSnapTapActive() const
-{
-	return g_Config.m_BcSnapTap != 0 &&
-		!GameClient()->IsSnapTapBlockedByCommunity();
-}
-
-bool CControls::UseGammaInputMovement() const
-{
-	return false;
-}
-
-void CControls::UpdateSnapTapState(int Dummy, bool LeftPressed, bool RightPressed)
-{
-	const int64_t Now = time_get();
-	if(LeftPressed && !m_aSnapTapPrevLeft[Dummy])
-	{
-		m_aSnapTapLastPressedDirection[Dummy] = -1;
-		m_aSnapTapLastPressedTime[Dummy] = Now;
-	}
-	if(RightPressed && !m_aSnapTapPrevRight[Dummy])
-	{
-		m_aSnapTapLastPressedDirection[Dummy] = 1;
-		m_aSnapTapLastPressedTime[Dummy] = Now;
-	}
-
-	m_aSnapTapPrevLeft[Dummy] = LeftPressed ? 1 : 0;
-	m_aSnapTapPrevRight[Dummy] = RightPressed ? 1 : 0;
-}
-
-int CControls::ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightPressed)
-{
-	UpdateSnapTapState(Dummy, LeftPressed, RightPressed);
-
-	if(IsSnapTapActive() || !UseGammaInputMovement())
-		return ResolveSnapTapDirection(Dummy, LeftPressed, RightPressed);
-
-	int Direction = 0;
-	if(LeftPressed && !RightPressed)
-		Direction = -1;
-	if(!LeftPressed && RightPressed)
-		Direction = 1;
-	return Direction;
-}
-int CControls::ResolveSnapTapDirection(int Dummy, bool LeftPressed, bool RightPressed)
-{
-	if(LeftPressed == RightPressed)
-	{
-		if(!LeftPressed)
-		{
-			m_aSnapTapAppliedDirection[Dummy] = 0;
-			return 0;
-		}
-
-		if(!IsSnapTapActive())
-			return 0;
-
-		int CandidateDirection = m_aSnapTapLastPressedDirection[Dummy];
-		if(CandidateDirection != -1 && CandidateDirection != 1)
-			CandidateDirection = m_aSnapTapAppliedDirection[Dummy] != 0 ? m_aSnapTapAppliedDirection[Dummy] : -1;
-
-		if(m_aSnapTapAppliedDirection[Dummy] == 0)
-		{
-			m_aSnapTapAppliedDirection[Dummy] = CandidateDirection;
-		}
-		else if(m_aSnapTapAppliedDirection[Dummy] != CandidateDirection)
-		{
-			const int64_t Delay = (time_freq() * (int64_t)g_Config.m_BcSnapTapDelay) / 1000;
-			if(time_get() - m_aSnapTapLastPressedTime[Dummy] >= Delay)
-				m_aSnapTapAppliedDirection[Dummy] = CandidateDirection;
-		}
-
-		return m_aSnapTapAppliedDirection[Dummy];
-	}
-
-	m_aSnapTapAppliedDirection[Dummy] = LeftPressed ? -1 : 1;
-	return m_aSnapTapAppliedDirection[Dummy];
-}
-
 void CControls::GoresMode()
 {
-	// if turning off kog mode and it was on before, rebind to previous bind
 	if(!GameClient()->m_Snap.m_pLocalCharacter)
 		return;
-	if(!g_Config.m_BcGoresMode || GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_GAMEPLAY_GORES_MODE))
+	if(!g_Config.m_BcGoresMode)
 		return;
 
-	CCharacterCore Core = GameClient()->m_PredictedPrevChar;
+	const int CurWeapon = GameClient()->m_Snap.m_pLocalCharacter->m_Weapon;
 
-	if(g_Config.m_BcGoresModeDisableIfWeapons)
-	{
-		if(Core.m_aWeapons[WEAPON_GRENADE].m_Got || Core.m_aWeapons[WEAPON_LASER].m_Got || Core.m_aWeapons[WEAPON_SHOTGUN].m_Got)
-			m_WeaponsGot = true;
-		if((!Core.m_aWeapons[WEAPON_GRENADE].m_Got && !Core.m_aWeapons[WEAPON_LASER].m_Got && !Core.m_aWeapons[WEAPON_SHOTGUN].m_Got) && m_WeaponsGot)
-			m_WeaponsGot = false;
+	// Only pause cycling while a heavy weapon is the active one, not merely owned
+	m_WeaponsGot = CurWeapon == WEAPON_GRENADE || CurWeapon == WEAPON_LASER || CurWeapon == WEAPON_SHOTGUN;
+	if(g_Config.m_BcGoresModeDisableIfWeapons && m_WeaponsGot)
+		return;
 
-		if(m_WeaponsGot)
-			return;
-	}
-
-	if(GameClient()->m_Snap.m_pLocalCharacter->m_Weapon == 0)
-		GameClient()->m_Controls.m_aInputData[g_Config.m_ClDummy].m_WantedWeapon = WEAPON_GUN + 1;
+	// WantedWeapon is 1-indexed (0 means "no weapon switch requested")
+	if(CurWeapon == WEAPON_HAMMER)
+		m_aInputData[g_Config.m_ClDummy].m_WantedWeapon = WEAPON_GUN + 1;
 }
 
 int CControls::SnapInput(int *pData)
@@ -402,7 +317,7 @@ int CControls::SnapInput(int *pData)
 		// set direction
 		const bool LeftPressed = m_aInputDirectionLeft[g_Config.m_ClDummy] != 0;
 		const bool RightPressed = m_aInputDirectionRight[g_Config.m_ClDummy] != 0;
-		m_aInputData[g_Config.m_ClDummy].m_Direction = ResolveMovementDirection(g_Config.m_ClDummy, LeftPressed, RightPressed);
+		m_aInputData[g_Config.m_ClDummy].m_Direction = ResolveMovementDirection(g_Config.m_ClDummy, LeftPressed, RightPressed, /*UpdateState=*/true);
 
 		// dummy copy moves
 		if(g_Config.m_ClDummyCopyMoves)
@@ -572,6 +487,90 @@ bool CControls::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
 	return true;
 }
 
+bool CControls::IsSnapTapActive() const
+{
+	return g_Config.m_BcSnapTap != 0 &&
+		!GameClient()->IsSnapTapBlockedByCommunity();
+}
+
+bool CControls::UseGammaInputMovement() const
+{
+	return false;
+}
+
+void CControls::UpdateSnapTapState(int Dummy, bool LeftPressed, bool RightPressed)
+{
+	const int64_t Now = time_get();
+	if(LeftPressed && !m_aSnapTapPrevLeft[Dummy])
+	{
+		m_aSnapTapLastPressedDirection[Dummy] = -1;
+		m_aSnapTapLastPressedTime[Dummy] = Now;
+	}
+	if(RightPressed && !m_aSnapTapPrevRight[Dummy])
+	{
+		m_aSnapTapLastPressedDirection[Dummy] = 1;
+		m_aSnapTapLastPressedTime[Dummy] = Now;
+	}
+
+	m_aSnapTapPrevLeft[Dummy] = LeftPressed ? 1 : 0;
+	m_aSnapTapPrevRight[Dummy] = RightPressed ? 1 : 0;
+}
+
+int CControls::ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightPressed, bool UpdateState)
+{
+	// Edge detection must only ever be driven by the authoritative tick-rate caller (SnapInput). Fast-input
+	// prediction (CheckNewInput) polls this every render frame and would otherwise consume the press/release
+	// transition before SnapInput sees it, leaving the wrong tee misprioritized and causing a visible
+	// misprediction stutter whenever the opposite direction is tapped while one is held.
+	if(UpdateState)
+		UpdateSnapTapState(Dummy, LeftPressed, RightPressed);
+
+	if(IsSnapTapActive() || !UseGammaInputMovement())
+		return ResolveSnapTapDirection(Dummy, LeftPressed, RightPressed);
+
+	int Direction = 0;
+	if(LeftPressed && !RightPressed)
+		Direction = -1;
+	if(!LeftPressed && RightPressed)
+		Direction = 1;
+	return Direction;
+}
+
+int CControls::ResolveSnapTapDirection(int Dummy, bool LeftPressed, bool RightPressed)
+{
+	if(LeftPressed == RightPressed)
+	{
+		if(!LeftPressed)
+		{
+			m_aSnapTapAppliedDirection[Dummy] = 0;
+			return 0;
+		}
+
+		if(!IsSnapTapActive())
+			return 0;
+
+		int CandidateDirection = m_aSnapTapLastPressedDirection[Dummy];
+		if(CandidateDirection != -1 && CandidateDirection != 1)
+			CandidateDirection = m_aSnapTapAppliedDirection[Dummy] != 0 ? m_aSnapTapAppliedDirection[Dummy] : -1;
+
+		if(m_aSnapTapAppliedDirection[Dummy] == 0)
+		{
+			m_aSnapTapAppliedDirection[Dummy] = CandidateDirection;
+		}
+		else if(m_aSnapTapAppliedDirection[Dummy] != CandidateDirection)
+		{
+			const int64_t Delay = (time_freq() * (int64_t)g_Config.m_BcSnapTapDelay) / 1000;
+			if(time_get() - m_aSnapTapLastPressedTime[Dummy] >= Delay)
+				m_aSnapTapAppliedDirection[Dummy] = CandidateDirection;
+		}
+
+		return m_aSnapTapAppliedDirection[Dummy];
+	}
+
+	m_aSnapTapAppliedDirection[Dummy] = LeftPressed ? -1 : 1;
+	return m_aSnapTapAppliedDirection[Dummy];
+}
+
 void CControls::ClampMousePos()
 {
 	if(GameClient()->m_Snap.m_SpecInfo.m_Active && GameClient()->m_Snap.m_SpecInfo.m_SpectatorId < 0)
@@ -627,14 +626,12 @@ float CControls::GetMaxMouseDistance() const
 
 bool CControls::CheckNewInput()
 {
-	if(g_Config.m_TcFastInput && g_Config.m_BcFastInputMode == 4 && g_Config.m_BcSaikoPlusAmount > 0)
+	if(g_Config.m_BcInputs == BC_INPUTS_SAIKO && g_Config.m_BcSaikoInputAmount > 0)
 	{
 		CNetObj_PlayerInput TestInput = m_aInputData[g_Config.m_ClDummy];
-		TestInput.m_Direction = 0;
-		if(m_aInputDirectionLeft[g_Config.m_ClDummy] && !m_aInputDirectionRight[g_Config.m_ClDummy])
-			TestInput.m_Direction = -1;
-		if(!m_aInputDirectionLeft[g_Config.m_ClDummy] && m_aInputDirectionRight[g_Config.m_ClDummy])
-			TestInput.m_Direction = 1;
+		const bool LeftPressed = m_aInputDirectionLeft[g_Config.m_ClDummy] != 0;
+		const bool RightPressed = m_aInputDirectionRight[g_Config.m_ClDummy] != 0;
+		TestInput.m_Direction = ResolveMovementDirection(g_Config.m_ClDummy, LeftPressed, RightPressed, /*UpdateState=*/false);
 
 		bool NewInput = false;
 		if(m_aFastInput[g_Config.m_ClDummy].m_Direction != TestInput.m_Direction)
@@ -671,7 +668,7 @@ bool CControls::CheckNewInput()
 		{
 			const bool LeftPressed = m_aInputDirectionLeft[Dummy] != 0;
 			const bool RightPressed = m_aInputDirectionRight[Dummy] != 0;
-			TestInput.m_Direction = ResolveMovementDirection(Dummy, LeftPressed, RightPressed);
+			TestInput.m_Direction = ResolveMovementDirection(Dummy, LeftPressed, RightPressed, /*UpdateState=*/false);
 		}
 
 		if(m_aFastInput[Dummy].m_Direction != TestInput.m_Direction)

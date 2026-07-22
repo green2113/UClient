@@ -424,7 +424,6 @@ void CItems::RenderLaser(const CLaserData *pCurrent, bool IsPredicted)
 {
 	if(!GameClient()->OptimizerAllowRenderPos((pCurrent->m_From + pCurrent->m_To) * 0.5f))
 		return;
-
 	int Type = std::clamp(pCurrent->m_Type, -1, NUM_LASERTYPES - 1);
 	int ColorIn, ColorOut;
 	switch(Type)
@@ -503,7 +502,7 @@ void CItems::RenderLaser(const CLaserData *pCurrent, bool IsPredicted)
 void CItems::RenderLaser(vec2 From, vec2 Pos, ColorRGBA OuterColor, ColorRGBA InnerColor, float TicksBody, float TicksHead, int Type) const
 {
 	float Len = distance(Pos, From);
-	const bool CrystalLaser = !GameClient()->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_VISUALS_CRYSTAL_LASER) && UseCrystalLaser(Type);
+	const bool CrystalLaser = UseCrystalLaser(Type);
 	float CrystalBodyScale = 1.0f;
 	float CrystalHeadScale = 1.0f;
 	SCrystalLaserGeometry CrystalGeometry;

@@ -8,12 +8,14 @@
 #include <engine/shared/config.h>
 
 #include <game/client/animstate.h>
+#include <game/client/components/bestclient/inputs.h>
 #include <game/client/gameclient.h>
 #include <game/client/prediction/entities/character.h>
 #include <game/client/prediction/entities/laser.h>
 #include <game/client/prediction/entities/projectile.h>
 #include <game/client/projectile_data.h>
 #include <game/gamecore.h>
+#include <game/localization.h>
 #include <game/mapitems.h>
 
 #include <algorithm>
@@ -51,71 +53,6 @@ namespace
 		if((FireState & 1) != 0)
 			FireState = (FireState + 1) & INPUT_STATE_MASK;
 		return FireState;
-	}
-
-	float EffectiveFastInputOffsetTicks(const CGameClient *pGameClient)
-	{
-		if(!g_Config.m_TcFastInput)
-			return 0.0f;
-
-		if(g_Config.m_BcFastInputMode == 0)
-		{
-			if(g_Config.m_TcFastInputAmount <= 0)
-				return 0.0f;
-			return g_Config.m_TcFastInputAmount / 20.0f;
-		}
-
-		if(BcFastInputNormalizedMode(g_Config.m_BcFastInputMode) == 1)
-		{
-			if(g_Config.m_BcFastInputDeltaInput <= 0)
-				return 0.0f;
-			return g_Config.m_BcFastInputDeltaInput / 100.0f;
-		}
-
-		if(BcFastInputNormalizedMode(g_Config.m_BcFastInputMode) == 4)
-		{
-			if(g_Config.m_BcSaikoPlusAmount <= 0)
-				return 0.0f;
-			return g_Config.m_BcSaikoPlusAmount / 100.0f;
-		}
-
-		const CGameClient::SBestInputSettings Settings = pGameClient->BestInputSettings();
-		if(Settings.m_Offset <= 0)
-			return 0.0f;
-
-		float Offset = Settings.m_Offset / 100.0f;
-		if(Settings.m_Smoothing > 0)
-		{
-			float SmoothFactor = 1.0f - (Settings.m_Smoothing / 200.0f);
-			Offset *= SmoothFactor;
-		}
-		if(Settings.m_LatencyComp > 0)
-		{
-			float CompFactor = 1.0f + (Settings.m_LatencyComp / 100.0f);
-			Offset *= CompFactor;
-		}
-		return Offset;
-	}
-
-	int FastInputPredictionTicks(float OffsetTicks)
-	{
-		if(OffsetTicks <= 0.0f)
-			return 0;
-		if(BcFastInputNormalizedMode(g_Config.m_BcFastInputMode) == 4)
-			return (int)std::ceil(OffsetTicks + 1.0f);
-		return (int)std::ceil(OffsetTicks);
-	}
-
-	bool EffectiveFastInputOthers()
-	{
-		const int FastInputMode = BcFastInputNormalizedMode(g_Config.m_BcFastInputMode);
-		if(FastInputMode == 0)
-			return g_Config.m_TcFastInputOthers != 0;
-		if(FastInputMode == 1)
-			return g_Config.m_BcDeltaInputOthers != 0;
-		if(FastInputMode == 4)
-			return g_Config.m_BcSaikoPlusOthers != 0;
-		return g_Config.m_BcBestInputOthers != 0;
 	}
 
 	bool IsFrozenState(const CCharacter *pChar)
@@ -236,11 +173,18 @@ void CFastPractice::ResetPracticeState()
 	m_PracticeBaseWorld.Clear();
 	ResetAttackTickHistory();
 	ResetCommandState();
+	ResetPracticeRaceStates();
 }
 
 void CFastPractice::ResetCommandState()
 {
 	for(auto &State : m_aPracticeCommandState)
+		State = {};
+}
+
+void CFastPractice::ResetPracticeRaceStates()
+{
+	for(auto &State : m_aPracticeRaceState)
 		State = {};
 }
 
@@ -294,22 +238,6 @@ bool CFastPractice::CanEnable() const
 	}
 
 	return true;
-}
-
-int CFastPractice::DummyClientId() const
-{
-	if(!Client()->DummyConnected())
-		return -1;
-
-	const int DummySlot = !g_Config.m_ClDummy;
-	const int DummyId = GameClient()->m_aLocalIds[DummySlot];
-	if(DummyId < 0 || DummyId >= MAX_CLIENTS)
-		return -1;
-
-	if(!GameClient()->m_Snap.m_aCharacters[DummyId].m_Active || GameClient()->m_aClients[DummyId].m_Paused)
-		return -1;
-
-	return DummyId;
 }
 
 bool CFastPractice::ResolveParticipantInputs(int LocalClientId, int DummyClientId, int &LocalInputConn, int &DummyInputConn) const
@@ -406,14 +334,84 @@ int CFastPractice::CurrentPracticeDummyId() const
 	return DummyClientId;
 }
 
-int CFastPractice::PracticeDummyId() const
+bool CFastPractice::GetLocalRaceState(SLocalRaceState &State) const
 {
-	return CurrentPracticeDummyId();
+	State = {};
+	if(!m_Enabled ||
+		GameClient()->m_Snap.m_SpecInfo.m_Active ||
+		(GameClient()->m_Snap.m_pLocalInfo && GameClient()->m_Snap.m_pLocalInfo->m_Team == TEAM_SPECTATORS))
+	{
+		return false;
+	}
+
+	const int ClientId = CurrentLocalPracticeId();
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return false;
+
+	const CCharacter *pChar = m_PracticeBaseWorld.GetCharacterById(ClientId);
+	if(!pChar)
+		return false;
+
+	const SPracticeRaceState &RaceState = m_aPracticeRaceState[ClientId];
+	State.m_Position = pChar->Core()->m_Pos;
+	State.m_CurrentTick = m_PracticeBaseWorld.GameTick();
+	State.m_StartTick = RaceState.m_StartTick >= 0 ? RaceState.m_StartTick : GameClient()->LastRaceTick();
+	State.m_Finished = RaceState.m_Finished;
+	return true;
 }
 
-bool CFastPractice::IsPracticeDummy(int ClientId) const
+void CFastPractice::UpdatePracticeRaceState(int ClientId, const CCharacter *pChar, int Tick)
 {
-	return ClientId >= 0 && ClientId == CurrentPracticeDummyId();
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS || !pChar || !Collision())
+		return;
+
+	SPracticeRaceState &RaceState = m_aPracticeRaceState[ClientId];
+	if(RaceState.m_StartTick < 0 && !RaceState.m_Finished &&
+		ClientId == CurrentLocalPracticeId() && GameClient()->LastRaceTick() >= 0)
+	{
+		RaceState.m_StartTick = GameClient()->LastRaceTick();
+	}
+
+	const auto HasTile = [&](int Index, int WantedTile) {
+		return Index >= 0 && (Collision()->GetTileIndex(Index) == WantedTile || Collision()->GetFrontTileIndex(Index) == WantedTile);
+	};
+
+	const vec2 Pos = pChar->GetPos();
+	bool CornerOnStart = false;
+	bool CornerOnFinish = false;
+	const float Offset = pChar->GetProximityRadius() / 3.0f;
+	static constexpr vec2 s_aCornerOffsets[] = {
+		{1.0f, -1.0f},
+		{1.0f, 1.0f},
+		{-1.0f, -1.0f},
+		{-1.0f, 1.0f},
+	};
+	for(const vec2 CornerOffset : s_aCornerOffsets)
+	{
+		const int Index = Collision()->GetPureMapIndex(Pos + CornerOffset * Offset);
+		CornerOnStart |= HasTile(Index, TILE_START);
+		CornerOnFinish |= HasTile(Index, TILE_FINISH);
+	}
+
+	const auto HandleMapIndex = [&](int Index) {
+		const bool WasStarted = RaceState.m_StartTick >= 0 && !RaceState.m_Finished;
+		if(CornerOnStart || HasTile(Index, TILE_START))
+		{
+			RaceState.m_StartTick = Tick;
+			RaceState.m_Finished = false;
+		}
+		if((CornerOnFinish || HasTile(Index, TILE_FINISH)) && WasStarted)
+			RaceState.m_Finished = true;
+	};
+
+	const std::vector<int> vIndices = Collision()->GetMapIndices(pChar->m_PrevPos, Pos);
+	if(vIndices.empty())
+		HandleMapIndex(Collision()->GetMapIndex(Pos));
+	else
+	{
+		for(const int Index : vIndices)
+			HandleMapIndex(Index);
+	}
 }
 
 bool CFastPractice::ForcePredictWeapons() const
@@ -487,6 +485,7 @@ bool CFastPractice::InitPracticeWorld()
 	m_PracticeBaseWorld.CopyWorldClean(&GameClient()->m_GameWorld);
 	PrunePracticeWorld(m_PracticeBaseWorld);
 	SyncPracticeWorldConfig();
+	ResetPracticeRaceStates();
 	m_PracticeWorldInitialized = true;
 
 	if(!m_PracticeBaseWorld.GetCharacterById(m_EnableLocalClientId))
@@ -852,97 +851,6 @@ void CFastPractice::MaybePlayHammerHitEffect(CCharacter *pChar)
 	}
 }
 
-bool CFastPractice::AdvanceBaseWorldToTick(int TargetTick, int LocalClientId, int DummyClientId)
-{
-	if(!m_PracticeWorldInitialized)
-		return false;
-
-	if(m_PracticeBaseWorld.GameTick() > TargetTick)
-		return InitPracticeWorld();
-
-	int LocalInputConn = -1;
-	int DummyInputConn = -1;
-	if(!ResolveParticipantInputs(LocalClientId, DummyClientId, LocalInputConn, DummyInputConn))
-		return false;
-
-	const int FirstBaseTick = m_PracticeBaseWorld.GameTick() + 1;
-	for(int Tick = m_PracticeBaseWorld.GameTick() + 1; Tick <= TargetTick; Tick++)
-	{
-		CCharacter *pLocalChar = m_PracticeBaseWorld.GetCharacterById(LocalClientId);
-		CCharacter *pDummyChar = m_RequireDummy ? m_PracticeBaseWorld.GetCharacterById(DummyClientId) : nullptr;
-		if(!pLocalChar || (m_RequireDummy && !pDummyChar))
-			return false;
-
-		CNetObj_PlayerInput *pInputData = (CNetObj_PlayerInput *)Client()->GetInput(Tick, LocalInputConn);
-		CNetObj_PlayerInput *pDummyInputData = pDummyChar ? (CNetObj_PlayerInput *)Client()->GetInput(Tick, DummyInputConn) : nullptr;
-		CNetObj_PlayerInput LocalSuppressedInput = {};
-		CNetObj_PlayerInput DummySuppressedInput = {};
-		const bool SuppressTransitionTick = Tick == FirstBaseTick && m_SuppressFireOnNextPredictTick;
-		const bool SuppressCooldownTick = Tick >= FirstBaseTick && m_InputSuppressTicks > 0;
-		if(SuppressTransitionTick || SuppressCooldownTick)
-		{
-			if(pInputData)
-			{
-				LocalSuppressedInput = *pInputData;
-				LocalSuppressedInput.m_Fire = ReleasedFireState(pLocalChar->LatestInput()->m_Fire);
-				LocalSuppressedInput.m_WantedWeapon = 0;
-				LocalSuppressedInput.m_NextWeapon = 0;
-				LocalSuppressedInput.m_PrevWeapon = 0;
-				pInputData = &LocalSuppressedInput;
-			}
-			if(pDummyInputData)
-			{
-				DummySuppressedInput = *pDummyInputData;
-				DummySuppressedInput.m_Fire = ReleasedFireState(pDummyChar->LatestInput()->m_Fire);
-				DummySuppressedInput.m_WantedWeapon = 0;
-				DummySuppressedInput.m_NextWeapon = 0;
-				DummySuppressedInput.m_PrevWeapon = 0;
-				pDummyInputData = &DummySuppressedInput;
-			}
-			if(m_InputSuppressTicks > 0)
-				m_InputSuppressTicks--;
-			m_SuppressFireOnNextPredictTick = false;
-		}
-
-		if(pDummyChar && g_Config.m_ClDummyHammer)
-		{
-			if(!pDummyInputData || pDummyInputData != &DummySuppressedInput)
-			{
-				DummySuppressedInput = pDummyInputData ? *pDummyInputData : CNetObj_PlayerInput{};
-				pDummyInputData = &DummySuppressedInput;
-			}
-			const vec2 Dir = pLocalChar->Core()->m_Pos - pDummyChar->Core()->m_Pos;
-			pDummyInputData->m_TargetX = (int)Dir.x;
-			pDummyInputData->m_TargetY = (int)Dir.y;
-			if(pDummyInputData->m_TargetX == 0 && pDummyInputData->m_TargetY == 0)
-				pDummyInputData->m_TargetY = -1;
-		}
-
-		const bool DummyFirst = pInputData && pDummyInputData && pDummyChar->GetCid() < pLocalChar->GetCid();
-
-		if(DummyFirst)
-			pDummyChar->OnDirectInput(pDummyInputData);
-		if(pInputData)
-			pLocalChar->OnDirectInput(pInputData);
-		if(pDummyInputData && !DummyFirst)
-			pDummyChar->OnDirectInput(pDummyInputData);
-
-		m_PracticeBaseWorld.m_GameTick = Tick;
-		if(pInputData)
-			pLocalChar->OnPredictedInput(pInputData);
-		if(pDummyInputData)
-			pDummyChar->OnPredictedInput(pDummyInputData);
-
-		m_PracticeBaseWorld.Tick();
-
-		TrackSafeRescuePosition(LocalClientId, pLocalChar);
-		if(pDummyChar)
-			TrackSafeRescuePosition(DummyClientId, pDummyChar);
-	}
-
-	return true;
-}
-
 bool CFastPractice::OverridePredict()
 {
 	if(!m_Enabled)
@@ -1036,19 +944,23 @@ bool CFastPractice::OverridePredict()
 	{
 		GameClient()->m_PredictedChar = pLocalChar->GetCore();
 		GameClient()->m_aClients[LocalClientId].m_Predicted = pLocalChar->GetCore();
+		GameClient()->m_aClients[LocalClientId].m_RegularPredicted = pLocalChar->GetCore();
 		if(pDummyChar)
 		{
 			GameClient()->m_aClients[DummyClientId].m_Predicted = pDummyChar->GetCore();
+			GameClient()->m_aClients[DummyClientId].m_RegularPredicted = pDummyChar->GetCore();
 		}
 		GameClient()->m_PredictedTick = BaseGameTick;
 		return true;
 	}
 
+	// Reused across ticks (CollectTrackedProjectiles clears them each call) to avoid
+	// reallocating the backing buffer every tick when explosives are in flight.
+	std::vector<STrackedProjectile> vTrackedExplosiveBefore;
+	std::vector<STrackedProjectile> vTrackedExplosiveAfter;
+
 	for(int Tick = BaseGameTick + 1; Tick <= FinalTickSelf; Tick++)
 	{
-		std::vector<STrackedProjectile> vTrackedExplosiveBefore;
-		std::vector<STrackedProjectile> vTrackedExplosiveAfter;
-
 		pLocalChar = GameClient()->m_PredictedWorld.GetCharacterById(LocalClientId);
 		pDummyChar = m_RequireDummy ? GameClient()->m_PredictedWorld.GetCharacterById(DummyClientId) : nullptr;
 		if(!pLocalChar || (m_RequireDummy && !pDummyChar))
@@ -1127,6 +1039,10 @@ bool CFastPractice::OverridePredict()
 		pLocalChar->m_CanMoveInFreeze = false;
 		if(pDummyChar)
 			pDummyChar->m_CanMoveInFreeze = false;
+		// Mirror regular gameplay's partial-freeze cushion (cl_predict_freeze 2): allow a
+		// small amount of movement in the last tick(s) before unfreezing, instead of a hard lock.
+		if(g_Config.m_ClPredictFreeze == 2 && PredTick - 1 - PredTick % 2 <= Tick)
+			pLocalChar->m_CanMoveInFreeze = true;
 
 		CollectTrackedProjectiles(GameClient()->m_PredictedWorld, LocalClientId, DummyClientId, vTrackedExplosiveBefore);
 
@@ -1138,6 +1054,9 @@ bool CFastPractice::OverridePredict()
 			pDummyChar->OnDirectInput(pDummyInputData);
 
 		GameClient()->m_PredictedWorld.m_GameTick = Tick;
+		UpdatePracticeRaceState(LocalClientId, pLocalChar, Tick);
+		if(pDummyChar)
+			UpdatePracticeRaceState(DummyClientId, pDummyChar, Tick);
 		if(pInputData)
 			pLocalChar->OnPredictedInput(pInputData);
 		if(pDummyInputData)
@@ -1159,7 +1078,7 @@ bool CFastPractice::OverridePredict()
 
 			const int TickSpeed = Client()->GameTickSpeed();
 			const int TuneZone = std::clamp(TrackedProj.m_TuneZone, 0, TuneZone::NUM - 1);
-			const CTuningParams *pTuning = &GameClient()->m_aTuning[TuneZone];
+			const CTuningParams *pTuning = GameClient()->GetTuning(TuneZone);
 			vec2 PrevPos = CalcTrackedProjectilePos(TrackedProj, Tick - 1, TickSpeed, pTuning);
 			vec2 CurPos = CalcTrackedProjectilePos(TrackedProj, Tick, TickSpeed, pTuning);
 			vec2 ImpactPos = CurPos;
@@ -1185,6 +1104,14 @@ bool CFastPractice::OverridePredict()
 			for(int i = 0; i < MAX_CLIENTS; i++)
 				if(CCharacter *pChar = GameClient()->m_PredictedWorld.GetCharacterById(i))
 					GameClient()->m_aClients[i].m_Predicted = pChar->GetCore();
+		}
+		if(Tick == FinalTickRegular)
+		{
+			// TClient: keep the freeze bar (and anything else reading m_RegularPredicted) in sync,
+			// since fast practice fully replaces the regular prediction loop that normally sets this.
+			for(int i = 0; i < MAX_CLIENTS; i++)
+				if(CCharacter *pChar = GameClient()->m_PredictedWorld.GetCharacterById(i))
+					GameClient()->m_aClients[i].m_RegularPredicted = pChar->GetCore();
 		}
 		if(Tick == PredTick)
 		{
@@ -1259,8 +1186,8 @@ bool CFastPractice::OverridePredict()
 
 int CFastPractice::ApplyVisualFastInputPrediction(int FinalTickRegular, int LocalClientId, int DummyClientId, int LocalInputConn, int DummyInputConn)
 {
-	const float FastInputOffsetTicks = EffectiveFastInputOffsetTicks(GameClient());
-	const int FastInputTicks = FastInputPredictionTicks(FastInputOffsetTicks);
+	const float FastInputOffsetTicks = BcInputs::EffectiveOffsetTicks();
+	const int FastInputTicks = BcInputs::PredictionTicks(FastInputOffsetTicks);
 	if(FastInputTicks <= 0)
 		return FinalTickRegular;
 
@@ -1273,9 +1200,10 @@ int CFastPractice::ApplyVisualFastInputPrediction(int FinalTickRegular, int Loca
 		return FinalTickRegular;
 
 	const int FinalTickSelf = FinalTickRegular + FastInputTicks;
-	int FinalTickOthers = FinalTickSelf;
-	if(!EffectiveFastInputOthers())
-		FinalTickOthers = FinalTickRegular;
+	// Others (dummy) extrapolate by their own tick count, not self's - mirrors gameclient.cpp's
+	// FinalTickOthers = FinalTickRegular + FastInputTicksOthers (e.g. Saiko has no "+1" for others).
+	const int FastInputTicksOthers = BcInputs::AnyOthers() ? BcInputs::PredictionTicksOthers(FastInputOffsetTicks) : 0;
+	const int FinalTickOthers = FinalTickRegular + FastInputTicksOthers;
 
 	const auto ResolveInputSlotByClientId = [&](int ClientId, int FallbackSlot) {
 		for(int Slot = 0; Slot < NUM_DUMMIES; Slot++)
@@ -1315,7 +1243,7 @@ int CFastPractice::ApplyVisualFastInputPrediction(int FinalTickRegular, int Loca
 		const bool DummyFirst = pInputData && pDummyInputData && pDummyChar->GetCid() < pLocalChar->GetCid();
 
 		pInputData = &GameClient()->m_Controls.m_aFastInput[LocalTee];
-		if(pDummyChar && GameClient()->GetDummyFastInput(DummyFastInput, pDummyInputData, pDummyChar, LocalTee, DummyTee))
+		if(pDummyChar && g_Config.m_BcInputs != BC_INPUTS_SAIKO && GameClient()->GetDummyFastInput(DummyFastInput, pDummyInputData, pDummyChar, LocalTee, DummyTee))
 			pDummyInputData = &DummyFastInput;
 		if(pDummyChar && g_Config.m_ClDummyHammer)
 		{
@@ -1333,6 +1261,10 @@ int CFastPractice::ApplyVisualFastInputPrediction(int FinalTickRegular, int Loca
 		pLocalChar->m_CanMoveInFreeze = false;
 		if(pDummyChar)
 			pDummyChar->m_CanMoveInFreeze = false;
+		// Mirror regular gameplay's partial-freeze cushion (cl_predict_freeze 2): allow a
+		// small amount of movement in the last tick(s) before unfreezing, instead of a hard lock.
+		if(g_Config.m_ClPredictFreeze == 2 && FinalTickRegular - 1 - FinalTickRegular % 2 <= Tick)
+			pLocalChar->m_CanMoveInFreeze = true;
 
 		if(DummyFirst)
 			pDummyChar->OnDirectInput(pDummyInputData);
@@ -1490,11 +1422,11 @@ void CFastPractice::EchoPractice(const char *pFormat, ...) const
 	char aBody[256];
 	va_list Args;
 	va_start(Args, pFormat);
-	str_format_v(aBody, sizeof(aBody), pFormat, Args);
+	str_format_v(aBody, sizeof(aBody), Localize(pFormat), Args);
 	va_end(Args);
 
 	char aMsg[320];
-	str_format(aMsg, sizeof(aMsg), "[practice local] %s", aBody);
+	str_format(aMsg, sizeof(aMsg), Localize("practice local: %s"), aBody);
 	GameClient()->Echo(aMsg);
 }
 
@@ -1830,32 +1762,6 @@ void CFastPractice::TrackSafeRescuePosition(int ClientId, CCharacter *pChar)
 	State.m_RescueAutoPos = Pos;
 }
 
-bool CFastPractice::FindNearestSafeRescuePosition(int ClientId, const vec2 &From, vec2 &OutPos) const
-{
-	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
-		return false;
-
-	const auto &State = m_aPracticeCommandState[ClientId];
-	float BestDistance = std::numeric_limits<float>::max();
-	bool Found = false;
-
-	for(const vec2 &Pos : State.m_vSafePositions)
-	{
-		if(!IsSafeRescuePosition(Pos, CCharacterCore::PhysicalSize()))
-			continue;
-
-		const float Dist = distance(From, Pos);
-		if(Dist < BestDistance)
-		{
-			BestDistance = Dist;
-			OutPos = Pos;
-			Found = true;
-		}
-	}
-
-	return Found;
-}
-
 void CFastPractice::SyncPredictedWorldAfterPracticeCommand(int LocalClientId, int DummyClientId, CCharacter *pBaseChar, bool WeaponsMutated)
 {
 	if(WeaponsMutated)
@@ -1918,7 +1824,7 @@ bool CFastPractice::ExecutePracticeRescueCommand(int LocalClientId, CCharacter *
 	{
 		if(vArgs.size() <= 1)
 		{
-			EchoPractice("rescue mode: %s", State.m_RescueManual ? "manual" : "auto");
+			EchoPractice("rescue mode: %s", State.m_RescueManual ? Localize("manual") : Localize("auto"));
 			return true;
 		}
 
@@ -2147,9 +2053,8 @@ bool CFastPractice::ExecutePracticeStateCommand(CCharacter *pChar, const std::st
 	return false;
 }
 
-bool CFastPractice::ExecutePracticeWeaponCommand(int LocalClientId, CCharacter *pChar, const std::string &Cmd, const std::vector<std::string> &vArgs, bool &WeaponsMutated)
+bool CFastPractice::ExecutePracticeWeaponCommand(CCharacter *pChar, const std::string &Cmd, const std::vector<std::string> &vArgs, bool &WeaponsMutated)
 {
-	(void)LocalClientId;
 	if(Cmd == "shotgun" || Cmd == "grenade" || Cmd == "laser" || Cmd == "rifle" || Cmd == "unshotgun" || Cmd == "ungrenade" || Cmd == "unlaser" || Cmd == "unrifle" || Cmd == "weapons" || Cmd == "unweapons")
 	{
 		if(Cmd == "shotgun")
@@ -2337,9 +2242,8 @@ bool CFastPractice::ExecutePracticeHitOthersCommand(CCharacter *pChar, const std
 	return true;
 }
 
-bool CFastPractice::ExecutePracticeCommand(int Team, int LocalClientId, CCharacter *pChar, const std::vector<std::string> &vArgs, bool &WeaponsMutated)
+bool CFastPractice::ExecutePracticeCommand(int LocalClientId, CCharacter *pChar, const std::vector<std::string> &vArgs, bool &WeaponsMutated)
 {
-	(void)Team;
 	WeaponsMutated = false;
 	if(vArgs.empty() || vArgs[0].size() < 2 || vArgs[0][0] != '/')
 		return false;
@@ -2353,7 +2257,7 @@ bool CFastPractice::ExecutePracticeCommand(int Team, int LocalClientId, CCharact
 		return true;
 	if(ExecutePracticeStateCommand(pChar, Cmd))
 		return true;
-	if(ExecutePracticeWeaponCommand(LocalClientId, pChar, Cmd, vArgs, WeaponsMutated))
+	if(ExecutePracticeWeaponCommand(pChar, Cmd, vArgs, WeaponsMutated))
 		return true;
 	if(ExecutePracticeMovementCommand(LocalClientId, pChar, Cmd, vArgs))
 		return true;
@@ -2368,6 +2272,7 @@ bool CFastPractice::ExecutePracticeCommand(int Team, int LocalClientId, CCharact
 
 bool CFastPractice::ConsumePracticeChatCommand(int Team, const char *pLine)
 {
+	(void)Team;
 	if(!m_Enabled || !pLine || pLine[0] != '/')
 		return false;
 
@@ -2435,7 +2340,7 @@ bool CFastPractice::ConsumePracticeChatCommand(int Team, const char *pLine)
 	}
 
 	bool WeaponsMutated = false;
-	const bool Consumed = ExecutePracticeCommand(Team, LocalClientId, pBaseChar, vArgs, WeaponsMutated);
+	const bool Consumed = ExecutePracticeCommand(LocalClientId, pBaseChar, vArgs, WeaponsMutated);
 	if(!Consumed)
 		return false;
 	if(!m_Enabled)

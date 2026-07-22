@@ -169,7 +169,7 @@ set(AUTO_DEPENDENCIES_DEFAULT OFF)
 set(AUTO_VULKAN_BACKEND ON)
 if(TARGET_OS STREQUAL "windows")
   set(AUTO_DEPENDENCIES_DEFAULT ON)
-  set(AUTO_VULKAN_BACKEND ON)
+  set(AUTO_VULKAN_BACKEND OFF)
 elseif(TARGET_OS STREQUAL "mac")
   set(AUTO_VULKAN_BACKEND OFF)
 endif()
@@ -340,14 +340,6 @@ endfunction()
 if(CMAKE_GENERATOR STREQUAL "Ninja")
   add_cxx_compiler_flag_if_supported(OUR_FLAGS -fdiagnostics-color=always)
   add_cxx_compiler_flag_if_supported(OUR_FLAGS -fcolor-diagnostics)
-endif()
-
-# MSVC + Ninja can run out of memory in debug builds when many compile/link
-# jobs run in parallel (C1060/LNK1102). Limit job concurrency globally.
-if(CMAKE_GENERATOR STREQUAL "Ninja" AND MSVC)
-  set_property(GLOBAL PROPERTY JOB_POOLS compile_pool=2 link_pool=1)
-  set(CMAKE_JOB_POOL_COMPILE compile_pool)
-  set(CMAKE_JOB_POOL_LINK link_pool)
 endif()
 
 if(NOT MSVC AND NOT HAIKU)
@@ -1066,25 +1058,8 @@ set_glob(RUST_MASTERSRV GLOB "rs;toml" src/mastersrv/src
   main.rs
 )
 
-set_glob(RUST_CLIENTINDICATORSRV GLOB_RECURSE "rs;toml;lock;example;md;sh;service" src/clientindicatorsrv
-  .env.example
-  Cargo.lock
-  Cargo.toml
-  README.md
-  bestclient-indicator-server.service
-  run.sh
-  src/main.rs
-)
-
 add_library(rust-bridge-shared EXCLUDE_FROM_ALL OBJECT ${RUST_BRIDGE_SHARED})
 list(APPEND TARGETS_OWN rust-bridge-shared)
-
-add_custom_target(bestclient-indicator-server
-  COMMAND ${CMAKE_COMMAND} -E env CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=${PROJECT_BINARY_DIR}/clientindicatorsrv ${RUST_CARGO} build --release --locked --manifest-path "${PROJECT_SOURCE_DIR}/src/clientindicatorsrv/Cargo.toml"
-  WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-  USES_TERMINAL
-  DEPENDS ${RUST_CLIENTINDICATORSRV}
-)
 
 set_glob(RUST_UCLIENTPRESENCESRV GLOB_RECURSE "rs;toml;lock;example;md;sh" src/uclientpresencesrv
   .env.example
@@ -1328,71 +1303,6 @@ set(EXPECTED_DATA
   audio/hook_noattach-02.wv
   audio/hook_noattach-03.wv
   audio/music_menu.wv
-  audio/osu/ui/bss-complete.wv
-  audio/osu/ui/bss-progress.wv
-  audio/osu/ui/bss-stage-0.wv
-  audio/osu/ui/bss-stage-1.wv
-  audio/osu/ui/bss-stage-2.wv
-  audio/osu/ui/bss-stage-3.wv
-  audio/osu/ui/button-hover.wv
-  audio/osu/ui/button-select.wv
-  audio/osu/ui/button-sidebar-hover.wv
-  audio/osu/ui/button-sidebar-select.wv
-  audio/osu/ui/check-off.wv
-  audio/osu/ui/check-on.wv
-  audio/osu/ui/cursor-tap.wv
-  audio/osu/ui/default-hover.wv
-  audio/osu/ui/default-select-disabled.wv
-  audio/osu/ui/default-select.wv
-  audio/osu/ui/dialog-cancel-select.wv
-  audio/osu/ui/dialog-dangerous-select.wv
-  audio/osu/ui/dialog-dangerous-tick.wv
-  audio/osu/ui/dialog-ok-select.wv
-  audio/osu/ui/dialog-pop-in.wv
-  audio/osu/ui/dialog-pop-out.wv
-  audio/osu/ui/dropdown-close.wv
-  audio/osu/ui/dropdown-open.wv
-  audio/osu/ui/generic-error.wv
-  audio/osu/ui/item-swap.wv
-  audio/osu/ui/menu-close.wv
-  audio/osu/ui/menu-open-select.wv
-  audio/osu/ui/menu-open.wv
-  audio/osu/ui/menu-sub-open.wv
-  audio/osu/ui/metronome-latch.wv
-  audio/osu/ui/metronome-tick-downbeat.wv
-  audio/osu/ui/metronome-tick.wv
-  audio/osu/ui/noclick-hover.wv
-  audio/osu/ui/noclick-select.wv
-  audio/osu/ui/notch-tick.wv
-  audio/osu/ui/notification-cancel.wv
-  audio/osu/ui/notification-default.wv
-  audio/osu/ui/notification-done.wv
-  audio/osu/ui/notification-error.wv
-  audio/osu/ui/notification-friend-offline.wv
-  audio/osu/ui/notification-friend-online.wv
-  audio/osu/ui/notification-mention.wv
-  audio/osu/ui/osd-change.wv
-  audio/osu/ui/osd-off.wv
-  audio/osu/ui/osd-on.wv
-  audio/osu/ui/overlay-big-pop-in.wv
-  audio/osu/ui/overlay-big-pop-out.wv
-  audio/osu/ui/overlay-pop-in.wv
-  audio/osu/ui/overlay-pop-out.wv
-  audio/osu/ui/ruleset-select-fruits.wv
-  audio/osu/ui/ruleset-select-mania.wv
-  audio/osu/ui/ruleset-select-osu.wv
-  audio/osu/ui/ruleset-select-taiko.wv
-  audio/osu/ui/screen-back.wv
-  audio/osu/ui/scroll-to-previous.wv
-  audio/osu/ui/scroll-to-top.wv
-  audio/osu/ui/settings-pop-in.wv
-  audio/osu/ui/shutter.wv
-  audio/osu/ui/submit-select.wv
-  audio/osu/ui/tabselect-select.wv
-  audio/osu/ui/toolbar-hover.wv
-  audio/osu/ui/toolbar-select.wv
-  audio/osu/ui/wave-pop-in.wv
-  audio/osu/ui/wave-pop-out.wv
   audio/sfx_ctf_cap_pl.wv
   audio/sfx_ctf_drop.wv
   audio/sfx_ctf_grab_en.wv
@@ -1756,6 +1666,7 @@ set(EXPECTED_DATA
   countryflags/X-ENTITY.png
   countryflags/X-FINISH.png
   countryflags/X-GAY.png
+  countryflags/X-HETERO.png
   countryflags/X-LESBIAN.png
   countryflags/X-LIMEKITTY.png
   countryflags/X-PINKY.png
@@ -1963,12 +1874,6 @@ set(EXPECTED_DATA
   menuimages/settings.png
   particles.png
   race_flag.png
-  shader/blur.frag
-  shader/blur.vert
-  shader/blur_kawase.frag
-  shader/blur_kawase.vert
-  shader/glow.frag
-  shader/glow.vert
   shader/pipeline.frag
   shader/pipeline.vert
   shader/prim.frag
@@ -1985,10 +1890,6 @@ set(EXPECTED_DATA
   shader/tile.vert
   shader/tile_border.frag
   shader/tile_border.vert
-  shader/vulkan/blur.frag
-  shader/vulkan/blur.vert
-  shader/vulkan/glow.frag
-  shader/vulkan/glow.vert
   shader/vulkan/prim.frag
   shader/vulkan/prim.vert
   shader/vulkan/prim3d.frag
@@ -2845,60 +2746,10 @@ if(CLIENT)
   set_src(GAME_CLIENT GLOB_RECURSE src/game/client
     animstate.cpp
     animstate.h
-    bc_ui_animations.h
     component.cpp
     component.h
     components/background.cpp
     components/background.h
-    components/bestclient/3d_particles.cpp
-    components/bestclient/3d_particles.h
-    components/bestclient/admin_panel.cpp
-    components/bestclient/admin_panel.h
-    components/bestclient/bestclient.cpp
-    components/bestclient/bestclient.h
-    components/bestclient/clientindicator/browser_cache.cpp
-    components/bestclient/clientindicator/browser_cache.h
-    components/bestclient/clientindicator/client_indicator.cpp
-    components/bestclient/clientindicator/client_indicator.h
-    components/bestclient/clientindicator/client_indicator_sync.h
-    components/bestclient/clientindicator/presence_cache.cpp
-    components/bestclient/clientindicator/presence_cache.h
-    components/bestclient/clientindicator/protocol.h
-    components/bestclient/editors/menus_assets_editor.cpp
-    components/bestclient/fast_actions.cpp
-    components/bestclient/fast_actions.h
-    components/bestclient/fast_practice.cpp
-    components/bestclient/fast_practice.h
-    components/bestclient/hud_editor.cpp
-    components/bestclient/hud_editor.h
-    components/bestclient/menus_bestclient.cpp
-    components/bestclient/music_player.cpp
-    components/bestclient/music_player.h
-    components/bestclient/r_jelly.cpp
-    components/bestclient/r_jelly.h
-    components/bestclient/r_trail.cpp
-    components/bestclient/r_trail.h
-    components/bestclient/subsystem_runtime.h
-    components/bestclient/translate.cpp
-    components/bestclient/translate.h
-    components/bestclient/version.h
-    components/bestclient/visualizer/analyzer.cpp
-    components/bestclient/visualizer/analyzer.h
-    components/bestclient/visualizer/service.cpp
-    components/bestclient/visualizer/service.h
-    components/bestclient/visualizer/smoother.cpp
-    components/bestclient/visualizer/smoother.h
-    components/bestclient/visualizer/source.h
-    components/bestclient/visualizer/source_passive.cpp
-    components/bestclient/visualizer/source_priority.h
-    components/bestclient/visualizer/source_pulse.cpp
-    components/bestclient/visualizer/source_wasapi.cpp
-    components/bestclient/visualizer/types.h
-    components/bestclient/voice/protocol.h
-    components/bestclient/voice/server.cpp
-    components/bestclient/voice/soundboard_file_dialog.cpp
-    components/bestclient/voice/voice.cpp
-    components/bestclient/voice/voice.h
     components/uclient/chat_nearby_tab.cpp
     components/uclient/chat_nearby_tab.h
     components/uclient/chat_paste_image.cpp
@@ -2974,9 +2825,12 @@ if(CLIENT)
     components/menu_media_background.h
     components/menus.cpp
     components/menus.h
+    components/menus_bestclient.cpp
     components/menus_browser.cpp
+    components/menus_clans.cpp
     components/menus_demo.cpp
     components/menus_games.cpp
+    components/menus_gif_wheel.cpp
     components/menus_ingame.cpp
     components/menus_ingame_touch_controls.cpp
     components/menus_ingame_touch_controls.h
@@ -3048,6 +2902,76 @@ if(CLIENT)
     components/tclient/tclient.h
     components/tclient/trails.cpp
     components/tclient/trails.h
+    components/bestclient/3d_particles.cpp
+    components/bestclient/3d_particles.h
+    components/bestclient/admin_panel.cpp
+    components/bestclient/admin_panel.h
+    components/bestclient/bestclient.cpp
+    components/bestclient/bestclient.h
+    components/bestclient/clientindicator/browser_cache.cpp
+    components/bestclient/clientindicator/browser_cache.h
+    components/bestclient/clientindicator/client_indicator.cpp
+    components/bestclient/clientindicator/client_indicator.h
+    components/bestclient/clientindicator/client_indicator_sync.h
+    components/bestclient/clientindicator/presence_cache.cpp
+    components/bestclient/clientindicator/presence_cache.h
+    components/bestclient/clientindicator/protocol.h
+    components/bestclient/cherry_gifs.cpp
+    components/bestclient/cherry_gifs.h
+    components/bestclient/clans/clans.cpp
+    components/bestclient/clans/clans.h
+    components/bestclient/cherry_gifs_cache.cpp
+    components/bestclient/cherry_gifs_cache.h
+    components/bestclient/chat_bubbles.cpp
+    components/bestclient/chat_bubbles.h
+    components/bestclient/fast_actions.cpp
+    components/bestclient/fast_actions.h
+    components/bestclient/fast_practice.cpp
+    components/bestclient/fast_practice.h
+    components/bestclient/gif_bubbles.cpp
+    components/bestclient/gif_bubbles.h
+    components/bestclient/gif_wheel.cpp
+    components/bestclient/gif_wheel.h
+    components/bestclient/gradient.cpp
+    components/bestclient/gradient.h
+    components/bestclient/hookcombo.cpp
+    components/bestclient/hookcombo.h
+    components/bestclient/hud_editor.cpp
+    components/bestclient/hud_editor.h
+    components/bestclient/inputs.cpp
+    components/bestclient/inputs.h
+    components/bestclient/menus_assets_editor.cpp
+    components/bestclient/music_player.cpp
+    components/bestclient/music_player.h
+    components/bestclient/quick_binds.cpp
+    components/bestclient/quick_binds.h
+    components/bestclient/r_jelly.cpp
+    components/bestclient/r_jelly.h
+    components/bestclient/rollback_demo.cpp
+    components/bestclient/rollback_demo.h
+    components/bestclient/self_time_cp.cpp
+    components/bestclient/self_time_cp.h
+    components/bestclient/subsystem_runtime.h
+    components/bestclient/translate.cpp
+    components/bestclient/translate.h
+    components/bestclient/version.h
+    components/bestclient/visualizer/analyzer.cpp
+    components/bestclient/visualizer/analyzer.h
+    components/bestclient/visualizer/service.cpp
+    components/bestclient/visualizer/service.h
+    components/bestclient/visualizer/smoother.cpp
+    components/bestclient/visualizer/smoother.h
+    components/bestclient/visualizer/source.h
+    components/bestclient/visualizer/source_passive.cpp
+    components/bestclient/visualizer/source_priority.h
+    components/bestclient/visualizer/source_pulse.cpp
+    components/bestclient/visualizer/source_wasapi.cpp
+    components/bestclient/visualizer/types.h
+    components/bestclient/voice/protocol.h
+    components/bestclient/voice/server.cpp
+    components/bestclient/voice/soundboard_file_dialog.cpp
+    components/bestclient/voice/voice.cpp
+    components/bestclient/voice/voice.h
     components/tclient/warlist.cpp
     components/tclient/warlist.h
     components/tooltips.cpp
@@ -3107,9 +3031,9 @@ if(CLIENT)
     auto_map.h
     component.cpp
     component.h
-    duo/duo_protocol.h
-    duo/duo_session.cpp
-    duo/duo_session.h
+    multimapping/multimapping_protocol.h
+    multimapping/multimapping_session.cpp
+    multimapping/multimapping_session.h
     editor.cpp
     editor.h
     editor_action.h
@@ -3238,19 +3162,19 @@ if(CLIENT)
     ${LIBS}
   )
 
-  if(DBUS_FOUND)
-    list(APPEND LIBS_CLIENT ${DBUS_LIBRARIES})
-  endif()
-  if(PULSE_SIMPLE_FOUND)
-    list(APPEND LIBS_CLIENT ${PULSE_SIMPLE_LIBRARIES})
-  endif()
-
   if(DISCORD)
     if(NOT DISCORD_DYNAMIC)
       list(APPEND LIBS_CLIENT discord-shared)
     else()
       list(APPEND LIBS_CLIENT ${CMAKE_DL_LIBS})
     endif()
+  endif()
+
+  if(DBUS_FOUND)
+    list(APPEND LIBS_CLIENT ${DBUS_LIBRARIES})
+  endif()
+  if(PULSE_SIMPLE_FOUND)
+    list(APPEND LIBS_CLIENT ${PULSE_SIMPLE_LIBRARIES})
   endif()
 
   if(TARGET_OS STREQUAL "windows")
@@ -3395,11 +3319,20 @@ if(CLIENT)
   list(APPEND TARGETS_OWN bestclient-voice-server)
   list(APPEND TARGETS_LINK bestclient-voice-server)
 
-  if(WIN32 AND AUTOUPDATE)
+  if(WIN32)
     add_executable(bestclient-updater WIN32
       src/tools/bestclient_updater.cpp
     )
     target_link_libraries(bestclient-updater shell32)
+    set_property(TARGET bestclient-updater PROPERTY OUTPUT_NAME "bestclient-updater")
+    list(APPEND TARGETS_OWN bestclient-updater)
+    list(APPEND TARGETS_LINK bestclient-updater)
+  elseif(TARGET_OS STREQUAL "linux")
+    add_executable(bestclient-updater
+      src/tools/bestclient_updater_linux.cpp
+    )
+    target_link_libraries(bestclient-updater ${SDL2_LIBRARIES})
+    target_include_directories(bestclient-updater PRIVATE ${SDL2_INCLUDE_DIRS})
     set_property(TARGET bestclient-updater PROPERTY OUTPUT_NAME "bestclient-updater")
     list(APPEND TARGETS_OWN bestclient-updater)
     list(APPEND TARGETS_LINK bestclient-updater)
@@ -3718,7 +3651,6 @@ if((GTEST_FOUND OR DOWNLOAD_GTEST) AND SERVER)
     blocklist_driver_test.cpp
     bytes_be_test.cpp
     chunk_header_test.cpp
-    clientindicator_test.cpp
     color_test.cpp
     compression_test.cpp
     csv_test.cpp
@@ -3738,7 +3670,6 @@ if((GTEST_FOUND OR DOWNLOAD_GTEST) AND SERVER)
     mapitems_test.cpp
     math_test.cpp
     mem_test.cpp
-    music_visualizer_test.cpp
     name_ban_test.cpp
     net_test.cpp
     netaddr_test.cpp
@@ -3775,13 +3706,6 @@ if((GTEST_FOUND OR DOWNLOAD_GTEST) AND SERVER)
     src/engine/client/serverbrowser_ping_cache.cpp
     src/engine/client/serverbrowser_ping_cache.h
     src/engine/client/sqlite.cpp
-    src/game/client/components/bestclient/clientindicator/browser_cache.cpp
-    src/game/client/components/bestclient/clientindicator/browser_cache.h
-    src/game/client/components/bestclient/visualizer/analyzer.cpp
-    src/game/client/components/bestclient/visualizer/analyzer.h
-    src/game/client/components/bestclient/visualizer/smoother.cpp
-    src/game/client/components/bestclient/visualizer/smoother.h
-    src/game/client/components/bestclient/visualizer/types.h
   )
 
   set(TARGET_TESTRUNNER testrunner)
@@ -3911,16 +3835,12 @@ set(CPACK_GENERATOR TGZ TXZ)
 set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
 if(TARGET_OS STREQUAL "mac")
   set(CPACK_STRIP_FILES FALSE)
-elseif(TARGET_OS STREQUAL "windows" AND TARGET_CPU_ARCHITECTURE STREQUAL "arm64")
+elseif(TARGET_OS STREQUAL "windows")
   set(CPACK_STRIP_FILES FALSE)
 elseif(TARGET_OS STREQUAL "emscripten")
   set(CPACK_STRIP_FILES FALSE)
 else()
   set(CPACK_STRIP_FILES TRUE)
-endif()
-if(CPACK_STRIP_FILES AND (NOT CMAKE_STRIP OR CMAKE_STRIP STREQUAL "CMAKE_STRIP-NOTFOUND"))
-  message(STATUS "Disabling CPACK_STRIP_FILES because no strip tool was found")
-  set(CPACK_STRIP_FILES FALSE)
 endif()
 set(CPACK_COMPONENTS_ALL portable)
 set(CPACK_SOURCE_GENERATOR ZIP TGZ TBZ2 TXZ)
@@ -3977,7 +3897,7 @@ set(CPACK_SOURCE_FILES
   data/
   datasrc/
   ddnet-libs/
-  LICENSE
+  license.txt
   lsan.supp
   memcheck.supp
   other/
@@ -4039,7 +3959,7 @@ else()
 endif()
 list(APPEND CPACK_DIRS ${COPY_DIRS})
 set(CPACK_FILES
-  LICENSE
+  license.txt
   steam_appid.txt
   ${COPY_FILES}
 )
@@ -4050,7 +3970,6 @@ endif()
 set(CPACK_GEN_FILES
   ${VULKAN_SHADER_FILE_LIST}
 )
-set(CPACK_GEN_TARGETS)
 
 if(TARGET_OS STREQUAL "windows")
   list(APPEND CPACK_FILES other/config_directory.bat)
@@ -4101,7 +4020,6 @@ else()
 endif()
 
 set(PACKAGE_TARGETS)
-set(PACKAGE_EXTRA_DEPENDS)
 if(CLIENT AND DMGBUILD_FOUND)
   file(MAKE_DIRECTORY bundle/client/)
   file(MAKE_DIRECTORY bundle/server/)
@@ -4220,10 +4138,11 @@ if(CLIENT AND DMGBUILD_FOUND)
 endif()
 
 foreach(ext zip tar.gz tar.xz)
+  set(TAR_MODE c)
+  set(TAR_EXTRA_ARGS)
   string(REPLACE . _ EXT_SLUG ${ext})
 
   set(TMPDIR pack_${CPACK_PACKAGE_FILE_NAME}_${EXT_SLUG}/${CPACK_PACKAGE_FILE_NAME})
-  set(PACKAGE_OUTPUT ${CPACK_PACKAGE_FILE_NAME}.${ext})
 
   set(COPY_FILE_COMMANDS)
   set(COPY_DIR_COMMANDS)
@@ -4234,9 +4153,6 @@ foreach(ext zip tar.gz tar.xz)
   endforeach()
   foreach(file ${CPACK_GEN_FILES})
     list(APPEND COPY_FILE_COMMANDS COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_BINARY_DIR}/${file} ${TMPDIR}/${file})
-  endforeach()
-  foreach(target ${CPACK_GEN_TARGETS})
-    list(APPEND COPY_TARGET_COMMANDS COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${target}> ${TMPDIR}/)
   endforeach()
   foreach(dir ${CPACK_DIRS})
     list(APPEND COPY_DIR_COMMANDS COMMAND ${CMAKE_COMMAND} -E copy_directory ${PROJECT_SOURCE_DIR}/${dir} ${TMPDIR}/${dir})
@@ -4251,70 +4167,26 @@ foreach(ext zip tar.gz tar.xz)
       list(APPEND COPY_TARGET_COMMANDS COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${target}> ${TMPDIR}/)
     endif()
     if(CPACK_STRIP_FILES)
-      list(APPEND STRIP_TARGET_COMMANDS COMMAND ${CMAKE_STRIP} -s ${TMPDIR}/$<TARGET_FILE_NAME:${target}>)
+      list(APPEND STRIP_TARGET_COMMANDS COMMAND strip -s ${TMPDIR}/$<TARGET_FILE_NAME:${target}>)
     endif()
   endforeach()
 
-  set(PACKAGE_ARCHIVE_COMMAND ${CMAKE_COMMAND})
-  set(PACKAGE_ARCHIVE_ARGS)
   if(ext STREQUAL zip)
-    list(APPEND PACKAGE_ARCHIVE_ARGS
-      -E chdir pack_${CPACK_PACKAGE_FILE_NAME}_${EXT_SLUG}
-      ${CMAKE_COMMAND} -E tar cf ../${CPACK_PACKAGE_FILE_NAME}.${ext} --format=zip ${CPACK_PACKAGE_FILE_NAME}/
-    )
+    set(TAR_EXTRA_ARGS --format=zip)
   elseif(ext STREQUAL tar.gz)
-    if(TARGET_OS STREQUAL "linux" OR TARGET_OS STREQUAL "mac")
-      find_program(BESTCLIENT_TAR_EXECUTABLE tar REQUIRED)
-      set(PACKAGE_ARCHIVE_COMMAND ${CMAKE_COMMAND})
-      list(APPEND PACKAGE_ARCHIVE_ARGS
-        -DTAR_EXECUTABLE=${BESTCLIENT_TAR_EXECUTABLE}
-        -DARCHIVE_FORMAT=${ext}
-        -DARCHIVE_OUTPUT=${PROJECT_BINARY_DIR}/${PACKAGE_OUTPUT}
-        -DARCHIVE_SOURCE_DIR=${PROJECT_BINARY_DIR}/pack_${CPACK_PACKAGE_FILE_NAME}_${EXT_SLUG}
-        -DARCHIVE_SOURCE_NAME=${CPACK_PACKAGE_FILE_NAME}
-        -P ${PROJECT_SOURCE_DIR}/cmake/CreatePackageArchive.cmake
-      )
-    else()
-      list(APPEND PACKAGE_ARCHIVE_ARGS
-        -E chdir pack_${CPACK_PACKAGE_FILE_NAME}_${EXT_SLUG}
-        ${CMAKE_COMMAND} -E tar cfz ../${CPACK_PACKAGE_FILE_NAME}.${ext} ${CPACK_PACKAGE_FILE_NAME}/
-      )
-    endif()
+    set(TAR_MODE cz)
   elseif(ext STREQUAL tar.xz)
-    if(TARGET_OS STREQUAL "linux" OR TARGET_OS STREQUAL "mac")
-      find_program(BESTCLIENT_TAR_EXECUTABLE tar REQUIRED)
-      set(PACKAGE_ARCHIVE_COMMAND ${CMAKE_COMMAND})
-      list(APPEND PACKAGE_ARCHIVE_ARGS
-        -DTAR_EXECUTABLE=${BESTCLIENT_TAR_EXECUTABLE}
-        -DARCHIVE_FORMAT=${ext}
-        -DARCHIVE_OUTPUT=${PROJECT_BINARY_DIR}/${PACKAGE_OUTPUT}
-        -DARCHIVE_SOURCE_DIR=${PROJECT_BINARY_DIR}/pack_${CPACK_PACKAGE_FILE_NAME}_${EXT_SLUG}
-        -DARCHIVE_SOURCE_NAME=${CPACK_PACKAGE_FILE_NAME}
-        -P ${PROJECT_SOURCE_DIR}/cmake/CreatePackageArchive.cmake
-      )
-    else()
-      list(APPEND PACKAGE_ARCHIVE_ARGS
-        -E chdir pack_${CPACK_PACKAGE_FILE_NAME}_${EXT_SLUG}
-        ${CMAKE_COMMAND} -E tar cfJ ../${CPACK_PACKAGE_FILE_NAME}.${ext} ${CPACK_PACKAGE_FILE_NAME}/
-      )
-    endif()
-  else()
-    list(APPEND PACKAGE_ARCHIVE_ARGS
-      -E chdir pack_${CPACK_PACKAGE_FILE_NAME}_${EXT_SLUG}
-      ${CMAKE_COMMAND} -E tar cf ../${CPACK_PACKAGE_FILE_NAME}.${ext} ${CPACK_PACKAGE_FILE_NAME}/
-    )
+    set(TAR_MODE cJ)
   endif()
-
   add_custom_command(OUTPUT ${CPACK_PACKAGE_FILE_NAME}.${ext}
-    COMMAND ${CMAKE_COMMAND} -E remove -f ${PACKAGE_OUTPUT}
     COMMAND ${CMAKE_COMMAND} -E remove_directory ${TMPDIR}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${TMPDIR}
     ${COPY_FILE_COMMANDS}
     ${COPY_DIR_COMMANDS}
     ${COPY_TARGET_COMMANDS}
     ${STRIP_TARGET_COMMANDS}
-    COMMAND ${PACKAGE_ARCHIVE_COMMAND} ${PACKAGE_ARCHIVE_ARGS}
-    DEPENDS ${CPACK_TARGETS} ${PACKAGE_EXTRA_DEPENDS}
+    COMMAND ${CMAKE_COMMAND} -E chdir pack_${CPACK_PACKAGE_FILE_NAME}_${EXT_SLUG} ${CMAKE_COMMAND} -E tar ${TAR_MODE} ../${CPACK_PACKAGE_FILE_NAME}.${ext} ${TAR_EXTRA_ARGS} -- ${CPACK_PACKAGE_FILE_NAME}/
+    DEPENDS ${CPACK_TARGETS}
   )
   add_custom_target(package_${EXT_SLUG} DEPENDS ${CPACK_PACKAGE_FILE_NAME}.${ext})
   list(APPEND PACKAGE_TARGETS package_${EXT_SLUG})
@@ -4337,7 +4209,6 @@ unset(CPACK_TARGETS)
 unset(CPACK_DIRS)
 unset(CPACK_FILES)
 unset(CPACK_GEN_FILES)
-unset(CPACK_GEN_TARGETS)
 
 include(CPack)
 
@@ -4371,8 +4242,7 @@ foreach(target ${TARGETS})
   if(MSVC)
     set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY MultiThreaded$<${DBG}:Debug>) # Use static CRT
     target_compile_options(${target} PRIVATE /Zc:__cplusplus) # Fixes the __cplusplus macro
-    # Keep debug builds memory-friendly on MSVC (paired with Ninja job pools above).
-    target_compile_options(${target} PRIVATE $<$<CONFIG:Debug>:/MP1> $<$<NOT:$<CONFIG:Debug>>:/MP>)
+    target_compile_options(${target} PRIVATE /MP) # Use multiple cores
     target_compile_options(${target} PRIVATE /EHsc) # Only catch C++ exceptions with catch.
     target_compile_options(${target} PRIVATE /GS) # Protect the stack pointer.
     target_compile_options(${target} PRIVATE /wd4996) # Use of non-_s functions.
@@ -4436,7 +4306,9 @@ foreach(target ${TARGETS_OWN})
     # See https://learn.microsoft.com/en-us/windows/win32/winprog/using-the-windows-headers
     target_compile_definitions(${target} PRIVATE NOMINMAX) # windows.h shouldn't define min/max macros
     target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN) # windows.h shouldn't define the name IStorage
-    target_compile_definitions(${target} PRIVATE NOGDI) # wingdi.h shouldn't define the name ERROR
+    if(NOT "${target}" STREQUAL "bestclient-updater")
+      target_compile_definitions(${target} PRIVATE NOGDI) # wingdi.h shouldn't define the name ERROR
+    endif()
     # 0x0501 (Windows XP) is required for mingw to get getaddrinfo to work
     # 0x0600 (Windows Vista) is required to use RegGetValueW and RegDeleteTreeW
     target_compile_definitions(${target} PRIVATE NTDDI_VERSION=0x06000000) # Minimum OS version (new macro, since Vista)
@@ -4446,9 +4318,6 @@ foreach(target ${TARGETS_OWN})
   endif()
   if(OUR_FLAGS_OWN)
     target_compile_options(${target} PRIVATE ${OUR_FLAGS_OWN})
-  endif()
-  if(TARGET_OS STREQUAL "mac")
-    target_compile_options(${target} PRIVATE -Wno-unused-const-variable -Wno-unused-variable -Wno-unused-lambda-capture)
   endif()
   target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/src)
   target_include_directories(${target} PRIVATE src)
@@ -4523,13 +4392,6 @@ foreach(target ${TARGETS_OWN})
     endif()
   endif()
 endforeach()
-
-# bestclient-updater needs GDI for custom painting — remove NOGDI that was added above.
-if(TARGET bestclient-updater AND TARGET_OS STREQUAL "windows")
-  get_target_property(_bc_updater_defs bestclient-updater COMPILE_DEFINITIONS)
-  list(REMOVE_ITEM _bc_updater_defs "NOGDI")
-  set_target_properties(bestclient-updater PROPERTIES COMPILE_DEFINITIONS "${_bc_updater_defs}")
-endif()
 
 foreach(target ${TARGETS_DEP})
   if(MSVC)

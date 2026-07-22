@@ -23,26 +23,6 @@
 
 constexpr float AUTO_SAVE_INTERVAL = 60.0f;
 
-static float cross(vec2 A, vec2 B)
-{
-	return A.x * B.y - A.y * B.x;
-}
-
-static bool line_intersects(vec2 A, vec2 B, vec2 C, vec2 D)
-{
-	const vec2 R = B - A;
-	const vec2 S = D - C;
-	const vec2 Ac = C - A;
-	const float Denom = cross(R, S);
-	const float Num1 = cross(Ac, S);
-	const float Num2 = cross(Ac, R);
-	if(Denom == 0.0f)
-		return false;
-	float T = Num1 / Denom;
-	float U = Num2 / Denom;
-	return (T >= 0.0f && T <= 1.0f) && (U >= 0.0f && U <= 1.0f);
-}
-
 class CBoundingBox
 {
 public:
@@ -225,49 +205,6 @@ public:
 	bool MoveTo(vec2 Pos)
 	{
 		return MoveTo(CBgDrawItemDataPoint(Pos, CurrentWidth(), CurrentColor()));
-	}
-	bool PointIntersect(const vec2 Pos, const float Radius) const
-	{
-		if(m_Data.empty())
-			return true;
-		if(m_Data.size() == 1)
-			return distance(m_Data[0].Pos(), Pos) < m_Data[0].w + Radius;
-		vec2 C, D = m_Data[0].Pos();
-		for(auto It = std::next(m_Data.begin()); It != m_Data.end(); ++It)
-		{
-			const CBgDrawItemDataPoint &Point = *It;
-			C = D;
-			D = Point.Pos();
-			vec2 Closest;
-			if(!closest_point_on_line(C, D, Pos, Closest))
-				continue;
-			if(distance(Closest, Pos) < Radius + Point.w)
-				return true;
-		}
-		return false;
-	}
-	bool LineIntersect(const vec2 A, const vec2 B) const
-	{
-		if(m_Data.empty())
-			return true;
-		if(m_Data.size() == 1)
-		{
-			vec2 P = m_Data[0].Pos();
-			vec2 Closest;
-			if(!closest_point_on_line(A, B, P, Closest))
-				return false;
-			return distance(Closest, P) < m_Data[0].w;
-		}
-		vec2 C, D = m_Data[0].Pos();
-		for(auto It = std::next(m_Data.begin()); It != m_Data.end(); ++It)
-		{
-			const CBgDrawItemDataPoint &Point = *It;
-			C = D;
-			D = Point.Pos();
-			if(line_intersects(A, B, C, D))
-				return true;
-		}
-		return false;
 	}
 	// Erase points covered by the eraser stroke [A, B] with the given radius.
 	// Surviving sub-paths are appended to vOutSegments. Returns true if anything was erased.

@@ -283,26 +283,27 @@ class IServerBrowser : public IInterface
 {
 	MACRO_INTERFACE("serverbrowser")
 public:
-		/* Constants: Server Browser Sorting
-			SORT_NAME - Sort by name.
-			SORT_PING - Sort by ping.
-			SORT_MAP - Sort by map
-			SORT_GAMETYPE - Sort by game type. DM, TDM etc.
-			SORT_NUMPLAYERS - Sort after how many players there are on the server.
-			SORT_NUMFRIENDS - Sort after how many friends there are on the server.
-			SORT_NUMBESTCLIENT - Sort after how many BestClient players there are on the server.
-		*/
-		enum
-		{
-			SORT_NAME = 0,
-			SORT_PING,
-			SORT_MAP,
-			SORT_GAMETYPE,
-			SORT_NUMPLAYERS,
-			SORT_NUMFRIENDS,
-			SORT_NUMBESTCLIENT,
-			SORT_NUMUCLIENT,
-		};
+	/* Constants: Server Browser Sorting
+		SORT_NAME - Sort by name.
+		SORT_PING - Sort by ping.
+		SORT_MAP - Sort by map
+		SORT_GAMETYPE - Sort by game type. DM, TDM etc.
+		SORT_NUMPLAYERS - Sort after how many players there are on the server.
+		SORT_NUMFRIENDS - Sort after how many friends there are on the server.
+		SORT_NUMBESTCLIENT - Sort after how many BestClient players there are on the server.
+		SORT_NUMUCLIENT - Sort after how many UClient players there are on the server.
+	*/
+	enum
+	{
+		SORT_NAME = 0,
+		SORT_PING,
+		SORT_MAP,
+		SORT_GAMETYPE,
+		SORT_NUMPLAYERS,
+		SORT_NUMFRIENDS,
+		SORT_NUMBESTCLIENT,
+		SORT_NUMUCLIENT,
+	};
 
 	enum
 	{

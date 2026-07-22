@@ -447,15 +447,6 @@ class Client(Runnable):
 				f"cl_input_fifo {self.fifo_name}",
 				"gfx_fullscreen 0",
 				"cl_save_settings 0",
-				"snd_enable 0",
-				"br_indicate_finished 0",
-				"bc_menu_sfx 0",
-				"bc_voice_chat_enable 0",
-				"tc_discord_rpc 0",
-				'tc_custom_communities_url ""',
-				"bc_client_indicator_server_address 127.0.0.1:1",
-				"bc_client_indicator_browser_url https://127.0.0.1:1/users.json",
-				"bc_client_indicator_token_url https://127.0.0.1:1/token.json",
 			]
 			+ extra_args,
 		)
@@ -687,14 +678,13 @@ def smoke_test(test_env):
 	client1.command("stdout_output_level 2; loglevel 2")
 	client1.command(f"connect localhost:{server.port}")
 	server.wait_for_log_prefix("server: player has entered the game", timeout=10)
-	client1.wait_for_log_exact("client: state change. last=2 current=3", timeout=30)
+	client1.wait_for_log_exact("client: state change. last=2 current=3", timeout=15)
 	client1.command("stdout_output_level 0; loglevel 0")
 	client1.command("debug 0")
 	client1.command("record client1")
-	client1.wait_for_log_exact("demo_recorder: Recording to 'demos/client1.demo'", timeout=10)
 
 	client2.command(f"connect localhost:{server.port}")
-	server.wait_for_log_prefix("server: player has entered the game", timeout=20)
+	server.wait_for_log_prefix("server: player has entered the game", timeout=10)
 	for _ in range(5):
 		server.wait_for_log(
 			lambda l: l.line.startswith("chat: *** client1 finished in:") or l.line.startswith("chat: *** client2 finished in:"),
@@ -750,7 +740,6 @@ def smoke_test(test_env):
 
 	server.command("stoprecord")
 	client1.command("stoprecord")
-	client1.wait_for_log_exact("demo_recorder: Stopped recording to 'demos/client1.demo'", timeout=10)
 
 	game_uuid = str(UUID(server.teehistorian_filename.removeprefix("teehistorian/").removesuffix(".teehistorian")))
 

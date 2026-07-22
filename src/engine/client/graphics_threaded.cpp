@@ -704,46 +704,26 @@ public:
 
 void CGraphics_Threaded::ScreenshotDirect(bool *pSwapped)
 {
-	// Drain a previously queued screenshot once the GPU has finished writing it.
-	// This is the deferred-readback path: no WaitForIdle() — we simply check
-	// IsIdle() which is true at frame boundary after the previous KickCommandBuffer().
-	if(m_HasPendingScreenshot)
-	{
-		if(IsIdle())
-		{
-			m_HasPendingScreenshot = false;
-			if(m_PendingScreenshotImage.m_pData)
-			{
-				m_pEngine->AddJob(std::make_shared<CScreenshotSaveJob>(m_pStorage, m_aPendingScreenshotName, std::move(m_PendingScreenshotImage)));
-			}
-		}
-		// If not idle yet, leave m_HasPendingScreenshot set; will be retried next frame.
-		// Do NOT enqueue a new screenshot command while one is still pending.
-		return;
-	}
-
 	if(!m_DoScreenshot)
 		return;
 	m_DoScreenshot = false;
 	if(!WindowActive())
 		return;
 
-	// Snapshot the name now so a subsequent TakeScreenshot() cannot overwrite it
-	// before the save job is dispatched on the next Swap().
-	str_copy(m_aPendingScreenshotName, m_aScreenshotName);
+	CImageInfo Image;
 
-	// Pass address of stable member so the backend can write the result without
-	// requiring the main thread to block via WaitForIdle().
-	m_PendingScreenshotImage = CImageInfo{};
 	CCommandBuffer::SCommand_TrySwapAndScreenshot Cmd;
-	Cmd.m_pImage = &m_PendingScreenshotImage;
+	Cmd.m_pImage = &Image;
 	Cmd.m_pSwapped = pSwapped;
 	AddCmd(Cmd);
 
 	KickCommandBuffer();
-	// No WaitForIdle() here — result will be collected on the next Swap() call
-	// once IsIdle() returns true (i.e., the backend has finished the command buffer).
-	m_HasPendingScreenshot = true;
+	WaitForIdle();
+
+	if(Image.m_pData)
+	{
+		m_pEngine->AddJob(std::make_shared<CScreenshotSaveJob>(m_pStorage, m_aScreenshotName, std::move(Image)));
+	}
 }
 
 void CGraphics_Threaded::TextureSet(CTextureHandle TextureId)
@@ -939,125 +919,6 @@ void CGraphics_Threaded::QuadsDraw(CQuadItem *pArray, int Num)
 void CGraphics_Threaded::QuadsDrawTL(const CQuadItem *pArray, int Num)
 {
 	QuadsDrawTLImpl(m_aVertices, pArray, Num);
-}
-
-void CGraphics_Threaded::DrawGlowRect(const SGlowRectRenderInfo &Info)
-{
-	dbg_assert(m_Drawing == EDrawing::NONE, "called Graphics()->DrawGlowRect within begin");
-
-	if(Info.m_Width <= 0.0f || Info.m_Height <= 0.0f)
-		return;
-
-	CCommandBuffer::SCommand_RenderGlowRect Cmd;
-	Cmd.m_State = m_State;
-	Cmd.m_State.m_Texture = -1;
-	Cmd.m_RectSize = vec2(Info.m_Width, Info.m_Height);
-	Cmd.m_GlowRadius = maximum(Info.m_GlowRadius, 0.0f);
-	Cmd.m_GlowStrength = maximum(Info.m_GlowStrength, 0.0f);
-	Cmd.m_pVertices = (CCommandBuffer::SVertex *)AllocCommandBufferData(sizeof(CCommandBuffer::SVertex) * 4);
-	CCommandBuffer::SVertex aVertices[4];
-
-	const float Radius = Cmd.m_GlowRadius;
-	const float Left = Info.m_X - Radius;
-	const float Top = Info.m_Y - Radius;
-	const float Right = Info.m_X + Info.m_Width + Radius;
-	const float Bottom = Info.m_Y + Info.m_Height + Radius;
-
-	const vec2 aPositions[] = {
-		vec2(Left, Top),
-		vec2(Right, Top),
-		vec2(Right, Bottom),
-		vec2(Left, Bottom),
-	};
-	const vec2 aLocalCoords[] = {
-		vec2(-Radius, -Radius),
-		vec2(Info.m_Width + Radius, -Radius),
-		vec2(Info.m_Width + Radius, Info.m_Height + Radius),
-		vec2(-Radius, Info.m_Height + Radius),
-	};
-
-	CCommandBuffer::SColor Color;
-	Color.r = NormalizeColorComponent(Info.m_Color.r);
-	Color.g = NormalizeColorComponent(Info.m_Color.g);
-	Color.b = NormalizeColorComponent(Info.m_Color.b);
-	Color.a = NormalizeColorComponent(Info.m_Color.a);
-
-	for(size_t i = 0; i < std::size(aPositions); ++i)
-	{
-		aVertices[i].m_Pos = aPositions[i];
-		aVertices[i].m_Tex = aLocalCoords[i];
-		aVertices[i].m_Color = Color;
-	}
-
-	AddCmd(Cmd, [&] {
-		Cmd.m_pVertices = (CCommandBuffer::SVertex *)m_pCommandBuffer->AllocData(sizeof(CCommandBuffer::SVertex) * 4);
-		return Cmd.m_pVertices != nullptr;
-	});
-	if(Cmd.m_pVertices != nullptr)
-	{
-		mem_copy(Cmd.m_pVertices, aVertices, sizeof(aVertices));
-	}
-	m_pCommandBuffer->AddRenderCalls(1);
-}
-
-void CGraphics_Threaded::DrawBlurRect(const SBlurRectRenderInfo &Info)
-{
-	dbg_assert(m_Drawing == EDrawing::NONE, "called Graphics()->DrawBlurRect within begin");
-
-	if(Info.m_Width <= 0.0f || Info.m_Height <= 0.0f)
-		return;
-
-	CCommandBuffer::SCommand_RenderBlurRect Cmd;
-	Cmd.m_State = m_State;
-	Cmd.m_State.m_Texture = -1;
-	Cmd.m_RectSize = vec2(Info.m_Width, Info.m_Height);
-	Cmd.m_Rounding = maximum(Info.m_Rounding, 0.0f);
-	Cmd.m_BlurRadius = maximum(Info.m_BlurRadius, 0.0f);
-	Cmd.m_BlurStrength = maximum(Info.m_BlurStrength, 0.0f);
-	Cmd.m_pVertices = (CCommandBuffer::SVertex *)AllocCommandBufferData(sizeof(CCommandBuffer::SVertex) * 4);
-	CCommandBuffer::SVertex aVertices[4];
-
-	const float Radius = Cmd.m_BlurRadius;
-	const float Left = Info.m_X - Radius;
-	const float Top = Info.m_Y - Radius;
-	const float Right = Info.m_X + Info.m_Width + Radius;
-	const float Bottom = Info.m_Y + Info.m_Height + Radius;
-
-	const vec2 aPositions[] = {
-		vec2(Left, Top),
-		vec2(Right, Top),
-		vec2(Right, Bottom),
-		vec2(Left, Bottom),
-	};
-	const vec2 aLocalCoords[] = {
-		vec2(-Radius, -Radius),
-		vec2(Info.m_Width + Radius, -Radius),
-		vec2(Info.m_Width + Radius, Info.m_Height + Radius),
-		vec2(-Radius, Info.m_Height + Radius),
-	};
-
-	CCommandBuffer::SColor Color;
-	Color.r = NormalizeColorComponent(Info.m_TintColor.r);
-	Color.g = NormalizeColorComponent(Info.m_TintColor.g);
-	Color.b = NormalizeColorComponent(Info.m_TintColor.b);
-	Color.a = NormalizeColorComponent(Info.m_TintColor.a);
-
-	for(size_t i = 0; i < std::size(aPositions); ++i)
-	{
-		aVertices[i].m_Pos = aPositions[i];
-		aVertices[i].m_Tex = aLocalCoords[i];
-		aVertices[i].m_Color = Color;
-	}
-
-	AddCmd(Cmd, [&] {
-		Cmd.m_pVertices = (CCommandBuffer::SVertex *)m_pCommandBuffer->AllocData(sizeof(CCommandBuffer::SVertex) * 4);
-		return Cmd.m_pVertices != nullptr;
-	});
-	if(Cmd.m_pVertices != nullptr)
-	{
-		mem_copy(Cmd.m_pVertices, aVertices, sizeof(aVertices));
-	}
-	m_pCommandBuffer->AddRenderCalls(1);
 }
 
 void CGraphics_Threaded::QuadsTex3DDrawTL(const CQuadItem *pArray, int Num)
@@ -2439,12 +2300,10 @@ void CGraphics_Threaded::AdjustViewport(bool SendViewportChangeToBackend)
 		return;
 	}
 
-	const int SourceViewportWidth = m_ScreenWidth;
-	const int SourceViewportHeight = m_ScreenHeight;
-	if(SourceViewportHeight > 4 * SourceViewportWidth / 5 && g_GraphicsForcedAspect)
+	if(m_ScreenHeight > 4 * m_ScreenWidth / 5 && g_GraphicsForcedAspect)
 	{
 		m_IsForcedViewport = true;
-		m_ScreenHeight = 4 * SourceViewportWidth / 5;
+		m_ScreenHeight = 4 * m_ScreenWidth / 5;
 
 		if(SendViewportChangeToBackend)
 		{
@@ -2875,15 +2734,15 @@ void CGraphics_Threaded::GotResized(int w, int h, int RefreshRate)
 
 	UpdateViewport(0, 0, m_ScreenWidth, m_ScreenHeight, true);
 
-	// Kick the command buffer so the viewport change reaches the graphics thread,
-	// but do NOT WaitForIdle() here — this runs on the main (game-logic) thread and
-	// blocking it on the graphics thread creates a priority inversion.
-	// The wait and resize-listener notifications are deferred to Swap() at the next
-	// frame boundary where a WaitForIdle() is already safe.
+	// kick the command buffer and wait
 	KickCommandBuffer();
+	WaitForIdle();
 
 	if(PrevCanvasWidth != m_ScreenWidth || PrevCanvasHeight != m_ScreenHeight)
-		m_PendingResizeListenerNotify = true;
+	{
+		for(auto &ResizeListener : m_vResizeListeners)
+			ResizeListener();
+	}
 }
 
 bool CGraphics_Threaded::IsScreenKeyboardShown()
@@ -2995,17 +2854,6 @@ void CGraphics_Threaded::TakeCustomScreenshot(const char *pFilename)
 
 void CGraphics_Threaded::Swap()
 {
-	// Drain pending resize notifications deferred from GotResized().
-	// WaitForIdle() here is safe because Swap() is the frame-boundary call,
-	// not a hot event-handler path, so it does not cause priority inversion.
-	if(m_PendingResizeListenerNotify)
-	{
-		WaitForIdle();
-		m_PendingResizeListenerNotify = false;
-		for(auto &ResizeListener : m_vResizeListeners)
-			ResizeListener();
-	}
-
 	bool Swapped = false;
 	ScreenshotDirect(&Swapped);
 	ReadPixelDirect(&Swapped);

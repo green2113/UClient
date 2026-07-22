@@ -1156,9 +1156,6 @@ int net_udp_recv(NETSOCKET sock, NETADDR *addr, unsigned char **data)
 			update_stats(bytes);
 			return bytes;
 		}
-		// No data available on non-blocking socket — not a real error
-		if(bytes < 0 && net_would_block())
-			return 0;
 	}
 
 	if(sock->ipv6sock >= 0)
@@ -1173,9 +1170,6 @@ int net_udp_recv(NETSOCKET sock, NETADDR *addr, unsigned char **data)
 			update_stats(bytes);
 			return bytes;
 		}
-		// No data available on non-blocking socket — not a real error
-		if(bytes < 0 && net_would_block())
-			return 0;
 	}
 #endif
 
@@ -1337,9 +1331,85 @@ int net_tcp_connect(NETSOCKET sock, const NETADDR *a)
 int net_tcp_connect_non_blocking(NETSOCKET sock, NETADDR bindaddr)
 {
 	net_set_non_blocking(sock);
-	int res = net_tcp_connect(sock, &bindaddr);
+	return net_tcp_connect(sock, &bindaddr);
+}
+
+int net_tcp_connect_poll(NETSOCKET sock)
+{
+	fd_set writefds;
+	FD_ZERO(&writefds);
+	int maxfd = -1;
+	if(sock->ipv4sock >= 0)
+	{
+		FD_SET(sock->ipv4sock, &writefds);
+		maxfd = sock->ipv4sock;
+	}
+	if(sock->ipv6sock >= 0)
+	{
+		FD_SET(sock->ipv6sock, &writefds);
+		maxfd = std::max(maxfd, sock->ipv6sock);
+	}
+	if(maxfd < 0)
+		return -1;
+
+	struct timeval tv = {};
+	int SelectResult = select(maxfd + 1, nullptr, &writefds, nullptr, &tv);
+	if(SelectResult <= 0)
+		return SelectResult;
+
+	int SockError = 0;
+	socklen_t Len = sizeof(SockError);
+	if(sock->ipv4sock >= 0 && FD_ISSET(sock->ipv4sock, &writefds) && getsockopt(sock->ipv4sock, SOL_SOCKET, SO_ERROR, (char *)&SockError, &Len) == 0)
+		return SockError == 0 ? 1 : -1;
+	if(sock->ipv6sock >= 0 && FD_ISSET(sock->ipv6sock, &writefds) && getsockopt(sock->ipv6sock, SOL_SOCKET, SO_ERROR, (char *)&SockError, &Len) == 0)
+		return SockError == 0 ? 1 : -1;
+	return -1;
+}
+
+int net_tcp_connect_timeout(NETSOCKET sock, const NETADDR *addr, int TimeoutMs)
+{
+	net_set_non_blocking(sock);
+	int Result = net_tcp_connect(sock, addr);
+	if(Result == 0)
+	{
+		net_set_blocking(sock);
+		return 0;
+	}
+
+	fd_set writefds;
+	FD_ZERO(&writefds);
+	int maxfd = -1;
+	if(sock->ipv4sock >= 0)
+	{
+		FD_SET(sock->ipv4sock, &writefds);
+		maxfd = sock->ipv4sock;
+	}
+	if(sock->ipv6sock >= 0)
+	{
+		FD_SET(sock->ipv6sock, &writefds);
+		maxfd = std::max(maxfd, sock->ipv6sock);
+	}
+	if(maxfd < 0)
+	{
+		net_set_blocking(sock);
+		return -1;
+	}
+
+	struct timeval tv;
+	tv.tv_sec = TimeoutMs / 1000;
+	tv.tv_usec = (TimeoutMs % 1000) * 1000;
+	int SelectResult = select(maxfd + 1, nullptr, &writefds, nullptr, &tv);
 	net_set_blocking(sock);
-	return res;
+	if(SelectResult <= 0)
+		return -1;
+
+	int SockError = 0;
+	socklen_t Len = sizeof(SockError);
+	if(sock->ipv4sock >= 0 && FD_ISSET(sock->ipv4sock, &writefds) && getsockopt(sock->ipv4sock, SOL_SOCKET, SO_ERROR, (char *)&SockError, &Len) == 0 && SockError == 0)
+		return 0;
+	if(sock->ipv6sock >= 0 && FD_ISSET(sock->ipv6sock, &writefds) && getsockopt(sock->ipv6sock, SOL_SOCKET, SO_ERROR, (char *)&SockError, &Len) == 0 && SockError == 0)
+		return 0;
+	return -1;
 }
 
 int net_tcp_send(NETSOCKET sock, const void *data, int size)

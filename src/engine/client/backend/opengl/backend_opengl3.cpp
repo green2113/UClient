@@ -96,9 +96,6 @@ bool CCommandProcessorFragment_OpenGL3_3::Cmd_Init(const SCommand_Init *pCommand
 	m_LastClipEnable = false;
 	m_pPrimitiveProgram = new CGLSLPrimitiveProgram;
 	m_pPrimitiveProgramTextured = new CGLSLPrimitiveProgram;
-	m_pGlowProgram = new CGLSLGlowProgram;
-	m_pBlurProgram = new CGLSLBlurProgram;
-	m_pBlurKawaseProgram = new CGLSLBlurKawaseProgram;
 	m_pTileProgram = new CGLSLTileProgram;
 	m_pTileProgramTextured = new CGLSLTileProgram;
 	m_pPrimitive3DProgram = new CGLSLPrimitiveProgram;
@@ -157,64 +154,6 @@ bool CCommandProcessorFragment_OpenGL3_3::Cmd_Init(const SCommand_Init *pCommand
 
 		m_pPrimitiveProgramTextured->m_LocPos = m_pPrimitiveProgramTextured->GetUniformLoc("gPos");
 		m_pPrimitiveProgramTextured->m_LocTextureSampler = m_pPrimitiveProgramTextured->GetUniformLoc("gTextureSampler");
-	}
-	{
-		CGLSL GlowVertexShader;
-		CGLSL GlowFragmentShader;
-		GlowVertexShader.LoadShader(&ShaderCompiler, pCommand->m_pStorage, "shader/glow.vert", GL_VERTEX_SHADER);
-		GlowFragmentShader.LoadShader(&ShaderCompiler, pCommand->m_pStorage, "shader/glow.frag", GL_FRAGMENT_SHADER);
-
-		m_pGlowProgram->CreateProgram();
-		m_pGlowProgram->AddShader(&GlowVertexShader);
-		m_pGlowProgram->AddShader(&GlowFragmentShader);
-		m_pGlowProgram->LinkProgram();
-
-		UseProgram(m_pGlowProgram);
-
-		m_pGlowProgram->m_LocPos = m_pGlowProgram->GetUniformLoc("gPos");
-		m_pGlowProgram->m_LocRectSize = m_pGlowProgram->GetUniformLoc("gRectSize");
-		m_pGlowProgram->m_LocGlowRadius = m_pGlowProgram->GetUniformLoc("gGlowRadius");
-		m_pGlowProgram->m_LocGlowStrength = m_pGlowProgram->GetUniformLoc("gGlowStrength");
-	}
-	{
-		CGLSL BlurVertexShader;
-		CGLSL BlurFragmentShader;
-		BlurVertexShader.LoadShader(&ShaderCompiler, pCommand->m_pStorage, "shader/blur.vert", GL_VERTEX_SHADER);
-		BlurFragmentShader.LoadShader(&ShaderCompiler, pCommand->m_pStorage, "shader/blur.frag", GL_FRAGMENT_SHADER);
-
-		m_pBlurProgram->CreateProgram();
-		m_pBlurProgram->AddShader(&BlurVertexShader);
-		m_pBlurProgram->AddShader(&BlurFragmentShader);
-		m_pBlurProgram->LinkProgram();
-
-		UseProgram(m_pBlurProgram);
-
-		m_pBlurProgram->m_LocPos = m_pBlurProgram->GetUniformLoc("gPos");
-		m_pBlurProgram->m_LocTextureSampler = m_pBlurProgram->GetUniformLoc("gTextureSampler");
-		m_pBlurProgram->m_LocTextureSize = m_pBlurProgram->GetUniformLoc("gTextureSize");
-		m_pBlurProgram->m_LocRectSize = m_pBlurProgram->GetUniformLoc("gRectSize");
-		m_pBlurProgram->m_LocRounding = m_pBlurProgram->GetUniformLoc("gRounding");
-		m_pBlurProgram->m_LocBlurRadius = m_pBlurProgram->GetUniformLoc("gBlurRadius");
-		m_pBlurProgram->m_LocBlurStrength = m_pBlurProgram->GetUniformLoc("gBlurStrength");
-	}
-	{
-		CGLSL BlurVertexShader;
-		CGLSL BlurFragmentShader;
-		BlurVertexShader.LoadShader(&ShaderCompiler, pCommand->m_pStorage, "shader/blur_kawase.vert", GL_VERTEX_SHADER);
-		BlurFragmentShader.LoadShader(&ShaderCompiler, pCommand->m_pStorage, "shader/blur_kawase.frag", GL_FRAGMENT_SHADER);
-
-		m_pBlurKawaseProgram->CreateProgram();
-		m_pBlurKawaseProgram->AddShader(&BlurVertexShader);
-		m_pBlurKawaseProgram->AddShader(&BlurFragmentShader);
-		m_pBlurKawaseProgram->LinkProgram();
-
-		m_pBlurKawaseProgram->UseProgram();
-		m_LastProgramId = m_pBlurKawaseProgram->GetProgramId();
-
-		m_pBlurKawaseProgram->m_LocTextureSampler = m_pBlurKawaseProgram->GetUniformLoc("gTextureSampler");
-		m_pBlurKawaseProgram->m_LocTexelSize = m_pBlurKawaseProgram->GetUniformLoc("gTexelSize");
-		m_pBlurKawaseProgram->m_LocOffset = m_pBlurKawaseProgram->GetUniformLoc("gOffset");
-		m_pBlurKawaseProgram->SetUniform(m_pBlurKawaseProgram->m_LocTextureSampler, 0);
 	}
 
 	{
@@ -536,9 +475,6 @@ void CCommandProcessorFragment_OpenGL3_3::Cmd_Shutdown(const SCommand_Shutdown *
 
 	m_pPrimitiveProgram->DeleteProgram();
 	m_pPrimitiveProgramTextured->DeleteProgram();
-	m_pGlowProgram->DeleteProgram();
-	m_pBlurProgram->DeleteProgram();
-	m_pBlurKawaseProgram->DeleteProgram();
 	m_pBorderTileProgram->DeleteProgram();
 	m_pBorderTileProgramTextured->DeleteProgram();
 	m_pQuadProgram->DeleteProgram();
@@ -559,9 +495,6 @@ void CCommandProcessorFragment_OpenGL3_3::Cmd_Shutdown(const SCommand_Shutdown *
 	// clean up everything
 	delete m_pPrimitiveProgram;
 	delete m_pPrimitiveProgramTextured;
-	delete m_pGlowProgram;
-	delete m_pBlurProgram;
-	delete m_pBlurKawaseProgram;
 	delete m_pBorderTileProgram;
 	delete m_pBorderTileProgramTextured;
 	delete m_pQuadProgram;
@@ -585,7 +518,6 @@ void CCommandProcessorFragment_OpenGL3_3::Cmd_Shutdown(const SCommand_Shutdown *
 	glDeleteVertexArrays(MAX_STREAM_BUFFER_COUNT, m_aPrimitiveDrawVertexId);
 	glDeleteBuffers(1, &m_PrimitiveDrawBufferIdTex3D);
 	glDeleteVertexArrays(1, &m_PrimitiveDrawVertexIdTex3D);
-	DestroyBlurResources();
 	DestroyMotionBlurTexture();
 
 	for(int i = 0; i < (int)m_vTextures.size(); ++i)
@@ -872,214 +804,6 @@ void CCommandProcessorFragment_OpenGL3_3::Cmd_Render(const CCommandBuffer::SComm
 	default:
 		dbg_assert_failed("Invalid primitive type: %d", (int)pCommand->m_PrimType);
 	};
-
-	m_LastStreamBuffer = (m_LastStreamBuffer + 1 >= MAX_STREAM_BUFFER_COUNT ? 0 : m_LastStreamBuffer + 1);
-}
-
-void CCommandProcessorFragment_OpenGL3_3::Cmd_RenderGlowRect(const CCommandBuffer::SCommand_RenderGlowRect *pCommand)
-{
-	UseProgram(m_pGlowProgram);
-	SetState(pCommand->m_State, m_pGlowProgram);
-
-	m_pGlowProgram->SetUniformVec2(m_pGlowProgram->m_LocRectSize, 1, (float *)&pCommand->m_RectSize);
-	m_pGlowProgram->SetUniform(m_pGlowProgram->m_LocGlowRadius, pCommand->m_GlowRadius);
-	m_pGlowProgram->SetUniform(m_pGlowProgram->m_LocGlowStrength, pCommand->m_GlowStrength);
-
-	UploadStreamBufferData(EPrimitiveType::QUADS, pCommand->m_pVertices, sizeof(CCommandBuffer::SVertex), 1);
-
-	glBindVertexArray(m_aPrimitiveDrawVertexId[m_LastStreamBuffer]);
-	if(m_aLastIndexBufferBound[m_LastStreamBuffer] != m_QuadDrawIndexBufferId)
-	{
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_QuadDrawIndexBufferId);
-		m_aLastIndexBufferBound[m_LastStreamBuffer] = m_QuadDrawIndexBufferId;
-	}
-	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-
-	m_LastStreamBuffer = (m_LastStreamBuffer + 1 >= MAX_STREAM_BUFFER_COUNT ? 0 : m_LastStreamBuffer + 1);
-}
-
-void CCommandProcessorFragment_OpenGL3_3::DestroyBlurResources()
-{
-	if(m_BlurScreenTexture != 0)
-		glDeleteTextures(1, &m_BlurScreenTexture);
-	if(m_aBlurTextures[0] != 0 || m_aBlurTextures[1] != 0)
-		glDeleteTextures(2, m_aBlurTextures);
-	if(m_aBlurFramebuffers[0] != 0 || m_aBlurFramebuffers[1] != 0)
-		glDeleteFramebuffers(2, m_aBlurFramebuffers);
-	if(m_BlurSampler != 0)
-		glDeleteSamplers(1, &m_BlurSampler);
-
-	m_BlurScreenTexture = 0;
-	m_aBlurTextures[0] = 0;
-	m_aBlurTextures[1] = 0;
-	m_aBlurFramebuffers[0] = 0;
-	m_aBlurFramebuffers[1] = 0;
-	m_BlurSampler = 0;
-	m_BlurCanvasWidth = 0;
-	m_BlurCanvasHeight = 0;
-	m_BlurTextureWidth = 0;
-	m_BlurTextureHeight = 0;
-}
-
-bool CCommandProcessorFragment_OpenGL3_3::EnsureBlurResources()
-{
-	if(m_CanvasWidth == 0 || m_CanvasHeight == 0)
-		return false;
-
-	const uint32_t BlurTextureWidth = maximum<uint32_t>(1, m_CanvasWidth / 2);
-	const uint32_t BlurTextureHeight = maximum<uint32_t>(1, m_CanvasHeight / 2);
-	if(m_BlurScreenTexture != 0 && m_BlurCanvasWidth == m_CanvasWidth && m_BlurCanvasHeight == m_CanvasHeight && m_BlurTextureWidth == BlurTextureWidth && m_BlurTextureHeight == BlurTextureHeight)
-		return true;
-
-	DestroyBlurResources();
-
-	m_BlurCanvasWidth = m_CanvasWidth;
-	m_BlurCanvasHeight = m_CanvasHeight;
-	m_BlurTextureWidth = BlurTextureWidth;
-	m_BlurTextureHeight = BlurTextureHeight;
-
-	glGenTextures(1, &m_BlurScreenTexture);
-	glBindTexture(GL_TEXTURE_2D, m_BlurScreenTexture);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, m_BlurCanvasWidth, m_BlurCanvasHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-
-	glGenTextures(2, m_aBlurTextures);
-	glGenFramebuffers(2, m_aBlurFramebuffers);
-	for(size_t i = 0; i < 2; ++i)
-	{
-		glBindTexture(GL_TEXTURE_2D, m_aBlurTextures[i]);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, m_BlurTextureWidth, m_BlurTextureHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-
-		glBindFramebuffer(GL_FRAMEBUFFER, m_aBlurFramebuffers[i]);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_aBlurTextures[i], 0);
-		if(glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-		{
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
-			DestroyBlurResources();
-			return false;
-		}
-	}
-
-	glGenSamplers(1, &m_BlurSampler);
-	glSamplerParameteri(m_BlurSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glSamplerParameteri(m_BlurSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glSamplerParameteri(m_BlurSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glSamplerParameteri(m_BlurSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	return true;
-}
-
-void CCommandProcessorFragment_OpenGL3_3::RenderBlurKawasePass(TWGLuint SourceTexture, int TargetIndex, float Offset)
-{
-	if(m_LastProgramId != m_pBlurKawaseProgram->GetProgramId())
-	{
-		m_pBlurKawaseProgram->UseProgram();
-		m_LastProgramId = m_pBlurKawaseProgram->GetProgramId();
-	}
-
-	glBindFramebuffer(GL_FRAMEBUFFER, m_aBlurFramebuffers[TargetIndex]);
-	glViewport(0, 0, m_BlurTextureWidth, m_BlurTextureHeight);
-	glDisable(GL_SCISSOR_TEST);
-	glDisable(GL_BLEND);
-	m_LastClipEnable = false;
-	m_LastBlendMode = EBlendMode::NONE;
-
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, SourceTexture);
-	glBindSampler(0, m_BlurSampler);
-
-	const float aTexelSize[] = {1.0f / (float)m_BlurTextureWidth, 1.0f / (float)m_BlurTextureHeight};
-	m_pBlurKawaseProgram->SetUniformVec2(m_pBlurKawaseProgram->m_LocTexelSize, 1, aTexelSize);
-	m_pBlurKawaseProgram->SetUniform(m_pBlurKawaseProgram->m_LocOffset, Offset);
-
-	CCommandBuffer::SVertex aVertices[4];
-	aVertices[0].m_Pos = vec2(-1.0f, -1.0f);
-	aVertices[1].m_Pos = vec2(1.0f, -1.0f);
-	aVertices[2].m_Pos = vec2(1.0f, 1.0f);
-	aVertices[3].m_Pos = vec2(-1.0f, 1.0f);
-	aVertices[0].m_Tex = vec2(0.0f, 0.0f);
-	aVertices[1].m_Tex = vec2(1.0f, 0.0f);
-	aVertices[2].m_Tex = vec2(1.0f, 1.0f);
-	aVertices[3].m_Tex = vec2(0.0f, 1.0f);
-	for(auto &Vertex : aVertices)
-	{
-		Vertex.m_Color.r = 255;
-		Vertex.m_Color.g = 255;
-		Vertex.m_Color.b = 255;
-		Vertex.m_Color.a = 255;
-	}
-
-	UploadStreamBufferData(EPrimitiveType::QUADS, aVertices, sizeof(CCommandBuffer::SVertex), 1);
-	glBindVertexArray(m_aPrimitiveDrawVertexId[m_LastStreamBuffer]);
-	if(m_aLastIndexBufferBound[m_LastStreamBuffer] != m_QuadDrawIndexBufferId)
-	{
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_QuadDrawIndexBufferId);
-		m_aLastIndexBufferBound[m_LastStreamBuffer] = m_QuadDrawIndexBufferId;
-	}
-	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-
-	m_LastStreamBuffer = (m_LastStreamBuffer + 1 >= MAX_STREAM_BUFFER_COUNT ? 0 : m_LastStreamBuffer + 1);
-}
-
-void CCommandProcessorFragment_OpenGL3_3::Cmd_RenderBlurRect(const CCommandBuffer::SCommand_RenderBlurRect *pCommand)
-{
-	if(!EnsureBlurResources())
-		return;
-
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, m_BlurScreenTexture);
-	glBindSampler(0, m_BlurSampler);
-	glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, m_BlurCanvasWidth, m_BlurCanvasHeight);
-
-	const float UnitsToPixelsX = m_CanvasWidth / maximum(1.0f, absolute(pCommand->m_State.m_ScreenBR.x - pCommand->m_State.m_ScreenTL.x));
-	const float UnitsToPixelsY = m_CanvasHeight / maximum(1.0f, absolute(pCommand->m_State.m_ScreenBR.y - pCommand->m_State.m_ScreenTL.y));
-	const float PixelRadius = pCommand->m_BlurRadius * (UnitsToPixelsX + UnitsToPixelsY) * 0.5f;
-	const int Passes = std::clamp((int)std::ceil(PixelRadius / 4.0f), 1, 5);
-
-	TWGLuint SourceTexture = m_BlurScreenTexture;
-	int TargetIndex = 0;
-	for(int i = 0; i < Passes; ++i)
-	{
-		RenderBlurKawasePass(SourceTexture, TargetIndex, 1.0f + (float)i * 1.35f);
-		SourceTexture = m_aBlurTextures[TargetIndex];
-		TargetIndex = 1 - TargetIndex;
-	}
-
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	glViewport(0, 0, m_CanvasWidth, m_CanvasHeight);
-
-	UseProgram(m_pBlurProgram);
-	SetState(pCommand->m_State, m_pBlurProgram);
-
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, SourceTexture);
-	glBindSampler(0, m_BlurSampler);
-	m_pBlurProgram->SetUniform(m_pBlurProgram->m_LocTextureSampler, 0);
-	const float aTextureSize[] = {(float)m_BlurCanvasWidth, (float)m_BlurCanvasHeight};
-	m_pBlurProgram->SetUniformVec2(m_pBlurProgram->m_LocTextureSize, 1, aTextureSize);
-	m_pBlurProgram->SetUniformVec2(m_pBlurProgram->m_LocRectSize, 1, (float *)&pCommand->m_RectSize);
-	m_pBlurProgram->SetUniform(m_pBlurProgram->m_LocRounding, pCommand->m_Rounding);
-	m_pBlurProgram->SetUniform(m_pBlurProgram->m_LocBlurRadius, pCommand->m_BlurRadius);
-	m_pBlurProgram->SetUniform(m_pBlurProgram->m_LocBlurStrength, pCommand->m_BlurStrength);
-
-	UploadStreamBufferData(EPrimitiveType::QUADS, pCommand->m_pVertices, sizeof(CCommandBuffer::SVertex), 1);
-
-	glBindVertexArray(m_aPrimitiveDrawVertexId[m_LastStreamBuffer]);
-	if(m_aLastIndexBufferBound[m_LastStreamBuffer] != m_QuadDrawIndexBufferId)
-	{
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_QuadDrawIndexBufferId);
-		m_aLastIndexBufferBound[m_LastStreamBuffer] = m_QuadDrawIndexBufferId;
-	}
-	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
 	m_LastStreamBuffer = (m_LastStreamBuffer + 1 >= MAX_STREAM_BUFFER_COUNT ? 0 : m_LastStreamBuffer + 1);
 }
@@ -1749,10 +1473,8 @@ void CCommandProcessorFragment_OpenGL3_3::RenderMotionBlurGL()
 
 	if(!m_MotionBlurHistoryValid)
 	{
-		// First frame — just save, no blend.
-		// Must bind default framebuffer before reading: a blur pass (Cmd_RenderBlurRect)
-		// may have left one of the intermediate blur FBOs bound, causing glCopyTexSubImage2D
-		// to capture garbage instead of the final composed frame.
+		// First frame — just save, no blend. Bind the default framebuffer before
+		// reading so glCopyTexSubImage2D captures the final composed frame.
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, m_MotionBlurTexWidth, m_MotionBlurTexHeight);
 		glBindTexture(GL_TEXTURE_2D, 0);

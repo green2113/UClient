@@ -43,7 +43,6 @@
 #include <engine/shared/fifo.h>
 #include <engine/shared/filecollection.h>
 #include <engine/shared/http.h>
-#include <engine/shared/linereader.h>
 #include <engine/shared/masterserver.h>
 #include <engine/shared/network.h>
 #include <engine/shared/packer.h>
@@ -79,16 +78,7 @@
 #undef main
 #endif
 
-#if defined(CONF_FAMILY_WINDOWS)
-#include <windows.h>
-#include <shellapi.h>
-#endif
-
 #include <chrono>
-#include <cmath>
-#include <cstdlib>
-#include <cstring>
-#include <cwctype>
 #include <limits>
 #include <stack>
 #include <thread>
@@ -98,73 +88,6 @@ using namespace std::chrono_literals;
 
 static constexpr ColorRGBA CLIENT_NETWORK_PRINT_COLOR = ColorRGBA(0.7f, 1, 0.7f, 1.0f);
 static constexpr ColorRGBA CLIENT_NETWORK_PRINT_ERROR_COLOR = ColorRGBA(1.0f, 0.25f, 0.25f, 1.0f);
-
-#if defined(CONF_FAMILY_WINDOWS)
-static void CleanupLegacyReShadeFiles()
-{
-	char aUserDir[IO_MAX_PATH_LENGTH];
-	if(fs_storage_path("BestClient", aUserDir, sizeof(aUserDir)) != 0)
-		return;
-
-	char aMarkerPath[IO_MAX_PATH_LENGTH];
-	str_format(aMarkerPath, sizeof(aMarkerPath), "%s/.reshade_cleaned", aUserDir);
-	if(fs_is_file(aMarkerPath))
-		return;
-
-	char aBinaryDir[IO_MAX_PATH_LENGTH];
-	if(fs_executable_path(aBinaryDir, sizeof(aBinaryDir)) != 0 || fs_parent_dir(aBinaryDir) != 0)
-		return;
-
-	static constexpr const char *s_apFilesToRemove[] = {
-		"ReShade.ini",
-		"ReShadePreset.ini",
-		"ReShade64.dll",
-		"ReShade64.json",
-		"ReShade64.reshade-disabled.json",
-		"BestClientReShadeBridge.ini",
-		"bestclient_reshade_live.addon",
-		"bestclient_reshade_bridge.addon",
-	};
-
-	for(const char *pFilename : s_apFilesToRemove)
-	{
-		char aFilePath[IO_MAX_PATH_LENGTH];
-		str_format(aFilePath, sizeof(aFilePath), "%s/%s", aBinaryDir, pFilename);
-		if(fs_is_file(aFilePath))
-			fs_remove(aFilePath);
-	}
-
-	char aReShadeDataDir[IO_MAX_PATH_LENGTH];
-	str_format(aReShadeDataDir, sizeof(aReShadeDataDir), "%s/data/reshade", aBinaryDir);
-	if(fs_is_dir(aReShadeDataDir))
-	{
-		std::wstring WidePath = windows_utf8_to_wide(aReShadeDataDir);
-		WidePath.push_back(L'\0');
-		SHFILEOPSTRUCTW FileOp = {};
-		FileOp.wFunc = FO_DELETE;
-		FileOp.pFrom = WidePath.c_str();
-		FileOp.fFlags = FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
-		SHFileOperationW(&FileOp);
-	}
-
-	char aRuntimeDir[IO_MAX_PATH_LENGTH];
-	str_format(aRuntimeDir, sizeof(aRuntimeDir), "%s/reshade-runtime", aUserDir);
-	if(fs_is_dir(aRuntimeDir))
-	{
-		std::wstring WideRuntimePath = windows_utf8_to_wide(aRuntimeDir);
-		WideRuntimePath.push_back(L'\0');
-		SHFILEOPSTRUCTW RuntimeOp = {};
-		RuntimeOp.wFunc = FO_DELETE;
-		RuntimeOp.pFrom = WideRuntimePath.c_str();
-		RuntimeOp.fFlags = FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
-		SHFileOperationW(&RuntimeOp);
-	}
-
-	IOHANDLE Marker = io_open(aMarkerPath, IOFLAG_WRITE);
-	if(Marker)
-		io_close(Marker);
-}
-#endif
 
 CClient::CClient() :
 	m_DemoPlayer(&m_SnapshotDelta, true, [&]() { UpdateDemoIntraTimers(); }),
@@ -454,6 +377,7 @@ void CClient::SendInput()
 
 		if(Size)
 		{
+			// BestClient: let the game layer sanitize the outgoing input copy (fast practice)
 			int aSendData[MAX_INPUT_SIZE];
 			dbg_assert(Size <= (int)sizeof(aSendData), "input size exceeds send buffer");
 			mem_copy(aSendData, m_aInputs[i][m_aCurrentInput[i]].m_aData, (size_t)Size);
@@ -600,12 +524,6 @@ void CClient::OnEnterGame(bool Dummy)
 	m_aPredIntraTick[Dummy] = 0.0f;
 	m_aGameTime[Dummy].Init(0);
 	m_PredictedTime.Init(0);
-	if(!Dummy)
-	{
-		m_AutoMarginLastSampleTime = 0;
-		m_AutoMarginLatencyAverageMs = 0.0f;
-		m_AutoMarginLatencyJitterMs = 0.0f;
-	}
 
 	if(!Dummy)
 	{
@@ -812,12 +730,13 @@ void CClient::Connect(const char *pAddress, const char *pPassword)
 	ServerInfoRequest();
 
 	// TClient
-	m_pGameClient->SetConnectInfo(&aConnectAddrs[0]);
 	// If user has manually specified password don't run autoexec
 	if(!m_SendPassword)
 	{
+		m_pGameClient->SetConnectInfo(&aConnectAddrs[0]);
 		m_pConsole->ExecuteLine(g_Config.m_TcExecuteOnConnect, IConsole::CLIENT_ID_UNSPECIFIED);
 	}
+	m_pGameClient->SetConnectInfo(nullptr);
 
 	if(m_SendPassword)
 	{
@@ -889,9 +808,6 @@ void CClient::DisconnectWithReason(const char *pReason)
 	mem_zero(&m_CurrentServerPingUuid, sizeof(m_CurrentServerPingUuid));
 	m_CurrentServerCurrentPingTime = -1;
 	m_CurrentServerNextPingTime = -1;
-	m_AutoMarginLastSampleTime = 0;
-	m_AutoMarginLatencyAverageMs = 0.0f;
-	m_AutoMarginLatencyJitterMs = 0.0f;
 
 	ResetMapDownload(true);
 
@@ -1016,12 +932,9 @@ void CClient::SetCurrentServerInfo(const CServerInfo &ServerInfo)
 {
 	m_CurrentServerInfo = ServerInfo;
 	m_CurrentServerInfoRequestTime = -1;
-	if(GameClient()->Map()->IsLoaded())
-	{
-		str_copy(m_CurrentServerInfo.m_aMap, GameClient()->Map()->BaseName());
-		m_CurrentServerInfo.m_MapCrc = GameClient()->Map()->Crc();
-		m_CurrentServerInfo.m_MapSize = GameClient()->Map()->Size();
-	}
+	str_copy(m_CurrentServerInfo.m_aMap, GameClient()->Map()->BaseName());
+	m_CurrentServerInfo.m_MapCrc = GameClient()->Map()->Crc();
+	m_CurrentServerInfo.m_MapSize = GameClient()->Map()->Size();
 }
 
 void CClient::LoadDebugFont()
@@ -3030,12 +2943,12 @@ void CClient::Update()
 				}
 
 				const bool HasFastInput =
-					g_Config.m_TcFastInput &&
-					((BcFastInputNormalizedMode(g_Config.m_BcFastInputMode) == 0 && g_Config.m_TcFastInputAmount > 0) ||
-						(BcFastInputNormalizedMode(g_Config.m_BcFastInputMode) == 1 && g_Config.m_BcFastInputDeltaInput > 0) ||
-						(BcFastInputNormalizedMode(g_Config.m_BcFastInputMode) == 3 && g_Config.m_BcBestInputOffset > 0) ||
-						(BcFastInputNormalizedMode(g_Config.m_BcFastInputMode) == 4 && g_Config.m_BcSaikoPlusAmount > 0));
-				if(HasFastInput && BcFastInputNormalizedMode(g_Config.m_BcFastInputMode) == 4)
+					(g_Config.m_BcInputs == BC_INPUTS_FAST && g_Config.m_TcFastInputAmount > 0) ||
+					(g_Config.m_BcInputs == BC_INPUTS_BEST && g_Config.m_BcBestInputAmount > 0) ||
+					(g_Config.m_BcInputs == BC_INPUTS_SAIKO && g_Config.m_BcSaikoInputAmount > 0) ||
+					(g_Config.m_BcInputs == BC_INPUTS_DELTA && g_Config.m_BcDeltaInputAmount > 0) ||
+					(g_Config.m_BcInputs == BC_INPUTS_F && g_Config.m_BcFInputAmount > 0);
+				if(HasFastInput && g_Config.m_BcInputs == BC_INPUTS_SAIKO)
 				{
 					GameClient()->CheckNewInput();
 					Repredict = true;
@@ -3592,33 +3505,12 @@ void CClient::Run()
 			SleepTimeInNanoSeconds = (std::chrono::nanoseconds(1s) / (int64_t)g_Config.m_ClRefreshRate) - (Now - LastTime);
 			auto SleepTimeInNanoSecondsInner = SleepTimeInNanoSeconds;
 			auto NowInner = Now;
-			// Busy-wait guard: only spin the last 200us for frame precision; sleep the rest.
-			// This prevents near-100% CPU usage when net_socket_read_wait returns early
-			// due to incoming packets, which causes rapid re-entry into the loop.
-			static constexpr std::chrono::nanoseconds BusyWaitThreshold = std::chrono::microseconds(200);
 			while(std::chrono::duration_cast<std::chrono::microseconds>(SleepTimeInNanoSecondsInner) > 0us)
 			{
-				if(SleepTimeInNanoSecondsInner > BusyWaitThreshold)
-				{
-					// Sleep most of the remaining time, keeping BusyWaitThreshold for precise spin-finish.
-					auto SleepDuration = SleepTimeInNanoSecondsInner - BusyWaitThreshold;
-					int GotData = net_socket_read_wait(m_aNetClient[CONN_MAIN].m_Socket, SleepDuration);
-					auto NowInnerCalc = time_get_nanoseconds();
-					SleepTimeInNanoSecondsInner -= (NowInnerCalc - NowInner);
-					NowInner = NowInnerCalc;
-					// If socket had data but significant time remains, yield to avoid
-					// tight spin on high-traffic connections.
-					if(GotData && SleepTimeInNanoSecondsInner > BusyWaitThreshold)
-						std::this_thread::yield();
-				}
-				else
-				{
-					// Final busy-wait window: spin without yielding for accurate frame timing.
-					net_socket_read_wait(m_aNetClient[CONN_MAIN].m_Socket, SleepTimeInNanoSecondsInner);
-					auto NowInnerCalc = time_get_nanoseconds();
-					SleepTimeInNanoSecondsInner -= (NowInnerCalc - NowInner);
-					NowInner = NowInnerCalc;
-				}
+				net_socket_read_wait(m_aNetClient[CONN_MAIN].m_Socket, SleepTimeInNanoSecondsInner);
+				auto NowInnerCalc = time_get_nanoseconds();
+				SleepTimeInNanoSecondsInner -= (NowInnerCalc - NowInner);
+				NowInner = NowInnerCalc;
 			}
 			Slept = true;
 		}
@@ -4368,13 +4260,6 @@ void CClient::DemoRecorder_UpdateReplayRecorder()
 		DemoRecorder(RECORDER_REPLAYS)->Stop(IDemoRecorder::EStopMode::REMOVE_FILE);
 	}
 
-	if(State() != IClient::STATE_ONLINE)
-	{
-		if(DemoRecorder(RECORDER_REPLAYS)->IsRecording())
-			DemoRecorder(RECORDER_REPLAYS)->Stop(IDemoRecorder::EStopMode::REMOVE_FILE);
-		return;
-	}
-
 	if(g_Config.m_ClReplays && !DemoRecorder(RECORDER_REPLAYS)->IsRecording())
 	{
 		char aFilename[IO_MAX_PATH_LENGTH];
@@ -4875,273 +4760,6 @@ static bool SaveUnknownCommandCallback(const char *pCommand, void *pUser)
 	return true;
 }
 
-#if defined(CONF_FAMILY_WINDOWS)
-static void NormalizeLineEndingsForWindows(const char *pInput, char *pOutput, size_t OutputSize)
-{
-	if(OutputSize == 0)
-		return;
-
-	size_t OutPos = 0;
-	for(size_t InPos = 0; pInput[InPos] != '\0' && OutPos + 1 < OutputSize; ++InPos)
-	{
-		if(pInput[InPos] == '\n' && (InPos == 0 || pInput[InPos - 1] != '\r'))
-		{
-			if(OutPos + 2 >= OutputSize)
-				break;
-			pOutput[OutPos++] = '\r';
-			pOutput[OutPos++] = '\n';
-		}
-		else
-		{
-			pOutput[OutPos++] = pInput[InPos];
-		}
-	}
-
-	pOutput[OutPos] = '\0';
-}
-#endif
-
-#if defined(CONF_FAMILY_WINDOWS)
-namespace
-{
-	enum class ECrashReportDialogAction
-	{
-		CLOSE,
-		OPEN_DUMPS_FOLDER,
-		RESTART_GAME,
-	};
-
-	enum
-	{
-		CRASH_BUTTON_COPY = 101,
-		CRASH_BUTTON_RESTART = 102,
-		CRASH_BUTTON_OPEN_DUMPS = 103,
-		CRASH_BUTTON_CLOSE = 104,
-	};
-
-	struct SCrashReportDialogState
-	{
-		std::wstring m_Details;
-		HWND m_hEdit = nullptr;
-		HWND m_hCopyButton = nullptr;
-		HWND m_hRestartButton = nullptr;
-		HWND m_hOpenDumpsButton = nullptr;
-		HWND m_hCloseButton = nullptr;
-		bool m_CanRestart = false;
-		bool m_CanOpenDumps = false;
-		ECrashReportDialogAction m_Action = ECrashReportDialogAction::CLOSE;
-	};
-
-	bool CopyWideTextToClipboard(HWND hWnd, const wchar_t *pText)
-	{
-		if(!OpenClipboard(hWnd))
-			return false;
-		EmptyClipboard();
-
-		const size_t TextLength = wcslen(pText);
-		const size_t TextBytes = (TextLength + 1) * sizeof(wchar_t);
-		HGLOBAL hMemory = GlobalAlloc(GMEM_MOVEABLE, TextBytes);
-		if(hMemory == nullptr)
-		{
-			CloseClipboard();
-			return false;
-		}
-
-		void *pMemory = GlobalLock(hMemory);
-		if(pMemory == nullptr)
-		{
-			GlobalFree(hMemory);
-			CloseClipboard();
-			return false;
-		}
-
-		std::memcpy(pMemory, pText, TextBytes);
-		GlobalUnlock(hMemory);
-		if(SetClipboardData(CF_UNICODETEXT, hMemory) == nullptr)
-		{
-			GlobalFree(hMemory);
-			CloseClipboard();
-			return false;
-		}
-		CloseClipboard();
-		return true;
-	}
-
-	void LayoutCrashDialogControls(HWND hWnd, SCrashReportDialogState *pState)
-	{
-		constexpr int Margin = 10;
-		constexpr int ButtonWidth = 160;
-		constexpr int ButtonHeight = 30;
-		constexpr int Spacing = 8;
-
-		RECT ClientRect;
-		GetClientRect(hWnd, &ClientRect);
-
-		const int ButtonsTop = ClientRect.bottom - Margin - ButtonHeight;
-		const int EditHeight = maximum<int>(120, ButtonsTop - Margin * 2);
-		const int EditWidth = maximum<int>(100, static_cast<int>(ClientRect.right) - Margin * 2);
-		MoveWindow(pState->m_hEdit, Margin, Margin, EditWidth, EditHeight, TRUE);
-
-		int Right = ClientRect.right - Margin;
-		if(pState->m_hCloseButton != nullptr)
-		{
-			MoveWindow(pState->m_hCloseButton, Right - ButtonWidth, ButtonsTop, ButtonWidth, ButtonHeight, TRUE);
-			Right -= ButtonWidth + Spacing;
-		}
-		if(pState->m_CanOpenDumps && pState->m_hOpenDumpsButton != nullptr)
-		{
-			MoveWindow(pState->m_hOpenDumpsButton, Right - ButtonWidth, ButtonsTop, ButtonWidth, ButtonHeight, TRUE);
-			Right -= ButtonWidth + Spacing;
-		}
-		if(pState->m_CanRestart && pState->m_hRestartButton != nullptr)
-		{
-			MoveWindow(pState->m_hRestartButton, Right - ButtonWidth, ButtonsTop, ButtonWidth, ButtonHeight, TRUE);
-		}
-		if(pState->m_hCopyButton != nullptr)
-		{
-			MoveWindow(pState->m_hCopyButton, Margin, ButtonsTop, ButtonWidth, ButtonHeight, TRUE);
-		}
-	}
-
-	LRESULT CALLBACK CrashReportDialogWindowProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
-	{
-		SCrashReportDialogState *pState = reinterpret_cast<SCrashReportDialogState *>(GetWindowLongPtrW(hWnd, GWLP_USERDATA));
-
-		switch(Msg)
-		{
-		case WM_NCCREATE:
-		{
-			LPCREATESTRUCTW pCreate = reinterpret_cast<LPCREATESTRUCTW>(lParam);
-			SetWindowLongPtrW(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pCreate->lpCreateParams));
-			return TRUE;
-		}
-		case WM_CREATE:
-		{
-			pState = reinterpret_cast<SCrashReportDialogState *>(reinterpret_cast<LPCREATESTRUCTW>(lParam)->lpCreateParams);
-			if(pState == nullptr)
-				return -1;
-
-			pState->m_hEdit = CreateWindowExW(
-				WS_EX_CLIENTEDGE, L"EDIT", pState->m_Details.c_str(),
-				WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY | WS_VSCROLL | WS_HSCROLL,
-				0, 0, 0, 0, hWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
-
-			pState->m_hCopyButton = CreateWindowExW(0, L"BUTTON", L"Copy to clipboard",
-				WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-				0, 0, 0, 0, hWnd, reinterpret_cast<HMENU>(CRASH_BUTTON_COPY), GetModuleHandleW(nullptr), nullptr);
-
-			if(pState->m_CanRestart)
-			{
-				pState->m_hRestartButton = CreateWindowExW(0, L"BUTTON", L"Restart game",
-					WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-					0, 0, 0, 0, hWnd, reinterpret_cast<HMENU>(CRASH_BUTTON_RESTART), GetModuleHandleW(nullptr), nullptr);
-			}
-
-			if(pState->m_CanOpenDumps)
-			{
-				pState->m_hOpenDumpsButton = CreateWindowExW(0, L"BUTTON", L"Open crashlog folder",
-					WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-					0, 0, 0, 0, hWnd, reinterpret_cast<HMENU>(CRASH_BUTTON_OPEN_DUMPS), GetModuleHandleW(nullptr), nullptr);
-			}
-
-			pState->m_hCloseButton = CreateWindowExW(0, L"BUTTON", L"Close",
-				WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-				0, 0, 0, 0, hWnd, reinterpret_cast<HMENU>(CRASH_BUTTON_CLOSE), GetModuleHandleW(nullptr), nullptr);
-
-			LayoutCrashDialogControls(hWnd, pState);
-			return 0;
-		}
-		case WM_SIZE:
-			if(pState != nullptr)
-			{
-				LayoutCrashDialogControls(hWnd, pState);
-			}
-			return 0;
-		case WM_COMMAND:
-			if(pState == nullptr)
-				return 0;
-			switch(LOWORD(wParam))
-			{
-			case CRASH_BUTTON_COPY:
-				CopyWideTextToClipboard(hWnd, pState->m_Details.c_str());
-				return 0;
-			case CRASH_BUTTON_RESTART:
-				pState->m_Action = ECrashReportDialogAction::RESTART_GAME;
-				DestroyWindow(hWnd);
-				return 0;
-			case CRASH_BUTTON_OPEN_DUMPS:
-				pState->m_Action = ECrashReportDialogAction::OPEN_DUMPS_FOLDER;
-				DestroyWindow(hWnd);
-				return 0;
-			case CRASH_BUTTON_CLOSE:
-				DestroyWindow(hWnd);
-				return 0;
-			}
-			return 0;
-		case WM_CLOSE:
-			DestroyWindow(hWnd);
-			return 0;
-		}
-
-		return DefWindowProcW(hWnd, Msg, wParam, lParam);
-	}
-
-	ECrashReportDialogAction ShowCrashReportDialogWindows(const char *pTitle, const char *pDetails, bool CanRestart, bool CanOpenDumps)
-	{
-		static bool s_IsWindowClassRegistered = false;
-		static const wchar_t *s_pClassName = L"BestClientCrashReportDialog";
-
-		if(!s_IsWindowClassRegistered)
-		{
-			WNDCLASSEXW WndClass{};
-			WndClass.cbSize = sizeof(WndClass);
-			WndClass.style = CS_HREDRAW | CS_VREDRAW;
-			WndClass.lpfnWndProc = CrashReportDialogWindowProc;
-			WndClass.hInstance = GetModuleHandleW(nullptr);
-			WndClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-			WndClass.hIcon = LoadIconW(nullptr, IDI_ERROR);
-			WndClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
-			WndClass.lpszClassName = s_pClassName;
-			if(RegisterClassExW(&WndClass) == 0)
-			{
-				return ECrashReportDialogAction::CLOSE;
-			}
-			s_IsWindowClassRegistered = true;
-		}
-
-		SCrashReportDialogState DialogState;
-		DialogState.m_Details = windows_utf8_to_wide(pDetails);
-		DialogState.m_CanRestart = CanRestart;
-		DialogState.m_CanOpenDumps = CanOpenDumps;
-
-		const std::wstring WideTitle = windows_utf8_to_wide(pTitle);
-		HWND hWnd = CreateWindowExW(
-			WS_EX_APPWINDOW,
-			s_pClassName,
-			WideTitle.c_str(),
-			WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SIZEBOX,
-			CW_USEDEFAULT, CW_USEDEFAULT, 960, 680,
-			nullptr, nullptr, GetModuleHandleW(nullptr), &DialogState);
-		if(hWnd == nullptr)
-		{
-			return ECrashReportDialogAction::CLOSE;
-		}
-
-		ShowWindow(hWnd, SW_SHOW);
-		UpdateWindow(hWnd);
-
-		MSG Msg;
-		while(IsWindow(hWnd) && GetMessageW(&Msg, nullptr, 0, 0) > 0)
-		{
-			TranslateMessage(&Msg);
-			DispatchMessageW(&Msg);
-		}
-
-		return DialogState.m_Action;
-	}
-} // namespace
-#endif
-
 /*
 	Server Time
 	Client Mirror Time
@@ -5178,7 +4796,6 @@ int main(int argc, const char **argv)
 	gs_AndroidStarted = true;
 #elif defined(CONF_FAMILY_WINDOWS)
 	CWindowsComLifecycle WindowsComLifecycle(true);
-	CleanupLegacyReShadeFiles();
 #endif
 	CCmdlineFix CmdlineFix(&argc, &argv);
 
@@ -5211,12 +4828,6 @@ int main(int argc, const char **argv)
 	std::shared_ptr<CFutureLogger> pFutureAssertionLogger = std::make_shared<CFutureLogger>();
 	vpLoggers.push_back(pFutureAssertionLogger);
 	log_set_global_logger(log_logger_collection(std::move(vpLoggers)).release());
-
-	if(SteamRestartAppIfNecessary())
-	{
-		log_info("steam", "Restarting through Steam");
-		return 0;
-	}
 
 #if defined(CONF_PLATFORM_ANDROID)
 	// Initialize Android after logger is available
@@ -5277,9 +4888,8 @@ int main(int argc, const char **argv)
 		delete pClient;
 	});
 
-	char aCrashLogPath[IO_MAX_PATH_LENGTH] = "";
 	const std::thread::id MainThreadId = std::this_thread::get_id();
-	dbg_assert_set_handler([MainThreadId, pClient, &aCrashLogPath](const char *pMsg) {
+	dbg_assert_set_handler([MainThreadId, pClient](const char *pMsg) {
 		if(MainThreadId != std::this_thread::get_id())
 			return;
 		char aOsVersionString[128];
@@ -5289,36 +4899,15 @@ int main(int argc, const char **argv)
 		}
 		char aGpuInfo[512];
 		pClient->GetGpuInfoString(aGpuInfo);
-		const bool HasStorage = pClient->Storage() != nullptr;
-		char aDumpsPath[IO_MAX_PATH_LENGTH] = "unavailable (storage not initialized yet)";
-		if(HasStorage)
-		{
-			pClient->Storage()->GetCompletePath(IStorage::TYPE_SAVE, "dumps", aDumpsPath, sizeof(aDumpsPath));
-		}
-
-		char aCrashReportRelPath[IO_MAX_PATH_LENGTH] = "";
-		char aCrashReportPath[IO_MAX_PATH_LENGTH] = "";
-		if(HasStorage)
-		{
-			char aDate[64];
-			str_timestamp(aDate, sizeof(aDate));
-			str_format(aCrashReportRelPath, sizeof(aCrashReportRelPath), "dumps/" GAME_NAME "_assert_report_%s_%d.txt", aDate, process_id());
-			pClient->Storage()->GetCompletePath(IStorage::TYPE_SAVE, aCrashReportRelPath, aCrashReportPath, sizeof(aCrashReportPath));
-		}
-
-		char aDetailedMessage[8192];
-		str_format(aDetailedMessage, sizeof(aDetailedMessage),
-			"BestClient crash report\n"
-			"======================\n\n"
-			"Error summary:\n"
+		char aMessage[2048];
+		str_format(aMessage, sizeof(aMessage),
+			"An assertion error occurred. Please write down or take a screenshot of the following information and report this error.\n"
+			"Please also share the assert log"
+#if defined(CONF_CRASHDUMP)
+			" and crash log"
+#endif
+			" which you should find in the 'dumps' folder in your config directory.\n\n"
 			"%s\n\n"
-			"Description:\n"
-			"An internal assertion failed, the client is now shutting down to avoid data corruption.\n\n"
-			"Please send this full report and the files from the dumps folder to the developers.\n\n"
-			"Paths:\n"
-			"Dumps folder: %s\n"
-			"Crash report file: %s\n"
-			"Crash log (if generated): %s\n\n"
 			"Platform: %s (%s)\n"
 			"Configuration: base"
 #if defined(CONF_AUTOUPDATE)
@@ -5342,88 +4931,33 @@ int main(int argc, const char **argv)
 			"\n"
 			"Game version: %s %s %s\n"
 			"OS version: %s\n\n"
-			"GPU info:\n%s",
+			"%s", // GPU info
 			pMsg,
-			aDumpsPath,
-			aCrashReportPath[0] != '\0' ? aCrashReportPath : "unavailable",
-			aCrashLogPath[0] != '\0' ? aCrashLogPath : "not initialized",
 			CONF_PLATFORM_STRING, CONF_ARCH_ENDIAN_STRING,
 			GAME_NAME, GAME_RELEASE_VERSION, GIT_SHORTREV_HASH != nullptr ? GIT_SHORTREV_HASH : "",
 			aOsVersionString,
 			aGpuInfo);
-
-#if defined(CONF_FAMILY_WINDOWS)
-		char aDetailedMessageForWindows[16384];
-		NormalizeLineEndingsForWindows(aDetailedMessage, aDetailedMessageForWindows, sizeof(aDetailedMessageForWindows));
-		const char *pDetailedMessage = aDetailedMessageForWindows;
-#else
-		const char *pDetailedMessage = aDetailedMessage;
-#endif
-
-		// Also log all of this information to the assertion log file.
-		log_error("assertion", "%s", pDetailedMessage);
-
-		bool WroteCrashReport = false;
-		if(HasStorage)
-		{
-			IOHANDLE FileHandle = pClient->Storage()->OpenFile(aCrashReportRelPath, IOFLAG_WRITE, IStorage::TYPE_SAVE);
-			if(FileHandle)
-			{
-				io_write(FileHandle, pDetailedMessage, str_length(pDetailedMessage));
-				io_sync(FileHandle);
-				io_close(FileHandle);
-				WroteCrashReport = true;
-			}
-		}
-
-#if defined(CONF_FAMILY_WINDOWS)
-		const ECrashReportDialogAction Action = ShowCrashReportDialogWindows("BestClient Crash Handler", pDetailedMessage, HasStorage, HasStorage);
-		if(Action == ECrashReportDialogAction::OPEN_DUMPS_FOLDER && HasStorage)
-		{
-			pClient->ViewFile(aDumpsPath);
-		}
-		else if(Action == ECrashReportDialogAction::RESTART_GAME && HasStorage)
-		{
-			char aRestartBinaryPath[IO_MAX_PATH_LENGTH];
-			pClient->Storage()->GetBinaryPath(PLAT_CLIENT_EXEC, aRestartBinaryPath, sizeof(aRestartBinaryPath));
-			if(aRestartBinaryPath[0] != '\0')
-			{
-				process_execute(aRestartBinaryPath, EShellExecuteWindowState::FOREGROUND);
-			}
-		}
-#else
-		char aPopupMessage[3072];
-		str_format(aPopupMessage, sizeof(aPopupMessage),
-			"An assertion error occurred and the client must close.\n\n"
-			"Reason:\n"
-			"%s\n\n"
-			"Detailed report: %s\n"
-			"Report folder: %s\n\n"
-			"Please send the report text and all files from the dumps folder.",
-			pMsg,
-			WroteCrashReport ? "saved in dumps folder" : "could not save report file",
-			aDumpsPath);
-
+		// Also log all of this information to the assertion log file
+		log_error("assertion", "%s", aMessage);
 		std::vector<IGraphics::CMessageBoxButton> vButtons;
-		int ShowDumpsButton = -1;
 		// Storage may not have been initialized yet and viewing files is not supported on Android yet
 #if !defined(CONF_PLATFORM_ANDROID)
-		if(HasStorage)
+		if(pClient->Storage() != nullptr)
 		{
-			ShowDumpsButton = vButtons.size();
 			vButtons.push_back({.m_pLabel = "Show dumps"});
 		}
 #endif
 		vButtons.push_back({.m_pLabel = "OK", .m_Confirm = true, .m_Cancel = true});
-		const std::optional<int> MessageResult = pClient->ShowMessageBox({.m_pTitle = "Assertion Error", .m_pMessage = aPopupMessage, .m_vButtons = vButtons});
+		const std::optional<int> MessageResult = pClient->ShowMessageBox({.m_pTitle = "Assertion Error", .m_pMessage = aMessage, .m_vButtons = vButtons});
 #if !defined(CONF_PLATFORM_ANDROID)
-		if(MessageResult && *MessageResult == ShowDumpsButton)
+		if(pClient->Storage() != nullptr && MessageResult && *MessageResult == 0)
 		{
+			char aDumpsPath[IO_MAX_PATH_LENGTH];
+			pClient->Storage()->GetCompletePath(IStorage::TYPE_SAVE, "dumps", aDumpsPath, sizeof(aDumpsPath));
 			pClient->ViewFile(aDumpsPath);
 		}
 #else
 		(void)MessageResult;
-#endif
 #endif
 		// Client will crash due to assertion, don't call PerformAllCleanup in this inconsistent state
 	});
@@ -5465,7 +4999,6 @@ int main(int argc, const char **argv)
 		str_format(aBufName, sizeof(aBufName), "dumps/" GAME_NAME "_%s_crash_log_%s_%d_%s.RTP", CONF_PLATFORM_STRING, aDate, process_id(), GIT_SHORTREV_HASH != nullptr ? GIT_SHORTREV_HASH : "");
 		pStorage->GetCompletePath(IStorage::TYPE_SAVE, aBufName, aBufPath, sizeof(aBufPath));
 		crashdump_init_if_available(aBufPath);
-		str_copy(aCrashLogPath, aBufPath);
 	}
 
 	IConsole *pConsole = CreateConsole(CFGFLAG_CLIENT).release();
@@ -5812,34 +5345,20 @@ int CClient::PredictionMargin() const
 		return 10;
 
 	int PredictionMargin = g_Config.m_ClPredictionMargin;
-	if(!g_Config.m_BcFastInputAutoMargin)
+	if(!g_Config.m_BcAutoMargin)
 		return PredictionMargin;
 
 	int FastInputMargin = 0;
-	if(g_Config.m_TcFastInput)
-	{
-		const int FastInputMode = BcFastInputNormalizedMode(g_Config.m_BcFastInputMode);
-		if(FastInputMode == 0)
-		{
-			FastInputMargin = std::max(0, g_Config.m_TcFastInputAmount);
-		}
-		else if(FastInputMode == 1)
-		{
-			const int DeltaInputAmount = std::max(0, g_Config.m_BcFastInputDeltaInput);
-			FastInputMargin = (DeltaInputAmount + 2) / 5;
-		}
-		else if(FastInputMode == 4)
-		{
-			const int SaikoPlusAmount = std::max(0, g_Config.m_BcSaikoPlusAmount);
-			FastInputMargin = (SaikoPlusAmount + 2) / 5;
-		}
-		else
-		{
-			const int BestInputAmount = std::max(0, g_Config.m_BcBestInputOffset);
-			// Best input is measured in 0.01 ticks, convert it to milliseconds.
-			FastInputMargin = (BestInputAmount + 2) / 5;
-		}
-	}
+	if(g_Config.m_BcInputs == BC_INPUTS_FAST)
+		FastInputMargin = std::max(0, g_Config.m_TcFastInputAmount);
+	else if(g_Config.m_BcInputs == BC_INPUTS_BEST)
+		FastInputMargin = (std::max(0, g_Config.m_BcBestInputAmount) + 2) / 5;
+	else if(g_Config.m_BcInputs == BC_INPUTS_SAIKO)
+		FastInputMargin = (std::max(0, g_Config.m_BcSaikoInputAmount) + 2) / 5;
+	else if(g_Config.m_BcInputs == BC_INPUTS_DELTA)
+		FastInputMargin = (std::max(0, g_Config.m_BcDeltaInputAmount) + 2) / 5;
+	else if(g_Config.m_BcInputs == BC_INPUTS_F)
+		FastInputMargin = (std::max(0, g_Config.m_BcFInputAmount) + 25) / 50;
 
 	const int BaseMargin = std::max(PredictionMargin, FastInputMargin);
 	const int64_t Now = time_get();

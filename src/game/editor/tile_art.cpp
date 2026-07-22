@@ -188,7 +188,7 @@ void CEditor::TileArtCheckColors()
 	else
 	{
 		AddTileArt();
-		m_DuoSession.StartMapTransfer();
+		m_MultiMappingSession.StartMapTransfer();
 	}
 }
 

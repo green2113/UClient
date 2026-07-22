@@ -78,4 +78,20 @@ void ExecuteAndroidServerCommand(const char *pCommand);
  */
 bool IsAndroidServerRunning();
 
+/**
+ * Requests the Android system to install the APK at the given path, replacing
+ * the currently running app once the user confirms the system install dialog.
+ *
+ * @ingroup Android
+ *
+ * The app process is not terminated by this call, the OS replaces the running
+ * process on its own once the installation completes.
+ *
+ * @param pApkPath Absolute path to the downloaded APK file.
+ *
+ * @return `true` if the install dialog was launched, `false` if the
+ * "install unknown apps" permission still needs to be granted by the user.
+ */
+bool InstallAndroidApk(const char *pApkPath);
+
 #endif // ANDROID_ANDROID_MAIN_H

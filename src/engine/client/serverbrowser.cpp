@@ -631,11 +631,11 @@ void CServerBrowser::Filter()
 			}
 		}
 
+		UpdateServerFriends(&Info);
+		UpdateServerBestClients(&Info);
+
 		if(!Filtered)
 		{
-			UpdateServerFriends(&Info);
-			UpdateServerBestClients(&Info);
-
 			if((!g_Config.m_BrFilterFriends || Info.m_FriendState != IFriends::FRIEND_NO) &&
 				(!g_Config.m_BrFilterBestclient || Info.m_HasBestClientPlayers))
 			{

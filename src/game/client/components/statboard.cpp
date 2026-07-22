@@ -305,14 +305,12 @@ void CStatboard::RenderGlobalStats()
 		RenderTools()->RenderTee(pIdleState, &Teeinfo, EMOTE_NORMAL, vec2(1, 0), TeeRenderPos);
 
 		char aBuf[128];
-		char aSanitizedName[MAX_NAME_LENGTH];
-		GameClient()->m_BestClient.SanitizePlayerName(GameClient()->m_aClients[pInfo->m_ClientId].m_aName, aSanitizedName, sizeof(aSanitizedName), pInfo->m_ClientId, true);
 		CTextCursor Cursor;
 		Cursor.SetPosition(vec2(x + 64, y + (LineHeight * 0.95f - FontSize) / 2.f));
 		Cursor.m_FontSize = FontSize;
 		Cursor.m_Flags |= TEXTFLAG_STOP_AT_END;
 		Cursor.m_LineWidth = 220;
-		TextRender()->TextEx(&Cursor, aSanitizedName, -1);
+		TextRender()->TextEx(&Cursor, GameClient()->m_aClients[pInfo->m_ClientId].m_aName, -1);
 
 		px = 325;
 

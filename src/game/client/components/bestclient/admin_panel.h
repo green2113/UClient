@@ -9,15 +9,52 @@
 #include <game/client/ui.h>
 
 #include <array>
-#include <cstdint>
 #include <deque>
 #include <optional>
 #include <string>
-#include <vector>
 
 class CAdminPanel : public CComponent
 {
 public:
+	enum class EAction
+	{
+		NONE = 0,
+		MUTE,
+		BAN,
+		KICK,
+		RESPAWN,
+		FORCE_PAUSE,
+		SAY,
+		SAY_TEAM,
+		BROADCAST,
+	};
+
+	enum class EActionField
+	{
+		NONE = 0,
+		MESSAGE,
+		REASON,
+		REASON_DURATION_SECONDS,
+		REASON_DURATION_MINUTES,
+		DURATION_SECONDS,
+	};
+
+	enum
+	{
+		AUTH_FALLBACK_HELPER = 1,
+		AUTH_FALLBACK_MOD = 2,
+		AUTH_FALLBACK_ADMIN = 3,
+	};
+
+	struct SActionSpec
+	{
+		EAction m_Action;
+		const char *m_pCommand;
+		int m_FallbackAuth;
+		bool m_NeedsPlayer;
+		EActionField m_Field;
+	};
+
 	CAdminPanel();
 	int Sizeof() const override { return sizeof(*this); }
 
@@ -32,72 +69,79 @@ public:
 	bool IsActive() const { return m_Active; }
 
 private:
+	enum class ETab
+	{
+		PLAYERS = 0,
+		TUNINGS,
+		LOGS,
+		COUNT,
+	};
+
+	struct SLogLine
+	{
+		std::string m_Text;
+		char m_aTime[9];
+	};
+
 	static void ConToggleAdminPanel(IConsole::IResult *pResult, void *pUserData);
 
 	void SetActive(bool Active);
 	void SetUiMousePos(vec2 Pos);
+	void CloseActionPopup();
+	void OpenActionPopup(const SActionSpec &Spec, int ClientId);
 
 	void RenderPanel(const CUIRect &Screen);
-	void RenderPlayerActions(CUIRect View, int ClientId, int LocalAuth);
-	void RenderPlayerInfo(CUIRect View, int ClientId);
-	void RenderPlayerList(CUIRect View);
 	void RenderRconLogin(CUIRect View);
+	void RenderTabs(CUIRect TabBar);
+	void RenderPlayersTab(CUIRect View);
+	void RenderPlayerActions(CUIRect View);
+	void RenderPlayerListAndInfo(CUIRect View);
+	void RenderPlayerInfo(CUIRect View, int ClientId);
+	void RenderTunings(CUIRect View);
 	void RenderLogs(CUIRect View);
-	void RenderFastActions(CUIRect View, int LocalAuth);
-	void RenderTunings(CUIRect View, int LocalAuth);
-	void RenderVoiceMod(CUIRect View);
-	void RenderActionPopup(const CUIRect &Screen, int LocalAuth);
-	void OpenActionPopup(int ClientId, int ActionType);
-	void CloseActionPopup();
+	void RenderActionPopup(const CUIRect &Screen);
+
+	bool HasCommand(const char *pCommand, int FallbackAuth) const;
+	bool HasActionCommand(const SActionSpec &Spec) const;
+	bool IsActionEnabled(const SActionSpec &Spec, int ClientId) const;
+	bool HasPlayer(int ClientId) const;
+	int LocalAuthLevel() const;
+	bool TryBuildActionCommand(char *pBuffer, int BufferSize) const;
 
 	bool m_Active = false;
 	bool m_MouseUnlocked = false;
 	std::optional<vec2> m_LastMousePos;
 	int m_SelectedClientId = -1;
-	int m_ActiveTab = 0;
-	float m_OpenAnimation = 0.0f;
-	float m_SizeAnimation = 0.0f;
-	static constexpr int MAX_FAST_ACTIONS = 10;
+	ETab m_ActiveTab = ETab::PLAYERS;
+	int m_SelectedTuning = -1;
+	int m_LastSelectedTuning = -1;
 
 	CLineInputBuffered<64> m_RconUserInput;
 	CLineInputBuffered<64> m_RconPassInput;
 	CLineInputBuffered<64> m_TuningSearchInput;
 	CLineInputBuffered<64> m_TuningValueInput;
-	CLineInputBuffered<96> m_FastActionInput;
-	CLineInputBuffered<64> m_FastActionSearchInput;
-	int m_FastActionEditIndex = -1;
-	int m_SelectedTuning = -1;
-	int m_LastSelectedTuning = -1;
-	struct SLogLine
-	{
-		std::string m_Text;
-		char m_aTime[9]; // "HH:MM:SS"
-	};
+	CLineInputBuffered<96> m_ActionReasonInput;
+	CLineInputBuffered<16> m_ActionDurationInput;
+
 	std::deque<SLogLine> m_RconLogLines;
 
 	CButtonContainer m_TabPlayersButton;
-	CButtonContainer m_TabInfoButton;
 	CButtonContainer m_TabTuningsButton;
-	CButtonContainer m_TabFastActionsButton;
 	CButtonContainer m_TabLogsButton;
-	CButtonContainer m_TabVoiceButton;
-
 	CButtonContainer m_RconLoginButton;
 	CButtonContainer m_RconLogoutButton;
-	CButtonContainer m_RconLogButton;
-	CButtonContainer m_SettingsButton;
-	CButtonContainer m_FastActionAddButton;
+	CButtonContainer m_ClearLogsButton;
 
-	CButtonContainer m_MuteButton;
 	CButtonContainer m_SayButton;
 	CButtonContainer m_SayTeamButton;
 	CButtonContainer m_BroadcastButton;
+	CButtonContainer m_MuteButton;
 	CButtonContainer m_UnmuteButton;
 	CButtonContainer m_VoteMuteButton;
 	CButtonContainer m_VoteUnmuteButton;
-	CButtonContainer m_KickButton;
 	CButtonContainer m_BanButton;
-	CButtonContainer m_KillButton;
+	CButtonContainer m_KickButton;
+	CButtonContainer m_RespawnButton;
 	CButtonContainer m_ForcePauseButton;
 	CButtonContainer m_ForceUnpauseButton;
 	CButtonContainer m_SpectateButton;
@@ -109,30 +153,14 @@ private:
 	CButtonContainer m_TuningResetButton;
 	CButtonContainer m_TuningResetAllButton;
 
-	std::array<CButtonContainer, MAX_FAST_ACTIONS> m_FastActionRunButtons;
-	std::array<CButtonContainer, MAX_FAST_ACTIONS> m_FastActionEditButtons;
-	std::array<CButtonContainer, MAX_FAST_ACTIONS> m_FastActionRemoveButtons;
-
-	CLineInputBuffered<96> m_ActionReasonInput;
-	CLineInputBuffered<16> m_ActionDurationInput;
-	CUi::SColorPickerPopupContext m_ColorPickerPopupContext;
-	int m_ActionPopupType = 0;
+	EAction m_ActionPopupType = EAction::NONE;
 	int m_ActionPopupClientId = -1;
-	float m_ActionPopupAnim = 0.0f;
-	bool m_ActionPopupClosing = false;
-
+	const SActionSpec *m_pActionPopupSpec = nullptr;
 	CButtonContainer m_ActionConfirmButton;
 	CButtonContainer m_ActionCancelButton;
 	CButtonContainer m_ActionPresetShortButton;
 	CButtonContainer m_ActionPresetMidButton;
 	CButtonContainer m_ActionPresetLongButton;
-
-	// Voice mod tab
-	CLineInputBuffered<128> m_VoiceModKeyInput;
-	CButtonContainer m_VoiceModAuthButton;
-	CButtonContainer m_VoiceModRefreshButton;
-	std::vector<CButtonContainer> m_vVoiceModMuteButtons;
-	int64_t m_LastVoiceModRefreshTick = 0;
 };
 
 #endif // GAME_CLIENT_COMPONENTS_BESTCLIENT_ADMIN_PANEL_H

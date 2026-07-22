@@ -35,12 +35,29 @@ class CDiscord : public IDiscord
 	int64_t m_LastActivityUpdate = 0;
 	bool m_ShowMap = true;
 
-	IDiscordCore *m_pCore;
+	IDiscordCore *m_pCore = nullptr;
 	IDiscordActivityEvents m_ActivityEvents;
-	IDiscordActivityManager *m_pActivityManager;
+	IDiscordActivityManager *m_pActivityManager = nullptr;
 
-	FDiscordCreate m_pfnDiscordCreate;
-	bool m_Enabled;
+	FDiscordCreate m_pfnDiscordCreate = nullptr;
+	bool m_Enabled = false;
+
+	void SetSkinImage(const char *pSkinName)
+	{
+		if(!pSkinName || pSkinName[0] == '\0')
+			return;
+
+		constexpr char SKIN_URL_PREFIX[] = "https://best-client-api.vercel.app/api/assemble-foot/";
+		constexpr char SKIN_URL_SUFFIX[] = ".png";
+		const int MaxEscapedSkinNameLength = (int)sizeof(m_Activity.assets.small_image) -
+			(int)sizeof(SKIN_URL_PREFIX) - (int)sizeof(SKIN_URL_SUFFIX) + 1;
+		char aEscapedSkinName[128];
+		EscapeUrl(aEscapedSkinName, sizeof(aEscapedSkinName), pSkinName);
+		if(aEscapedSkinName[0] == '\0' || str_length(aEscapedSkinName) > MaxEscapedSkinNameLength)
+			str_copy(aEscapedSkinName, "default", sizeof(aEscapedSkinName));
+
+		str_format(m_Activity.assets.small_image, sizeof(m_Activity.assets.small_image), "%s%s%s", SKIN_URL_PREFIX, aEscapedSkinName, SKIN_URL_SUFFIX);
+	}
 
 public:
 	bool Init(FDiscordCreate pfnDiscordCreate)
@@ -54,8 +71,8 @@ public:
 		if(m_pCore)
 		{
 			m_pCore->destroy(m_pCore);
-			m_pCore = 0;
-			m_pActivityManager = 0;
+			m_pCore = nullptr;
+			m_pActivityManager = nullptr;
 		}
 		if(!m_Enabled)
 			return false;
@@ -63,7 +80,7 @@ public:
 		mem_zero(&m_ActivityEvents, sizeof(m_ActivityEvents));
 
 		m_ActivityEvents.on_activity_join = &CDiscord::OnActivityJoin;
-		m_pActivityManager = 0;
+		m_pActivityManager = nullptr;
 
 		DiscordCreateParams Params;
 		DiscordCreateParamsSetDefault(&Params);
@@ -78,11 +95,25 @@ public:
 
 		if(Error != DiscordResult_Ok)
 		{
+			m_pCore = nullptr;
 			dbg_msg("discord", "error initializing discord instance, error=%d", Error);
 			return true;
 		}
 
+		if(!m_pCore)
+		{
+			dbg_msg("discord", "discord initialization returned no core");
+			return true;
+		}
+
 		m_pActivityManager = m_pCore->get_activity_manager(m_pCore);
+		if(!m_pActivityManager)
+		{
+			dbg_msg("discord", "discord initialization returned no activity manager");
+			m_pCore->destroy(m_pCore);
+			m_pCore = nullptr;
+			return true;
+		}
 
 		// which application to launch when joining activity
 		m_pActivityManager->register_command(m_pActivityManager, CONNECTLINK_DOUBLE_SLASH);
@@ -143,17 +174,7 @@ public:
 		m_Activity.instance = true;
 		m_ShowMap = ShowMap;
 
-		if(pSkinName && pSkinName[0] != '\0')
-		{
-			char aEscapedSkinName[128];
-			EscapeUrl(aEscapedSkinName, sizeof(aEscapedSkinName), pSkinName);
-			if(aEscapedSkinName[0] == '\0')
-				str_copy(aEscapedSkinName, "default", sizeof(aEscapedSkinName));
-
-			char aSkinUrl[256];
-			str_format(aSkinUrl, sizeof(aSkinUrl), "https://best-client-api.vercel.app/api/assemble-foot/%s.png", aEscapedSkinName);
-			str_copy(m_Activity.assets.small_image, aSkinUrl, sizeof(m_Activity.assets.small_image));
-		}
+		SetSkinImage(pSkinName);
 
 		if(pPlayerName && pPlayerName[0] != '\0')
 		{
@@ -197,17 +218,7 @@ public:
 
 		UpdateServerIp(ServerInfo);
 
-		if(pSkinName && pSkinName[0] != '\0')
-		{
-			char aEscapedSkinName[128];
-			EscapeUrl(aEscapedSkinName, sizeof(aEscapedSkinName), pSkinName);
-			if(aEscapedSkinName[0] == '\0')
-				str_copy(aEscapedSkinName, "default", sizeof(aEscapedSkinName));
-
-			char aSkinUrl[256];
-			str_format(aSkinUrl, sizeof(aSkinUrl), "https://best-client-api.vercel.app/api/assemble-foot/%s.png", aEscapedSkinName);
-			str_copy(m_Activity.assets.small_image, aSkinUrl, sizeof(m_Activity.assets.small_image));
-		}
+		SetSkinImage(pSkinName);
 		if(pPlayerName && pPlayerName[0] != '\0')
 		{
 			str_copy(m_Activity.assets.small_text, pPlayerName, sizeof(m_Activity.assets.small_text));
@@ -221,7 +232,6 @@ public:
 				str_copy(m_Activity.state, pDisplayMap, sizeof(m_Activity.state));
 			}
 		}
-		m_Activity.party.size.current_size = ServerInfo.m_NumClients;
 		m_Activity.party.size.max_size = ServerInfo.m_MaxClients;
 		m_UpdateActivity = true;
 	}
@@ -267,9 +277,13 @@ public:
 
 	static void DISCORD_CALLBACK OnActivityJoin(void *pEventData, const char *pSecret)
 	{
+		if(!pEventData || !pSecret || pSecret[0] == '\0')
+			return;
+
 		CDiscord *pSelf = static_cast<CDiscord *>(pEventData);
-		IClient *m_pClient = pSelf->Kernel()->RequestInterface<IClient>();
-		m_pClient->Connect(pSecret);
+		IClient *pClient = pSelf->Kernel()->RequestInterface<IClient>();
+		if(pClient)
+			pClient->Connect(pSecret);
 	}
 
 	~CDiscord()

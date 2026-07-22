@@ -28,16 +28,7 @@
 
 // components
 #include "components/background.h"
-#include "components/bestclient/3d_particles.h"
-#include "components/bestclient/admin_panel.h"
 #include "components/bestclient/bestclient.h"
-#include "components/bestclient/clientindicator/client_indicator.h"
-#include "components/bestclient/fast_actions.h"
-#include "components/bestclient/fast_practice.h"
-#include "components/bestclient/hud_editor.h"
-#include "components/bestclient/music_player.h"
-#include "components/bestclient/translate.h"
-#include "components/bestclient/voice/voice.h"
 #include "components/uclient/timeout_reconnect.h"
 #include "components/uclient/uclient.h"
 #include "components/binds.h"
@@ -77,6 +68,7 @@
 #include "components/sounds.h"
 #include "components/spectator.h"
 #include "components/statboard.h"
+#include "components/bestclient/clientindicator/client_indicator.h"
 #include "components/tclient/bg_draw.h"
 #include "components/tclient/bindchat.h"
 #include "components/tclient/bindwheel.h"
@@ -93,12 +85,29 @@
 #include "components/tclient/statusbar.h"
 #include "components/tclient/tclient.h"
 #include "components/tclient/trails.h"
+#include "components/bestclient/3d_particles.h"
+#include "components/bestclient/admin_panel.h"
+#include "components/bestclient/cherry_gifs.h"
+#include "components/bestclient/chat_bubbles.h"
+#include "components/bestclient/fast_actions.h"
+#include "components/bestclient/fast_practice.h"
+#include "components/bestclient/gif_bubbles.h"
+#include "components/bestclient/gif_wheel.h"
+#include "components/bestclient/gradient.h"
+#include "components/bestclient/hookcombo.h"
+#include "components/bestclient/hud_editor.h"
+#include "components/bestclient/music_player.h"
+#include "components/bestclient/quick_binds.h"
+#include "components/bestclient/rollback_demo.h"
+#include "components/bestclient/self_time_cp.h"
+#include "components/bestclient/translate.h"
+#include "components/bestclient/voice/voice.h"
+#include "components/bestclient/clans/clans.h"
 #include "components/tclient/warlist.h"
 #include "components/tooltips.h"
 #include "components/touch_controls.h"
 #include "components/voting.h"
 
-#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -174,7 +183,7 @@ class CGameClient : public IGameClient
 {
 public:
 	friend class CTClient;
-	friend class CFastPractice;
+	friend class CFastPractice; // BestClient
 
 	// all components
 	CInfoMessages m_InfoMessages;
@@ -222,15 +231,6 @@ public:
 
 	CRaceDemo m_RaceDemo;
 	CGhost m_Ghost;
-	C3DParticles m_3DParticles;
-	CClientIndicator m_ClientIndicator;
-	CMusicPlayer m_MusicPlayer;
-	CHudEditor m_HudEditor;
-	CAdminPanel m_AdminPanel;
-	CFastActions m_FastActions;
-	CFastPractice m_FastPractice;
-	CBestClient m_BestClient;
-	CVoiceChat m_VoiceChat;
 
 	CTooltips m_Tooltips;
 
@@ -241,10 +241,29 @@ public:
 	CStatusBar m_StatusBar;
 	CBindChat m_BindChat;
 	CBindWheel m_BindWheel;
+	CFastActions m_FastActions; // BestClient
+	CCherryGifs m_CherryGifs; // BestClient
+	CGifWheel m_GifWheel; // BestClient
+	CGifBubbles m_GifBubbles; // BestClient
+	CChatBubbles m_ChatBubbles; // BestClient
+	CFastPractice m_FastPractice; // BestClient
 	CBgDraw m_BgDraw;
 	CTClient m_TClient;
 	CTrails m_Trails;
 	CTranslate m_Translate;
+	CHookCombo m_HookCombo;
+	CBcGradient m_BcGradient;
+	C3DParticles m_3DParticles;
+	CRollbackDemo m_RollbackDemo; // BestClient
+	CQuickBinds m_QuickBinds; // BestClient
+	CSelfTimeCp m_SelfTimeCp; // BestClient
+	CClientIndicator m_ClientIndicator; // BestClient
+	CMusicPlayer m_MusicPlayer; // BestClient
+	CAdminPanel m_AdminPanel; // BestClient
+	CBestClient m_BestClient; // BestClient binds
+	CVoiceChat m_VoiceChat; // BestClient
+	CClans m_Clans; // BestClient
+	CHudEditor m_HudEditor; // BestClient
 	CPet m_Pet;
 	CPlayerIndicator m_PlayerIndicator;
 	COutlines m_Outlines;
@@ -254,8 +273,8 @@ public:
 	CScripting m_Scripting;
 	CMod m_Mod;
 	CCustomCommunities m_CustomCommunities;
-	CMovingTiles m_MovingTilesBackground = CMovingTiles{false};
-	CMovingTiles m_MovingTilesForeground = CMovingTiles{true};
+	CMovingTiles m_MovingTilesBackground = CMovingTiles{ false };
+	CMovingTiles m_MovingTilesForeground = CMovingTiles{ true };
 
 private:
 	std::vector<class CComponent *> m_vpAll;
@@ -299,6 +318,7 @@ private:
 	void UpdateAutoLoginKog();
 	void OptimizerUpdateProcessPriorities();
 	void RenderOptimizerFpsFogRect();
+	void UpdateSpecMovedNotify();
 
 	int m_EditorMovementDelay = 5;
 	void UpdateEditorIngameMoved();
@@ -313,11 +333,6 @@ private:
 	int m_LastFlagCarrierBlue;
 
 	int m_aCheckInfo[NUM_DUMMIES];
-	unsigned long m_OptimizerDdnetPrevPriorityClass = 0;
-	unsigned long m_OptimizerDdnetLastSetPriorityClass = 0; // cache: last value passed to SetPriorityClass for current process
-	bool m_OptimizerDdnetPriorityHighActive = false;
-	bool m_OptimizerDiscordPriorityBelowNormalActive = false;
-	float m_OptimizerDiscordPriorityLastUpdateTime = -1.0f;
 
 	char m_aDDNetVersionStr[64];
 	static void ConTeam(IConsole::IResult *pResult, void *pUserData);
@@ -396,7 +411,7 @@ public:
 	bool m_SuppressEvents;
 	bool m_NewTick;
 	bool m_NewPredictedTick;
-	bool m_aPredictedHammerHitEvent[NUM_DUMMIES];
+	bool m_aPredictedHammerHitEvent[NUM_DUMMIES]; // BestClient: hook combo (hammer mode)
 	int m_aFlagDropTick[2];
 
 	enum
@@ -707,7 +722,7 @@ public:
 	void OnActivateEditor() override;
 	void OnDummySwap() override;
 	int OnSnapInput(int *pData, bool Dummy, bool Force) override;
-	void PrepareInputForSend(int *pData, int Size, bool Dummy) override;
+	void PrepareInputForSend(int *pData, int Size, bool Dummy) override; // BestClient
 	void OnShutdown() override;
 	void OnEnterGame() override;
 	void OnRconType(bool UsernameReq) override;
@@ -743,6 +758,13 @@ public:
 	const char *DDNetVersionStr() const override;
 	int ClientVersion7() const override;
 
+	// BestClient: optimizer
+	bool OptimizerEnabled() const;
+	bool OptimizerDisableParticles() const;
+	bool OptimizerFpsFogEnabled() const;
+	void OptimizerFpsFogHalfExtents(float &HalfW, float &HalfH) const;
+	bool OptimizerAllowRenderPos(vec2 WorldPos) const;
+
 	void DoTeamChangeMessage7(const char *pName, int ClientId, int Team, const char *pPrefix = "");
 
 	// actions
@@ -755,7 +777,6 @@ public:
 	void SendInfo(bool Start);
 	void SendDummyInfo(bool Start) override;
 	void SendKill();
-	void SendKill() const;
 	void SendReadyChange7();
 
 	void ApplyPreInputs(int Tick, bool Direct, CGameWorld &GameWorld);
@@ -790,20 +811,14 @@ public:
 
 	bool IsTeamPlay() const { return m_Snap.m_pGameInfoObj && m_Snap.m_pGameInfoObj->m_GameFlags & GAMEFLAG_TEAMS; }
 
-	bool AntiPingPlayers() const { return m_FastPractice.ForcePredictPlayers() || (g_Config.m_ClAntiPing && g_Config.m_ClAntiPingPlayers && !m_Snap.m_SpecInfo.m_Active && Client()->State() != IClient::STATE_DEMOPLAYBACK && (m_aTuning[g_Config.m_ClDummy].m_PlayerCollision || m_aTuning[g_Config.m_ClDummy].m_PlayerHooking)); }
+	bool AntiPingPlayers() const { return m_FastPractice.ForcePredictPlayers() || (g_Config.m_ClAntiPing && g_Config.m_ClAntiPingPlayers && !m_Snap.m_SpecInfo.m_Active && Client()->State() != IClient::STATE_DEMOPLAYBACK); }
 	bool AntiPingGrenade() const { return m_FastPractice.ForcePredictGrenade() || (g_Config.m_ClAntiPing && g_Config.m_ClAntiPingGrenade && !m_Snap.m_SpecInfo.m_Active && Client()->State() != IClient::STATE_DEMOPLAYBACK); }
 	bool AntiPingWeapons() const { return m_FastPractice.ForcePredictWeapons() || (g_Config.m_ClAntiPing && g_Config.m_ClAntiPingWeapons && !m_Snap.m_SpecInfo.m_Active && Client()->State() != IClient::STATE_DEMOPLAYBACK); }
 	bool AntiPingGunfire() const { return m_FastPractice.ForcePredictGunfire() || (AntiPingGrenade() && AntiPingWeapons() && g_Config.m_ClAntiPingGunfire); }
-	bool OptimizerEnabled() const;
-	bool OptimizerDisableParticles() const;
-	bool OptimizerFpsFogEnabled() const;
-	void OptimizerFpsFogHalfExtents(float &HalfW, float &HalfH) const;
-	bool OptimizerAllowRenderPos(vec2 WorldPos) const;
-	void OptimizerSetDdnetPriorityHigh();
-	void OptimizerSetDiscordPriorityBelowNormal();
 	bool Predict() const;
 	bool PredictDummy() const
 	{
+		// BestClient: in fast practice the predicted dummy is a fixed practice participant
 		if(m_FastPractice.Enabled())
 		{
 			const int FastPracticeDummyId = m_FastPractice.CurrentPracticeDummyId();
@@ -830,6 +845,7 @@ public:
 	std::vector<SSwitchers> &PredSwitchers() { return m_PredictedWorld.m_Core.m_vSwitchers; }
 
 	void DummyResetInput() override;
+	void RenderSpecMovedNotify();
 	void Echo(const char *pString) override;
 	void Broadcast(const char *pString) override;
 	bool IsOtherTeam(int ClientId) const;
@@ -850,7 +866,6 @@ public:
 	void LoadExtrasSkin(const char *pPath, bool AsDir = false);
 	void LoadCursorAsset(const char *pPath, bool AsDir = false);
 	void LoadArrowAsset(const char *pPath, bool AsDir = false);
-
 	IGraphics::CTextureHandle CursorTexture() const;
 	IGraphics::CTextureHandle ArrowTexture() const;
 
@@ -1017,12 +1032,6 @@ public:
 	SClientExtrasSkin m_ExtrasSkin;
 	bool m_ExtrasSkinLoaded = false;
 
-	IGraphics::CTextureHandle m_CursorTextureOverride;
-	bool m_CursorTextureOverrideLoaded = false;
-
-	IGraphics::CTextureHandle m_ArrowTextureOverride;
-	bool m_ArrowTextureOverrideLoaded = false;
-
 	const std::vector<CSnapEntities> &SnapEntities() { return m_vSnapEntities; }
 
 	vec2 GetSmoothPos(int ClientId);
@@ -1045,6 +1054,11 @@ public:
 private:
 	std::unique_ptr<IMap> m_pMap;
 
+	IGraphics::CTextureHandle m_CursorTextureOverride;
+	bool m_CursorTextureOverrideLoaded = false;
+	IGraphics::CTextureHandle m_ArrowTextureOverride;
+	bool m_ArrowTextureOverrideLoaded = false;
+
 	std::vector<CSnapEntities> m_vSnapEntities;
 	void SnapCollectEntities();
 
@@ -1061,11 +1075,26 @@ private:
 	void UpdateRenderedCharacters();
 	void HandlePredictedEvents(int Tick);
 
+	void RenderEyeComfortOverlay(); // BestClient
+
+	// BestClient: optimizer
+	void OptimizerSetDdnetPriorityHigh();
+	void OptimizerSetDiscordPriorityBelowNormal();
+	void OptimizerUpdateProcessPriorities();
+	void RenderOptimizerFpsFogRect();
+	unsigned long m_OptimizerDdnetPrevPriorityClass = 0;
+	unsigned long m_OptimizerDdnetLastSetPriorityClass = 0;
+	bool m_OptimizerDdnetPriorityHighActive = false;
+	bool m_OptimizerDiscordPriorityBelowNormalActive = false;
+	std::vector<unsigned long> m_vOptimizerDiscordPids;
+	float m_OptimizerDiscordLastRescanTime = -1.0f;
+	float m_OptimizerDiscordLastReapplyTime = -1.0f;
+
 	int m_aLastUpdateTick[MAX_CLIENTS] = {0};
 	void DetectStrongHook();
 
 	int m_IsDummySwapping;
-	int m_PredictedDummyId = -1;
+	int m_PredictedDummyId = -1; // BestClient
 	int m_aAutoTeamLockLastTeam[NUM_DUMMIES];
 	int64_t m_aAutoTeamLockDeadlineTick[NUM_DUMMIES];
 	bool m_aAutoTeamLockPending[NUM_DUMMIES];
@@ -1075,6 +1104,9 @@ private:
 	int64_t m_aAutoLoginJapanDeadlineTick[NUM_DUMMIES] = {0, 0};
 	char m_aAutoLoginKogSentServer[NETADDR_MAXSTRSIZE] = "";
 	int64_t m_AutoLoginKogDeadlineTick = 0;
+	int m_SpecMovedActiveTick = -1;
+	int m_SpecMovedLastTick = -1;
+	float m_SpecMovedNotifyTime = -999.0f;
 	CCharOrder m_CharOrder;
 	int m_aSwitchStateTeam[NUM_DUMMIES];
 
