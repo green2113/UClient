@@ -1038,6 +1038,15 @@ void CChat::ConchainUcChatShowSameServerOnly(IConsole::IResult *pResult, void *p
 		g_Config.m_UcChatSendSameServerOnly = 1;
 }
 
+void CChat::ConchainUcChatSendSameServerOnly(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
+{
+	const int OldSend = g_Config.m_UcChatSendSameServerOnly;
+	pfnCallback(pResult, pCallbackUserData);
+	// Turning send off while show is on also clears show (they stay coupled).
+	if(OldSend && !g_Config.m_UcChatSendSameServerOnly && g_Config.m_UcChatShowSameServerOnly)
+		g_Config.m_UcChatShowSameServerOnly = 0;
+}
+
 void CChat::Echo(const char *pString)
 {
 	AddLine(CLIENT_MSG, 0, pString);
@@ -1064,6 +1073,7 @@ void CChat::OnInit()
 	Console()->Chain("cl_chat_width", ConchainChatWidth, this);
 	Console()->Chain("bc_regex_player_whitelist", ConchainRegexPlayerWhitelist, this);
 	Console()->Chain("uc_chat_show_same_server_only", ConchainUcChatShowSameServerOnly, this);
+	Console()->Chain("uc_chat_send_same_server_only", ConchainUcChatSendSameServerOnly, this);
 
 	if(g_Config.m_BcRegexPlayerWhitelist[0])
 	{
@@ -2703,19 +2713,6 @@ static float ReplyQuoteTextStartOffset(float TeeSize, float FontSize)
 	return TeeSize * 0.5f + ReplyQuoteDashLength(FontSize) + FontSize * REPLY_QUOTE_TEXT_GAP_FACTOR;
 }
 
-// Remote UClient lines use CLIENT_MSG but still show a tee + "Name: text" like normal chat.
-bool CChat::LineNeedsNameColon(const CLine &Line)
-{
-	return Line.m_aName[0] != '\0' && (Line.m_ClientId >= 0 || Line.m_UClient);
-}
-
-bool CChat::LineNeedsTeePadding(const CLine &Line)
-{
-	if(g_Config.m_ClChatOld || Line.m_aName[0] == '\0')
-		return false;
-	return Line.m_ClientId >= 0 || (Line.m_UClient && Line.m_pManagedTeeRenderInfo != nullptr);
-}
-
 static void RenderReplyQuoteConnector(IGraphics *pGraphics, float TeeCenterX, float QuoteY, float QuoteLineH, float QuoteBlockH, float FontSize, float Blend)
 {
 	const float DashLength = ReplyQuoteDashLength(FontSize);
@@ -3056,6 +3053,19 @@ static bool IsDirectDownloadPath(std::string_view Url)
 // ---- end URL click helpers ----
 
 } // namespace
+
+// Remote UClient lines use CLIENT_MSG but still show a tee + "Name: text" like normal chat.
+bool CChat::LineNeedsNameColon(const CLine &Line)
+{
+	return Line.m_aName[0] != '\0' && (Line.m_ClientId >= 0 || Line.m_UClient);
+}
+
+bool CChat::LineNeedsTeePadding(const CLine &Line)
+{
+	if(g_Config.m_ClChatOld || Line.m_aName[0] == '\0')
+		return false;
+	return Line.m_ClientId >= 0 || (Line.m_UClient && Line.m_pManagedTeeRenderInfo != nullptr);
+}
 
 bool CChat::IsDirectMediaUrl(const char *pUrl)
 {

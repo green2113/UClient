@@ -437,9 +437,10 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
 				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
 
-				// "채팅 보기" (show) can auto-couple "유저 전송" (send):
-				// show 0→1 with send 0 => send 1 (coupled); show 1→0 then also clears send.
-				// show 0→1 with send already 1 => leave send alone (not coupled).
+				// "채팅 보기" (show) couples with "유저 전송" (send):
+				// show 0→1 with send 0 => send 1
+				// send 1→0 while show 1 => show 0
+				// show 1→0 while send was auto-coupled => send 0
 				static bool s_UcChatSendCoupledWithShow = false;
 				const int OldShow = g_Config.m_UcChatShowSameServerOnly;
 				const int OldSend = g_Config.m_UcChatSendSameServerOnly;
@@ -447,8 +448,15 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcChatSendSameServerOnly, "Only send to users on the same server", &g_Config.m_UcChatSendSameServerOnly, &Expand, LineSize);
 				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcChatShowSameServerOnly, "Only show chats from users on the same server", &g_Config.m_UcChatShowSameServerOnly, &Expand, LineSize);
 
-				if(g_Config.m_UcChatSendSameServerOnly != OldSend)
+				if(OldSend && !g_Config.m_UcChatSendSameServerOnly && g_Config.m_UcChatShowSameServerOnly)
+				{
+					g_Config.m_UcChatShowSameServerOnly = 0;
 					s_UcChatSendCoupledWithShow = false;
+				}
+				else if(g_Config.m_UcChatSendSameServerOnly != OldSend)
+				{
+					s_UcChatSendCoupledWithShow = false;
+				}
 
 				if(g_Config.m_UcChatShowSameServerOnly != OldShow)
 				{
