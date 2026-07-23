@@ -14,6 +14,7 @@ class CPresenceCache
 public:
 	void Clear();
 	bool SetServerAddress(const std::string &ServerAddress);
+	bool SetServerAddress(const char *pServerAddress);
 	const std::string &ServerAddress() const { return m_ServerAddress; }
 	void Replace(const std::vector<int> &vClientIds);
 	void SetPresent(int ClientId, bool Present);

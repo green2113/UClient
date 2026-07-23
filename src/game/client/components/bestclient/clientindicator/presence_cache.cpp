@@ -9,9 +9,16 @@ void CPresenceCache::Clear()
 
 bool CPresenceCache::SetServerAddress(const std::string &ServerAddress)
 {
-	if(m_ServerAddress == ServerAddress)
+	return SetServerAddress(ServerAddress.c_str());
+}
+
+bool CPresenceCache::SetServerAddress(const char *pServerAddress)
+{
+	if(!pServerAddress)
+		pServerAddress = "";
+	if(m_ServerAddress == pServerAddress)
 		return false;
-	m_ServerAddress = ServerAddress;
+	m_ServerAddress = pServerAddress;
 	m_PresentClientIds.clear();
 	return true;
 }

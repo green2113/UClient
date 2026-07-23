@@ -274,6 +274,9 @@ private:
 	bool GetRacePathDistanceForClient(int ClientId, float &Distance) const;
 	bool GetRacePathFromStartForClient(int ClientId, float &Distance) const;
 	bool GetRacePathProgressForClient(int ClientId, float &Progress) const;
+	// Single-sample FromStart + Progress for Back notify (avoids double neighbor search).
+	bool GetRacePathMetricsForClient(int ClientId, float &FromStart, float &Progress) const;
+	bool GetRacePathMetricsAtPos(vec2 Pos, float &FromStart, float &Progress) const;
 	void RenderNotifyWhenBack();
 	float SampleRacePathDistanceField(const std::vector<int> &vDistances, vec2 Pos, bool RequireRacePath = false) const;
 	CUIRect GetFinishPredictionAnchorRect() const;
@@ -293,6 +296,11 @@ private:
 	mutable int m_FinishPredictionMapHeight = 0;
 	mutable int m_FinishPredictionFreezePenalty;
 	mutable int m_FinishPredictionRaceLength;
+	// Avoid rebuilding every frame when a map has no usable start/finish race path.
+	mutable bool m_FinishPredictionBuildFailed = false;
+	mutable int m_FinishPredictionFailedWidth = -1;
+	mutable int m_FinishPredictionFailedHeight = -1;
+	mutable int m_FinishPredictionFailedPenalty = -1;
 	mutable int m_FinishPredictionRaceStartTick = -1;
 	mutable float m_FinishPredictionRaceStartDistance = -1.0f;
 	mutable float m_FinishPredictionLastProgress = 0.0f;

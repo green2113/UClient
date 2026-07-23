@@ -699,6 +699,10 @@ void CHud::OnReset()
 	m_FinishPredictionMapHeight = 0;
 	m_FinishPredictionFreezePenalty = -1;
 	m_FinishPredictionRaceLength = -1;
+	m_FinishPredictionBuildFailed = false;
+	m_FinishPredictionFailedWidth = -1;
+	m_FinishPredictionFailedHeight = -1;
+	m_FinishPredictionFailedPenalty = -1;
 	m_FinishPredictionRaceStartTick = -1;
 	m_FinishPredictionRaceStartDistance = -1.0f;
 	m_FinishPredictionLastProgress = 0.0f;
@@ -1143,17 +1147,47 @@ bool CHud::EnsureFinishPredictionPathData() const
 {
 	if(!Collision() || Collision()->GetWidth() <= 0 || Collision()->GetHeight() <= 0)
 		return false;
-	if(m_FinishPredictionMapWidth != Collision()->GetWidth() ||
-		m_FinishPredictionMapHeight != Collision()->GetHeight() ||
-		m_FinishPredictionFreezePenalty != g_Config.m_UcRacePathFreezePenalty ||
-		m_FinishPredictionRaceLength < 0 ||
-		m_vFinishPredictionDistances.empty() ||
-		m_vRacePathToFinishDistances.empty() ||
-		m_vFinishPredictionFromStartDistances.empty() ||
-		m_vRacePathMainRoute.empty() ||
-		(int)m_vRacePathMainRoute.size() != Collision()->GetWidth() * Collision()->GetHeight())
-		return RebuildFinishPredictionPathData();
-	return !m_vFinishPredictionDistances.empty() && !m_vRacePathToFinishDistances.empty();
+
+	const int MapWidth = Collision()->GetWidth();
+	const int MapHeight = Collision()->GetHeight();
+	const int FreezePenalty = g_Config.m_UcRacePathFreezePenalty;
+
+	if(m_FinishPredictionMapWidth == MapWidth &&
+		m_FinishPredictionMapHeight == MapHeight &&
+		m_FinishPredictionFreezePenalty == FreezePenalty &&
+		m_FinishPredictionRaceLength >= 0 &&
+		!m_vFinishPredictionDistances.empty() &&
+		!m_vRacePathToFinishDistances.empty() &&
+		!m_vFinishPredictionFromStartDistances.empty() &&
+		!m_vRacePathMainRoute.empty() &&
+		(int)m_vRacePathMainRoute.size() == MapWidth * MapHeight)
+	{
+		return true;
+	}
+
+	// Same broken map/settings: do not thrash full Dijkstra every frame (Back / prediction).
+	if(m_FinishPredictionBuildFailed &&
+		m_FinishPredictionFailedWidth == MapWidth &&
+		m_FinishPredictionFailedHeight == MapHeight &&
+		m_FinishPredictionFailedPenalty == FreezePenalty)
+	{
+		return false;
+	}
+
+	if(!RebuildFinishPredictionPathData() || m_FinishPredictionRaceLength < 0)
+	{
+		m_FinishPredictionBuildFailed = true;
+		m_FinishPredictionFailedWidth = MapWidth;
+		m_FinishPredictionFailedHeight = MapHeight;
+		m_FinishPredictionFailedPenalty = FreezePenalty;
+		return false;
+	}
+
+	m_FinishPredictionBuildFailed = false;
+	m_FinishPredictionFailedWidth = -1;
+	m_FinishPredictionFailedHeight = -1;
+	m_FinishPredictionFailedPenalty = -1;
+	return true;
 }
 
 float CHud::SampleRacePathDistanceField(const std::vector<int> &vDistances, vec2 Pos, bool RequireRacePath) const
@@ -1304,6 +1338,103 @@ float CHud::GetRacePathProgressAtPos(vec2 Pos) const
 		return 0.0f;
 	// Local ratio stays valid on long maze routes even when gap shortcuts exist.
 	return std::clamp(FromStart / Total, 0.0f, 1.0f);
+}
+
+bool CHud::GetRacePathMetricsAtPos(vec2 Pos, float &FromStart, float &Progress) const
+{
+	FromStart = -1.0f;
+	Progress = -1.0f;
+	if(m_vRacePathToFinishDistances.empty() || m_vFinishPredictionFromStartDistances.empty() ||
+		m_FinishPredictionMapWidth <= 0 || m_FinishPredictionMapHeight <= 0 ||
+		m_FinishPredictionRaceLength < 0)
+	{
+		return false;
+	}
+
+	const int TileX = std::clamp((int)std::floor(Pos.x / 32.0f), 0, m_FinishPredictionMapWidth - 1);
+	const int TileY = std::clamp((int)std::floor(Pos.y / 32.0f), 0, m_FinishPredictionMapHeight - 1);
+
+	auto IsFreezeTileIndex = [&](int Index) {
+		const int GameTile = Collision()->GetTileIndex(Index);
+		const int FrontTile = Collision()->GetFrontTileIndex(Index);
+		auto IsFreezeType = [](int Tile) {
+			return Tile == TILE_FREEZE || Tile == TILE_DFREEZE || Tile == TILE_LFREEZE;
+		};
+		return IsFreezeType(GameTile) || IsFreezeType(FrontTile);
+	};
+
+	auto FindReferenceIndex = [&](bool SkipFreezeTiles) -> int {
+		int BestIndex = -1;
+		int BestFromStart = -1;
+		float BestOffset = -1.0f;
+		const int MaxRadius = SkipFreezeTiles ? 4 : 2;
+		for(int Radius = 0; Radius <= MaxRadius; ++Radius)
+		{
+			for(int y = maximum(0, TileY - Radius); y <= minimum(m_FinishPredictionMapHeight - 1, TileY + Radius); ++y)
+			{
+				for(int x = maximum(0, TileX - Radius); x <= minimum(m_FinishPredictionMapWidth - 1, TileX + Radius); ++x)
+				{
+					const int Index = y * m_FinishPredictionMapWidth + x;
+					if(!IsRacePathTileIndex(Index))
+						continue;
+					if(SkipFreezeTiles && IsFreezeTileIndex(Index))
+						continue;
+					const int TileFromStart = m_vFinishPredictionFromStartDistances[Index];
+					const float OffsetCost = distance(Pos, vec2(x * 32.0f + 16.0f, y * 32.0f + 16.0f)) / 32.0f;
+					const bool Better = BestIndex < 0 ||
+						(SkipFreezeTiles && (TileFromStart < BestFromStart || (TileFromStart == BestFromStart && OffsetCost < BestOffset))) ||
+						(!SkipFreezeTiles && OffsetCost < BestOffset);
+					if(Better)
+					{
+						BestIndex = Index;
+						BestFromStart = TileFromStart;
+						BestOffset = OffsetCost;
+					}
+				}
+			}
+			if(BestIndex >= 0)
+				break;
+		}
+		return BestIndex;
+	};
+
+	const int CurIndex = TileY * m_FinishPredictionMapWidth + TileX;
+	int RefIndex = -1;
+	if(m_FinishPredictionFreezePenalty > 0)
+		RefIndex = FindReferenceIndex(true);
+	if(RefIndex < 0 && IsRacePathTileIndex(CurIndex))
+		RefIndex = CurIndex;
+	if(RefIndex < 0)
+		RefIndex = FindReferenceIndex(false);
+	if(RefIndex < 0)
+	{
+		FromStart = 0.0f;
+		Progress = 0.0f;
+		return true;
+	}
+
+	FromStart = m_vFinishPredictionFromStartDistances[RefIndex] / 10.0f;
+	const float ToFinish = m_vRacePathToFinishDistances[RefIndex] / 10.0f;
+	if(ToFinish <= 0.0f)
+		Progress = 1.0f;
+	else
+	{
+		const float Total = FromStart + ToFinish;
+		Progress = Total > 0.0f ? std::clamp(FromStart / Total, 0.0f, 1.0f) : 0.0f;
+	}
+	return true;
+}
+
+bool CHud::GetRacePathMetricsForClient(int ClientId, float &FromStart, float &Progress) const
+{
+	FromStart = -1.0f;
+	Progress = -1.0f;
+	vec2 Pos;
+	if(!GetRacePathPosForClient(ClientId, Pos))
+		return false;
+	if(!const_cast<CHud *>(this)->EnsureFinishPredictionPathData())
+		return false;
+	return GetRacePathMetricsAtPos(Pos, FromStart, Progress);
 }
 
 float CHud::GetFinishPredictionStartDistance() const
@@ -1539,7 +1670,7 @@ void CHud::RenderNotifyWhenBack()
 
 	float LocalFromStart = -1.0f;
 	float LocalProgress = -1.0f;
-	if(!GetRacePathFromStartForClient(ViewClientId, LocalFromStart) || !GetRacePathProgressForClient(ViewClientId, LocalProgress))
+	if(!GetRacePathMetricsForClient(ViewClientId, LocalFromStart, LocalProgress))
 		return;
 
 	const float MaxGap = std::clamp(g_Config.m_UcNotifyWhenBackMaxDistance, 1, 100) / 100.0f;
@@ -1586,7 +1717,7 @@ void CHud::RenderNotifyWhenBack()
 
 		float OtherFromStart = -1.0f;
 		float OtherProgress = -1.0f;
-		if(!GetRacePathFromStartForClient(i, OtherFromStart) || !GetRacePathProgressForClient(i, OtherProgress))
+		if(!GetRacePathMetricsAtPos(OtherPos, OtherFromStart, OtherProgress))
 			continue;
 		if(OtherProgress < MinOtherProgress)
 			continue;

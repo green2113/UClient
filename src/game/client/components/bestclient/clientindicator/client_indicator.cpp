@@ -308,6 +308,7 @@ void CClientIndicator::OnReset()
 	m_LastUcPresenceRefreshTick = 0;
 	InvalidateUcPresenceLookupCache();
 	InvalidateUcPeerLookupCache();
+	InvalidateUcClientLookupCache();
 }
 
 void CClientIndicator::OnMapLoad()
@@ -368,6 +369,61 @@ void CClientIndicator::InvalidateUcPeerLookupCache()
 {
 	m_aUcPeerLookupServer[0] = '\0';
 	m_pUcPeersOnCurrentServer = nullptr;
+	InvalidateUcClientLookupCache();
+}
+
+void CClientIndicator::InvalidateUcClientLookupCache() const
+{
+	m_UcClientLookupCacheTick = -1;
+	m_aUcCachedNormalizedServer[0] = '\0';
+	for(int i = 0; i < MAX_CLIENTS; ++i)
+		m_aUcClientLookupCache[i] = -1;
+}
+
+void CClientIndicator::MarkUcLocalSlotJoined(int ClientId)
+{
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return;
+	for(int Slot = 0; Slot < NUM_DUMMIES; ++Slot)
+	{
+		if(GameClient()->m_aLocalIds[Slot] != ClientId)
+			continue;
+		m_aUcLocalSlots[Slot].m_Joined = true;
+		m_aUcLocalSlots[Slot].m_LastClientId = ClientId;
+		return;
+	}
+}
+
+bool CClientIndicator::EnsureCachedUcNormalizedServer(char *pOut, int OutSize) const
+{
+	if(!pOut || OutSize <= 0)
+		return false;
+
+	const int Tick = Client()->GameTick(g_Config.m_ClDummy);
+	if(m_UcClientLookupCacheTick == Tick && m_aUcCachedNormalizedServer[0] != '\0')
+	{
+		str_copy(pOut, m_aUcCachedNormalizedServer, OutSize);
+		return true;
+	}
+
+	char aCurrentServerAddress[NETADDR_MAXSTRSIZE];
+	net_addr_str(&Client()->ServerAddress(), aCurrentServerAddress, sizeof(aCurrentServerAddress), true);
+	if(aCurrentServerAddress[0] == '\0')
+		return false;
+	if(!NormalizePresenceServerAddress(aCurrentServerAddress, m_aUcCachedNormalizedServer, sizeof(m_aUcCachedNormalizedServer)))
+	{
+		m_aUcCachedNormalizedServer[0] = '\0';
+		return false;
+	}
+
+	if(m_UcClientLookupCacheTick != Tick)
+	{
+		m_UcClientLookupCacheTick = Tick;
+		for(int i = 0; i < MAX_CLIENTS; ++i)
+			m_aUcClientLookupCache[i] = -1;
+	}
+	str_copy(pOut, m_aUcCachedNormalizedServer, OutSize);
+	return true;
 }
 
 void CClientIndicator::OnStateChange(int NewState, int OldState)
@@ -859,12 +915,17 @@ void CClientIndicator::EnsureUcPresenceSocket()
 		return;
 	}
 
+	// Reuse the last successful parse while the config string is unchanged.
+	if(m_HasUcServerAddr && str_comp(m_aLastUcPresenceServerAddr, g_Config.m_UcPresenceUdpServerAddress) == 0)
+		return;
+
 	const bool HadUcServer = m_aLastUcPresenceServerAddr[0] != '\0' || m_HasUcServerAddr;
-	const bool ServerChanged = HadUcServer && str_comp(m_aLastUcPresenceServerAddr, g_Config.m_UcPresenceUdpServerAddress) != 0;
-	if(ServerChanged)
+	if(HadUcServer && str_comp(m_aLastUcPresenceServerAddr, g_Config.m_UcPresenceUdpServerAddress) != 0)
 	{
-		DebugLogF("uc presence server address changed, resetting state old=%s new=%s", m_aLastUcPresenceServerAddr, g_Config.m_UcPresenceUdpServerAddress);
+		if(g_Config.m_DbgClientIndicator)
+			DebugLogF("uc presence server address changed, resetting state old=%s new=%s", m_aLastUcPresenceServerAddr, g_Config.m_UcPresenceUdpServerAddress);
 		m_aLastUcPresenceServerAddr[0] = '\0';
+		m_HasUcServerAddr = false;
 	}
 
 	if(!UClientPresence::ParseAddress(g_Config.m_UcPresenceUdpServerAddress, UClientPresence::DEFAULT_PORT, m_UcServerAddr))
@@ -1035,10 +1096,13 @@ void CClientIndicator::SendBcPresencePacket(int ClientId, int PacketType)
 		DumpUdpPacketBytes("sent", m_ServerAddr, vPacket.data(), (int)vPacket.size());
 
 	const int Sent = net_udp_send(m_Socket, &m_ServerAddr, vPacket.data(), (int)vPacket.size());
-	char aServerAddr[NETADDR_MAXSTRSIZE];
-	net_addr_str(&m_ServerAddr, aServerAddr, sizeof(aServerAddr), true);
-	DebugLogF("sent %s packet client_id=%d player='%s' game_server=%s indicator_server=%s bytes=%d result=%d",
-		PacketTypeName(PacketType), ClientId, PlayerNameForClient(ClientId), CurrentGameServerAddress(), aServerAddr, (int)vPacket.size(), Sent);
+	if(g_Config.m_DbgClientIndicator)
+	{
+		char aServerAddr[NETADDR_MAXSTRSIZE];
+		net_addr_str(&m_ServerAddr, aServerAddr, sizeof(aServerAddr), true);
+		DebugLogF("sent %s packet client_id=%d player='%s' game_server=%s indicator_server=%s bytes=%d result=%d",
+			PacketTypeName(PacketType), ClientId, PlayerNameForClient(ClientId), CurrentGameServerAddress(), aServerAddr, (int)vPacket.size(), Sent);
+	}
 }
 
 void CClientIndicator::SendPresencePacket(int ClientId, int PacketType)
@@ -1050,12 +1114,31 @@ void CClientIndicator::SendPresencePacket(int ClientId, int PacketType)
 
 	if(PacketType == BestClientIndicator::PACKET_JOIN)
 	{
-		SendUcPresenceUdpPacket(ClientId, UClientPresence::PACKET_JOIN);
+		bool AlreadyJoined = false;
+		for(int Slot = 0; Slot < NUM_DUMMIES; ++Slot)
+		{
+			if(m_aUcLocalSlots[Slot].m_Joined && m_aUcLocalSlots[Slot].m_LastClientId == ClientId)
+			{
+				AlreadyJoined = true;
+				break;
+			}
+		}
+		// Suppress duplicate UC JOIN when UpdateUcPresenceForLocalClients already joined this slot.
+		if(!AlreadyJoined)
+			SendUcPresenceUdpPacket(ClientId, UClientPresence::PACKET_JOIN);
+		MarkUcLocalSlotJoined(ClientId);
 		SendPresenceHttpEvent(ClientId, "join");
 	}
 	else if(PacketType == BestClientIndicator::PACKET_LEAVE)
 	{
 		SendUcPresenceUdpPacket(ClientId, UClientPresence::PACKET_LEAVE);
+		for(int Slot = 0; Slot < NUM_DUMMIES; ++Slot)
+		{
+			if(m_aUcLocalSlots[Slot].m_LastClientId != ClientId)
+				continue;
+			m_aUcLocalSlots[Slot].m_Joined = false;
+			m_aUcLocalSlots[Slot].m_LastClientId = -1;
+		}
 		SendPresenceHttpEvent(ClientId, "leave");
 	}
 	else if(PacketType == BestClientIndicator::PACKET_HEARTBEAT)
@@ -1100,10 +1183,13 @@ void CClientIndicator::SendUcPresenceUdpPacket(int ClientId, int PacketType, con
 		DumpUdpPacketBytes("sent", m_UcServerAddr, vPacket.data(), (int)vPacket.size());
 
 	const int Sent = net_udp_send(m_Socket, &m_UcServerAddr, vPacket.data(), (int)vPacket.size());
-	char aServerAddr[NETADDR_MAXSTRSIZE];
-	net_addr_str(&m_UcServerAddr, aServerAddr, sizeof(aServerAddr), true);
-	DebugLogF("sent uc %s packet client_id=%d player='%s' game_server=%s uc_server=%s bytes=%d result=%d",
-		UcPacketTypeName(PacketType), ClientId, PlayerNameForClient(ClientId), pServerAddress, aServerAddr, (int)vPacket.size(), Sent);
+	if(g_Config.m_DbgClientIndicator)
+	{
+		char aServerAddr[NETADDR_MAXSTRSIZE];
+		net_addr_str(&m_UcServerAddr, aServerAddr, sizeof(aServerAddr), true);
+		DebugLogF("sent uc %s packet client_id=%d player='%s' game_server=%s uc_server=%s bytes=%d result=%d",
+			UcPacketTypeName(PacketType), ClientId, PlayerNameForClient(ClientId), pServerAddress, aServerAddr, (int)vPacket.size(), Sent);
+	}
 }
 
 void CClientIndicator::SendChatReaction(int TargetClientId, uint64_t MessageHash, const char *pEmoji, bool Add)
@@ -1271,6 +1357,7 @@ void CClientIndicator::UpdateLiveCursorSend(bool UcPresence)
 	{
 		// Make sure a lingering "active" state doesn't leak once presence turns off.
 		m_LiveCursorWasActive = false;
+		PruneStaleRemoteCursors();
 		return;
 	}
 
@@ -1298,6 +1385,8 @@ void CClientIndicator::UpdateLiveCursorSend(bool UcPresence)
 		m_LiveCursorWasActive = false;
 		m_LastLiveCursorSendTick = 0;
 	}
+
+	PruneStaleRemoteCursors();
 }
 
 vec2 CClientIndicator::LocalCursorWorldPos() const
@@ -1424,10 +1513,10 @@ void CClientIndicator::OnRender()
 
 	// Note: the "Sharing cursor" pill is drawn from CHud (after the timer/music player) so it is
 	// never hidden behind them. Here we only render the remote peers' world cursors.
+	// Stale cursor prune runs from UpdateLiveCursorSend (not every render).
 	if(!g_Config.m_UcShowSharedCursors)
 		return;
 
-	PruneStaleRemoteCursors();
 	if(m_RemoteCursors.empty())
 		return;
 
@@ -1450,6 +1539,8 @@ void CClientIndicator::OnRender()
 	const float Blend = std::clamp(Client()->RenderFrameTime() * 15.0f, 0.0f, 1.0f);
 	const float NameFontSize = 20.0f;
 
+	Graphics()->TextureSet(GameClient()->m_GameSkin.m_aSpriteWeaponCursors[WEAPON_GUN]);
+	Graphics()->QuadsBegin();
 	for(auto &Entry : m_RemoteCursors)
 	{
 		const int ClientId = Entry.first;
@@ -1467,24 +1558,32 @@ void CClientIndicator::OnRender()
 		Cursor.m_RenderPos += (Cursor.m_TargetPos - Cursor.m_RenderPos) * Blend;
 		const vec2 Pos = Cursor.m_RenderPos;
 
-		Graphics()->TextureSet(GameClient()->m_GameSkin.m_aSpriteWeaponCursors[WEAPON_GUN]);
-		Graphics()->QuadsBegin();
 		Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
 		IGraphics::CQuadItem QuadItem(Pos.x, Pos.y, SizeX, SizeY);
 		Graphics()->QuadsDraw(&QuadItem, 1);
-		Graphics()->QuadsEnd();
+	}
+	Graphics()->QuadsEnd();
 
-		if(Cursor.m_aName[0] != '\0')
-		{
-			const float TextWidth = TextRender()->TextWidth(NameFontSize, Cursor.m_aName);
-			const float TextX = Pos.x + SizeX * 0.35f;
-			const float TextY = Pos.y - SizeY * 0.5f - NameFontSize;
-			TextRender()->TextColor(1.0f, 1.0f, 1.0f, Alpha);
-			TextRender()->TextOutlineColor(0.0f, 0.0f, 0.0f, 0.6f * Alpha);
-			TextRender()->Text(TextX, TextY, NameFontSize, Cursor.m_aName, TextWidth + 8.0f);
-			TextRender()->TextColor(TextRender()->DefaultTextColor());
-			TextRender()->TextOutlineColor(TextRender()->DefaultTextOutlineColor());
-		}
+	for(auto &Entry : m_RemoteCursors)
+	{
+		const int ClientId = Entry.first;
+		const bool OtherTeam = GameClient()->IsOtherTeam(ClientId);
+		if(OtherTeam && g_Config.m_ClShowOthers != SHOW_OTHERS_ON)
+			continue;
+		const float Alpha = OtherTeam ? g_Config.m_ClShowOthersAlpha / 100.0f : 1.0f;
+		const SRemoteCursor &Cursor = Entry.second;
+		if(Cursor.m_aName[0] == '\0')
+			continue;
+
+		const vec2 Pos = Cursor.m_RenderPos;
+		const float TextWidth = TextRender()->TextWidth(NameFontSize, Cursor.m_aName);
+		const float TextX = Pos.x + SizeX * 0.35f;
+		const float TextY = Pos.y - SizeY * 0.5f - NameFontSize;
+		TextRender()->TextColor(1.0f, 1.0f, 1.0f, Alpha);
+		TextRender()->TextOutlineColor(0.0f, 0.0f, 0.0f, 0.6f * Alpha);
+		TextRender()->Text(TextX, TextY, NameFontSize, Cursor.m_aName, TextWidth + 8.0f);
+		TextRender()->TextColor(TextRender()->DefaultTextColor());
+		TextRender()->TextOutlineColor(TextRender()->DefaultTextOutlineColor());
 	}
 
 	Graphics()->MapScreen(ScreenX0, ScreenY0, ScreenX1, ScreenY1);
@@ -1797,15 +1896,11 @@ bool CClientIndicator::UcPeerAppliesToCurrentServer(const char *pServerAddress) 
 	if(!pServerAddress || pServerAddress[0] == '\0')
 		return false;
 
-	char aCurrentServerAddress[NETADDR_MAXSTRSIZE];
-	net_addr_str(&Client()->ServerAddress(), aCurrentServerAddress, sizeof(aCurrentServerAddress), true);
-	if(aCurrentServerAddress[0] == '\0')
+	char aNormalizedCurrent[NETADDR_MAXSTRSIZE];
+	if(!EnsureCachedUcNormalizedServer(aNormalizedCurrent, sizeof(aNormalizedCurrent)))
 		return false;
 
-	char aNormalizedCurrent[NETADDR_MAXSTRSIZE];
 	char aNormalizedPacket[NETADDR_MAXSTRSIZE];
-	if(!NormalizePresenceServerAddress(aCurrentServerAddress, aNormalizedCurrent, sizeof(aNormalizedCurrent)))
-		return false;
 	if(!NormalizePresenceServerAddress(pServerAddress, aNormalizedPacket, sizeof(aNormalizedPacket)))
 		return false;
 	return str_comp(aNormalizedCurrent, aNormalizedPacket) == 0;
@@ -1863,13 +1958,8 @@ void CClientIndicator::PruneStaleUcPeers()
 	if(Client()->State() != IClient::STATE_ONLINE)
 		return;
 
-	char aCurrentServerAddress[NETADDR_MAXSTRSIZE];
-	net_addr_str(&Client()->ServerAddress(), aCurrentServerAddress, sizeof(aCurrentServerAddress), true);
-	if(aCurrentServerAddress[0] == '\0')
-		return;
-
 	char aNormalizedServer[NETADDR_MAXSTRSIZE];
-	if(!NormalizePresenceServerAddress(aCurrentServerAddress, aNormalizedServer, sizeof(aNormalizedServer)))
+	if(!EnsureCachedUcNormalizedServer(aNormalizedServer, sizeof(aNormalizedServer)))
 		return;
 
 	auto ItServer = m_UcPeersByServer.find(aNormalizedServer);
@@ -1877,15 +1967,18 @@ void CClientIndicator::PruneStaleUcPeers()
 		return;
 
 	auto &Peers = ItServer->second;
+	bool Changed = false;
 	for(auto It = Peers.begin(); It != Peers.end();)
 	{
 		const int ClientId = It->first;
 		const char *pCurrentName = PlayerNameForClient(ClientId);
 		if(pCurrentName[0] != '\0' && str_comp(pCurrentName, It->second.m_PlayerName.c_str()) != 0)
 		{
-			DebugLogF("uc peer prune stale client_id=%d cached='%s' current='%s' server=%s",
-				ClientId, It->second.m_PlayerName.c_str(), pCurrentName, aNormalizedServer);
+			if(g_Config.m_DbgClientIndicator)
+				DebugLogF("uc peer prune stale client_id=%d cached='%s' current='%s' server=%s",
+					ClientId, It->second.m_PlayerName.c_str(), pCurrentName, aNormalizedServer);
 			It = Peers.erase(It);
+			Changed = true;
 		}
 		else
 		{
@@ -1894,8 +1987,12 @@ void CClientIndicator::PruneStaleUcPeers()
 	}
 
 	if(Peers.empty())
+	{
 		m_UcPeersByServer.erase(ItServer);
-	InvalidateUcPeerLookupCache();
+		Changed = true;
+	}
+	if(Changed)
+		InvalidateUcPeerLookupCache();
 }
 
 void CClientIndicator::ApplyUcPeerList(const UClientPresence::CPeerList &PeerList)
@@ -1923,43 +2020,58 @@ void CClientIndicator::ApplyUcPeerList(const UClientPresence::CPeerList &PeerLis
 
 void CClientIndicator::ProcessUcPresencePacket(const unsigned char *pData, int DataSize)
 {
-	UClientPresence::CPeerState PeerState;
-	if(UClientPresence::ReadPeerStatePacket(pData, DataSize, PeerState))
-	{
-		ApplyUcPeerState(PeerState);
+	UClientPresence::EPacketType Type = (UClientPresence::EPacketType)0;
+	int Offset = 0;
+	if(!UClientPresence::ReadHeader(pData, DataSize, Type, Offset, nullptr))
 		return;
-	}
 
-	if(UClientPresence::ReadPeerRemovePacket(pData, DataSize, PeerState))
+	switch(Type)
 	{
-		ApplyUcPeerRemove(PeerState);
-		return;
-	}
-
-	UClientPresence::CPeerList PeerList;
-	if(UClientPresence::ReadPeerListPacket(pData, DataSize, PeerList))
+	case UClientPresence::PACKET_PEER_STATE:
 	{
-		ApplyUcPeerList(PeerList);
-		return;
+		UClientPresence::CPeerState PeerState;
+		if(UClientPresence::ReadPeerStatePacket(pData, DataSize, PeerState))
+			ApplyUcPeerState(PeerState);
+		break;
 	}
-
-	UClientPresence::CReactionBroadcast Reaction;
-	if(UClientPresence::ReadReactionBroadcast(pData, DataSize, Reaction))
+	case UClientPresence::PACKET_PEER_REMOVE:
 	{
-		ApplyUcReactionBroadcast(Reaction);
-		return;
+		UClientPresence::CPeerState PeerState;
+		if(UClientPresence::ReadPeerRemovePacket(pData, DataSize, PeerState))
+			ApplyUcPeerRemove(PeerState);
+		break;
 	}
-
-	UClientPresence::CCursorBroadcast Cursor;
-	if(UClientPresence::ReadCursorBroadcast(pData, DataSize, Cursor))
+	case UClientPresence::PACKET_PEER_LIST:
 	{
-		ApplyUcCursorBroadcast(Cursor);
-		return;
+		UClientPresence::CPeerList PeerList;
+		if(UClientPresence::ReadPeerListPacket(pData, DataSize, PeerList))
+			ApplyUcPeerList(PeerList);
+		break;
 	}
-
-	UClientPresence::CChatBroadcast Chat;
-	if(UClientPresence::ReadChatBroadcast(pData, DataSize, Chat))
-		ApplyUcChatBroadcast(Chat);
+	case UClientPresence::PACKET_REACTION_BROADCAST:
+	{
+		UClientPresence::CReactionBroadcast Reaction;
+		if(UClientPresence::ReadReactionBroadcast(pData, DataSize, Reaction))
+			ApplyUcReactionBroadcast(Reaction);
+		break;
+	}
+	case UClientPresence::PACKET_CURSOR_BROADCAST:
+	{
+		UClientPresence::CCursorBroadcast Cursor;
+		if(UClientPresence::ReadCursorBroadcast(pData, DataSize, Cursor))
+			ApplyUcCursorBroadcast(Cursor);
+		break;
+	}
+	case UClientPresence::PACKET_CHAT_BROADCAST:
+	{
+		UClientPresence::CChatBroadcast Chat;
+		if(UClientPresence::ReadChatBroadcast(pData, DataSize, Chat))
+			ApplyUcChatBroadcast(Chat);
+		break;
+	}
+	default:
+		break;
+	}
 }
 
 void CClientIndicator::ProcessIncomingPackets(bool Force)
@@ -2232,16 +2344,18 @@ void CClientIndicator::UpdatePresence()
 		m_WasUcPresenceActive = UcPresence;
 		return;
 	}
-	const std::string PreviousGameServer = m_PresenceCache.ServerAddress();
+	char aPreviousGameServer[NETADDR_MAXSTRSIZE];
+	str_copy(aPreviousGameServer, m_PresenceCache.ServerAddress().c_str(), sizeof(aPreviousGameServer));
 	const bool ServerChanged = m_PresenceCache.SetServerAddress(pEffectiveGameServer);
 	if(ServerChanged)
 	{
-		const char *pFromServer = !PreviousGameServer.empty()
-			? PreviousGameServer.c_str()
+		const char *pFromServer = aPreviousGameServer[0] != '\0'
+			? aPreviousGameServer
 			: m_aPreviousPresenceServerForSwitch;
 		NotifyPresenceServerChanged(pFromServer, pEffectiveGameServer);
 		m_DeveloperClientIds.clear();
 		m_ClientVersions.clear();
+		InvalidateUcClientLookupCache();
 	}
 	ClearPresenceBlockReason();
 
@@ -2398,25 +2512,37 @@ bool CClientIndicator::IsPlayerUClient(int ClientId) const
 {
 	if(Client()->State() != IClient::STATE_ONLINE)
 		return false;
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return false;
+
+	const int Tick = Client()->GameTick(g_Config.m_ClDummy);
+	if(m_UcClientLookupCacheTick == Tick && m_aUcClientLookupCache[ClientId] >= 0)
+		return m_aUcClientLookupCache[ClientId] != 0;
+
+	auto StoreResult = [&](bool Result) -> bool {
+		if(m_UcClientLookupCacheTick != Tick)
+		{
+			m_UcClientLookupCacheTick = Tick;
+			for(int i = 0; i < MAX_CLIENTS; ++i)
+				m_aUcClientLookupCache[i] = -1;
+		}
+		m_aUcClientLookupCache[ClientId] = Result ? 1 : 0;
+		return Result;
+	};
 
 	for(const int LocalId : GameClient()->m_aLocalIds)
 	{
 		if(LocalId >= 0 && ClientId == LocalId && g_Config.m_UcInstallUuid[0] != '\0')
-			return true;
+			return StoreResult(true);
 	}
 
 	const char *pPlayerName = PlayerNameForClient(ClientId);
 	if(pPlayerName[0] == '\0')
-		return false;
-
-	char aCurrentServerAddress[NETADDR_MAXSTRSIZE];
-	net_addr_str(&Client()->ServerAddress(), aCurrentServerAddress, sizeof(aCurrentServerAddress), true);
-	if(aCurrentServerAddress[0] == '\0')
-		return false;
+		return StoreResult(false);
 
 	char aNormalizedServer[NETADDR_MAXSTRSIZE];
-	if(!NormalizePresenceServerAddress(aCurrentServerAddress, aNormalizedServer, sizeof(aNormalizedServer)))
-		return false;
+	if(!EnsureCachedUcNormalizedServer(aNormalizedServer, sizeof(aNormalizedServer)))
+		return StoreResult(false);
 
 	const std::unordered_map<int, SUcPeerInfo> *pPeers = m_pUcPeersOnCurrentServer;
 	if(str_comp(m_aUcPeerLookupServer, aNormalizedServer) != 0)
@@ -2436,18 +2562,18 @@ bool CClientIndicator::IsPlayerUClient(int ClientId) const
 		}
 	}
 
-	if(pPeers && ClientId >= 0)
+	if(pPeers)
 	{
 		const auto ItPeer = pPeers->find(ClientId);
 		if(ItPeer != pPeers->end() && str_comp(ItPeer->second.m_PlayerName.c_str(), pPlayerName) == 0)
-			return true;
+			return StoreResult(true);
 	}
 
 	// When live UDP peer data exists, trust only client_id + name matches above.
 	// Name-only HTTP/browser fallbacks are too stale-prone on busy servers.
 	const bool HasLiveUdpPeers = pPeers && !pPeers->empty();
 	if(HasLiveUdpPeers)
-		return false;
+		return StoreResult(false);
 
 	const std::unordered_set<std::string> *pNames = m_pUcPresenceLookupNames;
 	if(str_comp(m_aUcPresenceLookupServer, aNormalizedServer) != 0)
@@ -2468,22 +2594,22 @@ bool CClientIndicator::IsPlayerUClient(int ClientId) const
 	}
 
 	if(pNames && pNames->find(pPlayerName) != pNames->end())
-		return true;
+		return StoreResult(true);
 
 	// Fallback: browser snapshot flags when the HTTP list cache is stale.
 	const IServerBrowser::CServerEntry *pCurrentServer = ServerBrowser()->Find(Client()->ServerAddress());
 	if(!pCurrentServer)
-		return false;
+		return StoreResult(false);
 
 	const CServerInfo &Info = pCurrentServer->m_Info;
 	for(int Index = 0; Index < minimum(Info.m_NumReceivedClients, (int)MAX_CLIENTS); ++Index)
 	{
-		const CServerInfo::CClient &Client = Info.m_aClients[Index];
-		if(Client.m_UcClient && str_comp(Client.m_aName, pPlayerName) == 0)
-			return true;
+		const CServerInfo::CClient &ClientInfo = Info.m_aClients[Index];
+		if(ClientInfo.m_UcClient && str_comp(ClientInfo.m_aName, pPlayerName) == 0)
+			return StoreResult(true);
 	}
 
-	return false;
+	return StoreResult(false);
 }
 
 void CClientIndicator::FinishTokenRefresh()

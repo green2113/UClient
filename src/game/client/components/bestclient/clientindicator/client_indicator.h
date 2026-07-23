@@ -20,6 +20,7 @@
 #include <engine/shared/uuid_manager.h>
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <unordered_map>
 #include <string>
@@ -151,6 +152,10 @@ private:
 	std::unordered_map<std::string, std::unordered_map<int, SUcPeerInfo>> m_UcPeersByServer;
 	mutable char m_aUcPeerLookupServer[NETADDR_MAXSTRSIZE] = "";
 	mutable const std::unordered_map<int, SUcPeerInfo> *m_pUcPeersOnCurrentServer = nullptr;
+	// Per-tick cache for IsPlayerUClient (nameplates call this once per visible tee).
+	mutable int m_UcClientLookupCacheTick = -1;
+	mutable char m_aUcCachedNormalizedServer[NETADDR_MAXSTRSIZE] = "";
+	mutable int8_t m_aUcClientLookupCache[MAX_CLIENTS];
 	CBrowserCache m_BrowserCache;
 	char m_aWebSharedToken[256] = "";
 	std::string m_LastPresenceBlockReason;
@@ -216,6 +221,9 @@ private:
 	void ClearPresenceBlockReason();
 	void InvalidateUcPresenceLookupCache();
 	void InvalidateUcPeerLookupCache();
+	void InvalidateUcClientLookupCache() const;
+	void MarkUcLocalSlotJoined(int ClientId);
+	bool EnsureCachedUcNormalizedServer(char *pOut, int OutSize) const;
 };
 
 #endif
