@@ -5079,8 +5079,13 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 					return true;
 				}
 				SetPendingReply(Line.m_ClientId, pReplyName, m_HoveredReplyLineIndex, GetLineDisplayText(Line));
+				// Match input mode to the message being replied to (same as UClient reply).
 				if(Line.m_UClient && g_Config.m_UcChat)
 					m_Mode = MODE_UCLIENT;
+				else if(Line.m_Team)
+					m_Mode = MODE_TEAM;
+				else
+					m_Mode = MODE_ALL;
 				m_Input.Activate(EInputPriority::CHAT);
 				return true;
 			}
@@ -9639,8 +9644,77 @@ static void MediaDecodeUrlComponentLite(const char *pIn, char *pOut, int OutSize
 	pOut[o] = '\0';
 }
 
+static const char *MediaAssetCategoryBase(size_t Index)
+{
+	const char *pDir = gs_apMediaAssetCategoryDirs[Index];
+	const char *pBase = pDir;
+	for(const char *p = pDir; *p; ++p)
+	{
+		if(*p == '/')
+			pBase = p + 1;
+	}
+	return pBase;
+}
+
+static int MediaAssetCategoryIndexFromBase(const char *pBase)
+{
+	if(!pBase || pBase[0] == '\0')
+		return -1;
+	for(size_t i = 0; i < std::size(gs_apMediaAssetCategoryDirs); ++i)
+	{
+		if(str_comp_nocase(pBase, MediaAssetCategoryBase(i)) == 0)
+			return (int)i;
+	}
+	return -1;
+}
+
+// Extract uc_asset=<category> from a shared media URL query string.
+static bool MediaExtractUcAssetCategory(const char *pUrl, char *pOut, int OutSize)
+{
+	if(pOut && OutSize > 0)
+		pOut[0] = '\0';
+	if(!pUrl || !pOut || OutSize <= 0)
+		return false;
+
+	const char *pQuery = str_find(pUrl, "?");
+	if(!pQuery)
+		return false;
+	++pQuery;
+
+	while(*pQuery)
+	{
+		const char *pAmp = str_find(pQuery, "&");
+		const char *pHash = str_find(pQuery, "#");
+		const char *pEnd = pQuery + str_length(pQuery);
+		if(pAmp && pAmp < pEnd)
+			pEnd = pAmp;
+		if(pHash && pHash < pEnd)
+			pEnd = pHash;
+
+		if(str_startswith_nocase(pQuery, "uc_asset=") != nullptr)
+		{
+			const char *pVal = pQuery + 9;
+			char aRaw[64];
+			str_copy(aRaw, pVal, minimum((int)(pEnd - pVal) + 1, (int)sizeof(aRaw)));
+			MediaDecodeUrlComponentLite(aRaw, pOut, OutSize);
+			return pOut[0] != '\0';
+		}
+
+		if(!pAmp)
+			break;
+		pQuery = pAmp + 1;
+	}
+	return false;
+}
+
 // Returns category index if the URL encodes a shared-asset path like entities/foo.png, else -1.
 // Always writes a sanitized bare asset name into pNameOut when possible.
+//
+// Supported encodings (media CDN often flattens "hud/foo" → "hud_foo.png"):
+// 1) ?uc_asset=hud query (preferred; client appends this when sharing)
+// 2) slash in file name: hud/foo.png or hud%2Ffoo.png
+// 3) /hud/ segment in the URL path
+// 4) filename prefix: hud_foo.png
 static int MediaDetectAssetCategoryFromUrl(const char *pUrl, char *pNameOut, int NameOutSize)
 {
 	if(pNameOut && NameOutSize > 0)
@@ -9655,64 +9729,76 @@ static int MediaDetectAssetCategoryFromUrl(const char *pUrl, char *pNameOut, int
 
 	char aCategory[64] = "";
 	const char *pBaseName = aDecoded;
-	const char *pSlash = nullptr;
-	for(const char *p = aDecoded; *p != '\0'; ++p)
+
+	// 1) Explicit share marker from the client after upload.
+	MediaExtractUcAssetCategory(pUrl, aCategory, sizeof(aCategory));
+
+	if(aCategory[0] == '\0')
 	{
-		if(*p == '/' || *p == '\\')
-			pSlash = p;
-	}
-	if(pSlash && pSlash != aDecoded)
-	{
-		const char *pCatStart = aDecoded;
-		for(const char *p = aDecoded; p < pSlash; ++p)
+		const char *pSlash = nullptr;
+		for(const char *p = aDecoded; *p != '\0'; ++p)
 		{
 			if(*p == '/' || *p == '\\')
-				pCatStart = p + 1;
+				pSlash = p;
 		}
-		str_copy(aCategory, pCatStart, minimum((int)(pSlash - pCatStart) + 1, (int)sizeof(aCategory)));
-		pBaseName = pSlash + 1;
-	}
-	else
-	{
-		// Fallback: look for "/entities/" (etc.) earlier in the full URL path.
-		for(size_t i = 0; i < std::size(gs_apMediaAssetCategoryDirs); ++i)
+		if(pSlash && pSlash != aDecoded)
 		{
-			const char *pDir = gs_apMediaAssetCategoryDirs[i];
-			const char *pBase = pDir;
-			for(const char *p = pDir; *p; ++p)
+			// 2) category/name in the file component.
+			const char *pCatStart = aDecoded;
+			for(const char *p = aDecoded; p < pSlash; ++p)
 			{
-				if(*p == '/')
-					pBase = p + 1;
+				if(*p == '/' || *p == '\\')
+					pCatStart = p + 1;
 			}
-			char aNeedle[64];
-			str_format(aNeedle, sizeof(aNeedle), "/%s/", pBase);
-			if(str_find_nocase(pUrl, aNeedle) != nullptr)
+			str_copy(aCategory, pCatStart, minimum((int)(pSlash - pCatStart) + 1, (int)sizeof(aCategory)));
+			pBaseName = pSlash + 1;
+		}
+		else
+		{
+			// 3) "/entities/" (etc.) earlier in the full URL path.
+			for(size_t i = 0; i < std::size(gs_apMediaAssetCategoryDirs); ++i)
 			{
-				str_copy(aCategory, pBase, sizeof(aCategory));
-				break;
+				char aNeedle[64];
+				str_format(aNeedle, sizeof(aNeedle), "/%s/", MediaAssetCategoryBase(i));
+				if(str_find_nocase(pUrl, aNeedle) != nullptr)
+				{
+					str_copy(aCategory, MediaAssetCategoryBase(i), sizeof(aCategory));
+					break;
+				}
+			}
+
+			// 4) CDN flattened name: hud_705_....png (slash → underscore).
+			if(aCategory[0] == '\0')
+			{
+				for(size_t i = 0; i < std::size(gs_apMediaAssetCategoryDirs); ++i)
+				{
+					const char *pBase = MediaAssetCategoryBase(i);
+					const int BaseLen = str_length(pBase);
+					if(BaseLen <= 0)
+						continue;
+					if(str_comp_nocase_num(aDecoded, pBase, BaseLen) == 0 && aDecoded[BaseLen] == '_')
+					{
+						str_copy(aCategory, pBase, sizeof(aCategory));
+						pBaseName = aDecoded + BaseLen + 1;
+						break;
+					}
+				}
 			}
 		}
+	}
+
+	// If category is known and the CDN flattened "hud/foo" → "hud_foo", strip the prefix from the suggested name.
+	if(aCategory[0] != '\0' && pBaseName == aDecoded)
+	{
+		const int CatLen = str_length(aCategory);
+		if(CatLen > 0 && str_comp_nocase_num(aDecoded, aCategory, CatLen) == 0 && aDecoded[CatLen] == '_')
+			pBaseName = aDecoded + CatLen + 1;
 	}
 
 	if(pNameOut && NameOutSize > 0)
 		MediaSanitizeAssetName(pBaseName, pNameOut, NameOutSize);
 
-	if(aCategory[0] == '\0')
-		return -1;
-
-	for(size_t i = 0; i < std::size(gs_apMediaAssetCategoryDirs); ++i)
-	{
-		const char *pDir = gs_apMediaAssetCategoryDirs[i];
-		const char *pBase = pDir;
-		for(const char *p = pDir; *p; ++p)
-		{
-			if(*p == '/')
-				pBase = p + 1;
-		}
-		if(str_comp_nocase(aCategory, pBase) == 0)
-			return (int)i;
-	}
-	return -1;
+	return MediaAssetCategoryIndexFromBase(aCategory);
 }
 
 // UClient: chat emoji reactions

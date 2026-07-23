@@ -1575,20 +1575,44 @@ void CMenus::UpdateShareAssetUpload()
 		return;
 	}
 
+	// media.under1111.com flattens "hud/name" into "hud_name.png" and drops the
+	// category path. Append uc_asset= so Save to Assets can pre-select the tab.
+	const char *pCategoryDir = nullptr;
+	switch(m_ShareAssetTab)
+	{
+	case ASSETS_TAB_ENTITIES: pCategoryDir = "entities"; break;
+	case ASSETS_TAB_GAME: pCategoryDir = "game"; break;
+	case ASSETS_TAB_EMOTICONS: pCategoryDir = "emoticons"; break;
+	case ASSETS_TAB_PARTICLES: pCategoryDir = "particles"; break;
+	case ASSETS_TAB_HUD: pCategoryDir = "hud"; break;
+	case ASSETS_TAB_EXTRAS: pCategoryDir = "extras"; break;
+	case ASSETS_TAB_CURSOR: pCategoryDir = "cursor"; break;
+	case ASSETS_TAB_ARROW: pCategoryDir = "arrow"; break;
+	default: break;
+	}
+	char aShareUrl[768];
+	if(pCategoryDir && str_find(aUrl, "uc_asset=") == nullptr)
+	{
+		const char *pSep = str_find(aUrl, "?") != nullptr ? "&" : "?";
+		str_format(aShareUrl, sizeof(aShareUrl), "%s%suc_asset=%s", aUrl, pSep, pCategoryDir);
+	}
+	else
+		str_copy(aShareUrl, aUrl, sizeof(aShareUrl));
+
 	if(m_ShareAssetToUClientChat)
 	{
 		// Respects uc_chat_send_same_server_only / receive filter on peers.
-		GameClient()->m_ClientIndicator.SendUClientChat(aUrl);
+		GameClient()->m_ClientIndicator.SendUClientChat(aShareUrl);
 	}
 	else if(m_ShareAssetToAll)
 	{
 		// Broadcast the link to everyone via public chat.
-		GameClient()->m_Chat.SendChat(0, aUrl);
+		GameClient()->m_Chat.SendChat(0, aShareUrl);
 	}
 	else
 	{
 		char aMsg[600];
-		str_format(aMsg, sizeof(aMsg), "/w %s %s", m_aShareAssetTargetName, aUrl);
+		str_format(aMsg, sizeof(aMsg), "/w %s %s", m_aShareAssetTargetName, aShareUrl);
 		GameClient()->m_Chat.SendChat(0, aMsg);
 	}
 

@@ -691,6 +691,7 @@ void CHud::OnReset()
 	m_vFinishPredictionDistances.clear();
 	m_vRacePathToFinishDistances.clear();
 	m_vFinishPredictionFromStartDistances.clear();
+	m_vRacePathMainRoute.clear();
 	m_vFinishPredictionPassable.clear();
 	m_vFinishPredictionStartTiles.clear();
 	m_vFinishPredictionFinishTiles.clear();
@@ -718,6 +719,7 @@ bool CHud::RebuildFinishPredictionPathData() const
 	m_vFinishPredictionDistances.clear();
 	m_vRacePathToFinishDistances.clear();
 	m_vFinishPredictionFromStartDistances.clear();
+	m_vRacePathMainRoute.clear();
 	m_vFinishPredictionPassable.clear();
 	m_vFinishPredictionStartTiles.clear();
 	m_vFinishPredictionFinishTiles.clear();
@@ -958,6 +960,37 @@ bool CHud::RebuildFinishPredictionPathData() const
 		NoTeleportExpand,
 		false);
 
+	// Mark shortest walking route BEFORE freeze-shore snap. Side death pockets are reachable
+	// but FromStart+ToFinish is a detour; after snap they inherit the corridor's distances and
+	// would falsely look "on route" for Back notify.
+	int PreSnapRaceLength = -1;
+	for(const ivec2 &StartTile : m_vFinishPredictionStartTiles)
+	{
+		const int Index = StartTile.y * m_FinishPredictionMapWidth + StartTile.x;
+		if(Index < 0 || Index >= MapSize)
+			continue;
+		const int ToFinish = m_vRacePathToFinishDistances[Index];
+		if(ToFinish < 0)
+			continue;
+		if(PreSnapRaceLength < 0 || ToFinish < PreSnapRaceLength)
+			PreSnapRaceLength = ToFinish;
+	}
+	m_vRacePathMainRoute.assign(MapSize, 0);
+	if(PreSnapRaceLength >= 0)
+	{
+		// Small slack for diagonal/discretization noise (≈2 ortho tiles).
+		const int Slack = 20;
+		for(int Index = 0; Index < MapSize; ++Index)
+		{
+			const int FromStart = m_vFinishPredictionFromStartDistances[Index];
+			const int ToFinish = m_vRacePathToFinishDistances[Index];
+			if(FromStart < 0 || ToFinish < 0)
+				continue;
+			if(FromStart + ToFinish <= PreSnapRaceLength + Slack)
+				m_vRacePathMainRoute[Index] = 1;
+		}
+	}
+
 	// Keep freeze traversable for required drops. For display/progress, snap each freeze tile
 	// to its nearest safe shore (tie -> earliest from-start) so a map-wide freeze blob
 	// doesn't collapse every freeze cell to 0% at the start shore.
@@ -1090,6 +1123,22 @@ bool CHud::IsRacePathTileIndex(int Index) const
 	return m_vFinishPredictionFromStartDistances[Index] >= 0 && m_vRacePathToFinishDistances[Index] >= 0;
 }
 
+bool CHud::IsMainRaceRouteAtPos(vec2 Pos) const
+{
+	if(m_vRacePathMainRoute.empty() || m_FinishPredictionMapWidth <= 0 || m_FinishPredictionMapHeight <= 0)
+		return false;
+	if((int)m_vRacePathMainRoute.size() != m_FinishPredictionMapWidth * m_FinishPredictionMapHeight)
+		return false;
+
+	const int TileX = (int)std::floor(Pos.x / 32.0f);
+	const int TileY = (int)std::floor(Pos.y / 32.0f);
+	if(TileX < 0 || TileX >= m_FinishPredictionMapWidth || TileY < 0 || TileY >= m_FinishPredictionMapHeight)
+		return false;
+
+	const int Index = TileY * m_FinishPredictionMapWidth + TileX;
+	return m_vRacePathMainRoute[Index] != 0;
+}
+
 bool CHud::EnsureFinishPredictionPathData() const
 {
 	if(!Collision() || Collision()->GetWidth() <= 0 || Collision()->GetHeight() <= 0)
@@ -1100,7 +1149,9 @@ bool CHud::EnsureFinishPredictionPathData() const
 		m_FinishPredictionRaceLength < 0 ||
 		m_vFinishPredictionDistances.empty() ||
 		m_vRacePathToFinishDistances.empty() ||
-		m_vFinishPredictionFromStartDistances.empty())
+		m_vFinishPredictionFromStartDistances.empty() ||
+		m_vRacePathMainRoute.empty() ||
+		(int)m_vRacePathMainRoute.size() != Collision()->GetWidth() * Collision()->GetHeight())
 		return RebuildFinishPredictionPathData();
 	return !m_vFinishPredictionDistances.empty() && !m_vRacePathToFinishDistances.empty();
 }
@@ -1505,8 +1556,32 @@ void CHud::RenderNotifyWhenBack()
 			continue;
 
 		const bool Frozen = GameClient()->m_aClients[i].m_FreezeEnd > 0 || GameClient()->m_aClients[i].m_DeepFrozen;
-		const bool InSpec = GameClient()->m_aClients[i].m_Spec || GameClient()->m_aClients[i].m_SpecCharPresent;
-		if(!Frozen && !(g_Config.m_UcNotifyWhenBackIncludeSpec && InSpec))
+		// /spec alone must not trigger Back. Only count spectators whose last body
+		// (SpecChar) is still on a freeze tile — i.e. they /spec'd while frozen.
+		bool CountAsFrozen = Frozen;
+		if(!CountAsFrozen && g_Config.m_UcNotifyWhenBackIncludeSpec && GameClient()->m_aClients[i].m_SpecCharPresent)
+		{
+			if(!Collision())
+				continue;
+			const vec2 SpecPos = GameClient()->m_aClients[i].m_SpecChar;
+			const int MapIndex = Collision()->GetPureMapIndex(SpecPos);
+			if(MapIndex < 0)
+				continue;
+			const int GameTile = Collision()->GetTileIndex(MapIndex);
+			const int FrontTile = Collision()->GetFrontTileIndex(MapIndex);
+			const auto IsFreezeType = [](int Tile) {
+				return Tile == TILE_FREEZE || Tile == TILE_DFREEZE || Tile == TILE_LFREEZE;
+			};
+			CountAsFrozen = IsFreezeType(GameTile) || IsFreezeType(FrontTile);
+		}
+		if(!CountAsFrozen)
+			continue;
+
+		// Skip freeze deaths in side pockets / opposite branches. Progress sampling snaps those
+		// onto the nearby corridor, which made off-route freezes (e.g. DoD in a recess) look
+		// like they were just behind you on the play route.
+		vec2 OtherPos;
+		if(!GetRacePathPosForClient(i, OtherPos) || !IsMainRaceRouteAtPos(OtherPos))
 			continue;
 
 		float OtherFromStart = -1.0f;
