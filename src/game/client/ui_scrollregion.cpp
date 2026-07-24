@@ -231,6 +231,11 @@ void CScrollRegion::ScrollHere(EScrollOption Option)
 		m_RequestScrollY = TopScroll - (m_ClipRect.h - MinHeight);
 		break;
 
+	case SCROLLHERE_CENTER:
+		// Put the rect in the middle of the viewport; End() clamps if there isn't enough room.
+		m_RequestScrollY = TopScroll - (m_ClipRect.h - MinHeight) * 0.5f;
+		break;
+
 	case SCROLLHERE_KEEP_IN_VIEW:
 	default:
 		const float DeltaY = m_LastAddedRect.y - m_ClipRect.y;

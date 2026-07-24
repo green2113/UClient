@@ -68,6 +68,7 @@ public:
 
 	// UClient settings:// deep links
 	void SetSettingsLinkContext(int SettingsPage, const char *pTab = nullptr);
+	void SetSettingsLinkContextToken(const char *pPage, const char *pTab = nullptr);
 	void PushSettingsLinkParent(const char *pScriptName);
 	void PopSettingsLinkParent();
 	void SetSettingsLinkVarEnabled(bool Enabled);
@@ -1029,6 +1030,7 @@ public:
 	// UClient settings:// copy + navigate
 	bool m_SettingsLinkVarEnabled = true;
 	int m_SettingsLinkContextPage = -1;
+	char m_aSettingsLinkContextPageToken[64] = "";
 	char m_aSettingsLinkContextTab[64] = "";
 	char m_aaSettingsLinkParents[CUClientSettingsLink::MAX_PARENTS][CUClientSettingsLink::MAX_SCRIPT_NAME] = {};
 	int m_SettingsLinkParentCount = 0;

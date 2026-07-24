@@ -975,6 +975,9 @@ void CMenus::RenderServerbrowserFilters(CUIRect View)
 	const float RowHeight = 18.0f;
 	const float FontSize = (RowHeight - 4.0f) * CUi::ms_FontmodHeight; // based on DoButton_CheckBox
 
+	// So right-click copy / chat cards point at Browser > Server filter, not the last settings tab.
+	SetSettingsLinkContextToken("Browser", "ServerFilter");
+
 	View.Margin(5.0f, &View);
 
 	CUIRect Button, ResetButton;

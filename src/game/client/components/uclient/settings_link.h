@@ -51,6 +51,8 @@ struct SNavigateRequest
 	bool m_Highlight = false;
 	char m_aaParents[MAX_PARENTS][MAX_SCRIPT_NAME] = {};
 	int m_NumParents = 0;
+	// Non-settings destinations (server browser toolbox, etc.)
+	bool m_BrowserServerFilter = false;
 };
 
 bool IsSettingsLinkUri(const char *pText);
@@ -94,6 +96,8 @@ struct SVarLocation
 
 void RegisterVarLocation(const char *pScriptName, const char *pLabel, const char *pPage, const char *pTab, const char *const *ppParents, int NumParents);
 bool LookupVarLocation(const char *pScriptName, SVarLocation &Out);
+// Stable pointer into the registry (do not return addresses of stack copies of SVarLocation).
+const char *LookupVarLabel(const char *pScriptName);
 
 // Prefer local LookupVarLocation for VAR links; fall back to URI page/tab.
 void FormatBreadcrumb(const SParsed &Parsed, char *pOut, int OutSize);

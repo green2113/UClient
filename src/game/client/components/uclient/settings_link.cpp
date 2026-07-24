@@ -514,6 +514,8 @@ const char *LocalizedPageToken(const char *pToken)
 		return Localize("Profiles");
 	if(str_comp_nocase(pToken, "Configs") == 0)
 		return Localize("Settings File");
+	if(str_comp_nocase(pToken, "Browser") == 0)
+		return Localize("Browser");
 	return pToken;
 }
 
@@ -521,6 +523,8 @@ const char *LocalizedTabToken(const char *pPage, const char *pTab)
 {
 	if(!pTab || pTab[0] == '\0')
 		return "";
+	if(str_comp_nocase(pTab, "ServerFilter") == 0 || str_comp_nocase(pTab, "Filter") == 0)
+		return Localize("Server filter");
 	if(str_comp_nocase(pTab, "Visuals") == 0)
 		return Localize("Visuals");
 	if(str_comp_nocase(pTab, "Gameplay") == 0 || str_comp_nocase(pTab, "Game_Play") == 0)
@@ -610,6 +614,16 @@ bool LookupVarLocation(const char *pScriptName, SVarLocation &Out)
 	return true;
 }
 
+const char *LookupVarLabel(const char *pScriptName)
+{
+	if(!pScriptName || pScriptName[0] == '\0')
+		return nullptr;
+	const auto It = VarLocationMap().find(pScriptName);
+	if(It == VarLocationMap().end() || It->second.m_aLabel[0] == '\0' || !str_utf8_check(It->second.m_aLabel))
+		return nullptr;
+	return It->second.m_aLabel;
+}
+
 void FormatBreadcrumb(const SParsed &Parsed, char *pOut, int OutSize)
 {
 	if(!pOut || OutSize <= 0)
@@ -644,6 +658,19 @@ bool BuildNavigateRequest(const SParsed &Parsed, SNavigateRequest &Out)
 	{
 		pPage = Loc.m_aPage;
 		pTab = Loc.m_aTab;
+	}
+
+	if(pPage && str_comp_nocase(pPage, "Browser") == 0)
+	{
+		Out.m_Valid = true;
+		Out.m_BrowserServerFilter = true;
+		Out.m_SettingsPage = -1;
+		if(Parsed.m_Kind == EKind::VAR && Parsed.m_aScriptName[0] != '\0')
+		{
+			str_copy(Out.m_aHighlightScript, Parsed.m_aScriptName, sizeof(Out.m_aHighlightScript));
+			Out.m_Highlight = true;
+		}
+		return true;
 	}
 
 	Out.m_SettingsPage = SettingsPageFromPageToken(pPage);

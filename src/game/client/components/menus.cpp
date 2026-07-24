@@ -3444,6 +3444,8 @@ void CMenus::JoinTutorial()
 void CMenus::SetSettingsLinkContext(int SettingsPage, const char *pTab)
 {
 	m_SettingsLinkContextPage = SettingsPage;
+	const char *pPage = CUClientSettingsLink::PageTokenFromSettingsPage(SettingsPage);
+	str_copy(m_aSettingsLinkContextPageToken, pPage ? pPage : "", sizeof(m_aSettingsLinkContextPageToken));
 	if(pTab)
 		str_copy(m_aSettingsLinkContextTab, pTab, sizeof(m_aSettingsLinkContextTab));
 	else
@@ -3454,6 +3456,18 @@ void CMenus::SetSettingsLinkContext(int SettingsPage, const char *pTab)
 		m_SettingsLinkVarEnabled = false;
 	else if(SettingsPage == SETTINGS_GRAPHICS)
 		m_SettingsLinkVarEnabled = true; // allowlist enforced per-var
+}
+
+void CMenus::SetSettingsLinkContextToken(const char *pPage, const char *pTab)
+{
+	m_SettingsLinkContextPage = -2; // non-settings page (browser, etc.)
+	str_copy(m_aSettingsLinkContextPageToken, pPage ? pPage : "", sizeof(m_aSettingsLinkContextPageToken));
+	if(pTab)
+		str_copy(m_aSettingsLinkContextTab, pTab, sizeof(m_aSettingsLinkContextTab));
+	else
+		m_aSettingsLinkContextTab[0] = '\0';
+	m_SettingsLinkParentCount = 0;
+	m_SettingsLinkVarEnabled = m_aSettingsLinkContextPageToken[0] != '\0';
 }
 
 void CMenus::PushSettingsLinkParent(const char *pScriptName)
@@ -3477,20 +3491,17 @@ void CMenus::SetSettingsLinkVarEnabled(bool Enabled)
 
 void CMenus::MaybeRegisterSettingsLinkVar(const void *pId, const char *pLabel)
 {
-	if(!m_SettingsLinkVarEnabled || m_SettingsLinkContextPage < 0 || !pId)
+	if(!m_SettingsLinkVarEnabled || m_aSettingsLinkContextPageToken[0] == '\0' || !pId)
 		return;
 	const SConfigVariable *pVar = CUClientSettingsLink::FindVariableByPointer(ConfigManager(), pId);
 	if(!pVar)
 		return;
 	if(m_SettingsLinkContextPage == SETTINGS_GRAPHICS && !CUClientSettingsLink::IsGraphicsAllowlisted(pVar->m_pScriptName))
 		return;
-	const char *pPage = CUClientSettingsLink::PageTokenFromSettingsPage(m_SettingsLinkContextPage);
-	if(!pPage || pPage[0] == '\0')
-		return;
 	const char *apParents[CUClientSettingsLink::MAX_PARENTS] = {};
 	for(int i = 0; i < m_SettingsLinkParentCount; ++i)
 		apParents[i] = m_aaSettingsLinkParents[i];
-	CUClientSettingsLink::RegisterVarLocation(pVar->m_pScriptName, pLabel, pPage, m_aSettingsLinkContextTab, apParents, m_SettingsLinkParentCount);
+	CUClientSettingsLink::RegisterVarLocation(pVar->m_pScriptName, pLabel, m_aSettingsLinkContextPageToken, m_aSettingsLinkContextTab, apParents, m_SettingsLinkParentCount);
 }
 
 bool CMenus::TryOpenSettingsLinkMenuForVar(const void *pId, const char *pLabel, const CUIRect *pRect)
@@ -3505,7 +3516,8 @@ bool CMenus::TryOpenSettingsLinkMenuForVar(const void *pId, const char *pLabel, 
 
 	MaybeRegisterSettingsLinkVar(pId, pLabel);
 
-	const char *pPage = CUClientSettingsLink::PageTokenFromSettingsPage(m_SettingsLinkContextPage);
+	if(m_aSettingsLinkContextPageToken[0] == '\0')
+		return false;
 	const char *apParents[CUClientSettingsLink::MAX_PARENTS] = {};
 	for(int i = 0; i < m_SettingsLinkParentCount; ++i)
 		apParents[i] = m_aaSettingsLinkParents[i];
@@ -3514,7 +3526,7 @@ bool CMenus::TryOpenSettingsLinkMenuForVar(const void *pId, const char *pLabel, 
 	// receivers can Localize() it. Localized UI labels are kept only in the local registry.
 	const char *pUriLabel = (pVar->m_pHelp && pVar->m_pHelp[0] != '\0') ? pVar->m_pHelp : pLabel;
 	char aUri[CUClientSettingsLink::MAX_URI_LENGTH];
-	if(!CUClientSettingsLink::BuildVarUri(aUri, sizeof(aUri), pVar->m_pScriptName, pUriLabel, pPage, m_aSettingsLinkContextTab, apParents, m_SettingsLinkParentCount))
+	if(!CUClientSettingsLink::BuildVarUri(aUri, sizeof(aUri), pVar->m_pScriptName, pUriLabel, m_aSettingsLinkContextPageToken, m_aSettingsLinkContextTab, apParents, m_SettingsLinkParentCount))
 		return false;
 
 	str_copy(m_aSettingsLinkPendingUri, aUri, sizeof(m_aSettingsLinkPendingUri));
@@ -3576,8 +3588,9 @@ void CMenus::MaybeHighlightSettingsLink(const CUIRect *pRect, const char *pScrip
 	}
 	if(m_SettingsLinkNeedScroll && m_pSettingsLinkScrollRegion)
 	{
-		// Scroll once when the target row is first laid out (may be below the fold).
-		m_pSettingsLinkScrollRegion->AddRect(*pRect, true);
+		// Scroll once so the target row sits near the viewport center (clamped at ends).
+		m_pSettingsLinkScrollRegion->AddRect(*pRect, false);
+		m_pSettingsLinkScrollRegion->ScrollHere(CScrollRegion::SCROLLHERE_CENTER);
 		m_SettingsLinkNeedScroll = false;
 	}
 	constexpr float HighlightDuration = 1.6f;
@@ -3595,12 +3608,24 @@ void CMenus::NavigateToSettingsLink(const CUClientSettingsLink::SNavigateRequest
 	if(!Request.m_Valid)
 		return;
 	SetActive(true);
-	if(Client()->State() == IClient::STATE_ONLINE || Client()->State() == IClient::STATE_DEMOPLAYBACK)
-		m_GamePage = PAGE_SETTINGS;
+
+	if(Request.m_BrowserServerFilter)
+	{
+		// Server browser toolbox lives on offline menu pages.
+		const int BrowserPage = (g_Config.m_UiPage >= PAGE_INTERNET && g_Config.m_UiPage <= PAGE_FAVORITE_COMMUNITY_5) ? g_Config.m_UiPage : PAGE_INTERNET;
+		SetMenuPage(BrowserPage);
+		g_Config.m_UiToolboxPage = 0; // UI_TOOLBOX_PAGE_FILTERS
+	}
 	else
-		SetMenuPage(PAGE_SETTINGS);
-	if(Request.m_SettingsPage >= 0)
-		g_Config.m_UiSettingsPage = Request.m_SettingsPage;
+	{
+		if(Client()->State() == IClient::STATE_ONLINE || Client()->State() == IClient::STATE_DEMOPLAYBACK)
+			m_GamePage = PAGE_SETTINGS;
+		else
+			SetMenuPage(PAGE_SETTINGS);
+		if(Request.m_SettingsPage >= 0)
+			g_Config.m_UiSettingsPage = Request.m_SettingsPage;
+	}
+
 	m_SettingsLinkNavBestClientTab = Request.m_BestClientTab;
 	m_SettingsLinkNavTClientTab = Request.m_TClientTab;
 	m_SettingsLinkNavUClientTab = Request.m_UClientTab;
@@ -3610,7 +3635,7 @@ void CMenus::NavigateToSettingsLink(const CUClientSettingsLink::SNavigateRequest
 	{
 		str_copy(m_aSettingsLinkHighlightScript, Request.m_aHighlightScript, sizeof(m_aSettingsLinkHighlightScript));
 		m_SettingsLinkHighlightUntil = time_get() + (int64_t)(time_freq() * 1.6f); // 2 blinks
-		m_SettingsLinkNeedScroll = true;
+		m_SettingsLinkNeedScroll = !Request.m_BrowserServerFilter;
 
 		// Expand parent toggles so nested rows (e.g. AntiPing children) are actually rendered.
 		for(int i = 0; i < Request.m_NumParents; ++i)
@@ -3819,9 +3844,9 @@ float CMenus::MeasureSettingsLinkInlineWidth(const CUClientSettingsLink::SParsed
 		Width = maximum(Width, Layout.Margin * 2.0f + TrailingPad + TextRender()->TextWidth(Layout.CrumbFontSize, pCrumb) * 1.12f);
 
 	auto ResolveLabel = [&](const char *pScriptName, const char *pFallback) -> const char * {
-		CUClientSettingsLink::SVarLocation Loc;
-		if(CUClientSettingsLink::LookupVarLocation(pScriptName, Loc) && Loc.m_aLabel[0] != '\0' && str_utf8_check(Loc.m_aLabel))
-			return Loc.m_aLabel;
+		// Must use LookupVarLabel (map storage), never a stack SVarLocation::m_aLabel pointer.
+		if(const char *pRegistered = CUClientSettingsLink::LookupVarLabel(pScriptName))
+			return pRegistered;
 		// Prefer short UI/fallback strings (Localize English keys) over long help text.
 		if(pFallback && pFallback[0] != '\0' && str_utf8_check(pFallback))
 			return Localize(pFallback);
@@ -3970,9 +3995,8 @@ void CMenus::RenderSettingsLinkInline(const CUClientSettingsLink::SParsed &Parse
 	};
 
 	auto ResolveLabel = [&](const char *pScriptName, const char *pFallback) -> const char * {
-		CUClientSettingsLink::SVarLocation Loc;
-		if(CUClientSettingsLink::LookupVarLocation(pScriptName, Loc) && Loc.m_aLabel[0] != '\0' && str_utf8_check(Loc.m_aLabel))
-			return Loc.m_aLabel;
+		if(const char *pRegistered = CUClientSettingsLink::LookupVarLabel(pScriptName))
+			return pRegistered;
 		if(pFallback && pFallback[0] != '\0' && str_utf8_check(pFallback))
 			return Localize(pFallback);
 		const SConfigVariable *pVar = CUClientSettingsLink::FindVariable(ConfigManager(), pScriptName);
