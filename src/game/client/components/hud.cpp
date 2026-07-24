@@ -691,7 +691,6 @@ void CHud::OnReset()
 	m_vFinishPredictionDistances.clear();
 	m_vRacePathToFinishDistances.clear();
 	m_vFinishPredictionFromStartDistances.clear();
-	m_vRacePathMainRoute.clear();
 	m_vFinishPredictionPassable.clear();
 	m_vFinishPredictionStartTiles.clear();
 	m_vFinishPredictionFinishTiles.clear();
@@ -710,6 +709,8 @@ void CHud::OnReset()
 	m_FinishPredictionLastPredictTick = -1;
 	m_FinishPredictionFinishedRaceTick = -1;
 	m_FinishPredictionUsingFastPractice = false;
+	std::fill(std::begin(m_aBackNotifyFreezeOrder), std::end(m_aBackNotifyFreezeOrder), 0);
+	m_BackNotifyFreezeSeq = 0;
 	m_KeystrokesMouse1EndTime = 0;
 	m_KeystrokesWheelUpEndTime = 0;
 	m_KeystrokesWheelDownEndTime = 0;
@@ -723,7 +724,6 @@ bool CHud::RebuildFinishPredictionPathData() const
 	m_vFinishPredictionDistances.clear();
 	m_vRacePathToFinishDistances.clear();
 	m_vFinishPredictionFromStartDistances.clear();
-	m_vRacePathMainRoute.clear();
 	m_vFinishPredictionPassable.clear();
 	m_vFinishPredictionStartTiles.clear();
 	m_vFinishPredictionFinishTiles.clear();
@@ -964,37 +964,6 @@ bool CHud::RebuildFinishPredictionPathData() const
 		NoTeleportExpand,
 		false);
 
-	// Mark shortest walking route BEFORE freeze-shore snap. Side death pockets are reachable
-	// but FromStart+ToFinish is a detour; after snap they inherit the corridor's distances and
-	// would falsely look "on route" for Back notify.
-	int PreSnapRaceLength = -1;
-	for(const ivec2 &StartTile : m_vFinishPredictionStartTiles)
-	{
-		const int Index = StartTile.y * m_FinishPredictionMapWidth + StartTile.x;
-		if(Index < 0 || Index >= MapSize)
-			continue;
-		const int ToFinish = m_vRacePathToFinishDistances[Index];
-		if(ToFinish < 0)
-			continue;
-		if(PreSnapRaceLength < 0 || ToFinish < PreSnapRaceLength)
-			PreSnapRaceLength = ToFinish;
-	}
-	m_vRacePathMainRoute.assign(MapSize, 0);
-	if(PreSnapRaceLength >= 0)
-	{
-		// Small slack for diagonal/discretization noise (≈2 ortho tiles).
-		const int Slack = 20;
-		for(int Index = 0; Index < MapSize; ++Index)
-		{
-			const int FromStart = m_vFinishPredictionFromStartDistances[Index];
-			const int ToFinish = m_vRacePathToFinishDistances[Index];
-			if(FromStart < 0 || ToFinish < 0)
-				continue;
-			if(FromStart + ToFinish <= PreSnapRaceLength + Slack)
-				m_vRacePathMainRoute[Index] = 1;
-		}
-	}
-
 	// Keep freeze traversable for required drops. For display/progress, snap each freeze tile
 	// to its nearest safe shore (tie -> earliest from-start) so a map-wide freeze blob
 	// doesn't collapse every freeze cell to 0% at the start shore.
@@ -1127,22 +1096,6 @@ bool CHud::IsRacePathTileIndex(int Index) const
 	return m_vFinishPredictionFromStartDistances[Index] >= 0 && m_vRacePathToFinishDistances[Index] >= 0;
 }
 
-bool CHud::IsMainRaceRouteAtPos(vec2 Pos) const
-{
-	if(m_vRacePathMainRoute.empty() || m_FinishPredictionMapWidth <= 0 || m_FinishPredictionMapHeight <= 0)
-		return false;
-	if((int)m_vRacePathMainRoute.size() != m_FinishPredictionMapWidth * m_FinishPredictionMapHeight)
-		return false;
-
-	const int TileX = (int)std::floor(Pos.x / 32.0f);
-	const int TileY = (int)std::floor(Pos.y / 32.0f);
-	if(TileX < 0 || TileX >= m_FinishPredictionMapWidth || TileY < 0 || TileY >= m_FinishPredictionMapHeight)
-		return false;
-
-	const int Index = TileY * m_FinishPredictionMapWidth + TileX;
-	return m_vRacePathMainRoute[Index] != 0;
-}
-
 bool CHud::EnsureFinishPredictionPathData() const
 {
 	if(!Collision() || Collision()->GetWidth() <= 0 || Collision()->GetHeight() <= 0)
@@ -1158,9 +1111,7 @@ bool CHud::EnsureFinishPredictionPathData() const
 		m_FinishPredictionRaceLength >= 0 &&
 		!m_vFinishPredictionDistances.empty() &&
 		!m_vRacePathToFinishDistances.empty() &&
-		!m_vFinishPredictionFromStartDistances.empty() &&
-		!m_vRacePathMainRoute.empty() &&
-		(int)m_vRacePathMainRoute.size() == MapWidth * MapHeight)
+		!m_vFinishPredictionFromStartDistances.empty())
 	{
 		return true;
 	}
@@ -1338,103 +1289,6 @@ float CHud::GetRacePathProgressAtPos(vec2 Pos) const
 		return 0.0f;
 	// Local ratio stays valid on long maze routes even when gap shortcuts exist.
 	return std::clamp(FromStart / Total, 0.0f, 1.0f);
-}
-
-bool CHud::GetRacePathMetricsAtPos(vec2 Pos, float &FromStart, float &Progress) const
-{
-	FromStart = -1.0f;
-	Progress = -1.0f;
-	if(m_vRacePathToFinishDistances.empty() || m_vFinishPredictionFromStartDistances.empty() ||
-		m_FinishPredictionMapWidth <= 0 || m_FinishPredictionMapHeight <= 0 ||
-		m_FinishPredictionRaceLength < 0)
-	{
-		return false;
-	}
-
-	const int TileX = std::clamp((int)std::floor(Pos.x / 32.0f), 0, m_FinishPredictionMapWidth - 1);
-	const int TileY = std::clamp((int)std::floor(Pos.y / 32.0f), 0, m_FinishPredictionMapHeight - 1);
-
-	auto IsFreezeTileIndex = [&](int Index) {
-		const int GameTile = Collision()->GetTileIndex(Index);
-		const int FrontTile = Collision()->GetFrontTileIndex(Index);
-		auto IsFreezeType = [](int Tile) {
-			return Tile == TILE_FREEZE || Tile == TILE_DFREEZE || Tile == TILE_LFREEZE;
-		};
-		return IsFreezeType(GameTile) || IsFreezeType(FrontTile);
-	};
-
-	auto FindReferenceIndex = [&](bool SkipFreezeTiles) -> int {
-		int BestIndex = -1;
-		int BestFromStart = -1;
-		float BestOffset = -1.0f;
-		const int MaxRadius = SkipFreezeTiles ? 4 : 2;
-		for(int Radius = 0; Radius <= MaxRadius; ++Radius)
-		{
-			for(int y = maximum(0, TileY - Radius); y <= minimum(m_FinishPredictionMapHeight - 1, TileY + Radius); ++y)
-			{
-				for(int x = maximum(0, TileX - Radius); x <= minimum(m_FinishPredictionMapWidth - 1, TileX + Radius); ++x)
-				{
-					const int Index = y * m_FinishPredictionMapWidth + x;
-					if(!IsRacePathTileIndex(Index))
-						continue;
-					if(SkipFreezeTiles && IsFreezeTileIndex(Index))
-						continue;
-					const int TileFromStart = m_vFinishPredictionFromStartDistances[Index];
-					const float OffsetCost = distance(Pos, vec2(x * 32.0f + 16.0f, y * 32.0f + 16.0f)) / 32.0f;
-					const bool Better = BestIndex < 0 ||
-						(SkipFreezeTiles && (TileFromStart < BestFromStart || (TileFromStart == BestFromStart && OffsetCost < BestOffset))) ||
-						(!SkipFreezeTiles && OffsetCost < BestOffset);
-					if(Better)
-					{
-						BestIndex = Index;
-						BestFromStart = TileFromStart;
-						BestOffset = OffsetCost;
-					}
-				}
-			}
-			if(BestIndex >= 0)
-				break;
-		}
-		return BestIndex;
-	};
-
-	const int CurIndex = TileY * m_FinishPredictionMapWidth + TileX;
-	int RefIndex = -1;
-	if(m_FinishPredictionFreezePenalty > 0)
-		RefIndex = FindReferenceIndex(true);
-	if(RefIndex < 0 && IsRacePathTileIndex(CurIndex))
-		RefIndex = CurIndex;
-	if(RefIndex < 0)
-		RefIndex = FindReferenceIndex(false);
-	if(RefIndex < 0)
-	{
-		FromStart = 0.0f;
-		Progress = 0.0f;
-		return true;
-	}
-
-	FromStart = m_vFinishPredictionFromStartDistances[RefIndex] / 10.0f;
-	const float ToFinish = m_vRacePathToFinishDistances[RefIndex] / 10.0f;
-	if(ToFinish <= 0.0f)
-		Progress = 1.0f;
-	else
-	{
-		const float Total = FromStart + ToFinish;
-		Progress = Total > 0.0f ? std::clamp(FromStart / Total, 0.0f, 1.0f) : 0.0f;
-	}
-	return true;
-}
-
-bool CHud::GetRacePathMetricsForClient(int ClientId, float &FromStart, float &Progress) const
-{
-	FromStart = -1.0f;
-	Progress = -1.0f;
-	vec2 Pos;
-	if(!GetRacePathPosForClient(ClientId, Pos))
-		return false;
-	if(!const_cast<CHud *>(this)->EnsureFinishPredictionPathData())
-		return false;
-	return GetRacePathMetricsAtPos(Pos, FromStart, Progress);
 }
 
 float CHud::GetFinishPredictionStartDistance() const
@@ -1651,102 +1505,171 @@ bool CHud::GetRacePathProgressForClient(int ClientId, float &Progress) const
 	return Progress >= 0.0f;
 }
 
-void CHud::RenderNotifyWhenBack()
+CUIRect CHud::GetNotifyWhenBackRect(bool ForcePreview) const
 {
-	if(!g_Config.m_UcNotifyWhenBack || !GameClient()->m_GameInfo.m_EntitiesDDRace)
-		return;
-	if(!EnsureFinishPredictionPathData())
-		return;
+	if(!HudLayout::IsEnabled(HudLayout::MODULE_NOTIFY_BACK))
+		return {0.0f, 0.0f, 0.0f, 0.0f};
+	if(!ForcePreview && g_Config.m_UcNotifyWhenBack <= 0)
+		return {0.0f, 0.0f, 0.0f, 0.0f};
 
-	int ViewClientId = GameClient()->m_Snap.m_LocalClientId;
-	if(GameClient()->m_Snap.m_SpecInfo.m_Active)
-	{
-		if(GameClient()->m_Snap.m_SpecInfo.m_SpectatorId < 0)
-			return;
-		ViewClientId = GameClient()->m_Snap.m_SpecInfo.m_SpectatorId;
-	}
-	if(ViewClientId < 0)
-		return;
-
-	float LocalFromStart = -1.0f;
-	float LocalProgress = -1.0f;
-	if(!GetRacePathMetricsForClient(ViewClientId, LocalFromStart, LocalProgress))
-		return;
-
-	const float MaxGap = std::clamp(g_Config.m_UcNotifyWhenBackMaxDistance, 1, 100) / 100.0f;
-	constexpr float MinOtherProgress = 0.01f; // at least 1%
-
-	const int LocalTeamId = GameClient()->m_Teams.Team(ViewClientId);
-	std::vector<std::string> vBehindNames;
-	vBehindNames.reserve(8);
-	for(int i = 0; i < MAX_CLIENTS; ++i)
-	{
-		if(i == ViewClientId || !GameClient()->m_Snap.m_apPlayerInfos[i])
-			continue;
-		if(GameClient()->m_Teams.Team(i) != LocalTeamId)
-			continue;
-
-		const bool Frozen = GameClient()->m_aClients[i].m_FreezeEnd > 0 || GameClient()->m_aClients[i].m_DeepFrozen;
-		// /spec alone must not trigger Back. Only count spectators whose last body
-		// (SpecChar) is still on a freeze tile — i.e. they /spec'd while frozen.
-		bool CountAsFrozen = Frozen;
-		if(!CountAsFrozen && g_Config.m_UcNotifyWhenBackIncludeSpec && GameClient()->m_aClients[i].m_SpecCharPresent)
-		{
-			if(!Collision())
-				continue;
-			const vec2 SpecPos = GameClient()->m_aClients[i].m_SpecChar;
-			const int MapIndex = Collision()->GetPureMapIndex(SpecPos);
-			if(MapIndex < 0)
-				continue;
-			const int GameTile = Collision()->GetTileIndex(MapIndex);
-			const int FrontTile = Collision()->GetFrontTileIndex(MapIndex);
-			const auto IsFreezeType = [](int Tile) {
-				return Tile == TILE_FREEZE || Tile == TILE_DFREEZE || Tile == TILE_LFREEZE;
-			};
-			CountAsFrozen = IsFreezeType(GameTile) || IsFreezeType(FrontTile);
-		}
-		if(!CountAsFrozen)
-			continue;
-
-		// Skip freeze deaths in side pockets / opposite branches. Progress sampling snaps those
-		// onto the nearby corridor, which made off-route freezes (e.g. DoD in a recess) look
-		// like they were just behind you on the play route.
-		vec2 OtherPos;
-		if(!GetRacePathPosForClient(i, OtherPos) || !IsMainRaceRouteAtPos(OtherPos))
-			continue;
-
-		float OtherFromStart = -1.0f;
-		float OtherProgress = -1.0f;
-		if(!GetRacePathMetricsAtPos(OtherPos, OtherFromStart, OtherProgress))
-			continue;
-		if(OtherProgress < MinOtherProgress)
-			continue;
-
-		// "Behind" uses distance-from-start so winding corridors don't invert vs finish-only %.
-		if(OtherFromStart >= LocalFromStart)
-			continue;
-
-		const float Gap = LocalProgress - OtherProgress;
-		if(Gap > 0.0f && Gap <= MaxGap)
-			vBehindNames.emplace_back(GameClient()->m_aClients[i].m_aName);
-	}
-	if(vBehindNames.empty())
-		return;
-
+	const auto Layout = HudLayout::Get(HudLayout::MODULE_NOTIFY_BACK, m_Width, m_Height);
+	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
+	const float FontSize = std::clamp(g_Config.m_UcNotifyWhenBackSize * Scale, 1.0f, 50.0f * Scale);
 	const char *pText = g_Config.m_UcNotifyWhenBackText[0] != '\0' ? g_Config.m_UcNotifyWhenBackText : "Back";
 	char aTitle[96];
 	if(g_Config.m_UcNotifyWhenBackShowCount)
-		str_format(aTitle, sizeof(aTitle), "%s(%d)", pText, (int)vBehindNames.size());
+		str_format(aTitle, sizeof(aTitle), "%s(%d)", pText, ForcePreview ? 2 : 1);
 	else
 		str_copy(aTitle, pText);
 
+	const float TextWidth = TextRender()->TextWidth(FontSize, aTitle, -1, -1.0f);
+	float Height = FontSize + 2.0f * Scale;
+	float Width = maximum(TextWidth, 8.0f);
+	if(g_Config.m_UcNotifyWhenBackShowNames)
+	{
+		const float NameFontSize = maximum(1.0f, FontSize * 0.85f);
+		const char *pPreviewNames = ForcePreview ? "banana, apple" : "Player";
+		Width = maximum(Width, TextRender()->TextWidth(NameFontSize, pPreviewNames, -1, -1.0f));
+		Height += NameFontSize + 1.0f + 2.0f * Scale;
+	}
+
+	CUIRect Rect;
+	Rect.x = Layout.m_X;
+	Rect.y = Layout.m_Y;
+	Rect.w = Width;
+	Rect.h = Height;
+	Rect.x = std::clamp(Rect.x, 0.0f, maximum(0.0f, m_Width - Rect.w));
+	Rect.y = std::clamp(Rect.y, 0.0f, maximum(0.0f, m_Height - Rect.h));
+	return Rect;
+}
+
+void CHud::RenderNotifyWhenBack(bool ForcePreview)
+{
+	if(!HudLayout::IsEnabled(HudLayout::MODULE_NOTIFY_BACK))
+		return;
+	if(!ForcePreview && (!g_Config.m_UcNotifyWhenBack || !GameClient()->m_GameInfo.m_EntitiesDDRace))
+		return;
+
+	const auto Layout = HudLayout::Get(HudLayout::MODULE_NOTIFY_BACK, m_Width, m_Height);
+	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
+	const float FontSize = std::clamp(g_Config.m_UcNotifyWhenBackSize * Scale, 1.0f, 50.0f * Scale);
+	const char *pText = g_Config.m_UcNotifyWhenBackText[0] != '\0' ? g_Config.m_UcNotifyWhenBackText : "Back";
+
+	std::vector<std::string> vBehindNames;
+	if(ForcePreview)
+	{
+		if(g_Config.m_UcNotifyWhenBackShowNames)
+		{
+			vBehindNames.emplace_back("banana");
+			vBehindNames.emplace_back("apple");
+		}
+	}
+	else
+	{
+		if(!EnsureFinishPredictionPathData())
+			return;
+
+		int ViewClientId = GameClient()->m_Snap.m_LocalClientId;
+		if(GameClient()->m_Snap.m_SpecInfo.m_Active)
+		{
+			if(GameClient()->m_Snap.m_SpecInfo.m_SpectatorId < 0)
+				return;
+			ViewClientId = GameClient()->m_Snap.m_SpecInfo.m_SpectatorId;
+		}
+		if(ViewClientId < 0)
+			return;
+
+		float LocalFromStart = -1.0f;
+		float LocalProgress = -1.0f;
+		if(!GetRacePathFromStartForClient(ViewClientId, LocalFromStart) || !GetRacePathProgressForClient(ViewClientId, LocalProgress))
+			return;
+
+		const float MaxGap = std::clamp(g_Config.m_UcNotifyWhenBackMaxDistance, 1, 100) / 100.0f;
+		constexpr float MinOtherProgress = 0.01f; // at least 1%
+
+		const int LocalTeamId = GameClient()->m_Teams.Team(ViewClientId);
+
+		// Track first time we see each player freeze. Do not use server FreezeStart — it is
+		// refreshed about once per second while still frozen, which reshuffles the name list.
+		for(int i = 0; i < MAX_CLIENTS; ++i)
+		{
+			const bool Present = GameClient()->m_Snap.m_apPlayerInfos[i] != nullptr;
+			const bool Frozen = Present && (GameClient()->m_aClients[i].m_FreezeEnd > 0 || GameClient()->m_aClients[i].m_DeepFrozen);
+			if(!Frozen)
+			{
+				m_aBackNotifyFreezeOrder[i] = 0;
+				continue;
+			}
+			if(m_aBackNotifyFreezeOrder[i] == 0)
+				m_aBackNotifyFreezeOrder[i] = ++m_BackNotifyFreezeSeq;
+		}
+
+		struct SBehindFrozen
+		{
+			std::string m_Name;
+			int m_Order = 0;
+			int m_ClientId = 0;
+		};
+		std::vector<SBehindFrozen> vBehind;
+		vBehind.reserve(8);
+		for(int i = 0; i < MAX_CLIENTS; ++i)
+		{
+			if(i == ViewClientId || !GameClient()->m_Snap.m_apPlayerInfos[i])
+				continue;
+			if(GameClient()->m_Teams.Team(i) != LocalTeamId)
+				continue;
+
+			const bool Frozen = GameClient()->m_aClients[i].m_FreezeEnd > 0 || GameClient()->m_aClients[i].m_DeepFrozen;
+			if(!Frozen)
+				continue;
+
+			float OtherFromStart = -1.0f;
+			float OtherProgress = -1.0f;
+			if(!GetRacePathFromStartForClient(i, OtherFromStart) || !GetRacePathProgressForClient(i, OtherProgress))
+				continue;
+			if(OtherProgress < MinOtherProgress)
+				continue;
+
+			// "Behind" uses distance-from-start so winding corridors don't invert vs finish-only %.
+			if(OtherFromStart >= LocalFromStart)
+				continue;
+
+			const float Gap = LocalProgress - OtherProgress;
+			if(Gap <= 0.0f || Gap > MaxGap)
+				continue;
+
+			vBehind.push_back({GameClient()->m_aClients[i].m_aName, m_aBackNotifyFreezeOrder[i], i});
+		}
+		if(vBehind.empty())
+			return;
+
+		std::stable_sort(vBehind.begin(), vBehind.end(), [](const SBehindFrozen &A, const SBehindFrozen &B) {
+			if(A.m_Order != B.m_Order)
+				return A.m_Order < B.m_Order;
+			return A.m_ClientId < B.m_ClientId;
+		});
+
+		vBehindNames.reserve(vBehind.size());
+		for(const SBehindFrozen &Entry : vBehind)
+			vBehindNames.push_back(Entry.m_Name);
+	}
+
+	char aTitle[96];
+	if(g_Config.m_UcNotifyWhenBackShowCount)
+	{
+		const int Count = ForcePreview ? maximum(2, (int)vBehindNames.size()) : (int)vBehindNames.size();
+		str_format(aTitle, sizeof(aTitle), "%s(%d)", pText, Count);
+	}
+	else
+		str_copy(aTitle, pText);
+
+	const float XPos = std::clamp(Layout.m_X, 0.0f, maximum(0.0f, m_Width - FontSize));
+	const float YPos = std::clamp(Layout.m_Y, 0.0f, maximum(0.0f, m_Height - FontSize));
+
 	TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcNotifyWhenBackColor)));
-	const float FontSize = (float)g_Config.m_UcNotifyWhenBackSize;
-	const float XPos = std::clamp((g_Config.m_UcNotifyWhenBackX / 100.0f) * m_Width, 1.0f, m_Width - FontSize);
-	const float YPos = std::clamp((g_Config.m_UcNotifyWhenBackY / 100.0f) * m_Height, 1.0f, m_Height - FontSize);
 	TextRender()->Text(XPos, YPos, FontSize, aTitle, -1.0f);
 
-	if(g_Config.m_UcNotifyWhenBackShowNames)
+	if(g_Config.m_UcNotifyWhenBackShowNames && !vBehindNames.empty())
 	{
 		const float NameFontSize = maximum(1.0f, FontSize * 0.85f);
 		const float LineHeight = NameFontSize + 1.0f;

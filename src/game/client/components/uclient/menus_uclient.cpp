@@ -2,12 +2,15 @@
 #include <base/system.h>
 #include <base/time.h>
 
+#include <engine/font_icons.h>
 #include <engine/graphics.h>
+#include <engine/keys.h>
 #include <engine/shared/config.h>
 #include <engine/textrender.h>
 
 #include <game/client/bc_ui_animations.h>
 #include <game/client/components/chat.h>
+#include <game/client/components/hud_layout.h>
 #include <game/client/components/menus.h>
 #include <game/client/gameclient.h>
 #include <game/client/lineinput.h>
@@ -135,6 +138,11 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 	};
 
 	static int s_CurTab = UCLIENT_TAB_GAMEPLAY;
+	{
+		int NavTab = -1;
+		if(ConsumeSettingsLinkNavUClientTab(NavTab) && NavTab >= 0 && NavTab < NUM_UCLIENT_TABS)
+			s_CurTab = NavTab;
+	}
 	static CButtonContainer s_aPageTabs[NUM_UCLIENT_TABS] = {};
 	if(s_CurTab < 0 || s_CurTab >= NUM_UCLIENT_TABS)
 		s_CurTab = UCLIENT_TAB_GAMEPLAY;
@@ -172,9 +180,12 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 		const int Corners = Tab == 0 ? IGraphics::CORNER_L : (Tab == NUM_UCLIENT_TABS - 1 ? IGraphics::CORNER_R : IGraphics::CORNER_NONE);
 		if(DoButton_MenuTab(&s_aPageTabs[Tab], apTabNames[Tab], s_CurTab == Tab, &TabButton, Corners, nullptr, nullptr, nullptr, nullptr, 4.0f))
 			s_CurTab = Tab;
+		if(Ui()->MouseHovered(&TabButton) && Input()->KeyPress(KEY_MOUSE_2))
+			TryOpenSettingsLinkMenuForPage("UClient", CUClientSettingsLink::UClientTabToken(Tab), &TabButton);
 	}
 
 	MainView.HSplitTop(10.0f, nullptr, &MainView);
+	SetSettingsLinkContext(SETTINGS_UCLIENT, CUClientSettingsLink::UClientTabToken(s_CurTab));
 
 	static CScrollRegion s_UClientScrollRegion;
 	vec2 ScrollOffset(0.0f, 0.0f);
@@ -183,6 +194,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 	ScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
 	ScrollParams.m_ScrollbarMargin = 5.0f;
 	s_UClientScrollRegion.Begin(&MainView, &ScrollOffset, &ScrollParams);
+	SetSettingsLinkScrollRegion(&s_UClientScrollRegion);
 
 	MainView.y += ScrollOffset.y;
 	MainView.VSplitRight(5.0f, &MainView, nullptr);
@@ -228,7 +240,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			static float s_BackPhase = 0.0f;
 			const bool BackExpanded = g_Config.m_UcNotifyWhenBack != 0;
 			UpdateRevealPhase(s_BackPhase, BackExpanded);
-			const float ExpandedTargetHeight = MarginSmall + LineSize + MarginSmall + ColorPickerLineSize + ColorPickerLineSpacing + LineSize * 7.0f;
+			const float ExpandedTargetHeight = MarginSmall + LineSize + MarginSmall + ColorPickerLineSize + ColorPickerLineSpacing + LineSize * 6.0f;
 			const float ExpandedHeight = ExpandedTargetHeight * s_BackPhase;
 			const float ContentHeight = LineSize + MarginSmall + LineSize + ExpandedHeight;
 			CUIRect Content, Label, Button, Visible;
@@ -240,6 +252,8 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			Ui()->DoLabel(&Label, Localize("Back notify"), HeadlineFontSize, TEXTALIGN_ML);
 			Content.HSplitTop(MarginSmall, nullptr, &Content);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcNotifyWhenBack, Localize("Show when a teammate behind you freezes"), &g_Config.m_UcNotifyWhenBack, &Content, LineSize);
+			if(g_Config.m_UcNotifyWhenBack && !HudLayout::IsEnabled(HudLayout::MODULE_NOTIFY_BACK))
+				HudLayout::SetEnabled(HudLayout::MODULE_NOTIFY_BACK, true);
 			if(ExpandedHeight > 0.0f)
 			{
 				Content.HSplitTop(ExpandedHeight, &Visible, &Content);
@@ -250,11 +264,23 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 					~SScopedClip() { m_pUi->ClipDisable(); }
 				} ClipGuard{Ui()};
 
+				PushSettingsLinkParent("uc_back_notify");
 				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
 				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
 
-				CUIRect TextRow, TextLabel;
+				CUIRect TextRow, TextLabel, BackHudEditorButton;
 				Expand.HSplitTop(LineSize, &TextRow, &Expand);
+				TextRow.VSplitRight(LineSize + 8.0f, &TextRow, &BackHudEditorButton);
+				static CButtonContainer s_BackHudEditorButton;
+				const bool BackCanOpenHudEditor = Client()->State() == IClient::STATE_ONLINE || Client()->State() == IClient::STATE_DEMOPLAYBACK;
+				const bool BackHudEditorClicked = Ui()->DoButton_FontIcon(&s_BackHudEditorButton, FontIcon::UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER, BackCanOpenHudEditor ? 0 : -1, &BackHudEditorButton, BUTTONFLAG_LEFT);
+				GameClient()->m_Tooltips.DoToolTip(&s_BackHudEditorButton, &BackHudEditorButton, BackCanOpenHudEditor ? Localize("Open in HUD editor") : Localize("Join a game first"));
+				GameClient()->m_Tooltips.SetFadeTime(&s_BackHudEditorButton, 0.0f);
+				if(BackHudEditorClicked && BackCanOpenHudEditor)
+				{
+					SetActive(false);
+					GameClient()->m_HudEditor.Activate();
+				}
 				TextRow.VSplitLeft(40.0f, &TextLabel, &TextRow);
 				Ui()->DoLabel(&TextLabel, Localize("Text"), 12.0f, TEXTALIGN_ML);
 				static CLineInput s_BackInput(g_Config.m_UcNotifyWhenBackText, sizeof(g_Config.m_UcNotifyWhenBackText));
@@ -266,16 +292,16 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 				DoLine_ColorPicker(&s_NotifyWhenBackColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &Expand, Localize("Color"), &g_Config.m_UcNotifyWhenBackColor, ColorRGBA(1.0f, 0.55f, 0.15f), false);
 
 				Expand.HSplitTop(LineSize, &Button, &Expand);
-				Ui()->DoScrollbarOption(&g_Config.m_UcNotifyWhenBackMaxDistance, &g_Config.m_UcNotifyWhenBackMaxDistance, &Button, Localize("Max distance"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
-				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcNotifyWhenBackIncludeSpec, Localize("Also show players who /spec'd on freeze"), &g_Config.m_UcNotifyWhenBackIncludeSpec, &Expand, LineSize);
+				DoScrollbarOptionSettingsLink(&g_Config.m_UcNotifyWhenBackMaxDistance, &g_Config.m_UcNotifyWhenBackMaxDistance, &Button, Localize("Max distance"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
 				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcNotifyWhenBackShowCount, Localize("Show frozen user count"), &g_Config.m_UcNotifyWhenBackShowCount, &Expand, LineSize);
 				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcNotifyWhenBackShowNames, Localize("Show frozen user names"), &g_Config.m_UcNotifyWhenBackShowNames, &Expand, LineSize);
 				Expand.HSplitTop(LineSize, &Button, &Expand);
-				Ui()->DoScrollbarOption(&g_Config.m_UcNotifyWhenBackX, &g_Config.m_UcNotifyWhenBackX, &Button, Localize("Horizontal Position"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+				DoScrollbarOptionSettingsLink(&g_Config.m_UcNotifyWhenBackX, &g_Config.m_UcNotifyWhenBackX, &Button, Localize("Horizontal Position"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
 				Expand.HSplitTop(LineSize, &Button, &Expand);
-				Ui()->DoScrollbarOption(&g_Config.m_UcNotifyWhenBackY, &g_Config.m_UcNotifyWhenBackY, &Button, Localize("Vertical Position"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+				DoScrollbarOptionSettingsLink(&g_Config.m_UcNotifyWhenBackY, &g_Config.m_UcNotifyWhenBackY, &Button, Localize("Vertical Position"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
 				Expand.HSplitTop(LineSize, &Button, &Expand);
-				Ui()->DoScrollbarOption(&g_Config.m_UcNotifyWhenBackSize, &g_Config.m_UcNotifyWhenBackSize, &Button, Localize("Font Size"), 1, 50);
+				DoScrollbarOptionSettingsLink(&g_Config.m_UcNotifyWhenBackSize, &g_Config.m_UcNotifyWhenBackSize, &Button, Localize("Font Size"), 1, 50);
+				PopSettingsLinkParent();
 			}
 			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 		}
@@ -315,6 +341,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 					~SScopedClip() { m_pUi->ClipDisable(); }
 				} ClipGuard{Ui()};
 
+				PushSettingsLinkParent("uc_show_timeout_reconnect");
 				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
 				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
 				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcAutoTimeoutReconnect, "Auto reconnect to server when timeout expires", &g_Config.m_UcAutoTimeoutReconnect, &Expand, LineSize);
@@ -330,6 +357,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 					Ui()->DoLabel(&Warning, "You may be reconnected while playing the map.", 11.0f, TEXTALIGN_ML);
 					TextRender()->TextColor(TextRender()->DefaultTextColor());
 				}
+				PopSettingsLinkParent();
 			}
 			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 		}
@@ -369,12 +397,15 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 					~SScopedClip() { m_pUi->ClipDisable(); }
 				} ClipGuard{Ui()};
 
+				PushSettingsLinkParent("uc_auto_login_japan");
 				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
 				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
 				Expand.HSplitTop(CodeBoxHeight, &Row, &Expand);
 				static CLineInput s_AutoLoginJapanCode(g_Config.m_UcAutoLoginJapanCode, sizeof(g_Config.m_UcAutoLoginJapanCode));
 				s_AutoLoginJapanCode.SetEmptyText("Enter Japan server login code");
 				Ui()->DoClearableEditBox(&s_AutoLoginJapanCode, &Row, 14.0f);
+				MaybeRegisterSettingsLinkVar(&g_Config.m_UcAutoLoginJapanCode, Localize("Japan server login code"));
+				PopSettingsLinkParent();
 			}
 
 			Content.HSplitTop(MarginSmall, nullptr, &Content);
@@ -390,12 +421,15 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 					~SScopedClip() { m_pUi->ClipDisable(); }
 				} ClipGuard{Ui()};
 
+				PushSettingsLinkParent("uc_auto_login_kog");
 				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
 				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
 				Expand.HSplitTop(CodeBoxHeight, &Row, &Expand);
 				static CLineInput s_AutoLoginKogCode(g_Config.m_UcAutoLoginKogCode, sizeof(g_Config.m_UcAutoLoginKogCode));
 				s_AutoLoginKogCode.SetEmptyText("Enter KoG server login code");
 				Ui()->DoClearableEditBox(&s_AutoLoginKogCode, &Row, 14.0f);
+				MaybeRegisterSettingsLinkVar(&g_Config.m_UcAutoLoginKogCode, Localize("KoG server login code"));
+				PopSettingsLinkParent();
 			}
 			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 		}
@@ -434,6 +468,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 					~SScopedClip() { m_pUi->ClipDisable(); }
 				} ClipGuard{Ui()};
 
+				PushSettingsLinkParent("uc_chat");
 				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
 				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
 
@@ -481,6 +516,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 
 				static CButtonContainer s_UcMessageColor;
 				DoLine_ColorPicker(&s_UcMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &Expand, "UClient message", &g_Config.m_UcMessageColor, ColorRGBA(0.63f, 0.92f, 1.0f));
+				PopSettingsLinkParent();
 			}
 			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 		}
@@ -523,4 +559,5 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 	ScrollRegion.h = 0.0f;
 	s_UClientScrollRegion.AddRect(ScrollRegion);
 	s_UClientScrollRegion.End();
+	SetSettingsLinkScrollRegion(nullptr);
 }

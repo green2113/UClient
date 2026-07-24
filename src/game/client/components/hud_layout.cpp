@@ -48,6 +48,8 @@ namespace HudLayout
 			// when the keyboard preset changes.
 			{84.5f, 152.0f, 100, 0, true, false, 0x66000000U}, // KEYSTROKES_MOUSE
 			{484.0f, 172.0f, 100, 0, true, true, 0x66000000U}, // DUMMY_ACTIONS
+			// NOTIFY_BACK: matches uc_back_notify_x/y defaults (20%, 8%) on the 500x300 canvas.
+			{100.0f, 24.0f, 100, 0, true, false, 0x66000000U}, // NOTIFY_BACK
 		};
 
 		static const char *gs_apModuleNames[MODULE_COUNT] = {
@@ -73,6 +75,7 @@ namespace HudLayout
 			"Keyboard",
 			"Mouse",
 			"Dummy Actions",
+			"Notify Back",
 		};
 
 		static SModuleLayout gs_aRuntimeModuleLayouts[MODULE_COUNT];
@@ -110,7 +113,8 @@ namespace HudLayout
 			       Module == MODULE_VOICE_STATUS ||
 			       Module == MODULE_CHAT ||
 			       Module == MODULE_VOTES ||
-			       Module == MODULE_NOTIFY_LAST;
+			       Module == MODULE_NOTIFY_LAST ||
+			       Module == MODULE_NOTIFY_BACK;
 		}
 
 		bool HasLegacyConfigOverride(EModule Module)
@@ -140,6 +144,9 @@ namespace HudLayout
 			case MODULE_NOTIFY_LAST:
 				// Percentage + font-size settings are always the source of truth so the
 				// tclient scrollbars and the HUD editor stay in sync both ways.
+				return true;
+			case MODULE_NOTIFY_BACK:
+				// Same as Notify Last: uc_back_notify_x/y (%) stay the source of truth.
 				return true;
 			default:
 				return false;
@@ -190,6 +197,12 @@ namespace HudLayout
 				gs_aRuntimeModuleLayouts[Module].m_X = Layout.m_X;
 				gs_aRuntimeModuleLayouts[Module].m_Y = Layout.m_Y;
 				break;
+			case MODULE_NOTIFY_BACK:
+				Layout.m_X = (g_Config.m_UcNotifyWhenBackX / 100.0f) * CANVAS_WIDTH;
+				Layout.m_Y = (g_Config.m_UcNotifyWhenBackY / 100.0f) * CANVAS_HEIGHT;
+				gs_aRuntimeModuleLayouts[Module].m_X = Layout.m_X;
+				gs_aRuntimeModuleLayouts[Module].m_Y = Layout.m_Y;
+				break;
 			default:
 				break;
 			}
@@ -233,6 +246,10 @@ namespace HudLayout
 				g_Config.m_TcNotifyWhenLastX = std::clamp(round_to_int((Layout.m_X / CANVAS_WIDTH) * 100.0f), 0, 100);
 				g_Config.m_TcNotifyWhenLastY = std::clamp(round_to_int((Layout.m_Y / CANVAS_HEIGHT) * 100.0f), 0, 100);
 				break;
+			case MODULE_NOTIFY_BACK:
+				g_Config.m_UcNotifyWhenBackX = std::clamp(round_to_int((Layout.m_X / CANVAS_WIDTH) * 100.0f), 0, 100);
+				g_Config.m_UcNotifyWhenBackY = std::clamp(round_to_int((Layout.m_Y / CANVAS_HEIGHT) * 100.0f), 0, 100);
+				break;
 			default:
 				break;
 			}
@@ -252,6 +269,7 @@ namespace HudLayout
 			case MODULE_FROZEN_HUD:
 			case MODULE_MOVEMENT_INFO:
 			case MODULE_NOTIFY_LAST:
+			case MODULE_NOTIFY_BACK:
 			case MODULE_FPS:
 			case MODULE_PING:
 			case MODULE_GAME_TIMER:
@@ -291,6 +309,10 @@ namespace HudLayout
 			case MODULE_NOTIFY_LAST:
 				Layout.m_X = (float)round_to_int(HudWidth * 0.2f);
 				Layout.m_Y = (float)round_to_int(HudHeight * 0.01f);
+				break;
+			case MODULE_NOTIFY_BACK:
+				Layout.m_X = (float)round_to_int(HudWidth * 0.20f);
+				Layout.m_Y = (float)round_to_int(HudHeight * 0.08f);
 				break;
 			case MODULE_FPS:
 				Layout.m_X = (float)round_to_int(HudWidth - 26.0f);

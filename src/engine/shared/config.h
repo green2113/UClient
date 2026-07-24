@@ -304,6 +304,9 @@ public:
 	void StoreUnknownCommand(const char *pCommand) override;
 
 	void PossibleConfigVariables(const char *pStr, int FlagMask, POSSIBLECFGFUNC pfnCallback, void *pUserData) override;
+
+	const SConfigVariable *FindVariable(const char *pScriptName) const override;
+	const SConfigVariable *FindVariableByPointer(const void *pVariable) const override;
 };
 
 #endif

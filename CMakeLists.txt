@@ -2756,6 +2756,8 @@ if(CLIENT)
     components/uclient/chat_paste_image.h
     components/uclient/chat_reply.cpp
     components/uclient/chat_reply.h
+    components/uclient/settings_link.cpp
+    components/uclient/settings_link.h
     components/uclient/menus_uclient.cpp
     components/uclient/timeout_reconnect.cpp
     components/uclient/timeout_reconnect.h

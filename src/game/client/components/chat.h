@@ -32,6 +32,7 @@
 
 #include "giphy_browser.h"
 #include "uclient/chat_paste_image.h"
+#include "uclient/settings_link.h"
 
 class CTranslateResponse
 {
@@ -209,6 +210,19 @@ class CChat : public CComponent
 		// Set when the whole line is a single allowed gif-bubble-domain media link; drives the
 		// floating gif bubble rendered above the sender's head (see CGifBubbles).
 		bool m_ShowAboveHead;
+
+		// UClient settings:// chat bubble
+		bool m_HasSettingsLink = false;
+		bool m_SettingsLinkMissing = false;
+		bool m_SettingsLinkPageOnly = false;
+		char m_aSettingsLinkUri[512] = "";
+		CUClientSettingsLink::SParsed m_SettingsLinkParsed{};
+		float m_aSettingsLinkHeight[2] = {};
+		float m_aSettingsLinkWidth[2] = {};
+		SRenderRect m_SettingsLinkRect{};
+		bool m_SettingsLinkRectValid = false;
+		SRenderRect m_SettingsShortcutRect{};
+		bool m_SettingsShortcutRectValid = false;
 	};
 
 	bool m_PrevScoreBoardShowed;
@@ -355,6 +369,7 @@ class CChat : public CComponent
 	std::string m_HoveredLink;
 	bool m_HoveredLinkAlwaysConfirm = false;
 	int m_HoveredReplyLineIndex = -1;
+	int m_HoveredSettingsShortcutLineIndex = -1;
 
 	bool m_PendingReplyActive;
 	int m_PendingReplyClientId;
@@ -514,6 +529,12 @@ class CChat : public CComponent
 	void ApplyStashedUcReplyAfterSendScopePrompt();
 	void ClearStashedUcReplySendScopePrompt();
 	bool CanShowReplyButton(const CLine &Line) const;
+	void ApplySettingsLinkToLine(CLine &Line, const char *pSourceText);
+	float MeasureSettingsLinkHeight(const CLine &Line, float FontSize) const;
+	float MeasureSettingsLinkWidth(const CLine &Line, float FontSize) const;
+	void RenderSettingsLinkBubble(CLine &Line, float X, float Y, float MaxWidth, float FontSize, float Blend);
+	bool CanShowSettingsShortcut(const CLine &Line) const;
+	bool TryHandleSettingsLinkClick(CLine &Line, vec2 MousePos, float FontSize);
 	static bool LineNeedsNameColon(const CLine &Line);
 	static bool LineNeedsTeePadding(const CLine &Line);
 	float ReplyBannerHeight(float ScaledFontSize) const;

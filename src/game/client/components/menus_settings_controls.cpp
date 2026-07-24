@@ -142,6 +142,9 @@ void CMenusSettingsControls::Render(CUIRect MainView)
 
 	// UClient: view mode switch (list of actions vs. on-screen keyboard)
 	{
+		int NavMode = -1;
+		if(GameClient()->m_Menus.ConsumeSettingsLinkNavControlsMode(NavMode))
+			m_VisualBindMode = NavMode == 1;
 		CUIRect TopBar, ListButton, KeyboardButton;
 		MainView.HSplitTop(BUTTON_HEIGHT, &TopBar, &MainView);
 		MainView.HSplitTop(MARGIN, nullptr, &MainView);
@@ -152,10 +155,16 @@ void CMenusSettingsControls::Render(CUIRect MainView)
 		{
 			m_VisualBindMode = false;
 		}
+		if(Ui()->MouseHovered(&ListButton) && Input()->KeyPress(KEY_MOUSE_2))
+			GameClient()->m_Menus.TryOpenSettingsLinkMenuForPage("Controls", "ActionList", &ListButton);
 		if(GameClient()->m_Menus.DoButton_Menu(&m_ViewKeyboardButton, Localize("Keyboard"), m_VisualBindMode ? 1 : 0, &KeyboardButton))
 		{
 			m_VisualBindMode = true;
 		}
+		if(Ui()->MouseHovered(&KeyboardButton) && Input()->KeyPress(KEY_MOUSE_2))
+			GameClient()->m_Menus.TryOpenSettingsLinkMenuForPage("Controls", "Keyboard", &KeyboardButton);
+		GameClient()->m_Menus.SetSettingsLinkContext(CMenus::SETTINGS_CONTROLS, m_VisualBindMode ? "Keyboard" : "ActionList");
+		GameClient()->m_Menus.SetSettingsLinkVarEnabled(false);
 	}
 
 	if(m_VisualBindMode)
@@ -222,6 +231,7 @@ void CMenusSettingsControls::Render(CUIRect MainView)
 	ScrollParams.m_ScrollUnit = 6.0f * BUTTON_HEIGHT;
 	ScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
 	m_SettingsScrollRegion.Begin(&MainView, &ScrollOffset, &ScrollParams);
+	GameClient()->m_Menus.SetSettingsLinkScrollRegion(&m_SettingsScrollRegion);
 	MainView.y += ScrollOffset.y;
 
 	CUIRect LeftColumn, RightColumn;
@@ -248,6 +258,7 @@ void CMenusSettingsControls::Render(CUIRect MainView)
 	}
 
 	m_SettingsScrollRegion.End();
+	GameClient()->m_Menus.SetSettingsLinkScrollRegion(nullptr);
 }
 
 void CMenusSettingsControls::UpdateBindOptions()

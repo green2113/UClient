@@ -10,6 +10,7 @@
 
 #include <engine/font_icons.h>
 #include <engine/graphics.h>
+#include <engine/keys.h>
 #include <engine/shared/config.h>
 #include <engine/shared/http.h>
 #include <engine/shared/json.h>
@@ -129,7 +130,7 @@ void CMenus::RenderSettingsGeneral(CUIRect MainView)
 		Left.HSplitTop(20.0f, &Button, &Left);
 		str_copy(aBuf, " ");
 		str_append(aBuf, Localize("Hz", "Hertz"));
-		Ui()->DoScrollbarOption(&g_Config.m_ClRefreshRate, &g_Config.m_ClRefreshRate, &Button, Localize("Update Rate"), 10, 1000, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_INFINITE | CUi::SCROLLBAR_OPTION_NOCLAMPVALUE | CUi::SCROLLBAR_OPTION_DELAYUPDATE, aBuf);
+		DoScrollbarOptionSettingsLink(&g_Config.m_ClRefreshRate, &g_Config.m_ClRefreshRate, &Button, Localize("Update Rate"), 10, 1000, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_INFINITE | CUi::SCROLLBAR_OPTION_NOCLAMPVALUE | CUi::SCROLLBAR_OPTION_DELAYUPDATE, aBuf);
 		Left.HSplitTop(5.0f, nullptr, &Left);
 		Left.HSplitTop(20.0f, &Button, &Left);
 		static int s_LowerRefreshRate;
@@ -2131,8 +2132,12 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 
 	bool MultiSamplingChanged = false;
 	MainView.HSplitTop(20.0f, &Button, &MainView);
+	CUIRect FsaaButton = Button;
 	str_format(aBuf, sizeof(aBuf), "%s (%s)", Localize("FSAA samples"), Localize("may cause delay"));
 	int GfxFsaaSamplesMouseButton = DoButton_CheckBox_Number(&g_Config.m_GfxFsaaSamples, aBuf, g_Config.m_GfxFsaaSamples, &Button);
+	// Number checkbox uses right-click to decrement; Ctrl+Right copies settings link.
+	if(Ui()->MouseHovered(&FsaaButton) && Input()->ModifierIsPressed() && Input()->KeyPress(KEY_MOUSE_2))
+		TryOpenSettingsLinkMenuForVar(&g_Config.m_GfxFsaaSamples, Localize("FSAA samples"), &FsaaButton);
 	int CurFSAA = g_Config.m_GfxFsaaSamples == 0 ? 1 : g_Config.m_GfxFsaaSamples;
 	if(GfxFsaaSamplesMouseButton == 1) // inc
 	{
@@ -2182,11 +2187,15 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 	MainView.HSplitTop(20.0f, &Button, &MainView);
 	str_copy(aBuf, " ");
 	str_append(aBuf, Localize("Hz", "Hertz"));
-	Ui()->DoScrollbarOption(&g_Config.m_GfxRefreshRate, &g_Config.m_GfxRefreshRate, &Button, Localize("Refresh Rate"), 10, 1000, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_INFINITE | CUi::SCROLLBAR_OPTION_NOCLAMPVALUE | CUi::SCROLLBAR_OPTION_DELAYUPDATE, aBuf);
+	DoScrollbarOptionSettingsLink(&g_Config.m_GfxRefreshRate, &g_Config.m_GfxRefreshRate, &Button, Localize("Refresh Rate"), 10, 1000, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_INFINITE | CUi::SCROLLBAR_OPTION_NOCLAMPVALUE | CUi::SCROLLBAR_OPTION_DELAYUPDATE, aBuf);
 
 	MainView.HSplitTop(2.0f, nullptr, &MainView);
 	static CButtonContainer s_UiColorResetId;
+	CUIRect UiColorLinkProbe = MainView;
+	UiColorLinkProbe.h = 25.0f;
 	DoLine_ColorPicker(&s_UiColorResetId, 25.0f, 13.0f, 2.0f, &MainView, Localize("UI Color"), &g_Config.m_UiColor, color_cast<ColorRGBA>(ColorHSLA(0xE4A046AFU, true)), false, nullptr, true);
+	if(Ui()->MouseHovered(&UiColorLinkProbe) && Input()->KeyPress(KEY_MOUSE_2))
+		TryOpenSettingsLinkMenuForVar(&g_Config.m_UiColor, Localize("UI Color"), &UiColorLinkProbe);
 
 	// Backend list
 	struct SMenuBackendInfo
@@ -2603,6 +2612,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 		const bool NeedRestart = m_NeedRestartGraphics || m_NeedRestartSound || m_NeedRestartUpdate;
 
 		auto RenderSettingsPage = [&](CUIRect PageView) {
+			SetSettingsLinkContext(g_Config.m_UiSettingsPage);
 			if(g_Config.m_UiSettingsPage == SETTINGS_GENERAL)
 			{
 				GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GENERAL);
@@ -2715,10 +2725,11 @@ void CMenus::RenderSettings(CUIRect MainView)
 
 		auto RenderSettingsPageNewLayout = [&](CUIRect PageView) {
 			const int Page = g_Config.m_UiSettingsPage;
-			const bool NeedsAutoScroll = Page == SETTINGS_GENERAL || Page == SETTINGS_APPEARANCE;
+			const bool NeedsAutoScroll = Page == SETTINGS_GENERAL || Page == SETTINGS_APPEARANCE || Page == SETTINGS_DDNET;
 
 			if(!NeedsAutoScroll)
 			{
+				SetSettingsLinkScrollRegion(nullptr);
 				RenderSettingsPage(PageView);
 				return;
 			}
@@ -2732,11 +2743,12 @@ void CMenus::RenderSettings(CUIRect MainView)
 			vec2 ScrollOffset(0.0f, 0.0f);
 			CScrollRegion &ScrollRegion = s_aNewLayoutScrollRegions[Page];
 			ScrollRegion.Begin(&PageView, &ScrollOffset, &ScrollParams);
+			SetSettingsLinkScrollRegion(&ScrollRegion);
 
 			CUIRect ContentView = PageView;
 			ContentView.y += ScrollOffset.y;
 			const float ContentStartY = ContentView.y;
-			const float VirtualHeightBoost = Page == SETTINGS_GENERAL ? 120.0f : 96.0f;
+			const float VirtualHeightBoost = Page == SETTINGS_GENERAL ? 120.0f : (Page == SETTINGS_DDNET ? 160.0f : 96.0f);
 			ContentView.h = PageView.h + VirtualHeightBoost;
 
 			RenderSettingsPage(ContentView);
@@ -2746,6 +2758,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 			ContentRect.h = ContentView.h;
 			ScrollRegion.AddRect(ContentRect);
 			ScrollRegion.End();
+			SetSettingsLinkScrollRegion(nullptr);
 		};
 
 		CUIRect ContentView, RootTabBar, RestartBar;
@@ -2933,25 +2946,38 @@ void CMenus::RenderSettings(CUIRect MainView)
 		TabBar.HSplitTop(26.0f, &Button, &TabBar);
 		if(DoButton_MenuTab(&s_aTabButtons[i], apTabs[i], g_Config.m_UiSettingsPage == i, &Button, IGraphics::CORNER_R, &m_aAnimatorsSettingsTab[i]))
 			g_Config.m_UiSettingsPage = i;
+		if(Ui()->MouseHovered(&Button) && Input()->KeyPress(KEY_MOUSE_2))
+		{
+			const char *pPageToken = CUClientSettingsLink::PageTokenFromSettingsPage(i);
+			if(pPageToken[0] != '\0')
+				TryOpenSettingsLinkMenuForPage(pPageToken, nullptr, &Button);
+		}
 	}
 
 	if(g_Config.m_UiSettingsPage == SETTINGS_LANGUAGE)
 	{
+		SetSettingsLinkContext(SETTINGS_LANGUAGE);
+		SetSettingsLinkVarEnabled(false);
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_LANGUAGE);
 		RenderLanguageSettings(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_GENERAL)
 	{
+		SetSettingsLinkContext(SETTINGS_GENERAL);
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GENERAL);
 		RenderSettingsGeneral(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_PLAYER)
 	{
+		SetSettingsLinkContext(SETTINGS_PLAYER);
+		SetSettingsLinkVarEnabled(false);
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_PLAYER);
 		RenderSettingsPlayer(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_TEE)
 	{
+		SetSettingsLinkContext(SETTINGS_TEE);
+		SetSettingsLinkVarEnabled(false);
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_TEE);
 		if(Client()->IsSixup())
 			RenderSettingsTee7(MainView);
@@ -2960,56 +2986,68 @@ void CMenus::RenderSettings(CUIRect MainView)
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_APPEARANCE)
 	{
+		SetSettingsLinkContext(SETTINGS_APPEARANCE);
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_APPEARANCE);
 		RenderSettingsAppearance(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_CONTROLS)
 	{
+		SetSettingsLinkContext(SETTINGS_CONTROLS);
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_CONTROLS);
 		m_MenusSettingsControls.Render(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_GRAPHICS)
 	{
+		SetSettingsLinkContext(SETTINGS_GRAPHICS);
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GRAPHICS);
 		RenderSettingsGraphics(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_SOUND)
 	{
+		SetSettingsLinkContext(SETTINGS_SOUND);
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_SOUND);
 		RenderSettingsSound(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_DDNET)
 	{
+		SetSettingsLinkContext(SETTINGS_DDNET);
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_DDNET);
 		RenderSettingsDDNet(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_ASSETS)
 	{
+		SetSettingsLinkContext(SETTINGS_ASSETS);
+		SetSettingsLinkVarEnabled(false);
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_ASSETS);
 		RenderSettingsCustom(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_TCLIENT)
 	{
+		SetSettingsLinkContext(SETTINGS_TCLIENT);
 		GameClient()->m_MenuBackground.ChangePosition(13);
 		RenderSettingsTClient(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_PROFILES)
 	{
+		SetSettingsLinkContext(SETTINGS_PROFILES);
 		GameClient()->m_MenuBackground.ChangePosition(14);
 		RenderSettingsTClientProfiles(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_CONFIGS)
 	{
+		SetSettingsLinkContext(SETTINGS_CONFIGS);
 		GameClient()->m_MenuBackground.ChangePosition(15);
 		RenderSettingsTClientConfigs(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_BESTCLIENT)
 	{
+		SetSettingsLinkContext(SETTINGS_BESTCLIENT);
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_RESERVED0);
 		RenderSettingsBestClient(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_UCLIENT)
 	{
+		SetSettingsLinkContext(SETTINGS_UCLIENT);
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_RESERVED1);
 		RenderSettingsUClient(MainView);
 	}
@@ -4379,6 +4417,7 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 
 	if(g_Config.m_ClAntiPing)
 	{
+		PushSettingsLinkParent("cl_antiping");
 		Right.HSplitTop(20.0f, &Button, &Right);
 		if(DoButton_CheckBox(&g_Config.m_ClAntiPingPlayers, Localize("AntiPing: predict other players"), g_Config.m_ClAntiPingPlayers, &Button))
 		{
@@ -4396,6 +4435,7 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 		{
 			g_Config.m_ClAntiPingGrenade ^= 1;
 		}
+		PopSettingsLinkParent();
 	}
 
 	CUIRect Background, Miscellaneous;

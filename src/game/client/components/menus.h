@@ -24,6 +24,7 @@
 #include <game/client/components/menus_start.h>
 #include <game/client/components/skins7.h>
 #include <game/client/components/tclient/warlist.h>
+#include <game/client/components/uclient/settings_link.h>
 #include <game/client/lineinput.h>
 #include <game/client/ui.h>
 #include <game/voting.h>
@@ -64,6 +65,30 @@ public:
 	int DoButton_CheckBox(const void *pId, const char *pText, int Checked, const CUIRect *pRect);
 	int DoButton_CheckBoxAutoVMarginAndSet(const void *pId, const char *pText, int *pValue, CUIRect *pRect, float VMargin);
 	int DoButton_CheckBox_Number(const void *pId, const char *pText, int Checked, const CUIRect *pRect);
+
+	// UClient settings:// deep links
+	void SetSettingsLinkContext(int SettingsPage, const char *pTab = nullptr);
+	void PushSettingsLinkParent(const char *pScriptName);
+	void PopSettingsLinkParent();
+	void SetSettingsLinkVarEnabled(bool Enabled);
+	bool TryOpenSettingsLinkMenuForVar(const void *pId, const char *pLabel, const CUIRect *pRect);
+	bool TryOpenSettingsLinkMenuForPage(const char *pPageToken, const char *pTabToken, const CUIRect *pRect);
+	bool DoScrollbarOptionSettingsLink(const void *pId, int *pOption, const CUIRect *pRect, const char *pStr, int Min, int Max, const IScrollbarScale *pScale = &CUi::ms_LinearScrollbarScale, unsigned Flags = 0u, const char *pSuffix = "");
+	void MaybeHighlightSettingsLink(const CUIRect *pRect, const char *pScriptName);
+	void MaybeRegisterSettingsLinkVar(const void *pId, const char *pLabel);
+	void NavigateToSettingsLink(const CUClientSettingsLink::SNavigateRequest &Request);
+	void SetSettingsLinkScrollRegion(CScrollRegion *pRegion);
+	// Chat preview: compact settings-styled controls (chat coordinate space; clicks handled by chat).
+	float MeasureSettingsLinkInlineHeight(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, float FontSize) const;
+	float MeasureSettingsLinkInlineWidth(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, float FontSize) const;
+	void RenderSettingsLinkInline(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, CUIRect Rect, float FontSize, float Blend, vec2 MousePos);
+	bool TryClickSettingsLinkInline(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, const CUIRect &Rect, float FontSize, vec2 MousePos);
+	bool ConsumeSettingsLinkNavBestClientTab(int &Tab);
+	bool ConsumeSettingsLinkNavTClientTab(int &Tab);
+	bool ConsumeSettingsLinkNavUClientTab(int &Tab);
+	bool ConsumeSettingsLinkNavAssetsTab(int &Tab);
+	bool ConsumeSettingsLinkNavControlsMode(int &Mode);
+	static CUi::EPopupMenuFunctionResult PopupSettingsLinkCopy(void *pContext, CUIRect View, bool Active);
 
 	bool DoSliderWithScaledValue(const void *pId, int *pOption, const CUIRect *pRect, const char *pStr, int Min, int Max, int Scale, const IScrollbarScale *pScale, unsigned Flags = 0u, const char *pSuffix = "");
 	void DoTickAmountSlider(int *pValue, const CUIRect *pRect, const char *pLabel, int Min, int Max, int Scale = 100);
@@ -1000,6 +1025,26 @@ public:
 	SUIAnimator m_aAnimatorsBigPage[BIG_TAB_LENGTH];
 	SUIAnimator m_aAnimatorsSmallPage[SMALL_TAB_LENGTH];
 	SUIAnimator m_aAnimatorsSettingsTab[SETTINGS_LENGTH];
+
+	// UClient settings:// copy + navigate
+	bool m_SettingsLinkVarEnabled = true;
+	int m_SettingsLinkContextPage = -1;
+	char m_aSettingsLinkContextTab[64] = "";
+	char m_aaSettingsLinkParents[CUClientSettingsLink::MAX_PARENTS][CUClientSettingsLink::MAX_SCRIPT_NAME] = {};
+	int m_SettingsLinkParentCount = 0;
+	SPopupMenuId m_SettingsLinkPopupId;
+	CButtonContainer m_SettingsLinkCopyButton;
+	char m_aSettingsLinkPendingUri[CUClientSettingsLink::MAX_URI_LENGTH] = "";
+	bool m_SettingsLinkCopyIsTab = false;
+	int m_SettingsLinkNavBestClientTab = -1;
+	int m_SettingsLinkNavTClientTab = -1;
+	int m_SettingsLinkNavUClientTab = -1;
+	int m_SettingsLinkNavAssetsTab = -1;
+	int m_SettingsLinkNavControlsMode = -1;
+	char m_aSettingsLinkHighlightScript[CUClientSettingsLink::MAX_SCRIPT_NAME] = "";
+	int64_t m_SettingsLinkHighlightUntil = 0;
+	CScrollRegion *m_pSettingsLinkScrollRegion = nullptr;
+	bool m_SettingsLinkNeedScroll = false;
 
 	// DDRace
 	int DoButton_CheckBox_Tristate(const void *pId, const char *pText, TRISTATE Checked, const CUIRect *pRect);

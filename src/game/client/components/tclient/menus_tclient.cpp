@@ -5,6 +5,7 @@
 
 #include <engine/font_icons.h>
 #include <engine/graphics.h>
+#include <engine/keys.h>
 #include <engine/shared/config.h>
 #include <engine/shared/linereader.h>
 #include <engine/shared/localization.h>
@@ -321,6 +322,11 @@ void CMenus::RenderSettingsTClient(CUIRect MainView)
 	}
 
 	static int s_CurCustomTab = 0;
+	{
+		int NavTab = -1;
+		if(ConsumeSettingsLinkNavTClientTab(NavTab) && NavTab >= 0 && NavTab < NUMBER_OF_TCLIENT_TABS)
+			s_CurCustomTab = NavTab;
+	}
 
 	CUIRect TabBar, Button;
 	int TabCount = NUMBER_OF_TCLIENT_TABS;
@@ -355,9 +361,12 @@ void CMenus::RenderSettingsTClient(CUIRect MainView)
 													 IGraphics::CORNER_NONE;
 		if(DoButton_MenuTab(&s_aPageTabs[Tab], apTabNames[Tab], s_CurCustomTab == Tab, &Button, Corners, nullptr, nullptr, nullptr, nullptr, 4.0f))
 			s_CurCustomTab = Tab;
+		if(Ui()->MouseHovered(&Button) && Input()->KeyPress(KEY_MOUSE_2))
+			TryOpenSettingsLinkMenuForPage("TClient", CUClientSettingsLink::TClientTabToken(Tab), &Button);
 	}
 
 	MainView.HSplitTop(Margin, nullptr, &MainView);
+	SetSettingsLinkContext(SETTINGS_TCLIENT, CUClientSettingsLink::TClientTabToken(s_CurCustomTab));
 
 	if(s_CurCustomTab == TCLIENT_TAB_SETTINGS)
 		RenderSettingsTClientSettings(MainView);
@@ -384,6 +393,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	ScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
 	ScrollParams.m_ScrollbarMargin = 5.0f;
 	s_ScrollRegion.Begin(&MainView, &ScrollOffset, &ScrollParams);
+	SetSettingsLinkScrollRegion(&s_ScrollRegion);
 
 	static std::vector<CUIRect> s_SectionBoxes;
 	static vec2 s_PrevScrollOffset(0.0f, 0.0f);
@@ -818,6 +828,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	Column.HSplitTop(LineSize + MarginSmall, &NotificationConfig, &Column);
 	if(g_Config.m_TcNotifyWhenLast)
 	{
+		PushSettingsLinkParent("tc_last_notify");
 		CUIRect NotifyLastHudEditorButton;
 		NotificationConfig.VSplitRight(LineSize + 8.0f, &NotificationConfig, &NotifyLastHudEditorButton);
 		static CButtonContainer s_NotifyLastHudEditorButton;
@@ -839,11 +850,12 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 		static CButtonContainer s_ClientNotifyWhenLastColor;
 		DoLine_ColorPicker(&s_ClientNotifyWhenLastColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &NotificationConfig, "", &g_Config.m_TcNotifyWhenLastColor, ColorRGBA(1.0f, 1.0f, 1.0f), false);
 		Column.HSplitTop(LineSize, &Button, &Column);
-		Ui()->DoScrollbarOption(&g_Config.m_TcNotifyWhenLastX, &g_Config.m_TcNotifyWhenLastX, &Button, TCLocalize("Horizontal Position"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		DoScrollbarOptionSettingsLink(&g_Config.m_TcNotifyWhenLastX, &g_Config.m_TcNotifyWhenLastX, &Button, TCLocalize("Horizontal Position"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
 		Column.HSplitTop(LineSize, &Button, &Column);
-		Ui()->DoScrollbarOption(&g_Config.m_TcNotifyWhenLastY, &g_Config.m_TcNotifyWhenLastY, &Button, TCLocalize("Vertical Position"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		DoScrollbarOptionSettingsLink(&g_Config.m_TcNotifyWhenLastY, &g_Config.m_TcNotifyWhenLastY, &Button, TCLocalize("Vertical Position"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
 		Column.HSplitTop(LineSize, &Button, &Column);
-		Ui()->DoScrollbarOption(&g_Config.m_TcNotifyWhenLastSize, &g_Config.m_TcNotifyWhenLastSize, &Button, TCLocalize("Font Size"), 1, 50);
+		DoScrollbarOptionSettingsLink(&g_Config.m_TcNotifyWhenLastSize, &g_Config.m_TcNotifyWhenLastSize, &Button, TCLocalize("Font Size"), 1, 50);
+		PopSettingsLinkParent();
 	}
 	else
 	{
@@ -1115,6 +1127,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	ScrollRegion.h = 0.0f;
 	s_ScrollRegion.AddRect(ScrollRegion);
 	s_ScrollRegion.End();
+	SetSettingsLinkScrollRegion(nullptr);
 }
 
 void CMenus::RenderSettingsTClientBindWheel(CUIRect MainView)
@@ -1284,6 +1297,7 @@ void CMenus::RenderSettingsTClientChatBinds(CUIRect MainView)
 	ScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
 	ScrollParams.m_ScrollbarMargin = 5.0f;
 	s_ScrollRegion.Begin(&MainView, &ScrollOffset, &ScrollParams);
+	SetSettingsLinkScrollRegion(&s_ScrollRegion);
 
 	static std::vector<CUIRect> s_SectionBoxes;
 	static vec2 s_PrevScrollOffset(0.0f, 0.0f);
@@ -1368,6 +1382,7 @@ void CMenus::RenderSettingsTClientChatBinds(CUIRect MainView)
 	ScrollRegion.h = 0.0f;
 	s_ScrollRegion.AddRect(ScrollRegion);
 	s_ScrollRegion.End();
+	SetSettingsLinkScrollRegion(nullptr);
 }
 
 void CMenus::RenderSettingsTClientWarList(CUIRect MainView)

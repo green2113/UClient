@@ -506,6 +506,43 @@ void CConfigManager::PossibleConfigVariables(const char *pStr, int FlagMask, POS
 	}
 }
 
+const SConfigVariable *CConfigManager::FindVariable(const char *pScriptName) const
+{
+	if(!pScriptName || pScriptName[0] == '\0')
+		return nullptr;
+	for(const SConfigVariable *pVariable : m_vpAllVariables)
+	{
+		if(str_comp(pVariable->m_pScriptName, pScriptName) == 0)
+			return pVariable;
+	}
+	return nullptr;
+}
+
+const SConfigVariable *CConfigManager::FindVariableByPointer(const void *pVariable) const
+{
+	if(!pVariable)
+		return nullptr;
+	for(const SConfigVariable *pConfigVar : m_vpAllVariables)
+	{
+		if(pConfigVar->m_Type == SConfigVariable::VAR_INT)
+		{
+			if(static_cast<const SIntConfigVariable *>(pConfigVar)->m_pVariable == pVariable)
+				return pConfigVar;
+		}
+		else if(pConfigVar->m_Type == SConfigVariable::VAR_COLOR)
+		{
+			if(static_cast<const SColorConfigVariable *>(pConfigVar)->m_pVariable == pVariable)
+				return pConfigVar;
+		}
+		else if(pConfigVar->m_Type == SConfigVariable::VAR_STRING)
+		{
+			if(static_cast<const SStringConfigVariable *>(pConfigVar)->m_pStr == pVariable)
+				return pConfigVar;
+		}
+	}
+	return nullptr;
+}
+
 void CConfigManager::Con_Reset(IConsole::IResult *pResult, void *pUserData)
 {
 	static_cast<CConfigManager *>(pUserData)->Reset(pResult->GetString(0));

@@ -171,6 +171,8 @@ class CHud : public CComponent
 
 	CUIRect GetNotifyLastRect(bool ForcePreview = false) const;
 	void RenderNotifyLast(bool ForcePreview = false);
+	CUIRect GetNotifyWhenBackRect(bool ForcePreview = false) const;
+	void RenderNotifyWhenBack(bool ForcePreview = false);
 
 	CUIRect GetKeystrokesKeyboardRectInternal(bool IgnoreModuleEnabled) const;
 	void RenderKeystrokesKeyboardInternal(bool ForcePreview, bool IgnoreModuleEnabled);
@@ -209,6 +211,8 @@ public:
 	void RenderFrozenHudPreview() { RenderFrozenHud(true); }
 	CUIRect GetNotifyLastHudEditorRect() const { return GetNotifyLastRect(true); }
 	void RenderNotifyLastPreview() { RenderNotifyLast(true); }
+	CUIRect GetNotifyWhenBackHudEditorRect() const { return GetNotifyWhenBackRect(true); }
+	void RenderNotifyWhenBackPreview() { RenderNotifyWhenBack(true); }
 	CUIRect GetKeystrokesKeyboardHudEditorRect() const;
 	void RenderKeystrokesKeyboardPreview() { RenderKeystrokesKeyboardInternal(true, true); }
 	CUIRect GetKeystrokesMouseHudEditorRect() const { return GetKeystrokesMouseRectInternal(true); }
@@ -258,9 +262,6 @@ private:
 	float GetRacePathFromStartAtPos(vec2 Pos) const;
 	float GetRacePathProgressAtPos(vec2 Pos) const;
 	bool IsRacePathTileIndex(int Index) const;
-	// True if Pos lies on a shortest start→finish walking route (before freeze-shore snap).
-	// Side death pockets next to the corridor return false — used by Back notify.
-	bool IsMainRaceRouteAtPos(vec2 Pos) const;
 	float GetFinishPredictionStartDistance() const;
 	int64_t GetFinishPredictionScoreboardTimeMs(int ClientId) const;
 	int64_t GetFinishPredictionBestTimeMs() const;
@@ -274,10 +275,9 @@ private:
 	bool GetRacePathDistanceForClient(int ClientId, float &Distance) const;
 	bool GetRacePathFromStartForClient(int ClientId, float &Distance) const;
 	bool GetRacePathProgressForClient(int ClientId, float &Progress) const;
-	// Single-sample FromStart + Progress for Back notify (avoids double neighbor search).
-	bool GetRacePathMetricsForClient(int ClientId, float &FromStart, float &Progress) const;
-	bool GetRacePathMetricsAtPos(vec2 Pos, float &FromStart, float &Progress) const;
-	void RenderNotifyWhenBack();
+	// First-seen freeze order for Back name list (server FreezeStart refreshes every second).
+	int m_aBackNotifyFreezeOrder[MAX_CLIENTS] = {};
+	int m_BackNotifyFreezeSeq = 0;
 	float SampleRacePathDistanceField(const std::vector<int> &vDistances, vec2 Pos, bool RequireRacePath = false) const;
 	CUIRect GetFinishPredictionAnchorRect() const;
 	CUIRect GetFinishPredictionClassicRect(bool ForcePreview) const;
@@ -288,7 +288,6 @@ private:
 	mutable std::vector<int> m_vFinishPredictionDistances; // to-finish with teleports (finish prediction)
 	mutable std::vector<int> m_vRacePathToFinishDistances; // to-finish without teleports (progress/BACK)
 	mutable std::vector<int> m_vFinishPredictionFromStartDistances; // from-start without teleports (progress/BACK)
-	mutable std::vector<unsigned char> m_vRacePathMainRoute; // shortest-route mask before freeze shore snap
 	mutable std::vector<unsigned char> m_vFinishPredictionPassable;
 	mutable std::vector<ivec2> m_vFinishPredictionStartTiles;
 	mutable std::vector<ivec2> m_vFinishPredictionFinishTiles;

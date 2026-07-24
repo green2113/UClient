@@ -1495,7 +1495,7 @@ void CVoiceChat::RenderMenuSettingsBlock(const CUIRect &View, float RevealPhase)
 	AddSpacing(kVoiceMenuTitleToEnableSpacing);
 	if(AddRow(kVoiceMenuEnableRowHeight, Row))
 	{
-		if(GameClient()->m_Menus.DoButton_CheckBox(&m_EnableVoiceButton, BCLocalize("Enable voice chat"), g_Config.m_BcVoiceChatEnable, &Row))
+		if(GameClient()->m_Menus.DoButton_CheckBox(&g_Config.m_BcVoiceChatEnable, BCLocalize("Enable voice chat"), g_Config.m_BcVoiceChatEnable, &Row))
 		{
 			g_Config.m_BcVoiceChatEnable ^= 1;
 			if(!g_Config.m_BcVoiceChatEnable && m_Socket)
@@ -1505,6 +1505,8 @@ void CVoiceChat::RenderMenuSettingsBlock(const CUIRect &View, float RevealPhase)
 
 	if(!g_Config.m_BcVoiceChatEnable || RevealPhase <= 0.0f)
 		return;
+
+	GameClient()->m_Menus.PushSettingsLinkParent("bc_voice_chat_enable");
 
 	const int InitialServerCount = (int)m_vServerEntries.size();
 	const bool RadiusFilterEnabled = g_Config.m_BcVoiceChatRadiusEnabled != 0;
@@ -1535,14 +1537,14 @@ void CVoiceChat::RenderMenuSettingsBlock(const CUIRect &View, float RevealPhase)
 	AddExpandedSpacing(4.0f);
 	if(AddExpandedRow(20.0f, Row))
 	{
-		if(GameClient()->m_Menus.DoButton_CheckBox(&m_InGameOnlyButton, BCLocalize("In-Game Only"), g_Config.m_BcVoiceChatInGameOnly, &Row))
+		if(GameClient()->m_Menus.DoButton_CheckBox(&g_Config.m_BcVoiceChatInGameOnly, BCLocalize("In-Game Only"), g_Config.m_BcVoiceChatInGameOnly, &Row))
 			g_Config.m_BcVoiceChatInGameOnly ^= 1;
 	}
 
 	AddExpandedSpacing(4.0f);
 	if(AddExpandedRow(20.0f, Row))
 	{
-		if(GameClient()->m_Menus.DoButton_CheckBox(&m_UseTeam0Button, BCLocalize("Use team0"), g_Config.m_BcVoiceChatUseTeam0, &Row))
+		if(GameClient()->m_Menus.DoButton_CheckBox(&g_Config.m_BcVoiceChatUseTeam0, BCLocalize("Use team0"), g_Config.m_BcVoiceChatUseTeam0, &Row))
 		{
 			g_Config.m_BcVoiceChatUseTeam0 ^= 1;
 			if(g_Config.m_BcVoiceChatUseTeam0 == 0)
@@ -1557,7 +1559,7 @@ void CVoiceChat::RenderMenuSettingsBlock(const CUIRect &View, float RevealPhase)
 		CUIRect ClippedRow;
 		if(AddExpandedRow(20.0f * YourGroupRowPhase, ClippedRow) && ClippedRow.h > 0.0f)
 		{
-			if(GameClient()->m_Menus.DoButton_CheckBox(&m_EnableYourGroupButton, BCLocalize("Enable your group"), g_Config.m_BcVoiceChatEnableYourGroup, &ClippedRow))
+			if(GameClient()->m_Menus.DoButton_CheckBox(&g_Config.m_BcVoiceChatEnableYourGroup, BCLocalize("Enable your group"), g_Config.m_BcVoiceChatEnableYourGroup, &ClippedRow))
 				g_Config.m_BcVoiceChatEnableYourGroup ^= 1;
 		}
 	}
@@ -1565,7 +1567,7 @@ void CVoiceChat::RenderMenuSettingsBlock(const CUIRect &View, float RevealPhase)
 	AddExpandedSpacing(4.0f);
 	if(AddExpandedRow(20.0f, Row))
 	{
-		if(GameClient()->m_Menus.DoButton_CheckBox(&m_RadiusFilterButton, BCLocalize("Radius filter"), g_Config.m_BcVoiceChatRadiusEnabled, &Row))
+		if(GameClient()->m_Menus.DoButton_CheckBox(&g_Config.m_BcVoiceChatRadiusEnabled, BCLocalize("Radius filter"), g_Config.m_BcVoiceChatRadiusEnabled, &Row))
 			g_Config.m_BcVoiceChatRadiusEnabled ^= 1;
 	}
 
@@ -1574,7 +1576,7 @@ void CVoiceChat::RenderMenuSettingsBlock(const CUIRect &View, float RevealPhase)
 		AddExpandedSpacing(3.0f);
 		if(AddExpandedRow(20.0f, Row))
 		{
-			Ui()->DoScrollbarOption(&g_Config.m_BcVoiceChatRadiusTiles, &g_Config.m_BcVoiceChatRadiusTiles, &Row, BCLocalize("Radius (tiles)"), 1, 500);
+			GameClient()->m_Menus.DoScrollbarOptionSettingsLink(&g_Config.m_BcVoiceChatRadiusTiles, &g_Config.m_BcVoiceChatRadiusTiles, &Row, BCLocalize("Radius (tiles)"), 1, 500);
 		}
 	}
 
@@ -1683,6 +1685,8 @@ void CVoiceChat::RenderMenuSettingsBlock(const CUIRect &View, float RevealPhase)
 	AddExpandedSpacing(2.0f);
 	if(AddExpandedRow(14.0f, Row))
 		Ui()->DoLabel(&Row, BCLocalize("!voice radius on/off/<tiles>"), 11.0f, TEXTALIGN_ML);
+
+	GameClient()->m_Menus.PopSettingsLinkParent();
 }
 
 void CVoiceChat::RenderMenuControlBinds(const CUIRect &View)

@@ -4,6 +4,7 @@
 #include <engine/config.h>
 #include <engine/font_icons.h>
 #include <engine/graphics.h>
+#include <engine/keys.h>
 #include <engine/shared/config.h>
 #include <engine/storage.h>
 #include <engine/textrender.h>
@@ -83,6 +84,11 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 	MainView.h += 20.0f;
 
 	static int s_CurTab = BESTCLIENT_TAB_VISUALS;
+	{
+		int NavTab = -1;
+		if(ConsumeSettingsLinkNavBestClientTab(NavTab) && NavTab >= 0 && NavTab < NUM_BESTCLIENT_TABS)
+			s_CurTab = NavTab;
+	}
 	static CButtonContainer s_aPageTabs[NUM_BESTCLIENT_TABS] = {};
 
 	MainView.HSplitTop(8.0f, nullptr, &MainView);
@@ -140,10 +146,13 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 		const int Corners = VisibleIndex == 0 ? IGraphics::CORNER_L : (VisibleIndex == TabCount - 1 ? IGraphics::CORNER_R : IGraphics::CORNER_NONE);
 		if(DoButton_MenuTab(&s_aPageTabs[Tab], apTabNames[Tab], s_CurTab == Tab, &TabButton, Corners, nullptr, nullptr, nullptr, nullptr, 4.0f))
 			s_CurTab = Tab;
+		if(Ui()->MouseHovered(&TabButton) && Input()->KeyPress(KEY_MOUSE_2))
+			TryOpenSettingsLinkMenuForPage("BestClient", CUClientSettingsLink::BestClientTabToken(Tab), &TabButton);
 		VisibleIndex++;
 	}
 
 	MainView.HSplitTop(10.0f, nullptr, &MainView);
+	SetSettingsLinkContext(SETTINGS_BESTCLIENT, CUClientSettingsLink::BestClientTabToken(s_CurTab));
 
 	if(s_CurTab == BESTCLIENT_TAB_VISUALS)
 		RenderSettingsBestClientVisuals(MainView);
@@ -188,6 +197,7 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 	VisualsScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
 	VisualsScrollParams.m_ScrollbarMargin = 5.0f;
 	s_VisualsScrollRegion.Begin(&MainView, &VisualsScrollOffset, &VisualsScrollParams);
+	SetSettingsLinkScrollRegion(&s_VisualsScrollRegion);
 	MainView.y += VisualsScrollOffset.y;
 	MainView.VSplitRight(5.0f, &MainView, nullptr);
 	MainView.VSplitLeft(5.0f, nullptr, &MainView);
@@ -264,6 +274,8 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		Visible.h = ChatBubblesExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_chat_bubbles");
+
 		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 		MainView.HSplitTop(LineSize, &Content, &MainView);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcChatBubblesSelf, Localize("Show chat bubbles above you"), &g_Config.m_BcChatBubblesSelf, &Content, LineSize);
@@ -312,6 +324,7 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 			DoLine_ColorPicker(&s_ChatBubbleOutlineColorButton, ChatBubbleColorPickerLineSize, 13.0f, ChatBubbleColorPickerSpacing, &MainView, Localize("Outline"), &g_Config.m_BcChatBubbleOutlineColor, color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::BcChatBubbleOutlineColor, true)), false, nullptr, true);
 		}
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -500,6 +513,8 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		Visible.h = ExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_hook_combo");
+
 		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 
 		CUIRect ModeLabel, ModeRow;
@@ -533,6 +548,7 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		MainView.HSplitTop(LineSize, &Button, &MainView);
 		DoSliderWithScaledValue(&g_Config.m_BcHookComboSize, &g_Config.m_BcHookComboSize, &Button, Localize("Hook combo size"), 50, 200, 1, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "%");
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -583,6 +599,8 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		Visible.h = JellyExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_jelly_tee");
+
 		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 		MainView.HSplitTop(LineSize, &Content, &MainView);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcJellyTeeOthers, Localize("Jelly Others"), &g_Config.m_BcJellyTeeOthers, &Content, LineSize);
@@ -595,6 +613,7 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		MainView.HSplitTop(LineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_BcJellyTeeDuration, &g_Config.m_BcJellyTeeDuration, &Button, Localize("Jelly duration"), 1, 500);
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -667,6 +686,8 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		Visible.h = Particles3DExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_3d_particles");
+
 		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 		MainView.HSplitTop(LineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_Bc3dParticlesCount, &g_Config.m_Bc3dParticlesCount, &Button, Localize("Particles count"), 1, 200);
@@ -733,6 +754,8 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 			GlowVisible.h = Particles3DGlowExpandedHeight;
 			Ui()->ClipEnable(&GlowVisible);
 
+			PushSettingsLinkParent("bc_3d_particles_glow");
+
 			MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 			MainView.HSplitTop(LineSize, &Button, &MainView);
 			Ui()->DoScrollbarOption(&g_Config.m_Bc3dParticlesGlowAlpha, &g_Config.m_Bc3dParticlesGlowAlpha, &Button, Localize("Glow alpha"), 1, 100);
@@ -741,9 +764,11 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 			MainView.HSplitTop(LineSize, &Button, &MainView);
 			Ui()->DoScrollbarOption(&g_Config.m_Bc3dParticlesGlowOffset, &g_Config.m_Bc3dParticlesGlowOffset, &Button, Localize("Glow offset"), 1, 20);
 
+			PopSettingsLinkParent();
 			Ui()->ClipDisable();
 		}
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -948,10 +973,13 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		Visible.h = EyeComfortExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_eye_comfort");
+
 		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 		MainView.HSplitTop(LineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_BcEyeComfortStrength, &g_Config.m_BcEyeComfortStrength, &Button, Localize("Comfort level"), 0, 100, &CUi::ms_LinearScrollbarScale, 0u, "%");
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -1040,6 +1068,8 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		Visible.h = FlyingNamePlatesExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_flying_name_plates");
+
 		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 		MainView.HSplitTop(LineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_BcFlyingNamePlatesLift, &g_Config.m_BcFlyingNamePlatesLift, &Button, Localize("Lift above player"), 0, 120);
@@ -1052,6 +1082,7 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		MainView.HSplitTop(LineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_BcFlyingNamePlatesFollow, &g_Config.m_BcFlyingNamePlatesFollow, &Button, Localize("Follow speed"), 1, 100);
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -1103,10 +1134,13 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		Visible.h = MotionBlurExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_motion_blur");
+
 		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 		MainView.HSplitTop(LineSize, &Button, &MainView);
 		DoSliderWithScaledValue(&g_Config.m_BcMotionBlurStrength, &g_Config.m_BcMotionBlurStrength, &Button, Localize("Blend strength"), 0, 95, 1, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "%");
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -1167,6 +1201,8 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		Visible.h = AnimationsExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_animations");
+
 		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 		MainView.HSplitTop(LineSize, &Content, &MainView);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcModuleUiRevealAnimation, Localize("Module settings reveals"), &g_Config.m_BcModuleUiRevealAnimation, &Content, LineSize);
@@ -1209,6 +1245,7 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		MainView.HSplitTop(LineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_BcMainMenuAnimationSpeed, &g_Config.m_BcMainMenuAnimationSpeed, &Button, Localize("Main menu animation speed"), 1, 50);
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -1279,6 +1316,8 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		CUIRect Visible = MainView;
 		Visible.h = MusicPlayerExpandedHeight;
 		Ui()->ClipEnable(&Visible);
+
+		PushSettingsLinkParent("bc_music_player");
 
 		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 		MainView.HSplitTop(LineSize, &Button, &MainView);
@@ -1379,6 +1418,7 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		if(DoButton_Menu(&s_MusicPlayerVisualizerRoundingPill, Localize("Pill"), MusicPlayerRoundingPreset == 2, &MusicPlayerPillButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_R))
 			g_Config.m_BcMusicPlayerVisualizerRounding = 400;
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -1472,6 +1512,8 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		Visible.h = KeystrokesClassicPresetHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_keystrokes_keyboard");
+
 		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 		MainView.HSplitTop(LineSize, &Button, &MainView);
 
@@ -1509,6 +1551,7 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 			HudLayout::ResetPosition(HudLayout::MODULE_KEYSTROKES_MOUSE);
 		}
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -1517,6 +1560,8 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 		CUIRect Visible = MainView;
 		Visible.h = KeystrokesMinecraftExpandedHeight;
 		Ui()->ClipEnable(&Visible);
+
+		PushSettingsLinkParent("bc_keystrokes_keyboard");
 
 		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 		MainView.HSplitTop(LineSize, &Button, &MainView);
@@ -1547,6 +1592,7 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcKeystrokesMcShowSpace, Localize("Enable Space"), &g_Config.m_BcKeystrokesMcShowSpace, &Content, LineSize);
 		}
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -1563,6 +1609,8 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 			CUIRect Visible = MainView;
 			Visible.h = KeystrokesMouseExpandedHeight;
 			Ui()->ClipEnable(&Visible);
+
+			PushSettingsLinkParent("bc_keystrokes_mouse");
 
 			MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 			MainView.HSplitTop(LineSize, &Button, &MainView);
@@ -1588,6 +1636,7 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 			if(DoButton_Menu(&s_MousePresetNothing, Localize("Nothing"), g_Config.m_BcKeystrokesMousePreset == 3, &NothingButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_R))
 				g_Config.m_BcKeystrokesMousePreset = 3;
 
+			PopSettingsLinkParent();
 			Ui()->ClipDisable();
 		}
 	}
@@ -1793,6 +1842,7 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 	VisualsScrollContentRect.h = 0.0f;
 	s_VisualsScrollRegion.AddRect(VisualsScrollContentRect);
 	s_VisualsScrollRegion.End();
+	SetSettingsLinkScrollRegion(nullptr);
 }
 
 void CMenus::DoTickAmountSlider(int *pValue, const CUIRect *pRect, const char *pLabel, int Min, int Max, int Scale)
@@ -1837,6 +1887,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 	GameplayScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
 	GameplayScrollParams.m_ScrollbarMargin = 5.0f;
 	s_GameplayScrollRegion.Begin(&MainView, &GameplayScrollOffset, &GameplayScrollParams);
+	SetSettingsLinkScrollRegion(&s_GameplayScrollRegion);
 	MainView.y += GameplayScrollOffset.y;
 	MainView.VSplitRight(5.0f, &MainView, nullptr);
 	MainView.VSplitLeft(5.0f, nullptr, &MainView);
@@ -1892,6 +1943,8 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		CUIRect Visible = InputsBlock;
 		Visible.h = InputsExpandedHeight;
 		Ui()->ClipEnable(&Visible);
+
+		PushSettingsLinkParent("bc_inputs");
 
 		InputsBlock.HSplitTop(MarginSmall, nullptr, &InputsBlock);
 		InputsBlock.HSplitTop(LineSize, &Button, &InputsBlock);
@@ -2026,6 +2079,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFInputOthers, Localize("F input others"), &g_Config.m_BcFInputOthers, &Content, LineSize);
 		}
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -2072,6 +2126,8 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		Visible.h = SnapTapExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_snap_tap");
+
 		SnapTapBlock.HSplitTop(MarginSmall, nullptr, &SnapTapBlock);
 		SnapTapBlock.HSplitTop(LineSize, &Button, &SnapTapBlock);
 
@@ -2099,6 +2155,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		Value = (int)(Min + NewRel * (Max - Min) + 0.5f);
 		g_Config.m_BcSnapTapDelay = std::clamp(Value, Min, Max);
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -2153,6 +2210,8 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		Visible.h = OptimizerExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_optimizer");
+
 		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 		MainView.HSplitTop(LineSize, &Content, &MainView);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcOptimizerDisableParticles, Localize("Disable all particles render"), &g_Config.m_BcOptimizerDisableParticles, &Content, LineSize);
@@ -2174,6 +2233,8 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 			CUIRect FogVisible = MainView;
 			FogVisible.h = OptimizerFpsFogExpandedHeight;
 			Ui()->ClipEnable(&FogVisible);
+
+			PushSettingsLinkParent("bc_optimizer_fps_fog");
 
 			MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 			MainView.HSplitTop(LineSize, &Content, &MainView);
@@ -2203,9 +2264,11 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 			else
 				Ui()->DoScrollbarOption(&g_Config.m_BcOptimizerFpsFogZoomPercent, &g_Config.m_BcOptimizerFpsFogZoomPercent, &Button, Localize("Visible area (%)"), 10, 120, &CUi::ms_LinearScrollbarScale, 0u, "%");
 
+			PopSettingsLinkParent();
 			Ui()->ClipDisable();
 		}
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -2242,10 +2305,13 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		Visible.h = ExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_gores_mode");
+
 		Block.HSplitTop(MarginSmall, nullptr, &Block);
 		Block.HSplitTop(LineSize, &Content, &Block);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcGoresModeDisableIfWeapons, Localize("Disable if you have shotgun, grenade or laser"), &g_Config.m_BcGoresModeDisableIfWeapons, &Content, LineSize);
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -2288,6 +2354,8 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		Visible.h = SelfTimeCpExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_self_time_cp");
+
 		SelfTimeCpBlock.HSplitTop(MarginSmall, nullptr, &SelfTimeCpBlock);
 		SelfTimeCpBlock.HSplitTop(LineSize, &Button, &SelfTimeCpBlock);
 		{
@@ -2319,6 +2387,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		if(DoButton_Menu(&s_SelfTimeCpClearButton, Localize("Clear timeCP"), 0, &Button, BUTTONFLAG_LEFT))
 			Console()->ExecuteLine("BC_clear_time_cp", IConsole::CLIENT_ID_UNSPECIFIED);
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -2362,6 +2431,8 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		CUIRect Visible = MainView;
 		Visible.h = FastActionsExpandedHeight;
 		Ui()->ClipEnable(&Visible);
+
+		PushSettingsLinkParent("bc_fast_actions");
 
 		static char s_aBindName[FAST_ACTIONS_MAX_NAME] = "";
 		static char s_aBindCommand[FAST_ACTIONS_MAX_CMD] = "";
@@ -2496,6 +2567,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		static CButtonContainer s_FastActionsClearKeyButton;
 		DoLine_KeyReader(Label, s_FastActionsReaderButton, s_FastActionsClearKeyButton, Localize("Fast Actions key"), "+fa");
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -2532,6 +2604,8 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		Visible.h = SpeedrunExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_speedrun_timer");
+
 		SpeedrunBlock.HSplitTop(MarginSmall, nullptr, &SpeedrunBlock);
 		SpeedrunBlock.HSplitTop(LineSize, &Button, &SpeedrunBlock);
 		Ui()->DoScrollbarOption(&g_Config.m_BcSpeedrunTimerHours, &g_Config.m_BcSpeedrunTimerHours, &Button, Localize("Hours"), 0, 99);
@@ -2552,6 +2626,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		SpeedrunBlock.HSplitTop(LineSize, &Content, &SpeedrunBlock);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcSpeedrunTimerAutoDisable, Localize("Auto disable after time end"), &g_Config.m_BcSpeedrunTimerAutoDisable, &Content, LineSize);
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -2611,6 +2686,8 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		Visible.h = FinishPredictionExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_finish_prediction");
+
 		FinishPredictionView.HSplitTop(MarginSmall, nullptr, &FinishPredictionView);
 		FinishPredictionView.HSplitTop(LineSize, &Content, &FinishPredictionView);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFinishPredictionShowTime, Localize("Show time"), &g_Config.m_BcFinishPredictionShowTime, &Content, LineSize);
@@ -2620,6 +2697,8 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 			CUIRect TimeVisible = FinishPredictionView;
 			TimeVisible.h = FinishPredictionTimeExpandedHeight;
 			Ui()->ClipEnable(&TimeVisible);
+
+			PushSettingsLinkParent("bc_finish_prediction_show_time");
 
 			FinishPredictionView.HSplitTop(MarginSmall, nullptr, &FinishPredictionView);
 			FinishPredictionView.HSplitTop(LineSize, &Button, &FinishPredictionView);
@@ -2638,6 +2717,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 			FinishPredictionView.HSplitTop(LineSize, &Content, &FinishPredictionView);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFinishPredictionShowMillis, Localize("Show milliseconds"), &g_Config.m_BcFinishPredictionShowMillis, &Content, LineSize);
 
+			PopSettingsLinkParent();
 			Ui()->ClipDisable();
 		}
 
@@ -2649,6 +2729,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		FinishPredictionView.HSplitTop(LineSize, &Content, &FinishPredictionView);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFinishPredictionShowAlways, Localize("Show always"), &g_Config.m_BcFinishPredictionShowAlways, &Content, LineSize);
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -2687,6 +2768,8 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		Visible.h = FocusModeExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("p_focus_mode");
+
 		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 		MainView.HSplitTop(LineSize, &Content, &MainView);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClFocusModeHideNames, Localize("Hide Player Names"), &g_Config.m_ClFocusModeHideNames, &Content, LineSize);
@@ -2721,6 +2804,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		static CButtonContainer s_FocusModeBindClear;
 		DoLine_KeyReader(Label, s_FocusModeBindReader, s_FocusModeBindClear, Localize("Focus mode bind"), "toggle p_focus_mode 0 1");
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -2732,6 +2816,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 	GameplayScrollContentRect.h = 0.0f;
 	s_GameplayScrollRegion.AddRect(GameplayScrollContentRect);
 	s_GameplayScrollRegion.End();
+	SetSettingsLinkScrollRegion(nullptr);
 }
 
 void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
@@ -2750,6 +2835,7 @@ void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
 	OthersScrollParams.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
 	OthersScrollParams.m_ScrollbarMargin = 5.0f;
 	s_OthersScrollRegion.Begin(&MainView, &OthersScrollOffset, &OthersScrollParams);
+	SetSettingsLinkScrollRegion(&s_OthersScrollRegion);
 	MainView.y += OthersScrollOffset.y;
 	MainView.VSplitRight(5.0f, &MainView, nullptr);
 	MainView.VSplitLeft(5.0f, nullptr, &MainView);
@@ -2877,6 +2963,8 @@ void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
 		Visible.h = ExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("cl_replays");
+
 		g_Config.m_ClReplayLength = std::clamp(g_Config.m_ClReplayLength, 10, 60);
 
 		Block.HSplitTop(MarginSmall, nullptr, &Block);
@@ -2889,6 +2977,7 @@ void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
 		static CButtonContainer s_RollbackBindClear;
 		DoLine_KeyReader(Button, s_RollbackBindReader, s_RollbackBindClear, Localize("Rollback bind"), "BC_save_rollback");
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -2963,6 +3052,8 @@ void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
 		Visible.h = ChatFilterExpandedHeight;
 		Ui()->ClipEnable(&Visible);
 
+		PushSettingsLinkParent("bc_enable_censor_list");
+
 		ChatFilterBlock.HSplitTop(MarginSmall, nullptr, &ChatFilterBlock);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcShowBlockedWordInConsole, Localize("Show blocked word in console"), &g_Config.m_BcShowBlockedWordInConsole, &ChatFilterBlock, LineSize);
 		GameClient()->m_Tooltips.DoToolTip(&g_Config.m_BcShowBlockedWordInConsole, &ChatFilterBlock, Localize("In console will be like 'tee said badbad'"));
@@ -2998,6 +3089,7 @@ void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
 			DoEditBoxWithLabel(&s_PartialReplacementChar, &Label, Localize("Partial Replacement char"), "*", g_Config.m_BcBlockedContentPartialReplacementChar, sizeof(g_Config.m_BcBlockedContentPartialReplacementChar));
 		}
 
+		PopSettingsLinkParent();
 		Ui()->ClipDisable();
 	}
 
@@ -3115,6 +3207,7 @@ void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
 	OthersScrollContentRect.h = 0.0f;
 	s_OthersScrollRegion.AddRect(OthersScrollContentRect);
 	s_OthersScrollRegion.End();
+	SetSettingsLinkScrollRegion(nullptr);
 }
 
 CUi::EPopupMenuFunctionResult CMenus::PopupVoiceModeration(void *pContext, CUIRect View, bool Active)

@@ -482,6 +482,17 @@ CChat::CLine::CLine()
 	m_aReactionRowHeight[0] = 0.0f;
 	m_aReactionRowHeight[1] = 0.0f;
 	m_ShowAboveHead = false;
+	m_HasSettingsLink = false;
+	m_SettingsLinkMissing = false;
+	m_SettingsLinkPageOnly = false;
+	m_aSettingsLinkUri[0] = '\0';
+	m_SettingsLinkParsed = {};
+	m_aSettingsLinkHeight[0] = 0.0f;
+	m_aSettingsLinkHeight[1] = 0.0f;
+	m_aSettingsLinkWidth[0] = 0.0f;
+	m_aSettingsLinkWidth[1] = 0.0f;
+	m_SettingsLinkRectValid = false;
+	m_SettingsShortcutRectValid = false;
 }
 
 void CChat::CLine::Reset(CChat &This)
@@ -541,6 +552,17 @@ void CChat::CLine::Reset(CChat &This)
 	m_aReactionRowHeight[0] = 0.0f;
 	m_aReactionRowHeight[1] = 0.0f;
 	m_ShowAboveHead = false;
+	m_HasSettingsLink = false;
+	m_SettingsLinkMissing = false;
+	m_SettingsLinkPageOnly = false;
+	m_aSettingsLinkUri[0] = '\0';
+	m_SettingsLinkParsed = {};
+	m_aSettingsLinkHeight[0] = 0.0f;
+	m_aSettingsLinkHeight[1] = 0.0f;
+	m_aSettingsLinkWidth[0] = 0.0f;
+	m_aSettingsLinkWidth[1] = 0.0f;
+	m_SettingsLinkRectValid = false;
+	m_SettingsShortcutRectValid = false;
 }
 
 CChat::CChat()
@@ -571,6 +593,7 @@ CChat::CChat()
 	m_aPendingReplyPreview[0] = '\0';
 	m_ReplyCancelButtonRectValid = false;
 	m_HoveredReplyLineIndex = -1;
+	m_HoveredSettingsShortcutLineIndex = -1;
 	m_LastOutgoingReplyTime = 0;
 	m_aLastOutgoingReplyWire[0] = '\0';
 	m_LastOutgoingReplyToClientId = -1;
@@ -1280,7 +1303,7 @@ namespace
 {
 static bool IsUrlStart(const char *pStr)
 {
-	return str_startswith(pStr, "http://") || str_startswith(pStr, "https://");
+	return str_startswith(pStr, "http://") || str_startswith(pStr, "https://") || str_startswith(pStr, "settings://");
 }
 
 static bool IsTokenEnd(char c)
@@ -2473,11 +2496,20 @@ static void ParseLinkPolicyArray(const json_value *pValue, std::unordered_set<st
 
 static bool TryParseClickableUrlAt(const char *pText, int Index, const std::unordered_set<std::string> &vSafeDomains, SUrlMatch &Match)
 {
-	const int SchemeLength = str_startswith(pText + Index, "https://") ? 8 : (str_startswith(pText + Index, "http://") ? 7 : 0);
 	if(Index > 0 && !IsUrlBoundaryCharacter(pText[Index - 1]))
 		return false;
 
+	const int SettingsSchemeLength = str_startswith(pText + Index, "settings://") ? 11 : 0;
+	const int SchemeLength = SettingsSchemeLength > 0 ? SettingsSchemeLength :
+		(str_startswith(pText + Index, "https://") ? 8 : (str_startswith(pText + Index, "http://") ? 7 : 0));
+	if(SchemeLength <= 0 && SettingsSchemeLength <= 0)
+	{
+		// Fall through to bare-host / safe-domain parsing via NormalizeClickableLink below.
+	}
+
 	int End = Index + maximum(SchemeLength, 0);
+	if(SchemeLength <= 0)
+		End = Index; // bare host candidates start at Index
 	while(pText[End] != '\0' && !std::isspace(static_cast<unsigned char>(pText[End])))
 		++End;
 	while(End > Index + maximum(SchemeLength, 0) && IsTrailingUrlPunctuation(pText[End - 1]))
@@ -2485,11 +2517,19 @@ static bool TryParseClickableUrlAt(const char *pText, int Index, const std::unor
 	if(End <= Index + maximum(SchemeLength, 0))
 		return false;
 
+	const std::string_view Candidate(pText + Index, End - Index);
+	if(SettingsSchemeLength > 0)
+	{
+		Match.m_Start = Index;
+		Match.m_Length = End - Index;
+		Match.m_TargetUrl = std::string(Candidate);
+		return true;
+	}
+
 	std::string TargetUrl;
 	std::string Host;
 	bool Https = false;
 	bool Http = false;
-	const std::string_view Candidate(pText + Index, End - Index);
 	if(!NormalizeClickableLink(Candidate, vSafeDomains, TargetUrl, Host, Https, Http))
 		return false;
 
@@ -5055,6 +5095,46 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		}
 	}
 
+	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1)
+	{
+		const vec2 MousePos = ChatMousePos();
+		// Prefer toggling the inline settings card before other chat click handlers.
+		for(int i = 0; i < MAX_LINES; ++i)
+		{
+			CLine &Line = m_aLines[i];
+			if(!Line.m_SettingsLinkRectValid)
+				continue;
+			if(TryHandleSettingsLinkClick(Line, MousePos, FontSize()))
+			{
+				m_MouseIsPress = false;
+				m_HasSelection = false;
+				return true;
+			}
+		}
+
+		if(m_HoveredSettingsShortcutLineIndex >= 0)
+		{
+			CLine &Line = m_aLines[m_HoveredSettingsShortcutLineIndex];
+			if(Line.m_SettingsShortcutRectValid)
+			{
+				const SRenderRect &Rect = Line.m_SettingsShortcutRect;
+				if(MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
+					MousePos.y >= Rect.m_Y && MousePos.y <= Rect.m_Y + Rect.m_H)
+				{
+					CUClientSettingsLink::SNavigateRequest Nav;
+					if(CUClientSettingsLink::BuildNavigateRequest(Line.m_SettingsLinkParsed, Nav))
+					{
+						DisableMode();
+						// +show_chat (expand-only) steals mouse wheel; clear it so settings can scroll.
+						m_Show = false;
+						GameClient()->m_Menus.NavigateToSettingsLink(Nav);
+					}
+					return true;
+				}
+			}
+		}
+	}
+
 	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && m_HoveredReplyLineIndex >= 0)
 	{
 		CLine &Line = m_aLines[m_HoveredReplyLineIndex];
@@ -6338,6 +6418,113 @@ bool CChat::CanShowReplyButton(const CLine &Line) const
 	return Line.m_ClientId >= 0;
 }
 
+void CChat::ApplySettingsLinkToLine(CLine &Line, const char *pSourceText)
+{
+	Line.m_HasSettingsLink = false;
+	Line.m_SettingsLinkMissing = false;
+	Line.m_SettingsLinkPageOnly = false;
+	Line.m_aSettingsLinkUri[0] = '\0';
+	Line.m_SettingsLinkParsed = {};
+	Line.m_aSettingsLinkHeight[0] = 0.0f;
+	Line.m_aSettingsLinkHeight[1] = 0.0f;
+	Line.m_aSettingsLinkWidth[0] = 0.0f;
+	Line.m_aSettingsLinkWidth[1] = 0.0f;
+	Line.m_SettingsLinkRectValid = false;
+	Line.m_SettingsShortcutRectValid = false;
+
+	int UriStart = -1, UriLen = 0;
+	char aUri[CUClientSettingsLink::MAX_URI_LENGTH];
+	if(!CUClientSettingsLink::FindUriInText(pSourceText, UriStart, UriLen, aUri, sizeof(aUri)))
+		return;
+	CUClientSettingsLink::SParsed Parsed;
+	if(!CUClientSettingsLink::TryParse(aUri, Parsed))
+		return;
+
+	str_copy(Line.m_aSettingsLinkUri, aUri, sizeof(Line.m_aSettingsLinkUri));
+	Line.m_SettingsLinkParsed = Parsed;
+	Line.m_HasSettingsLink = true;
+
+	if(Parsed.m_Kind == CUClientSettingsLink::EKind::PAGE)
+	{
+		Line.m_SettingsLinkPageOnly = true;
+	}
+	else if(Parsed.m_Kind == CUClientSettingsLink::EKind::VAR)
+	{
+		const SConfigVariable *pVar = CUClientSettingsLink::FindVariable(ConfigManager(), Parsed.m_aScriptName);
+		Line.m_SettingsLinkMissing = pVar == nullptr;
+
+		// Prefer local parent chain (gated UI) over URI; fills parents when the sender
+		// omitted them but this client has already visited the settings page.
+		CUClientSettingsLink::SVarLocation Loc;
+		if(CUClientSettingsLink::LookupVarLocation(Parsed.m_aScriptName, Loc) && Loc.m_NumParents > 0)
+		{
+			Line.m_SettingsLinkParsed.m_NumParents = Loc.m_NumParents;
+			for(int i = 0; i < Loc.m_NumParents; ++i)
+			{
+				str_copy(Line.m_SettingsLinkParsed.m_aaParents[i], Loc.m_aaParents[i], sizeof(Line.m_SettingsLinkParsed.m_aaParents[i]));
+				Line.m_SettingsLinkParsed.m_aaParentLabels[i][0] = '\0';
+				CUClientSettingsLink::SVarLocation ParentLoc;
+				if(CUClientSettingsLink::LookupVarLocation(Loc.m_aaParents[i], ParentLoc) && ParentLoc.m_aLabel[0] != '\0')
+					str_copy(Line.m_SettingsLinkParsed.m_aaParentLabels[i], ParentLoc.m_aLabel, sizeof(Line.m_SettingsLinkParsed.m_aaParentLabels[i]));
+			}
+		}
+	}
+
+	char aStripped[CHAT_LINE_LENGTH];
+	CUClientSettingsLink::StripUriFromDisplay(pSourceText, UriStart, UriLen, aStripped, sizeof(aStripped));
+	if(Line.m_aDisplayText[0] != '\0')
+		str_copy(Line.m_aDisplayText, aStripped, sizeof(Line.m_aDisplayText));
+	else
+		str_copy(Line.m_aDisplayText, aStripped, sizeof(Line.m_aDisplayText));
+}
+
+float CChat::MeasureSettingsLinkHeight(const CLine &Line, float FontSize) const
+{
+	if(!Line.m_HasSettingsLink)
+		return 0.0f;
+	return GameClient()->m_Menus.MeasureSettingsLinkInlineHeight(Line.m_SettingsLinkParsed, Line.m_SettingsLinkMissing, Line.m_SettingsLinkPageOnly, FontSize);
+}
+
+float CChat::MeasureSettingsLinkWidth(const CLine &Line, float FontSize) const
+{
+	if(!Line.m_HasSettingsLink)
+		return 0.0f;
+	return GameClient()->m_Menus.MeasureSettingsLinkInlineWidth(Line.m_SettingsLinkParsed, Line.m_SettingsLinkMissing, Line.m_SettingsLinkPageOnly, FontSize);
+}
+
+bool CChat::CanShowSettingsShortcut(const CLine &Line) const
+{
+	// Same as reply: only while chat is open, then only on line hover (checked by callers).
+	return m_Mode != MODE_NONE && Line.m_HasSettingsLink && !Line.m_SettingsLinkMissing;
+}
+
+void CChat::RenderSettingsLinkBubble(CLine &Line, float X, float Y, float MaxWidth, float FontSize, float Blend)
+{
+	if(!Line.m_HasSettingsLink)
+		return;
+
+	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+	TextRender()->SetRenderFlags(0);
+	const float CardW = minimum(MaxWidth, maximum(MeasureSettingsLinkWidth(Line, FontSize), FontSize * 8.0f));
+	const float CardH = MeasureSettingsLinkHeight(Line, FontSize);
+	Line.m_SettingsLinkRect.m_X = X;
+	Line.m_SettingsLinkRect.m_Y = Y;
+	Line.m_SettingsLinkRect.m_W = CardW;
+	Line.m_SettingsLinkRect.m_H = CardH;
+	Line.m_SettingsLinkRectValid = true;
+
+	CUIRect Card(X, Y, CardW, CardH);
+	GameClient()->m_Menus.RenderSettingsLinkInline(Line.m_SettingsLinkParsed, Line.m_SettingsLinkMissing, Line.m_SettingsLinkPageOnly, Card, FontSize, Blend, ChatMousePos());
+}
+
+bool CChat::TryHandleSettingsLinkClick(CLine &Line, vec2 MousePos, float FontSize)
+{
+	if(!Line.m_SettingsLinkRectValid || !Line.m_HasSettingsLink)
+		return false;
+	const CUIRect Card(Line.m_SettingsLinkRect.m_X, Line.m_SettingsLinkRect.m_Y, Line.m_SettingsLinkRect.m_W, Line.m_SettingsLinkRect.m_H);
+	return GameClient()->m_Menus.TryClickSettingsLinkInline(Line.m_SettingsLinkParsed, Line.m_SettingsLinkMissing, Line.m_SettingsLinkPageOnly, Card, FontSize, MousePos);
+}
+
 float CChat::ReplyBannerHeight(float ScaledFontSize) const
 {
 	if(!m_PendingReplyActive)
@@ -6708,6 +6895,8 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 			SetMapAttachment(CurrentLine, aMapUrl, aMapName);
 	}
 
+	ApplySettingsLinkToLine(CurrentLine, CurrentLine.m_aDisplayText[0] != '\0' ? CurrentLine.m_aDisplayText : CurrentLine.m_aText);
+
 	// The whole message is a single recognized link from a gif-bubble domain (e.g. sent via
 	// the gif wheel, or pasted by hand) -> pop a bubble above the sender's head too.
 	CurrentLine.m_ShowAboveHead = ClientId >= 0 &&
@@ -6931,7 +7120,9 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 	float x = Layout.m_X;
 	float FontSize = this->FontSize();
 
-	const bool IsScoreBoardOpen = GameClient()->m_Scoreboard.IsActive() && (Graphics()->ScreenAspect() > 1.7f); // only assume scoreboard when screen ratio is widescreen(something around 16:9)
+	// Always compact chat while the scoreboard is open so wide settings cards / media
+	// previews do not run underneath the scoreboard (previously gated on aspect > 1.7).
+	const bool IsScoreBoardOpen = GameClient()->m_Scoreboard.IsActive();
 	const bool ShowLargeArea = m_Show || (m_Mode != MODE_NONE && g_Config.m_ClShowChat == 1) || g_Config.m_ClShowChat == 2;
 	// BestClient: mouse interaction (cursor, selection, scrollbar, media clicks) belongs to
 	// typing only. The expand-only bind (m_Show) still shows the large area and wheel-scrolls,
@@ -7002,7 +7193,11 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 		if(Now > Line.m_Time + 16 * time_freq() && !m_PrevShowChat && !KeepLinesAlive)
 			break;
 
-		if(Line.m_TextContainerIndex.Valid() && Line.m_aYOffset[OffsetType] >= 0.0f && !ForceRecreate)
+		// Rebuild when settings-card layout metrics change (size / checkbox proportions).
+		const bool SettingsLinkLayoutStale = Line.m_HasSettingsLink &&
+			(Line.m_aSettingsLinkWidth[OffsetType] <= 0.0f ||
+				absolute(Line.m_aSettingsLinkHeight[OffsetType] - MeasureSettingsLinkHeight(Line, FontSize)) > 0.5f);
+		if(Line.m_TextContainerIndex.Valid() && Line.m_aYOffset[OffsetType] >= 0.0f && !ForceRecreate && !SettingsLinkLayoutStale)
 			continue;
 
 		TextRender()->DeleteTextContainer(Line.m_TextContainerIndex);
@@ -7059,6 +7254,17 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 				CUClientChatReply::BuildReplyBodyPrefix(Line.m_aReplyToName, aReplyPrefix, sizeof(aReplyPrefix));
 				if(aReplyPrefix[0] != '\0' && str_startswith_nocase(VisibleTextStorage.c_str(), aReplyPrefix))
 					VisibleTextStorage.erase(0, str_length(aReplyPrefix));
+			}
+			if(Line.m_HasSettingsLink)
+			{
+				int UriStart = -1, UriLen = 0;
+				char aUri[CUClientSettingsLink::MAX_URI_LENGTH];
+				if(CUClientSettingsLink::FindUriInText(VisibleTextStorage.c_str(), UriStart, UriLen, aUri, sizeof(aUri)))
+				{
+					char aStripped[CHAT_LINE_LENGTH];
+					CUClientSettingsLink::StripUriFromDisplay(VisibleTextStorage.c_str(), UriStart, UriLen, aStripped, sizeof(aStripped));
+					VisibleTextStorage = aStripped;
+				}
 			}
 			pText = VisibleTextStorage.c_str();
 		}
@@ -7239,6 +7445,15 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			{
 				Line.m_aMapCardHeight[OffsetType] = maximum(18.0f, FontSize * 1.85f);
 				TotalHeight += FontSize * 0.25f + Line.m_aMapCardHeight[OffsetType];
+			}
+
+			Line.m_aSettingsLinkHeight[OffsetType] = 0.0f;
+			Line.m_aSettingsLinkWidth[OffsetType] = 0.0f;
+			if(Line.m_HasSettingsLink)
+			{
+				Line.m_aSettingsLinkHeight[OffsetType] = MeasureSettingsLinkHeight(Line, FontSize);
+				Line.m_aSettingsLinkWidth[OffsetType] = MeasureSettingsLinkWidth(Line, FontSize);
+				TotalHeight += FontSize * 0.25f + Line.m_aSettingsLinkHeight[OffsetType];
 			}
 
 			// UClient: reserve space for the emoji reaction row below the message/media.
@@ -7436,7 +7651,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 
 		Line.m_ReplyButtonAnchorX = LineCursor.m_X;
 		Line.m_ReplyButtonAnchorY = LineCursor.m_Y;
-		Line.m_ReplyButtonAnchorValid = CanShowReplyButton(Line);
+		Line.m_ReplyButtonAnchorValid = CanShowReplyButton(Line) || CanShowSettingsShortcut(Line);
 
 		if(!g_Config.m_ClChatOld && (Line.m_aText[0] != '\0' || Line.m_aName[0] != '\0'))
 		{
@@ -7463,6 +7678,11 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			{
 				const float QuoteWidth = Line.m_ReplyQuoteRect.m_W + (TextBegin - Begin) + RealMsgPaddingX;
 				FullWidth = maximum(FullWidth, QuoteWidth);
+			}
+			if(Line.m_aSettingsLinkWidth[OffsetType] > 0.0f)
+			{
+				const float SettingsWidth = Line.m_aSettingsLinkWidth[OffsetType] + (TextBegin - Begin) + RealMsgPaddingX;
+				FullWidth = maximum(FullWidth, SettingsWidth);
 			}
 			Graphics()->SetColor(1, 1, 1, 1);
 			Line.m_QuadContainerIndex = Graphics()->CreateRectQuadContainer(Begin, y, FullWidth, Line.m_aYOffset[OffsetType], MessageRounding(), IGraphics::CORNER_ALL);
@@ -7532,6 +7752,7 @@ void CChat::OnRender()
 	m_HoveredLink.clear();
 	m_HoveredLinkAlwaysConfirm = false;
 	m_HoveredReplyLineIndex = -1;
+	m_HoveredSettingsShortcutLineIndex = -1;
 	m_ReplyCancelButtonRectValid = false;
 	for(int LineIndex = 0; LineIndex < MAX_LINES; ++LineIndex)
 	{
@@ -7593,7 +7814,21 @@ void CChat::OnRender()
 	{
 		if(!m_MediaViewerOpen && !m_ScrollbarDragging)
 		{
-			if(!m_MouseIsPress && MouseDown)
+			bool OverSettingsLink = false;
+			for(int i = 0; i < MAX_LINES; ++i)
+			{
+				const CLine &Line = m_aLines[i];
+				if(!Line.m_SettingsLinkRectValid)
+					continue;
+				const SRenderRect &R = Line.m_SettingsLinkRect;
+				if(MousePos.x >= R.m_X && MousePos.x <= R.m_X + R.m_W &&
+					MousePos.y >= R.m_Y && MousePos.y <= R.m_Y + R.m_H)
+				{
+					OverSettingsLink = true;
+					break;
+				}
+			}
+			if(!m_MouseIsPress && MouseDown && !OverSettingsLink)
 			{
 				m_MouseIsPress = true;
 				m_MousePress = MousePos;
@@ -7700,6 +7935,12 @@ void CChat::OnRender()
 			str_copy(aDisplayedInputText, m_Input.GetDisplayedString(), sizeof(aDisplayedInputText));
 			const float TypingAnimDuration = BCUiAnimations::MsToSeconds(g_Config.m_BcChatTypingAnimationMs);
 			std::vector<STextColorSplit> vTypingColorSplits;
+			if(aDisplayedInputText[0] != '\0')
+			{
+				const std::vector<SUrlMatch> vInputLinks = FindClickableUrlMatches(aDisplayedInputText, m_LinkPolicyCache.m_vSafeDomains);
+				for(const SUrlMatch &Link : vInputLinks)
+					vTypingColorSplits.emplace_back(Link.m_Start, Link.m_Length, ChatLinkColor());
+			}
 			std::vector<CChat::STypingGlyphAnim> vActiveTypingGlyphAnims;
 			if(BcChatTypingAnimEnabled && TypingAnimDuration > 0.0f && aDisplayedInputText[0] != '\0' && ChatTypingAnimSupportsText(aDisplayedInputText))
 			{
@@ -7728,9 +7969,9 @@ void CChat::OnRender()
 				}
 			}
 
-			// Color splits can hide the fill color, but the outline would still be drawn for hidden glyphs.
-			// Temporarily disable outline for the base pass so the animated overlay is the only visible glyph.
-			const bool DisableBaseOutline = !vTypingColorSplits.empty();
+			// Typing anims hide fill via transparent color splits; outline would still show those glyphs.
+			// Only disable outline for the base pass when glyph overlays are active (not for URL tinting alone).
+			const bool DisableBaseOutline = !vActiveTypingGlyphAnims.empty();
 			if(DisableBaseOutline)
 				TextRender()->TextOutlineColor(ColorRGBA(0.0f, 0.0f, 0.0f, 0.0f));
 			const STextBoundingBox BoundingBox = m_Input.Render(&InputCursorRect, InputCursor.m_FontSize, TEXTALIGN_TL, Changed, MessageMaxWidth, 0.0f, vTypingColorSplits);
@@ -7860,7 +8101,7 @@ void CChat::OnRender()
 
 	y -= PendingPreviewReserve;
 	y -= ScaledFontSize;
-	bool IsScoreBoardOpen = GameClient()->m_Scoreboard.IsActive() && (Graphics()->ScreenAspect() > 1.7f); // only assume scoreboard when screen ratio is widescreen(something around 16:9)
+	const bool IsScoreBoardOpen = GameClient()->m_Scoreboard.IsActive();
 	const bool ShowLargeArea = m_Show || (m_Mode != MODE_NONE && g_Config.m_ClShowChat == 1) || g_Config.m_ClShowChat == 2;
 	const bool KeepLinesAlive = m_MediaViewerOpen && ValidateMediaViewerLine();
 
@@ -8076,6 +8317,8 @@ void CChat::OnRender()
 			// highlight at least as wide so the blue backdrop reaches the card.
 			if(HasMapAttachment(Line))
 				HighlightW = maximum(HighlightW, RealMsgPaddingX / 2.0f + ReactionAvailWidth);
+			if(Line.m_aSettingsLinkWidth[OffsetType] > 0.0f)
+				HighlightW = maximum(HighlightW, RealMsgPaddingX / 2.0f + Line.m_aSettingsLinkWidth[OffsetType] + RealMsgPaddingX / 2.0f);
 			Graphics()->DrawRect(LineRenderX, LineRenderY, HighlightW, LineH, ColorRGBA(0.18f, 0.32f, 0.58f, 0.42f * Blend), IGraphics::CORNER_L, MessageRounding());
 
 			const float AccentW = maximum(0.8f, FontSize() * 0.06f);
@@ -8170,8 +8413,38 @@ void CChat::OnRender()
 				{
 					const float BtnSize = maximum(6.5f, FontSize() * 0.34f);
 					const float BtnGap = FontSize() * 0.6f;
-					const float BtnX = Line.m_ReplyButtonAnchorX + ChatOpenOffsetX + BcLineXOffset + BtnGap;
+					const float BtnSpacing = FontSize() * 0.18f;
+					float NextX = Line.m_ReplyButtonAnchorX + ChatOpenOffsetX + BcLineXOffset + BtnGap;
 					const float BtnY = Line.m_ReplyButtonAnchorY + TextOffsetY + maximum(0.0f, (FontSize() - BtnSize) * 0.5f) - FontSize() * 0.08f;
+
+					Line.m_SettingsShortcutRectValid = false;
+					if(CanShowSettingsShortcut(Line))
+					{
+						const float ShortcutX = NextX;
+						Line.m_SettingsShortcutRect.m_X = ShortcutX;
+						Line.m_SettingsShortcutRect.m_Y = BtnY;
+						Line.m_SettingsShortcutRect.m_W = BtnSize;
+						Line.m_SettingsShortcutRect.m_H = BtnSize;
+						Line.m_SettingsShortcutRectValid = true;
+						m_HoveredSettingsShortcutLineIndex = LineIndex;
+						const bool HoveredShortcut = MousePos.x >= ShortcutX && MousePos.x <= ShortcutX + BtnSize &&
+							MousePos.y >= BtnY && MousePos.y <= BtnY + BtnSize;
+						const ColorRGBA ShortcutColor = HoveredShortcut ? ColorRGBA(0.22f, 0.48f, 0.42f, 0.90f * Blend) : ColorRGBA(0.14f, 0.14f, 0.14f, 0.72f * Blend);
+						CUIRect ShortcutRect(ShortcutX, BtnY, BtnSize, BtnSize);
+						ShortcutRect.Draw(ShortcutColor, IGraphics::CORNER_ALL, maximum(2.0f, BtnSize * 0.24f));
+						CUIRect ShortcutIcon;
+						ShortcutRect.Margin(0.5f, &ShortcutIcon);
+						TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+						TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
+						TextRender()->TextColor(0.92f, 0.92f, 0.92f, Blend);
+						Ui()->DoLabel(&ShortcutIcon, FontIcon::ARROW_UP_RIGHT_FROM_SQUARE, ShortcutIcon.h * CUi::ms_FontmodHeight, TEXTALIGN_MC);
+						TextRender()->SetRenderFlags(0);
+						TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+						TextRender()->TextColor(TextRender()->DefaultTextColor());
+						NextX += BtnSize + BtnSpacing;
+					}
+
+					const float BtnX = NextX;
 					Line.m_ReplyButtonRect.m_X = BtnX;
 					Line.m_ReplyButtonRect.m_Y = BtnY;
 					Line.m_ReplyButtonRect.m_W = BtnSize;
@@ -8191,6 +8464,46 @@ void CChat::OnRender()
 					TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
 					TextRender()->TextColor(0.92f, 0.92f, 0.92f, Blend);
 					Ui()->DoLabel(&IconRect, FontIcon::REPLY, IconRect.h * CUi::ms_FontmodHeight, TEXTALIGN_MC);
+					TextRender()->SetRenderFlags(0);
+					TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+					TextRender()->TextColor(TextRender()->DefaultTextColor());
+				}
+			}
+			else if(CanShowSettingsShortcut(Line) && Line.m_ReplyButtonAnchorValid)
+			{
+				// Settings shortcut without reply button (e.g. server lines): hover-only, same as reply.
+				const float LineH = maximum(Line.m_aYOffset[OffsetType], FontSize() + RealMsgPaddingY);
+				Line.m_LineRect.m_X = LineRenderX;
+				Line.m_LineRect.m_Y = LineRenderY;
+				Line.m_LineRect.m_W = maximum(1.0f, ChatWidth());
+				Line.m_LineRect.m_H = LineH;
+				Line.m_LineRectValid = true;
+
+				const bool HoveredLine = MousePos.x >= Line.m_LineRect.m_X && MousePos.x <= Line.m_LineRect.m_X + Line.m_LineRect.m_W &&
+					MousePos.y >= Line.m_LineRect.m_Y && MousePos.y <= Line.m_LineRect.m_Y + Line.m_LineRect.m_H;
+				if(HoveredLine || HoveredName)
+				{
+					const float BtnSize = maximum(6.5f, FontSize() * 0.34f);
+					const float BtnGap = FontSize() * 0.6f;
+					const float BtnX = Line.m_ReplyButtonAnchorX + ChatOpenOffsetX + BcLineXOffset + BtnGap;
+					const float BtnY = Line.m_ReplyButtonAnchorY + TextOffsetY + maximum(0.0f, (FontSize() - BtnSize) * 0.5f) - FontSize() * 0.08f;
+					Line.m_SettingsShortcutRect.m_X = BtnX;
+					Line.m_SettingsShortcutRect.m_Y = BtnY;
+					Line.m_SettingsShortcutRect.m_W = BtnSize;
+					Line.m_SettingsShortcutRect.m_H = BtnSize;
+					Line.m_SettingsShortcutRectValid = true;
+					m_HoveredSettingsShortcutLineIndex = LineIndex;
+					const bool HoveredShortcut = MousePos.x >= BtnX && MousePos.x <= BtnX + BtnSize &&
+						MousePos.y >= BtnY && MousePos.y <= BtnY + BtnSize;
+					const ColorRGBA ShortcutColor = HoveredShortcut ? ColorRGBA(0.22f, 0.48f, 0.42f, 0.90f * Blend) : ColorRGBA(0.14f, 0.14f, 0.14f, 0.72f * Blend);
+					CUIRect ShortcutRect(BtnX, BtnY, BtnSize, BtnSize);
+					ShortcutRect.Draw(ShortcutColor, IGraphics::CORNER_ALL, maximum(2.0f, BtnSize * 0.24f));
+					CUIRect ShortcutIcon;
+					ShortcutRect.Margin(0.5f, &ShortcutIcon);
+					TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+					TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
+					TextRender()->TextColor(0.92f, 0.92f, 0.92f, Blend);
+					Ui()->DoLabel(&ShortcutIcon, FontIcon::ARROW_UP_RIGHT_FROM_SQUARE, ShortcutIcon.h * CUi::ms_FontmodHeight, TEXTALIGN_MC);
 					TextRender()->SetRenderFlags(0);
 					TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 					TextRender()->TextColor(TextRender()->DefaultTextColor());
@@ -8293,6 +8606,8 @@ void CChat::OnRender()
 						ReactionOriginY += FontSize() * 0.4f + Line.m_aMediaPreviewHeight[OffsetType];
 					if(HasMapAttachment(Line) && Line.m_aMapCardHeight[OffsetType] > 0.0f)
 						ReactionOriginY += FontSize() * 0.25f + Line.m_aMapCardHeight[OffsetType];
+					if(Line.m_HasSettingsLink && Line.m_aSettingsLinkHeight[OffsetType] > 0.0f)
+						ReactionOriginY += FontSize() * 0.25f + Line.m_aSettingsLinkHeight[OffsetType];
 					const float ReactionOriginX = LineRenderX + RealMsgPaddingX / 2.0f + RealMsgPaddingTee;
 
 					Line.m_vReactionRects.clear();
@@ -8570,6 +8885,18 @@ void CChat::OnRender()
 						Line.m_MapCardRectValid = true;
 					}
 				}
+
+				Line.m_SettingsLinkRectValid = false;
+				if(Line.m_HasSettingsLink && Line.m_aSettingsLinkHeight[OffsetType] > 0.0f)
+				{
+					float CardY = Line.m_TextYOffset + TextOffsetY + Line.m_aTextHeight[OffsetType] + FontSize() * 0.25f;
+					if(ShouldDisplayMediaSlot(Line) && Line.m_aMediaPreviewHeight[OffsetType] > 0.0f)
+						CardY += FontSize() * 0.4f + Line.m_aMediaPreviewHeight[OffsetType];
+					if(HasMapAttachment(Line) && Line.m_aMapCardHeight[OffsetType] > 0.0f)
+						CardY += FontSize() * 0.25f + Line.m_aMapCardHeight[OffsetType];
+					const float CardX = LineRenderX + RealMsgPaddingX / 2.0f;
+					RenderSettingsLinkBubble(Line, CardX, CardY, ReactionAvailWidth, FontSize(), Blend);
+				}
 		}
 	}
 
@@ -8663,7 +8990,7 @@ CUIRect CChat::GetHudRect(float HudWidth, float HudHeight, bool ForcePreview) co
 
 	const auto Layout = HudLayout::Get(HudLayout::MODULE_CHAT, HudWidth, HudHeight);
 	const float Scale = std::clamp(Layout.m_Scale / 100.0f, 0.25f, 3.0f);
-	const bool IsScoreBoardOpen = GameClient()->m_Scoreboard.IsActive() && (Graphics()->ScreenAspect() > 1.7f);
+	const bool IsScoreBoardOpen = GameClient()->m_Scoreboard.IsActive();
 	const bool ShowLargeArea = ForcePreview || m_Show || (m_Mode != MODE_NONE && g_Config.m_ClShowChat == 1) || g_Config.m_ClShowChat == 2;
 	const float VisibleHeight = IsScoreBoardOpen ? 93.0f * Scale : (ShowLargeArea ? 223.0f * Scale : 73.0f * Scale);
 	float ExtraTop = 0.0f;

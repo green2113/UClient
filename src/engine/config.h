@@ -53,6 +53,9 @@ public:
 	virtual void StoreUnknownCommand(const char *pCommand) = 0;
 
 	virtual void PossibleConfigVariables(const char *pStr, int FlagMask, POSSIBLECFGFUNC pfnCallback, void *pUserData) = 0;
+
+	virtual const struct SConfigVariable *FindVariable(const char *pScriptName) const = 0;
+	virtual const struct SConfigVariable *FindVariableByPointer(const void *pVariable) const = 0;
 };
 
 extern IConfigManager *CreateConfigManager();

@@ -8,6 +8,7 @@
 
 #include <engine/font_icons.h>
 #include <engine/config.h>
+#include <engine/keys.h>
 #include <engine/shared/config.h>
 #include <engine/shared/http.h>
 #include <engine/shared/json.h>
@@ -743,6 +744,11 @@ void CMenus::RenderSettingsCustom(CUIRect MainView)
 		Localize("Arrow"),
 		Localize("Audio")};
 
+	{
+		int NavTab = -1;
+		if(ConsumeSettingsLinkNavAssetsTab(NavTab) && NavTab >= ASSETS_TAB_ENTITIES && NavTab < NUMBER_OF_ASSETS_TABS)
+			s_CurCustomTab = NavTab;
+	}
 	for(int Tab = ASSETS_TAB_ENTITIES; Tab < NUMBER_OF_ASSETS_TABS; ++Tab)
 	{
 		CUIRect Button;
@@ -752,7 +758,11 @@ void CMenus::RenderSettingsCustom(CUIRect MainView)
 		{
 			s_CurCustomTab = Tab;
 		}
+		if(Ui()->MouseHovered(&Button) && Input()->KeyPress(KEY_MOUSE_2))
+			TryOpenSettingsLinkMenuForPage("Assets", CUClientSettingsLink::AssetsTabToken(Tab), &Button);
 	}
+	SetSettingsLinkContext(SETTINGS_ASSETS, CUClientSettingsLink::AssetsTabToken(s_CurCustomTab));
+	SetSettingsLinkVarEnabled(false);
 
 	auto LoadStartTime = time_get_nanoseconds();
 	SMenuAssetScanUser User;

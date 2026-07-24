@@ -35,11 +35,14 @@
 #include <game/client/components/sounds.h>
 #include <game/client/gameclient.h>
 #include <game/client/ui_listbox.h>
+#include <game/client/ui_scrollregion.h>
 #include <game/localization.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace std::chrono_literals;
@@ -339,6 +342,13 @@ int CMenus::DoButton_CheckBox_Common(const void *pId, const char *pText, const c
 	TextRender()->SetRenderFlags(0);
 	Ui()->DoLabel(&Label, pText, Box.h * CUi::ms_FontmodHeight, TEXTALIGN_ML);
 
+	const SConfigVariable *pVar = CUClientSettingsLink::FindVariableByPointer(ConfigManager(), pId);
+	if(pVar)
+	{
+		MaybeRegisterSettingsLinkVar(pId, pText);
+		MaybeHighlightSettingsLink(pRect, pVar->m_pScriptName);
+	}
+
 	return Ui()->DoButtonLogic(pId, 0, pRect, Flags);
 }
 
@@ -514,8 +524,12 @@ int CMenus::DoButton_CheckBoxAutoVMarginAndSet(const void *pId, const char *pTex
 	CUIRect CheckBoxRect;
 	pRect->HSplitTop(VMargin, &CheckBoxRect, pRect);
 
-	int Logic = DoButton_CheckBox_Common(pId, pText, *pValue ? "X" : "", &CheckBoxRect, BUTTONFLAG_LEFT);
-
+	int Logic = DoButton_CheckBox_Common(pId, pText, *pValue ? "X" : "", &CheckBoxRect, BUTTONFLAG_LEFT | BUTTONFLAG_RIGHT);
+	if(Logic == 2)
+	{
+		TryOpenSettingsLinkMenuForVar(pId, pText, &CheckBoxRect);
+		return 0;
+	}
 	if(Logic)
 		*pValue ^= 1;
 
@@ -524,7 +538,13 @@ int CMenus::DoButton_CheckBoxAutoVMarginAndSet(const void *pId, const char *pTex
 
 int CMenus::DoButton_CheckBox(const void *pId, const char *pText, int Checked, const CUIRect *pRect)
 {
-	return DoButton_CheckBox_Common(pId, pText, Checked ? "X" : "", pRect, BUTTONFLAG_LEFT);
+	int Logic = DoButton_CheckBox_Common(pId, pText, Checked ? "X" : "", pRect, BUTTONFLAG_LEFT | BUTTONFLAG_RIGHT);
+	if(Logic == 2)
+	{
+		TryOpenSettingsLinkMenuForVar(pId, pText, pRect);
+		return 0;
+	}
+	return Logic == 1 ? 1 : 0;
 }
 
 int CMenus::DoButton_CheckBox_Number(const void *pId, const char *pText, int Checked, const CUIRect *pRect)
@@ -3419,4 +3439,662 @@ void CMenus::JoinTutorial()
 	m_JoinTutorial.m_TriedRefresh = false;
 	m_JoinTutorial.m_LocalServerState = CJoinTutorial::ELocalServerState::NOT_TRIED;
 	m_JoinTutorial.m_StateChange = time_get_nanoseconds();
+}
+
+void CMenus::SetSettingsLinkContext(int SettingsPage, const char *pTab)
+{
+	m_SettingsLinkContextPage = SettingsPage;
+	if(pTab)
+		str_copy(m_aSettingsLinkContextTab, pTab, sizeof(m_aSettingsLinkContextTab));
+	else
+		m_aSettingsLinkContextTab[0] = '\0';
+	m_SettingsLinkParentCount = 0;
+	m_SettingsLinkVarEnabled = CUClientSettingsLink::PageAllowsVarLinks(SettingsPage);
+	if(SettingsPage == SETTINGS_LANGUAGE || SettingsPage == SETTINGS_PLAYER || SettingsPage == SETTINGS_CONFIGS)
+		m_SettingsLinkVarEnabled = false;
+	else if(SettingsPage == SETTINGS_GRAPHICS)
+		m_SettingsLinkVarEnabled = true; // allowlist enforced per-var
+}
+
+void CMenus::PushSettingsLinkParent(const char *pScriptName)
+{
+	if(!pScriptName || pScriptName[0] == '\0' || m_SettingsLinkParentCount >= CUClientSettingsLink::MAX_PARENTS)
+		return;
+	str_copy(m_aaSettingsLinkParents[m_SettingsLinkParentCount], pScriptName, sizeof(m_aaSettingsLinkParents[0]));
+	m_SettingsLinkParentCount++;
+}
+
+void CMenus::PopSettingsLinkParent()
+{
+	if(m_SettingsLinkParentCount > 0)
+		m_SettingsLinkParentCount--;
+}
+
+void CMenus::SetSettingsLinkVarEnabled(bool Enabled)
+{
+	m_SettingsLinkVarEnabled = Enabled;
+}
+
+void CMenus::MaybeRegisterSettingsLinkVar(const void *pId, const char *pLabel)
+{
+	if(!m_SettingsLinkVarEnabled || m_SettingsLinkContextPage < 0 || !pId)
+		return;
+	const SConfigVariable *pVar = CUClientSettingsLink::FindVariableByPointer(ConfigManager(), pId);
+	if(!pVar)
+		return;
+	if(m_SettingsLinkContextPage == SETTINGS_GRAPHICS && !CUClientSettingsLink::IsGraphicsAllowlisted(pVar->m_pScriptName))
+		return;
+	const char *pPage = CUClientSettingsLink::PageTokenFromSettingsPage(m_SettingsLinkContextPage);
+	if(!pPage || pPage[0] == '\0')
+		return;
+	const char *apParents[CUClientSettingsLink::MAX_PARENTS] = {};
+	for(int i = 0; i < m_SettingsLinkParentCount; ++i)
+		apParents[i] = m_aaSettingsLinkParents[i];
+	CUClientSettingsLink::RegisterVarLocation(pVar->m_pScriptName, pLabel, pPage, m_aSettingsLinkContextTab, apParents, m_SettingsLinkParentCount);
+}
+
+bool CMenus::TryOpenSettingsLinkMenuForVar(const void *pId, const char *pLabel, const CUIRect *pRect)
+{
+	if(!m_SettingsLinkVarEnabled)
+		return false;
+	const SConfigVariable *pVar = CUClientSettingsLink::FindVariableByPointer(ConfigManager(), pId);
+	if(!pVar)
+		return false;
+	if(m_SettingsLinkContextPage == SETTINGS_GRAPHICS && !CUClientSettingsLink::IsGraphicsAllowlisted(pVar->m_pScriptName))
+		return false;
+
+	MaybeRegisterSettingsLinkVar(pId, pLabel);
+
+	const char *pPage = CUClientSettingsLink::PageTokenFromSettingsPage(m_SettingsLinkContextPage);
+	const char *apParents[CUClientSettingsLink::MAX_PARENTS] = {};
+	for(int i = 0; i < m_SettingsLinkParentCount; ++i)
+		apParents[i] = m_aaSettingsLinkParents[i];
+
+	// Prefer English help text in the URI so percent-encoding stays short/ASCII and
+	// receivers can Localize() it. Localized UI labels are kept only in the local registry.
+	const char *pUriLabel = (pVar->m_pHelp && pVar->m_pHelp[0] != '\0') ? pVar->m_pHelp : pLabel;
+	char aUri[CUClientSettingsLink::MAX_URI_LENGTH];
+	if(!CUClientSettingsLink::BuildVarUri(aUri, sizeof(aUri), pVar->m_pScriptName, pUriLabel, pPage, m_aSettingsLinkContextTab, apParents, m_SettingsLinkParentCount))
+		return false;
+
+	str_copy(m_aSettingsLinkPendingUri, aUri, sizeof(m_aSettingsLinkPendingUri));
+	m_SettingsLinkCopyIsTab = false;
+	const float X = pRect ? pRect->x : Ui()->MouseX();
+	const float Y = pRect ? (pRect->y + pRect->h) : Ui()->MouseY();
+	if(Ui()->IsPopupOpen(&m_SettingsLinkPopupId))
+		Ui()->ClosePopupMenu(&m_SettingsLinkPopupId, true);
+	Ui()->DoPopupMenu(&m_SettingsLinkPopupId, X, Y, 170.0f, 28.0f, this, PopupSettingsLinkCopy, {}, CUi::EButtonSoundType::DEFAULT);
+	return true;
+}
+
+bool CMenus::TryOpenSettingsLinkMenuForPage(const char *pPageToken, const char *pTabToken, const CUIRect *pRect)
+{
+	char aUri[CUClientSettingsLink::MAX_URI_LENGTH];
+	if(!CUClientSettingsLink::BuildPageUri(aUri, sizeof(aUri), pPageToken, pTabToken))
+		return false;
+	str_copy(m_aSettingsLinkPendingUri, aUri, sizeof(m_aSettingsLinkPendingUri));
+	m_SettingsLinkCopyIsTab = true;
+	const float X = pRect ? pRect->x : Ui()->MouseX();
+	const float Y = pRect ? (pRect->y + pRect->h) : Ui()->MouseY();
+	if(Ui()->IsPopupOpen(&m_SettingsLinkPopupId))
+		Ui()->ClosePopupMenu(&m_SettingsLinkPopupId, true);
+	Ui()->DoPopupMenu(&m_SettingsLinkPopupId, X, Y, 170.0f, 28.0f, this, PopupSettingsLinkCopy, {}, CUi::EButtonSoundType::DEFAULT);
+	return true;
+}
+
+bool CMenus::DoScrollbarOptionSettingsLink(const void *pId, int *pOption, const CUIRect *pRect, const char *pStr, int Min, int Max, const IScrollbarScale *pScale, unsigned Flags, const char *pSuffix)
+{
+	const bool Changed = Ui()->DoScrollbarOption(pId, pOption, pRect, pStr, Min, Max, pScale, Flags, pSuffix);
+	const SConfigVariable *pVar = CUClientSettingsLink::FindVariableByPointer(ConfigManager(), pId);
+	if(pVar)
+	{
+		MaybeRegisterSettingsLinkVar(pId, pStr);
+		MaybeHighlightSettingsLink(pRect, pVar->m_pScriptName);
+	}
+	if(Ui()->MouseHovered(pRect) && Input()->KeyPress(KEY_MOUSE_2))
+		TryOpenSettingsLinkMenuForVar(pId, pStr, pRect);
+	return Changed;
+}
+
+void CMenus::SetSettingsLinkScrollRegion(CScrollRegion *pRegion)
+{
+	m_pSettingsLinkScrollRegion = pRegion;
+}
+
+void CMenus::MaybeHighlightSettingsLink(const CUIRect *pRect, const char *pScriptName)
+{
+	if(!pRect || !pScriptName || m_aSettingsLinkHighlightScript[0] == '\0')
+		return;
+	if(str_comp(pScriptName, m_aSettingsLinkHighlightScript) != 0)
+		return;
+	if(m_SettingsLinkHighlightUntil > 0 && time_get() > m_SettingsLinkHighlightUntil)
+	{
+		m_aSettingsLinkHighlightScript[0] = '\0';
+		m_SettingsLinkHighlightUntil = 0;
+		m_SettingsLinkNeedScroll = false;
+		return;
+	}
+	if(m_SettingsLinkNeedScroll && m_pSettingsLinkScrollRegion)
+	{
+		// Scroll once when the target row is first laid out (may be below the fold).
+		m_pSettingsLinkScrollRegion->AddRect(*pRect, true);
+		m_SettingsLinkNeedScroll = false;
+	}
+	constexpr float HighlightDuration = 1.6f;
+	constexpr float HighlightBlinks = 2.0f;
+	const float Remain = m_SettingsLinkHighlightUntil > 0 ? (float)(m_SettingsLinkHighlightUntil - time_get()) / (float)time_freq() : 0.0f;
+	const float Progress = std::clamp(1.0f - Remain / HighlightDuration, 0.0f, 1.0f);
+	// Start bright, then complete at least two on/off pulses.
+	const float Pulse = std::abs(std::sin((0.5f + Progress * HighlightBlinks) * pi));
+	const float Alpha = Pulse * 0.55f;
+	pRect->Draw(ColorRGBA(0.35f, 0.75f, 1.0f, Alpha), IGraphics::CORNER_ALL, 4.0f);
+}
+
+void CMenus::NavigateToSettingsLink(const CUClientSettingsLink::SNavigateRequest &Request)
+{
+	if(!Request.m_Valid)
+		return;
+	SetActive(true);
+	if(Client()->State() == IClient::STATE_ONLINE || Client()->State() == IClient::STATE_DEMOPLAYBACK)
+		m_GamePage = PAGE_SETTINGS;
+	else
+		SetMenuPage(PAGE_SETTINGS);
+	if(Request.m_SettingsPage >= 0)
+		g_Config.m_UiSettingsPage = Request.m_SettingsPage;
+	m_SettingsLinkNavBestClientTab = Request.m_BestClientTab;
+	m_SettingsLinkNavTClientTab = Request.m_TClientTab;
+	m_SettingsLinkNavUClientTab = Request.m_UClientTab;
+	m_SettingsLinkNavAssetsTab = Request.m_AssetsTab;
+	m_SettingsLinkNavControlsMode = Request.m_ControlsMode;
+	if(Request.m_Highlight && Request.m_aHighlightScript[0] != '\0')
+	{
+		str_copy(m_aSettingsLinkHighlightScript, Request.m_aHighlightScript, sizeof(m_aSettingsLinkHighlightScript));
+		m_SettingsLinkHighlightUntil = time_get() + (int64_t)(time_freq() * 1.6f); // 2 blinks
+		m_SettingsLinkNeedScroll = true;
+
+		// Expand parent toggles so nested rows (e.g. AntiPing children) are actually rendered.
+		for(int i = 0; i < Request.m_NumParents; ++i)
+		{
+			const SConfigVariable *pParent = CUClientSettingsLink::FindVariable(ConfigManager(), Request.m_aaParents[i]);
+			if(!pParent || pParent->m_Type != SConfigVariable::VAR_INT)
+				continue;
+			auto *pInt = static_cast<SIntConfigVariable *>(const_cast<SConfigVariable *>(pParent));
+			if(pInt->m_Min == 0 && pInt->m_Max == 1 && *pInt->m_pVariable == 0)
+				*pInt->m_pVariable = 1;
+		}
+	}
+	else
+	{
+		m_aSettingsLinkHighlightScript[0] = '\0';
+		m_SettingsLinkHighlightUntil = 0;
+		m_SettingsLinkNeedScroll = false;
+	}
+}
+
+namespace
+{
+struct SSettingsLinkChatLayout
+{
+	float Margin;
+	float CrumbH;
+	float CrumbGap;
+	float CrumbFontSize;
+	float LineSize;
+	float LabelSize;
+	float ColorH;
+	float ColorGap;
+	float Rounding;
+	float LabelGap;
+	float BoxMargin;
+};
+
+SSettingsLinkChatLayout SettingsLinkChatLayout(float FontSize)
+{
+	const float Fs = maximum(5.0f, FontSize);
+	SSettingsLinkChatLayout Layout;
+	// Inner padding so text doesn't sit flush against the card edges.
+	Layout.Margin = maximum(Fs * 0.42f, 4.0f);
+	// Breadcrumb stays clearly smaller than the setting row.
+	Layout.CrumbFontSize = maximum(Fs * 0.62f, 4.0f);
+	Layout.CrumbH = Layout.CrumbFontSize * 1.15f;
+	Layout.CrumbGap = maximum(Fs * 0.18f, 2.0f);
+	// Compact chat-scale controls (still readable, smaller than settings menus).
+	Layout.LineSize = maximum(Fs * 1.15f, 8.0f);
+	Layout.BoxMargin = maximum(1.0f, Layout.LineSize * 0.10f);
+	Layout.LabelSize = maximum(1.0f, (Layout.LineSize - Layout.BoxMargin * 2.0f) * CUi::ms_FontmodHeight);
+	Layout.ColorH = Layout.LineSize;
+	Layout.ColorGap = Fs * 0.10f;
+	Layout.Rounding = maximum(2.0f, Fs * 0.28f);
+	Layout.LabelGap = maximum(1.0f, Layout.LineSize * 0.12f);
+	return Layout;
+}
+
+constexpr const char *SETTINGS_LINK_PAGE_HINT = "Press the shortcut button to go to settings.";
+
+struct SSettingsLinkPageLayout
+{
+	float Margin;
+	float TitleFont;
+	float TitleH;
+	float HintFont;
+	float HintGap;
+};
+
+SSettingsLinkPageLayout SettingsLinkPageLayout(float FontSize)
+{
+	const float Fs = maximum(5.0f, FontSize);
+	SSettingsLinkPageLayout Layout;
+	Layout.Margin = maximum(Fs * 0.22f, 2.0f);
+	Layout.TitleFont = maximum(Fs * 0.82f, 5.0f);
+	Layout.TitleH = Layout.TitleFont * 1.12f;
+	Layout.HintFont = maximum(Fs * 0.55f, 3.5f);
+	Layout.HintGap = maximum(Fs * 0.12f, 1.5f);
+	return Layout;
+}
+
+float SettingsLinkControlHeight(const SConfigVariable *pVar, const SSettingsLinkChatLayout &Layout)
+{
+	if(!pVar)
+		return Layout.LineSize;
+	if(pVar->m_Type == SConfigVariable::VAR_COLOR)
+		return Layout.ColorH + Layout.ColorGap;
+	return Layout.LineSize;
+}
+
+float SettingsLinkControlWidth(ITextRender *pTextRender, const SConfigVariable *pVar, const char *pLabel, const SSettingsLinkChatLayout &Layout)
+{
+	const char *pText = (pLabel && pLabel[0] != '\0') ? pLabel : (pVar ? pVar->m_pScriptName : "");
+	const float TextW = pTextRender->TextWidth(Layout.LabelSize, pText);
+	if(!pVar)
+		return Layout.LineSize + Layout.LabelGap + TextW;
+	if(pVar->m_Type == SConfigVariable::VAR_COLOR)
+		return Layout.LineSize + Layout.LabelGap + TextW + Layout.ColorH + 50.0f;
+	if(pVar->m_Type == SConfigVariable::VAR_INT)
+	{
+		auto *pInt = static_cast<const SIntConfigVariable *>(pVar);
+		if(pInt->m_Min == 0 && pInt->m_Max == 1)
+			return Layout.LineSize + Layout.LabelGap + TextW;
+		return Layout.LabelGap + TextW + maximum(48.0f, Layout.LineSize * 6.0f);
+	}
+	return Layout.LabelGap + TextW + maximum(40.0f, Layout.LineSize * 5.0f);
+}
+
+// Mirror CMenus::DoButton_CheckBox_Common visuals (box + XMARK + label size), scaled for chat.
+void DrawSettingsLinkCheckboxRow(CUi *pUi, ITextRender *pTextRender, CUIRect Row, const char *pText, bool Checked, bool Hovered, bool Pressed, float Blend, float LabelGap, float BoxMargin)
+{
+	CUIRect Box, Label;
+	Row.VSplitLeft(Row.h, &Box, &Label);
+	Label.VSplitLeft(LabelGap, nullptr, &Label);
+
+	Box.Margin(BoxMargin, &Box);
+	const float ColorMul = Pressed ? pUi->ButtonColorMulActive() : (Hovered ? pUi->ButtonColorMulHot() : pUi->ButtonColorMulDefault());
+	Box.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.25f * ColorMul * Blend), IGraphics::CORNER_ALL, maximum(2.0f, Box.h * 0.22f));
+
+	const float GlyphSize = Box.h * CUi::ms_FontmodHeight;
+	if(Checked)
+	{
+		pTextRender->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT);
+		pTextRender->SetFontPreset(EFontPreset::ICON_FONT);
+		pTextRender->TextColor(pTextRender->DefaultTextColor().WithMultipliedAlpha(Blend));
+		pTextRender->TextOutlineColor(pTextRender->DefaultTextOutlineColor().WithMultipliedAlpha(Blend));
+		pUi->DoLabel(&Box, FontIcon::XMARK, GlyphSize, TEXTALIGN_MC);
+	}
+
+	// Always restore default face before CJK labels — icon face must not stay selected.
+	pTextRender->SetRenderFlags(0);
+	pTextRender->SetFontPreset(EFontPreset::DEFAULT_FONT);
+	pTextRender->TextColor(pTextRender->DefaultTextColor().WithMultipliedAlpha(Blend));
+	pTextRender->TextOutlineColor(pTextRender->DefaultTextOutlineColor().WithMultipliedAlpha(Blend));
+	SLabelProperties LabelProps;
+	LabelProps.m_MaxWidth = Label.w;
+	LabelProps.m_EllipsisAtEnd = true;
+	LabelProps.m_EnableWidthCheck = false;
+	pUi->DoLabel(&Label, pText, GlyphSize, TEXTALIGN_ML, LabelProps);
+	pTextRender->TextColor(pTextRender->DefaultTextColor());
+	pTextRender->TextOutlineColor(pTextRender->DefaultTextOutlineColor());
+}
+
+void DrawSettingsLinkClippedLabel(CUi *pUi, ITextRender *pTextRender, const CUIRect &Label, const char *pText, float FontSize, float Blend)
+{
+	pTextRender->SetRenderFlags(0);
+	pTextRender->SetFontPreset(EFontPreset::DEFAULT_FONT);
+	pTextRender->TextColor(1.0f, 1.0f, 1.0f, Blend);
+	SLabelProperties Props;
+	Props.m_MaxWidth = Label.w;
+	Props.m_EllipsisAtEnd = true;
+	Props.m_EnableWidthCheck = false;
+	pUi->DoLabel(&Label, pText, FontSize, TEXTALIGN_ML, Props);
+	pTextRender->TextColor(pTextRender->DefaultTextColor());
+}
+}
+
+float CMenus::MeasureSettingsLinkInlineHeight(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, float FontSize) const
+{
+	const SSettingsLinkChatLayout Layout = SettingsLinkChatLayout(FontSize);
+	float Height = Layout.Margin * 2.0f;
+	if(Missing)
+		return Height + Layout.LineSize;
+
+	if(PageOnly)
+	{
+		const SSettingsLinkPageLayout Page = SettingsLinkPageLayout(FontSize);
+		return Page.Margin * 2.0f + Page.TitleH + Page.HintGap + Page.HintFont;
+	}
+
+	Height += Layout.CrumbH + Layout.CrumbGap;
+	for(int i = 0; i < Parsed.m_NumParents; ++i)
+		Height += SettingsLinkControlHeight(CUClientSettingsLink::FindVariable(ConfigManager(), Parsed.m_aaParents[i]), Layout);
+	Height += SettingsLinkControlHeight(CUClientSettingsLink::FindVariable(ConfigManager(), Parsed.m_aScriptName), Layout);
+	return Height;
+}
+
+float CMenus::MeasureSettingsLinkInlineWidth(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, float FontSize) const
+{
+	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+	TextRender()->SetRenderFlags(0);
+	const SSettingsLinkChatLayout Layout = SettingsLinkChatLayout(FontSize);
+	const float Fs = maximum(5.0f, FontSize);
+	const float TrailingPad = maximum(Fs * 1.35f, 10.0f); // breathing room after the last glyph
+	float Width = Layout.Margin * 2.0f + TrailingPad;
+	if(Missing)
+	{
+		Width += TextRender()->TextWidth(Layout.LabelSize, "This client does not have this setting.") * 1.08f;
+		return Width;
+	}
+
+	char aBreadcrumb[128];
+	CUClientSettingsLink::FormatBreadcrumb(Parsed, aBreadcrumb, sizeof(aBreadcrumb));
+	const char *pCrumb = aBreadcrumb[0] != '\0' ? aBreadcrumb : Parsed.m_aPage;
+	if(PageOnly)
+	{
+		// Same chip width for short page/tab names: size to the shared hint line
+		// (or the title if longer), so "Tee" / "일반" / "BestClient" don't look random.
+		const SSettingsLinkPageLayout Page = SettingsLinkPageLayout(FontSize);
+		const float TitleW = TextRender()->TextWidth(Page.TitleFont, pCrumb) * 1.12f;
+		const float HintW = TextRender()->TextWidth(Page.HintFont, SETTINGS_LINK_PAGE_HINT);
+		return Page.Margin * 2.0f + maximum(TitleW, HintW) + maximum(Fs * 0.35f, 3.0f);
+	}
+
+	if(pCrumb[0] != '\0')
+		Width = maximum(Width, Layout.Margin * 2.0f + TrailingPad + TextRender()->TextWidth(Layout.CrumbFontSize, pCrumb) * 1.12f);
+
+	auto ResolveLabel = [&](const char *pScriptName, const char *pFallback) -> const char * {
+		CUClientSettingsLink::SVarLocation Loc;
+		if(CUClientSettingsLink::LookupVarLocation(pScriptName, Loc) && Loc.m_aLabel[0] != '\0' && str_utf8_check(Loc.m_aLabel))
+			return Loc.m_aLabel;
+		// Prefer short UI/fallback strings (Localize English keys) over long help text.
+		if(pFallback && pFallback[0] != '\0' && str_utf8_check(pFallback))
+			return Localize(pFallback);
+		const SConfigVariable *pVar = CUClientSettingsLink::FindVariable(ConfigManager(), pScriptName);
+		if(pVar && pVar->m_pHelp && pVar->m_pHelp[0] != '\0')
+			return Localize(pVar->m_pHelp);
+		return pScriptName;
+	};
+	auto Widen = [&](const char *pScriptName, const char *pLabel) {
+		const SConfigVariable *pVar = CUClientSettingsLink::FindVariable(ConfigManager(), pScriptName);
+		Width = maximum(Width, Layout.Margin * 2.0f + TrailingPad + SettingsLinkControlWidth(TextRender(), pVar, pLabel, Layout) * 1.08f);
+	};
+	for(int i = 0; i < Parsed.m_NumParents; ++i)
+	{
+		const char *pParentLabel = Parsed.m_aaParentLabels[i][0] != '\0' ? Parsed.m_aaParentLabels[i] : nullptr;
+		Widen(Parsed.m_aaParents[i], ResolveLabel(Parsed.m_aaParents[i], pParentLabel));
+	}
+	Widen(Parsed.m_aScriptName, ResolveLabel(Parsed.m_aScriptName, Parsed.m_aLabel[0] != '\0' ? Parsed.m_aLabel : nullptr));
+	return Width;
+}
+
+void CMenus::RenderSettingsLinkInline(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, CUIRect Rect, float FontSize, float Blend, vec2 MousePos)
+{
+	const SSettingsLinkChatLayout Layout = SettingsLinkChatLayout(FontSize);
+	const float Fs = maximum(5.0f, FontSize);
+	const ColorRGBA BlockColor = ColorRGBA(0.0f, 0.0f, 0.0f, 0.28f * Blend);
+	const bool MouseDown = Ui()->MouseButton(0) != 0;
+
+	CUIRect Card = Rect;
+	CUIRect HintRow;
+	const SSettingsLinkPageLayout Page = SettingsLinkPageLayout(FontSize);
+	if(PageOnly)
+		Card.HSplitBottom(Page.HintGap + Page.HintFont, &Card, &HintRow);
+
+	Card.Draw(BlockColor, IGraphics::CORNER_ALL, Layout.Rounding);
+	Card.VMargin(PageOnly ? Page.Margin : Layout.Margin, &Card);
+	Card.HMargin(PageOnly ? Page.Margin : Layout.Margin, &Card);
+
+	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+	TextRender()->SetRenderFlags(0);
+
+	if(Missing)
+	{
+		TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+		TextRender()->SetRenderFlags(0);
+		TextRender()->TextColor(1.0f, 0.35f, 0.35f, Blend);
+		SLabelProperties MissingProps;
+		MissingProps.m_MaxWidth = Card.w;
+		MissingProps.m_EllipsisAtEnd = true;
+		MissingProps.m_EnableWidthCheck = false;
+		Ui()->DoLabel(&Card, "This client does not have this setting.", Layout.LabelSize, TEXTALIGN_ML, MissingProps);
+		TextRender()->TextColor(TextRender()->DefaultTextColor());
+		return;
+	}
+
+	char aBreadcrumb[128];
+	CUClientSettingsLink::FormatBreadcrumb(Parsed, aBreadcrumb, sizeof(aBreadcrumb));
+	const char *pCrumb = aBreadcrumb[0] != '\0' ? aBreadcrumb : Parsed.m_aPage;
+
+	if(PageOnly)
+	{
+		DrawSettingsLinkClippedLabel(Ui(), TextRender(), Card, pCrumb, Page.TitleFont, 0.9f * Blend);
+
+		HintRow.HSplitTop(Page.HintGap, nullptr, &HintRow);
+		TextRender()->TextColor(0.72f, 0.72f, 0.76f, 0.9f * Blend);
+		SLabelProperties HintProps;
+		HintProps.m_MaxWidth = HintRow.w;
+		HintProps.m_EllipsisAtEnd = true;
+		HintProps.m_EnableWidthCheck = false;
+		Ui()->DoLabel(&HintRow, SETTINGS_LINK_PAGE_HINT, Page.HintFont, TEXTALIGN_ML, HintProps);
+		TextRender()->TextColor(TextRender()->DefaultTextColor());
+		return;
+	}
+
+	if(pCrumb[0] != '\0')
+	{
+		CUIRect Crumb;
+		Card.HSplitTop(Layout.CrumbH, &Crumb, &Card);
+		Card.HSplitTop(Layout.CrumbGap, nullptr, &Card);
+		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.65f * Blend);
+		SLabelProperties CrumbProps;
+		CrumbProps.m_MaxWidth = Crumb.w;
+		CrumbProps.m_EllipsisAtEnd = true;
+		CrumbProps.m_EnableWidthCheck = false;
+		Ui()->DoLabel(&Crumb, pCrumb, Layout.CrumbFontSize, TEXTALIGN_ML, CrumbProps);
+		TextRender()->TextColor(TextRender()->DefaultTextColor());
+	}
+
+	auto MouseIn = [&](const CUIRect &R) {
+		return MousePos.x >= R.x && MousePos.x <= R.x + R.w && MousePos.y >= R.y && MousePos.y <= R.y + R.h;
+	};
+
+	auto DrawControl = [&](const char *pScriptName, const char *pLabel) {
+		const SConfigVariable *pVar = CUClientSettingsLink::FindVariable(ConfigManager(), pScriptName);
+		if(!pVar)
+			return;
+		const char *pText = (pLabel && pLabel[0] != '\0') ? pLabel : pScriptName;
+
+		if(pVar->m_Type == SConfigVariable::VAR_INT)
+		{
+			auto *pInt = static_cast<const SIntConfigVariable *>(pVar);
+			CUIRect Row;
+			Card.HSplitTop(Layout.LineSize, &Row, &Card);
+			if(pInt->m_Min == 0 && pInt->m_Max == 1)
+			{
+				const bool Hovered = MouseIn(Row);
+				DrawSettingsLinkCheckboxRow(Ui(), TextRender(), Row, pText, *pInt->m_pVariable != 0, Hovered, Hovered && MouseDown, Blend, Layout.LabelGap, Layout.BoxMargin);
+			}
+			else
+			{
+				char aValue[64];
+				str_format(aValue, sizeof(aValue), "%s: %d", pText, *pInt->m_pVariable);
+				DrawSettingsLinkClippedLabel(Ui(), TextRender(), Row, aValue, Layout.LabelSize, Blend);
+			}
+			return;
+		}
+
+		if(pVar->m_Type == SConfigVariable::VAR_COLOR)
+		{
+			auto *pColor = static_cast<const SColorConfigVariable *>(pVar);
+			CUIRect Row, Swatch, Label;
+			Card.HSplitTop(Layout.ColorH, &Row, &Card);
+			Card.HSplitTop(Layout.ColorGap, nullptr, &Card);
+			Row.VSplitLeft(Layout.ColorH, &Swatch, &Label);
+			Label.VSplitLeft(Layout.LabelGap, nullptr, &Label);
+			const bool Hovered = MouseIn(Row);
+			const float ColorMul = (Hovered && MouseDown) ? Ui()->ButtonColorMulActive() : (Hovered ? Ui()->ButtonColorMulHot() : Ui()->ButtonColorMulDefault());
+			Swatch.Margin(Layout.BoxMargin, &Swatch);
+			Swatch.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.25f * ColorMul * Blend), IGraphics::CORNER_ALL, maximum(2.0f, Swatch.h * 0.22f));
+			CUIRect Inner = Swatch;
+			Inner.Margin(1.0f, &Inner);
+			Inner.Draw(color_cast<ColorRGBA>(ColorHSLA(*pColor->m_pVariable, pColor->m_Alpha)), IGraphics::CORNER_ALL, 2.0f);
+			DrawSettingsLinkClippedLabel(Ui(), TextRender(), Label, pText, Layout.LabelSize, Blend);
+			return;
+		}
+
+		if(pVar->m_Type == SConfigVariable::VAR_STRING)
+		{
+			auto *pStr = static_cast<const SStringConfigVariable *>(pVar);
+			CUIRect Row;
+			Card.HSplitTop(Layout.LineSize, &Row, &Card);
+			char aLine[256];
+			str_format(aLine, sizeof(aLine), "%s: %s", pText, pStr->m_pStr);
+			DrawSettingsLinkClippedLabel(Ui(), TextRender(), Row, aLine, Layout.LabelSize, Blend);
+		}
+	};
+
+	auto ResolveLabel = [&](const char *pScriptName, const char *pFallback) -> const char * {
+		CUClientSettingsLink::SVarLocation Loc;
+		if(CUClientSettingsLink::LookupVarLocation(pScriptName, Loc) && Loc.m_aLabel[0] != '\0' && str_utf8_check(Loc.m_aLabel))
+			return Loc.m_aLabel;
+		if(pFallback && pFallback[0] != '\0' && str_utf8_check(pFallback))
+			return Localize(pFallback);
+		const SConfigVariable *pVar = CUClientSettingsLink::FindVariable(ConfigManager(), pScriptName);
+		if(pVar && pVar->m_pHelp && pVar->m_pHelp[0] != '\0')
+			return Localize(pVar->m_pHelp);
+		return pScriptName;
+	};
+	for(int i = 0; i < Parsed.m_NumParents; ++i)
+	{
+		const char *pParentLabel = Parsed.m_aaParentLabels[i][0] != '\0' ? Parsed.m_aaParentLabels[i] : nullptr;
+		DrawControl(Parsed.m_aaParents[i], ResolveLabel(Parsed.m_aaParents[i], pParentLabel));
+	}
+	DrawControl(Parsed.m_aScriptName, ResolveLabel(Parsed.m_aScriptName, Parsed.m_aLabel[0] != '\0' ? Parsed.m_aLabel : nullptr));
+}
+
+bool CMenus::TryClickSettingsLinkInline(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, const CUIRect &Rect, float FontSize, vec2 MousePos)
+{
+	if(Missing || PageOnly)
+		return false;
+	if(MousePos.x < Rect.x || MousePos.x > Rect.x + Rect.w || MousePos.y < Rect.y || MousePos.y > Rect.y + Rect.h)
+		return false;
+
+	const SSettingsLinkChatLayout Layout = SettingsLinkChatLayout(FontSize);
+	CUIRect Content = Rect;
+	Content.VMargin(Layout.Margin, &Content);
+	Content.HMargin(Layout.Margin, &Content);
+
+	char aBreadcrumb[128];
+	CUClientSettingsLink::FormatBreadcrumb(Parsed, aBreadcrumb, sizeof(aBreadcrumb));
+	if(aBreadcrumb[0] != '\0' || Parsed.m_aPage[0] != '\0')
+	{
+		Content.HSplitTop(Layout.CrumbH, nullptr, &Content);
+		Content.HSplitTop(Layout.CrumbGap, nullptr, &Content);
+	}
+
+	auto TryToggle = [&](const char *pScriptName) -> bool {
+		const SConfigVariable *pVar = CUClientSettingsLink::FindVariable(ConfigManager(), pScriptName);
+		if(!pVar)
+			return false;
+		CUIRect Row;
+		if(pVar->m_Type == SConfigVariable::VAR_COLOR)
+		{
+			Content.HSplitTop(Layout.ColorH + Layout.ColorGap, &Row, &Content);
+			return false;
+		}
+		Content.HSplitTop(Layout.LineSize, &Row, &Content);
+		if(pVar->m_Type != SConfigVariable::VAR_INT)
+			return false;
+		auto *pInt = static_cast<SIntConfigVariable *>(const_cast<SConfigVariable *>(pVar));
+		if(pInt->m_Min != 0 || pInt->m_Max != 1)
+			return false;
+		if(MousePos.x < Row.x || MousePos.x > Row.x + Row.w || MousePos.y < Row.y || MousePos.y > Row.y + Row.h)
+			return false;
+		*pInt->m_pVariable ^= 1;
+		return true;
+	};
+
+	for(int i = 0; i < Parsed.m_NumParents; ++i)
+	{
+		if(TryToggle(Parsed.m_aaParents[i]))
+			return true;
+	}
+	return TryToggle(Parsed.m_aScriptName);
+}
+
+bool CMenus::ConsumeSettingsLinkNavBestClientTab(int &Tab)
+{
+	if(m_SettingsLinkNavBestClientTab < 0)
+		return false;
+	Tab = m_SettingsLinkNavBestClientTab;
+	m_SettingsLinkNavBestClientTab = -1;
+	return true;
+}
+
+bool CMenus::ConsumeSettingsLinkNavTClientTab(int &Tab)
+{
+	if(m_SettingsLinkNavTClientTab < 0)
+		return false;
+	Tab = m_SettingsLinkNavTClientTab;
+	m_SettingsLinkNavTClientTab = -1;
+	return true;
+}
+
+bool CMenus::ConsumeSettingsLinkNavUClientTab(int &Tab)
+{
+	if(m_SettingsLinkNavUClientTab < 0)
+		return false;
+	Tab = m_SettingsLinkNavUClientTab;
+	m_SettingsLinkNavUClientTab = -1;
+	return true;
+}
+
+bool CMenus::ConsumeSettingsLinkNavAssetsTab(int &Tab)
+{
+	if(m_SettingsLinkNavAssetsTab < 0)
+		return false;
+	Tab = m_SettingsLinkNavAssetsTab;
+	m_SettingsLinkNavAssetsTab = -1;
+	return true;
+}
+
+bool CMenus::ConsumeSettingsLinkNavControlsMode(int &Mode)
+{
+	if(m_SettingsLinkNavControlsMode < 0)
+		return false;
+	Mode = m_SettingsLinkNavControlsMode;
+	m_SettingsLinkNavControlsMode = -1;
+	return true;
+}
+
+CUi::EPopupMenuFunctionResult CMenus::PopupSettingsLinkCopy(void *pContext, CUIRect View, bool Active)
+{
+	CMenus *pMenus = static_cast<CMenus *>(pContext);
+	(void)Active;
+	CUIRect Row;
+	View.HSplitTop(18.0f, &Row, &View);
+	const char *pButtonText = pMenus->m_SettingsLinkCopyIsTab ? "Copy Tab Link" : "Copy Setting Link";
+	if(pMenus->DoButton_Menu(&pMenus->m_SettingsLinkCopyButton, pButtonText, 0, &Row))
+	{
+		if(pMenus->m_aSettingsLinkPendingUri[0] != '\0')
+			pMenus->Input()->SetClipboardText(pMenus->m_aSettingsLinkPendingUri);
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+	return CUi::POPUP_KEEP_OPEN;
 }
