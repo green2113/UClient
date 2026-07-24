@@ -7684,6 +7684,10 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 				const float SettingsWidth = Line.m_aSettingsLinkWidth[OffsetType] + (TextBegin - Begin) + RealMsgPaddingX;
 				FullWidth = maximum(FullWidth, SettingsWidth);
 			}
+			// Settings/media natural width can exceed the compact scoreboard column while the
+			// rendered card is clamped — keep the background bubble matching that column.
+			const float MaxBubbleWidth = LineWidth + (RealMsgPaddingX * 1.5f) + RealMsgPaddingTee;
+			FullWidth = minimum(FullWidth, MaxBubbleWidth);
 			Graphics()->SetColor(1, 1, 1, 1);
 			Line.m_QuadContainerIndex = Graphics()->CreateRectQuadContainer(Begin, y, FullWidth, Line.m_aYOffset[OffsetType], MessageRounding(), IGraphics::CORNER_ALL);
 			Line.m_MessageFullWidth = FullWidth;
