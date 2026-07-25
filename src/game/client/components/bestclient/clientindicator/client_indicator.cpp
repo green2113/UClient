@@ -226,6 +226,10 @@ namespace
 			return "uc_chat";
 		case UClientPresence::PACKET_CHAT_BROADCAST:
 			return "uc_chat_broadcast";
+		case UClientPresence::PACKET_READ:
+			return "uc_read";
+		case UClientPresence::PACKET_READ_BROADCAST:
+			return "uc_read_broadcast";
 		default:
 			return "unknown";
 		}
@@ -1231,6 +1235,38 @@ void CClientIndicator::ApplyUcReactionBroadcast(const UClientPresence::CReaction
 		Reaction.m_Action != UClientPresence::REACTION_REMOVE);
 }
 
+void CClientIndicator::SendChatReadMarker(const CUuid &MessageId)
+{
+	if(!g_Config.m_UcChat || !IsUcPresenceUdpEnabled() || !m_Socket || !m_HasUcServerAddr)
+		return;
+	if(MessageId == UUID_ZEROED)
+		return;
+
+	const char *pServerAddress = EffectivePresenceServerAddress();
+	if(pServerAddress[0] == '\0')
+		return;
+
+	const int LocalId = GameClient()->m_Snap.m_LocalClientId;
+	const char *pReaderName = LocalId >= 0 ? PlayerNameForClient(LocalId) : g_Config.m_PlayerName;
+
+	std::vector<uint8_t> vPacket;
+	vPacket.reserve(128);
+	UClientPresence::WriteReadClientBody(vPacket,
+		g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
+		pServerAddress, pReaderName, m_ClientInstanceId, MessageId);
+	UClientPresence::AppendProof(vPacket, g_Config.m_UcPresenceUdpSharedToken);
+	net_udp_send(m_Socket, &m_UcServerAddr, vPacket.data(), (int)vPacket.size());
+}
+
+void CClientIndicator::ApplyUcReadBroadcast(const UClientPresence::CReadBroadcast &Read)
+{
+	// Suppress our own echo: the relay broadcasts globally to everyone including us.
+	if(Read.m_ReaderKey == m_ClientInstanceId)
+		return;
+	// Read receipts are global (author may be on a different server), so no server gate.
+	GameClient()->m_Chat.OnChatReadReceived(Read.m_ReaderKey, Read.m_ReaderName.c_str(), Read.m_MessageId);
+}
+
 void CClientIndicator::SendUClientChat(const char *pMessage)
 {
 	if(!g_Config.m_UcChat || !IsUcPresenceUdpEnabled() || !m_Socket || !m_HasUcServerAddr)
@@ -1269,6 +1305,9 @@ void CClientIndicator::SendUClientChat(const char *pMessage)
 		ColorFeet = (int32_t)Local.m_ColorFeet;
 	}
 
+	// One globally-unique id per message so read receipts can target it across servers.
+	const CUuid MessageId = RandomUuid();
+
 	std::vector<uint8_t> vPacket;
 	vPacket.reserve(128 + str_length(aMessage));
 	UClientPresence::WriteChatClientBody(vPacket,
@@ -1277,14 +1316,15 @@ void CClientIndicator::SendUClientChat(const char *pMessage)
 		SenderClientId >= 0 ? PlayerNameForClient(SenderClientId) : g_Config.m_PlayerName,
 		SenderClientId >= 0 ? SenderClientId : -1,
 		Scope, aMessage,
-		pSkinName, UseCustomColor, ColorBody, ColorFeet);
+		pSkinName, UseCustomColor, ColorBody, ColorFeet, MessageId);
 	UClientPresence::AppendProof(vPacket, g_Config.m_UcPresenceUdpSharedToken);
 	net_udp_send(m_Socket, &m_UcServerAddr, vPacket.data(), (int)vPacket.size());
 
-	// Local echo so the sender sees their own line immediately.
+	// Local echo so the sender sees their own line immediately. Mine=true keeps our own
+	// message out of our local read marker (we never "read" what we just sent).
 	GameClient()->m_Chat.AddUClientChatLine(
 		SenderClientId >= 0 ? PlayerNameForClient(SenderClientId) : g_Config.m_PlayerName,
-		SenderClientId, aMessage, pServerAddress,
+		SenderClientId, aMessage, pServerAddress, MessageId, true,
 		pSkinName, UseCustomColor, ColorBody, ColorFeet);
 }
 
@@ -1315,7 +1355,7 @@ void CClientIndicator::ApplyUcChatBroadcast(const UClientPresence::CChatBroadcas
 	}
 
 	GameClient()->m_Chat.AddUClientChatLine(Chat.m_SenderName.c_str(), Chat.m_SenderClientId,
-		Chat.m_Message.c_str(), aNormalizedServer,
+		Chat.m_Message.c_str(), aNormalizedServer, Chat.m_MessageId, false,
 		Chat.m_SkinName.c_str(), Chat.m_UseCustomColor, Chat.m_ColorBody, Chat.m_ColorFeet);
 }
 
@@ -2067,6 +2107,13 @@ void CClientIndicator::ProcessUcPresencePacket(const unsigned char *pData, int D
 		UClientPresence::CChatBroadcast Chat;
 		if(UClientPresence::ReadChatBroadcast(pData, DataSize, Chat))
 			ApplyUcChatBroadcast(Chat);
+		break;
+	}
+	case UClientPresence::PACKET_READ_BROADCAST:
+	{
+		UClientPresence::CReadBroadcast Read;
+		if(UClientPresence::ReadReadBroadcast(pData, DataSize, Read))
+			ApplyUcReadBroadcast(Read);
 		break;
 	}
 	default:

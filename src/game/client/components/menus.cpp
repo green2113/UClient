@@ -3713,8 +3713,24 @@ SSettingsLinkPageLayout SettingsLinkPageLayout(float FontSize)
 	Layout.TitleFont = maximum(Fs * 0.82f, 5.0f);
 	Layout.TitleH = Layout.TitleFont * 1.12f;
 	Layout.HintFont = maximum(Fs * 0.55f, 3.5f);
-	Layout.HintGap = maximum(Fs * 0.12f, 1.5f);
+	// Small breathing room so the shortcut hint sits just under the tab name /
+	// setting rows above it (kept tight per user request).
+	Layout.HintGap = maximum(Fs * 0.24f, 2.5f);
 	return Layout;
+}
+
+// Height reserved for the shortcut hint. When the card is wide enough the hint fits
+// on one line; on the narrow scoreboard column it wraps instead of being ellipsized,
+// so we measure the wrapped height (word-wrapped at InnerWidth) to reserve room for it.
+// InnerWidth <= 0 means "width unknown" -> assume a single line (legacy behavior).
+float SettingsLinkHintHeight(ITextRender *pTextRender, const SSettingsLinkPageLayout &Page, float InnerWidth)
+{
+	if(InnerWidth <= 1.0f)
+		return Page.HintFont;
+	pTextRender->SetFontPreset(EFontPreset::DEFAULT_FONT);
+	pTextRender->SetRenderFlags(0);
+	const STextBoundingBox Box = pTextRender->TextBoundingBox(Page.HintFont, SETTINGS_LINK_PAGE_HINT, -1, InnerWidth);
+	return maximum(Page.HintFont, Box.m_H);
 }
 
 float SettingsLinkControlHeight(const SConfigVariable *pVar, const SSettingsLinkChatLayout &Layout)
@@ -3793,23 +3809,32 @@ void DrawSettingsLinkClippedLabel(CUi *pUi, ITextRender *pTextRender, const CUIR
 }
 }
 
-float CMenus::MeasureSettingsLinkInlineHeight(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, float FontSize) const
+float CMenus::MeasureSettingsLinkInlineHeight(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, float FontSize, float CardWidth) const
 {
 	const SSettingsLinkChatLayout Layout = SettingsLinkChatLayout(FontSize);
+	const SSettingsLinkPageLayout Page = SettingsLinkPageLayout(FontSize);
 	float Height = Layout.Margin * 2.0f;
 	if(Missing)
-		return Height + Layout.LineSize;
+	{
+		// Tight single-line box (small top/bottom padding) for the red "missing" notice.
+		const float MissingMargin = PageOnly ? Page.Margin : Layout.Margin;
+		return MissingMargin * 2.0f + Layout.LabelSize * 1.25f;
+	}
+
+	// Inner width available to the shortcut hint (card minus side margins). Lets the hint
+	// wrap onto multiple lines instead of being cut off when the card is clamped narrow.
+	const float Margin = PageOnly ? Page.Margin : Layout.Margin;
+	const float InnerWidth = CardWidth > 0.0f ? CardWidth - Margin * 2.0f : -1.0f;
+	const float HintH = SettingsLinkHintHeight(TextRender(), Page, InnerWidth);
 
 	if(PageOnly)
-	{
-		const SSettingsLinkPageLayout Page = SettingsLinkPageLayout(FontSize);
-		return Page.Margin * 2.0f + Page.TitleH + Page.HintGap + Page.HintFont;
-	}
+		return Page.Margin * 2.0f + Page.TitleH + Page.HintGap + HintH;
 
 	Height += Layout.CrumbH + Layout.CrumbGap;
 	for(int i = 0; i < Parsed.m_NumParents; ++i)
 		Height += SettingsLinkControlHeight(CUClientSettingsLink::FindVariable(ConfigManager(), Parsed.m_aaParents[i]), Layout);
 	Height += SettingsLinkControlHeight(CUClientSettingsLink::FindVariable(ConfigManager(), Parsed.m_aScriptName), Layout);
+	Height += Page.HintGap + HintH;
 	return Height;
 }
 
@@ -3823,7 +3848,8 @@ float CMenus::MeasureSettingsLinkInlineWidth(const CUClientSettingsLink::SParsed
 	float Width = Layout.Margin * 2.0f + TrailingPad;
 	if(Missing)
 	{
-		Width += TextRender()->TextWidth(Layout.LabelSize, "This client does not have this setting.") * 1.08f;
+		const char *pMissingText = PageOnly ? "This client does not have this tab." : "This client does not have this setting.";
+		Width += TextRender()->TextWidth(Layout.LabelSize, pMissingText) * 1.08f;
 		return Width;
 	}
 
@@ -3834,12 +3860,15 @@ float CMenus::MeasureSettingsLinkInlineWidth(const CUClientSettingsLink::SParsed
 	{
 		// Same chip width for short page/tab names: size to the shared hint line
 		// (or the title if longer), so "Tee" / "일반" / "BestClient" don't look random.
+		// Use the same 1.12f / TrailingPad as var cards — HintW alone under-measures
+		// DoLabel and truncates to "Press the shortcut button to ..." even with scoreboard off.
 		const SSettingsLinkPageLayout Page = SettingsLinkPageLayout(FontSize);
 		const float TitleW = TextRender()->TextWidth(Page.TitleFont, pCrumb) * 1.12f;
-		const float HintW = TextRender()->TextWidth(Page.HintFont, SETTINGS_LINK_PAGE_HINT);
-		return Page.Margin * 2.0f + maximum(TitleW, HintW) + maximum(Fs * 0.35f, 3.0f);
+		const float HintW = TextRender()->TextWidth(Page.HintFont, SETTINGS_LINK_PAGE_HINT) * 1.12f;
+		return Page.Margin * 2.0f + maximum(TitleW, HintW) + TrailingPad;
 	}
 
+	const SSettingsLinkPageLayout Page = SettingsLinkPageLayout(FontSize);
 	if(pCrumb[0] != '\0')
 		Width = maximum(Width, Layout.Margin * 2.0f + TrailingPad + TextRender()->TextWidth(Layout.CrumbFontSize, pCrumb) * 1.12f);
 
@@ -3865,6 +3894,8 @@ float CMenus::MeasureSettingsLinkInlineWidth(const CUClientSettingsLink::SParsed
 		Widen(Parsed.m_aaParents[i], ResolveLabel(Parsed.m_aaParents[i], pParentLabel));
 	}
 	Widen(Parsed.m_aScriptName, ResolveLabel(Parsed.m_aScriptName, Parsed.m_aLabel[0] != '\0' ? Parsed.m_aLabel : nullptr));
+	const float HintW = TextRender()->TextWidth(Page.HintFont, SETTINGS_LINK_PAGE_HINT) * 1.12f;
+	Width = maximum(Width, Layout.Margin * 2.0f + TrailingPad + HintW);
 	return Width;
 }
 
@@ -3876,10 +3907,7 @@ void CMenus::RenderSettingsLinkInline(const CUClientSettingsLink::SParsed &Parse
 	const bool MouseDown = Ui()->MouseButton(0) != 0;
 
 	CUIRect Card = Rect;
-	CUIRect HintRow;
 	const SSettingsLinkPageLayout Page = SettingsLinkPageLayout(FontSize);
-	if(PageOnly)
-		Card.HSplitBottom(Page.HintGap + Page.HintFont, &Card, &HintRow);
 
 	Card.Draw(BlockColor, IGraphics::CORNER_ALL, Layout.Rounding);
 	Card.VMargin(PageOnly ? Page.Margin : Layout.Margin, &Card);
@@ -3890,6 +3918,7 @@ void CMenus::RenderSettingsLinkInline(const CUClientSettingsLink::SParsed &Parse
 
 	if(Missing)
 	{
+		const char *pMissingText = PageOnly ? "This client does not have this tab." : "This client does not have this setting.";
 		TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 		TextRender()->SetRenderFlags(0);
 		TextRender()->TextColor(1.0f, 0.35f, 0.35f, Blend);
@@ -3897,7 +3926,7 @@ void CMenus::RenderSettingsLinkInline(const CUClientSettingsLink::SParsed &Parse
 		MissingProps.m_MaxWidth = Card.w;
 		MissingProps.m_EllipsisAtEnd = true;
 		MissingProps.m_EnableWidthCheck = false;
-		Ui()->DoLabel(&Card, "This client does not have this setting.", Layout.LabelSize, TEXTALIGN_ML, MissingProps);
+		Ui()->DoLabel(&Card, pMissingText, Layout.LabelSize, TEXTALIGN_ML, MissingProps);
 		TextRender()->TextColor(TextRender()->DefaultTextColor());
 		return;
 	}
@@ -3906,20 +3935,35 @@ void CMenus::RenderSettingsLinkInline(const CUClientSettingsLink::SParsed &Parse
 	CUClientSettingsLink::FormatBreadcrumb(Parsed, aBreadcrumb, sizeof(aBreadcrumb));
 	const char *pCrumb = aBreadcrumb[0] != '\0' ? aBreadcrumb : Parsed.m_aPage;
 
-	if(PageOnly)
-	{
-		DrawSettingsLinkClippedLabel(Ui(), TextRender(), Card, pCrumb, Page.TitleFont, 0.9f * Blend);
+	// Hint may wrap when the card is clamped narrow (scoreboard column); reserve the
+	// wrapped height so it is never ellipsized.
+	const float HintH = SettingsLinkHintHeight(TextRender(), Page, Card.w);
 
+	auto DrawShortcutHint = [&](CUIRect HintRow) {
 		HintRow.HSplitTop(Page.HintGap, nullptr, &HintRow);
 		TextRender()->TextColor(0.72f, 0.72f, 0.76f, 0.9f * Blend);
 		SLabelProperties HintProps;
 		HintProps.m_MaxWidth = HintRow.w;
-		HintProps.m_EllipsisAtEnd = true;
+		// Wrap instead of ellipsize; the reserved HintH matches the wrapped bounding box
+		// so the extra lines stay inside the card.
+		HintProps.m_EllipsisAtEnd = false;
 		HintProps.m_EnableWidthCheck = false;
 		Ui()->DoLabel(&HintRow, SETTINGS_LINK_PAGE_HINT, Page.HintFont, TEXTALIGN_ML, HintProps);
 		TextRender()->TextColor(TextRender()->DefaultTextColor());
+	};
+
+	if(PageOnly)
+	{
+		CUIRect TitleRow, HintRow;
+		Card.HSplitBottom(Page.HintGap + HintH, &TitleRow, &HintRow);
+		// Title may still ellipsis if MaxWidth was clamped (scoreboard).
+		DrawSettingsLinkClippedLabel(Ui(), TextRender(), TitleRow, pCrumb, Page.TitleFont, 0.9f * Blend);
+		DrawShortcutHint(HintRow);
 		return;
 	}
+
+	CUIRect HintRow;
+	Card.HSplitBottom(Page.HintGap + HintH, &Card, &HintRow);
 
 	if(pCrumb[0] != '\0')
 	{
@@ -4010,6 +4054,7 @@ void CMenus::RenderSettingsLinkInline(const CUClientSettingsLink::SParsed &Parse
 		DrawControl(Parsed.m_aaParents[i], ResolveLabel(Parsed.m_aaParents[i], pParentLabel));
 	}
 	DrawControl(Parsed.m_aScriptName, ResolveLabel(Parsed.m_aScriptName, Parsed.m_aLabel[0] != '\0' ? Parsed.m_aLabel : nullptr));
+	DrawShortcutHint(HintRow);
 }
 
 bool CMenus::TryClickSettingsLinkInline(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, const CUIRect &Rect, float FontSize, vec2 MousePos)
@@ -4020,9 +4065,14 @@ bool CMenus::TryClickSettingsLinkInline(const CUClientSettingsLink::SParsed &Par
 		return false;
 
 	const SSettingsLinkChatLayout Layout = SettingsLinkChatLayout(FontSize);
+	const SSettingsLinkPageLayout Page = SettingsLinkPageLayout(FontSize);
 	CUIRect Content = Rect;
 	Content.VMargin(Layout.Margin, &Content);
 	Content.HMargin(Layout.Margin, &Content);
+	// Hint row is not interactive — keep hit-testing aligned with controls only.
+	// Mirror the (possibly wrapped) hint height used when rendering.
+	const float HintH = SettingsLinkHintHeight(TextRender(), Page, Content.w);
+	Content.HSplitBottom(Page.HintGap + HintH, &Content, nullptr);
 
 	char aBreadcrumb[128];
 	CUClientSettingsLink::FormatBreadcrumb(Parsed, aBreadcrumb, sizeof(aBreadcrumb));
@@ -4050,7 +4100,12 @@ bool CMenus::TryClickSettingsLinkInline(const CUClientSettingsLink::SParsed &Par
 			return false;
 		if(MousePos.x < Row.x || MousePos.x > Row.x + Row.w || MousePos.y < Row.y || MousePos.y > Row.y + Row.h)
 			return false;
-		*pInt->m_pVariable ^= 1;
+		// Run through the console so registered conchains fire (e.g. coupled toggles like
+		// uc_chat_show/send_same_server_only). Writing *m_pVariable directly bypasses them.
+		const int NewValue = *pInt->m_pVariable ? 0 : 1;
+		char aCmd[128];
+		str_format(aCmd, sizeof(aCmd), "%s %d", pVar->m_pScriptName, NewValue);
+		Console()->ExecuteLine(aCmd, IConsole::CLIENT_ID_UNSPECIFIED);
 		return true;
 	};
 

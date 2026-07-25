@@ -1,0 +1,28 @@
+---
+description: Use rtk CLI proxy to reduce token usage on noisy dev commands
+alwaysApply: true
+---
+
+# RTK — 터미널 명령 토큰 절약
+
+`rtk`는 지원 명령의 출력을 규칙 기반(heuristic, LLM 아님)으로 압축해 60~90% 토큰을 아끼는 CLI 프록시다.
+터미널 명령을 실행할 때, **아래 지원 목록에 있는 명령이면 앞에 `rtk `를 붙여서 실행**한다.
+
+## 지원 명령 (반드시 `rtk` prefix)
+
+`git` · `gh` · `glab` · `gt` · `ls` · `tree` · `find` · `grep` · `rg` · `diff` · `log`
+· `docker` · `kubectl` · `oc` · `aws` · `psql` · `curl` · `wget` · `wc`
+· `npm` · `npx` · `pnpm` · `next` · `tsc` · `eslint`(→`rtk lint`) · `prettier` · `jest` · `vitest` · `playwright` · `prisma`
+· `cargo` · `go` · `golangci-lint` · `dotnet` · `mvn` · `gradlew`
+· `pytest` · `ruff` · `mypy` · `pip` · `rake` · `rubocop` · `rspec`
+
+예: `git status` → `rtk git status`, `ls -la` → `rtk ls -la`, `grep -r foo .` → `rtk grep -r foo .`
+
+## 규칙
+
+- **목록에 없는 명령**(예: `cmake`, `cp`, `mkdir`, shell 내장 `echo`)은 `rtk`로 감싸지 **않는다**. 압축 이득이 없고 셸 내장은 실패할 수 있다.
+- 임의의 시끄러운 명령은 필요 시 `rtk summary "<cmd>"`(2줄 요약) 또는 `rtk err "<cmd>"`(에러/경고만)로 감쌀 수 있다.
+- **원본 전체 출력이 꼭 필요**하면 압축을 건너뛴다: 그냥 원본 명령을 쓰거나 `rtk proxy <cmd>`.
+- 대화형/장기 실행 프로세스(dev server, watch, REPL 등)는 `rtk`로 감싸지 않는다.
+- Windows/PowerShell 환경이며 `rtk`는 PATH로 실제 바이너리를 찾아 실행한다.
+- 메타: `rtk gain`으로 절약량 확인 가능.

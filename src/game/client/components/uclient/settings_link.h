@@ -101,6 +101,8 @@ const char *LookupVarLabel(const char *pScriptName);
 
 // Prefer local LookupVarLocation for VAR links; fall back to URI page/tab.
 void FormatBreadcrumb(const SParsed &Parsed, char *pOut, int OutSize);
+// True if a PAGE link resolves to an existing page (and tab, when specified). Non-page links return true.
+bool IsPageLinkValid(const SParsed &Parsed);
 bool BuildNavigateRequest(const SParsed &Parsed, SNavigateRequest &Out);
 }
 

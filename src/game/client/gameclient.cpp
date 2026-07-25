@@ -526,6 +526,7 @@ void CGameClient::OnConsoleInit()
 						  &m_Emoticon,
 						  &m_ImportantAlert,
 						  &m_AdminPanel, // BestClient
+						  &m_VoiceChat, // BestClient: in-game voice/soundboard panel must grab mouse before m_Controls
 						  &m_BestClient,
 						  &m_UClient,
 						  &m_Menus,

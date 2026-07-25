@@ -10,6 +10,7 @@
 #include <engine/shared/jobs.h>
 #include <engine/shared/protocol.h>
 #include <engine/shared/ringbuffer.h>
+#include <engine/shared/uuid_manager.h>
 
 #include <generated/protocol7.h>
 
@@ -201,11 +202,21 @@ class CChat : public CComponent
 		{
 			char m_aEmoji[16] = "";
 			std::vector<int> m_vReactorClientIds; // game-server client ids of everyone who reacted
+			std::vector<std::string> m_vReactorNames; // parallel to m_vReactorClientIds, for the hover tooltip
 		};
 		std::vector<SReaction> m_vReactions;
 		std::vector<SRenderRect> m_vReactionRects; // one per reaction, screen-space, for click hit testing
 		bool m_ReactionRectsValid;
 		float m_aReactionRowHeight[2];
+
+		// UClient chat read receipts. m_UClientMessageId is the globally-unique id carried in
+		// the chat packet; m_UClientSeq is a local monotonic order used as the read high-water
+		// mark; m_UClientMine marks our own sent lines (excluded from our own read marker).
+		CUuid m_UClientMessageId = UUID_ZEROED;
+		int m_UClientSeq = 0;
+		bool m_UClientMine = false;
+		SRenderRect m_ReadLabelRect{}; // screen-space rect of the "<name> read" label, for hover
+		bool m_ReadLabelRectValid = false;
 
 		// Set when the whole line is a single allowed gif-bubble-domain media link; drives the
 		// floating gif bubble rendered above the sender's head (see CGifBubbles).
@@ -370,6 +381,30 @@ class CChat : public CComponent
 	bool m_HoveredLinkAlwaysConfirm = false;
 	int m_HoveredReplyLineIndex = -1;
 	int m_HoveredSettingsShortcutLineIndex = -1;
+	// UClient: reaction pill the mouse is over this frame, for the Discord-style reactor tooltip.
+	int m_HoveredReactionLineIndex = -1;
+	int m_HoveredReactionIndex = -1;
+	SRenderRect m_HoveredReactionRect{};
+
+	// UClient chat read receipts (KakaoTalk-style "read up to here" markers).
+	struct SReadMarker
+	{
+		CUuid m_MessageId = UUID_ZEROED; // message this reader has read up to
+		std::string m_Name; // reader's display name
+		int m_Order = 0; // update order, so the newest reader can be shown as representative
+	};
+	std::unordered_map<std::string, SReadMarker> m_UcReadMarkers; // reader key (uuid string) -> marker
+	int m_UcSeqCounter = 0; // monotonic order assigned to each added UClient line
+	int m_UcReadOrderCounter = 0; // monotonic order assigned to each read marker update
+	int m_UcLocalReadMarkerSeq = 0; // highest UClient seq we (locally) have read; 0 = none
+	CUuid m_UcLocalReadMarkerMsgId = UUID_ZEROED; // message id matching m_UcLocalReadMarkerSeq
+	// Read label the mouse is over this frame, for the reader-name tooltip.
+	int m_HoveredReadLineIndex = -1;
+	SRenderRect m_HoveredReadRect{};
+
+	// Display name for a remote UClient chat line (ClientId == CLIENT_MSG). AddLine reads this
+	// so the console log prints the sender's name instead of the "— " client-message dash.
+	char m_aPendingUClientName[64] = "";
 
 	bool m_PendingReplyActive;
 	int m_PendingReplyClientId;
@@ -530,8 +565,10 @@ class CChat : public CComponent
 	void ClearStashedUcReplySendScopePrompt();
 	bool CanShowReplyButton(const CLine &Line) const;
 	void ApplySettingsLinkToLine(CLine &Line, const char *pSourceText);
-	float MeasureSettingsLinkHeight(const CLine &Line, float FontSize) const;
+	float MeasureSettingsLinkHeight(const CLine &Line, float FontSize, float CardWidth = -1.0f) const;
 	float MeasureSettingsLinkWidth(const CLine &Line, float FontSize) const;
+	// Actual on-screen card width after clamping to the available column (scoreboard vs full chat).
+	float SettingsCardRenderWidth(const CLine &Line, float FontSize, bool ScoreboardOpen, float AvailWidth, float RealMsgPaddingX) const;
 	void RenderSettingsLinkBubble(CLine &Line, float X, float Y, float MaxWidth, float FontSize, float Blend);
 	bool CanShowSettingsShortcut(const CLine &Line) const;
 	bool TryHandleSettingsLinkClick(CLine &Line, vec2 MousePos, float FontSize);
@@ -675,7 +712,7 @@ class CChat : public CComponent
 	static uint64_t ComputeMessageHash(const char *pText);
 	int FindLineForReaction(int TargetClientId, uint64_t MessageHash) const;
 	bool IsLocalClientId(int ClientId) const;
-	void ApplyReactionToLineData(CLine &Line, const char *pEmoji, int ReactorClientId, bool Add);
+	void ApplyReactionToLineData(CLine &Line, const char *pEmoji, int ReactorClientId, const char *pReactorName, bool Add);
 	void ToggleLocalReaction(int LineIndex, const char *pEmoji);
 	// Lays out the reaction pill row. Returns the total height it occupies (0 if none).
 	// When pOutRects is set, fills it with absolute pill rects anchored at (OriginX, OriginY).
@@ -701,6 +738,7 @@ public:
 	bool IsActive() const { return m_Mode != MODE_NONE; }
 	void AddLine(int ClientId, int Team, const char *pLine);
 	void AddUClientChatLine(const char *pName, int SuggestedClientId, const char *pLine, const char *pServerAddress,
+		const CUuid &MessageId, bool Mine,
 		const char *pSkinName = nullptr, int UseCustomColor = 0, int ColorBody = 0, int ColorFeet = 0);
 	const char *FilterText(const char *pMessage, int ClientId = -2, bool IsChat = false);
 	void EnableMode(int Team);
@@ -723,6 +761,9 @@ public:
 
 	// Called by the client indicator when a reaction broadcast arrives over UDP.
 	void OnChatReactionReceived(int TargetClientId, uint64_t MessageHash, const char *pEmoji, int ReactorClientId, const char *pReactorName, bool Add);
+
+	// Called by the client indicator when a read-receipt broadcast arrives over UDP.
+	void OnChatReadReceived(const CUuid &ReaderKey, const char *pReaderName, const CUuid &MessageId);
 
 	void RebuildChat();
 	void ClearLines();

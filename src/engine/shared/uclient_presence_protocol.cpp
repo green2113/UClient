@@ -212,7 +212,7 @@ bool ReadCursorBroadcast(const uint8_t *pData, int DataSize, CCursorBroadcast &O
 
 void WriteChatClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
 	const char *pServerAddress, const char *pSenderName, int SenderClientId, uint8_t Scope, const char *pMessage,
-	const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet)
+	const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet, CUuid MessageId)
 {
 	WriteHeader(vOut, PACKET_CHAT);
 	WriteString(vOut, pPlayerId);
@@ -228,10 +228,11 @@ void WriteChatClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUui
 	WriteU8(vOut, UseCustomColor);
 	WriteI32(vOut, ColorBody);
 	WriteI32(vOut, ColorFeet);
+	WriteUuid(vOut, MessageId);
 }
 
 void WriteChatBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pSenderName, int SenderClientId,
-	uint8_t Scope, const char *pMessage, const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet)
+	uint8_t Scope, const char *pMessage, const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet, CUuid MessageId)
 {
 	vOut.clear();
 	WriteHeader(vOut, PACKET_CHAT_BROADCAST);
@@ -244,6 +245,7 @@ void WriteChatBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, 
 	WriteU8(vOut, UseCustomColor);
 	WriteI32(vOut, ColorBody);
 	WriteI32(vOut, ColorFeet);
+	WriteUuid(vOut, MessageId);
 }
 
 bool ReadChatBroadcast(const uint8_t *pData, int DataSize, CChatBroadcast &Out)
@@ -271,6 +273,58 @@ bool ReadChatBroadcast(const uint8_t *pData, int DataSize, CChatBroadcast &Out)
 	Out.m_SenderClientId = SenderClientId;
 	Out.m_ColorBody = ColorBody;
 	Out.m_ColorFeet = ColorFeet;
+	// Message id is appended after the color fields. Tolerate its absence so a relay
+	// or peer that predates read receipts still parses (the id stays zeroed).
+	if(DataSize - Offset >= (int)sizeof(CUuid))
+	{
+		if(!ReadUuid(pData, DataSize, Offset, Out.m_MessageId))
+			return false;
+	}
+	else
+	{
+		Out.m_MessageId = UUID_ZEROED;
+	}
+	return Offset == DataSize;
+}
+
+void WriteReadClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId)
+{
+	WriteHeader(vOut, PACKET_READ);
+	WriteString(vOut, pPlayerId);
+	WriteUuid(vOut, SessionId);
+	WriteUuid(vOut, Nonce);
+	WriteU64(vOut, Timestamp);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pReaderName);
+	WriteUuid(vOut, ReaderKey);
+	WriteUuid(vOut, MessageId);
+}
+
+void WriteReadBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId)
+{
+	vOut.clear();
+	WriteHeader(vOut, PACKET_READ_BROADCAST);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pReaderName);
+	WriteUuid(vOut, ReaderKey);
+	WriteUuid(vOut, MessageId);
+}
+
+bool ReadReadBroadcast(const uint8_t *pData, int DataSize, CReadBroadcast &Out)
+{
+	int Offset = 0;
+	EPacketType Type;
+	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != PACKET_READ_BROADCAST)
+		return false;
+
+	if(!ReadString(pData, DataSize, Offset, Out.m_ServerAddress) ||
+		!ReadString(pData, DataSize, Offset, Out.m_ReaderName) ||
+		!ReadUuid(pData, DataSize, Offset, Out.m_ReaderKey) ||
+		!ReadUuid(pData, DataSize, Offset, Out.m_MessageId))
+	{
+		return false;
+	}
 	return Offset == DataSize;
 }
 

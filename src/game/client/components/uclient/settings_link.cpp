@@ -646,6 +646,36 @@ void FormatBreadcrumb(const SParsed &Parsed, char *pOut, int OutSize)
 	FormatPageTab(Parsed.m_aPage, Parsed.m_aTab, pOut, OutSize);
 }
 
+bool IsPageLinkValid(const SParsed &Parsed)
+{
+	if(Parsed.m_Kind != EKind::PAGE)
+		return true; // only page/tab links are validated here
+	const char *pPage = Parsed.m_aPage;
+	if(!pPage || pPage[0] == '\0')
+		return false;
+	// Server browser filters are a valid non-settings destination.
+	if(str_comp_nocase(pPage, "Browser") == 0)
+		return true;
+	const int Page = SettingsPageFromPageToken(pPage);
+	if(Page < 0)
+		return false;
+	// If a tab was specified, it must resolve. Pages without a tab system reject any tab.
+	const char *pTab = Parsed.m_aTab;
+	if(pTab && pTab[0] != '\0')
+	{
+		switch(Page)
+		{
+		case 11: return BestClientTabFromToken(pTab) >= 0; // BestClient
+		case 10: return TClientTabFromToken(pTab) >= 0; // TClient
+		case 12: return UClientTabFromToken(pTab) >= 0; // UClient
+		case 9: return AssetsTabFromToken(pTab) >= 0; // Assets
+		case 5: return ControlsModeFromToken(pTab) >= 0; // Controls
+		default: return false; // page has no tabs, but a tab token was given
+		}
+	}
+	return true;
+}
+
 bool BuildNavigateRequest(const SParsed &Parsed, SNavigateRequest &Out)
 {
 	Out = {};

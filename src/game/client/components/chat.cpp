@@ -16,6 +16,7 @@
 #include <engine/editor.h>
 #include <engine/external/regex.h>
 #include <engine/font_icons.h>
+#include <engine/friends.h>
 #include <engine/graphics.h>
 #include <engine/keys.h>
 #include <engine/shared/config.h>
@@ -481,6 +482,10 @@ CChat::CLine::CLine()
 	m_ReactionRectsValid = false;
 	m_aReactionRowHeight[0] = 0.0f;
 	m_aReactionRowHeight[1] = 0.0f;
+	m_UClientMessageId = UUID_ZEROED;
+	m_UClientSeq = 0;
+	m_UClientMine = false;
+	m_ReadLabelRectValid = false;
 	m_ShowAboveHead = false;
 	m_HasSettingsLink = false;
 	m_SettingsLinkMissing = false;
@@ -551,6 +556,10 @@ void CChat::CLine::Reset(CChat &This)
 	m_ReactionRectsValid = false;
 	m_aReactionRowHeight[0] = 0.0f;
 	m_aReactionRowHeight[1] = 0.0f;
+	m_UClientMessageId = UUID_ZEROED;
+	m_UClientSeq = 0;
+	m_UClientMine = false;
+	m_ReadLabelRectValid = false;
 	m_ShowAboveHead = false;
 	m_HasSettingsLink = false;
 	m_SettingsLinkMissing = false;
@@ -4918,12 +4927,12 @@ void CChat::RenderTextLine(CLine &Line, float y, float FontSize, float LineWidth
 		Color = *CustomColor;
 	else if(Line.m_ClientId == SERVER_MSG)
 		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageSystemColor));
+	else if(Line.m_Highlighted)
+		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageHighlightColor));
 	else if(Line.m_UClient)
 		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
 	else if(Line.m_ClientId == CLIENT_MSG)
 		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
-	else if(Line.m_Highlighted)
-		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageHighlightColor));
 	else if(Line.m_Team)
 		Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageTeamColor));
 	else
@@ -5112,26 +5121,24 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			}
 		}
 
-		if(m_HoveredSettingsShortcutLineIndex >= 0)
+		for(int i = 0; i < MAX_LINES; ++i)
 		{
-			CLine &Line = m_aLines[m_HoveredSettingsShortcutLineIndex];
-			if(Line.m_SettingsShortcutRectValid)
+			CLine &Line = m_aLines[i];
+			if(!Line.m_SettingsShortcutRectValid)
+				continue;
+			const SRenderRect &Rect = Line.m_SettingsShortcutRect;
+			if(MousePos.x < Rect.m_X || MousePos.x > Rect.m_X + Rect.m_W ||
+				MousePos.y < Rect.m_Y || MousePos.y > Rect.m_Y + Rect.m_H)
+				continue;
+			CUClientSettingsLink::SNavigateRequest Nav;
+			if(CUClientSettingsLink::BuildNavigateRequest(Line.m_SettingsLinkParsed, Nav))
 			{
-				const SRenderRect &Rect = Line.m_SettingsShortcutRect;
-				if(MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
-					MousePos.y >= Rect.m_Y && MousePos.y <= Rect.m_Y + Rect.m_H)
-				{
-					CUClientSettingsLink::SNavigateRequest Nav;
-					if(CUClientSettingsLink::BuildNavigateRequest(Line.m_SettingsLinkParsed, Nav))
-					{
-						DisableMode();
-						// +show_chat (expand-only) steals mouse wheel; clear it so settings can scroll.
-						m_Show = false;
-						GameClient()->m_Menus.NavigateToSettingsLink(Nav);
-					}
-					return true;
-				}
+				DisableMode();
+				// +show_chat (expand-only) steals mouse wheel; clear it so settings can scroll.
+				m_Show = false;
+				GameClient()->m_Menus.NavigateToSettingsLink(Nav);
 			}
+			return true;
 		}
 	}
 
@@ -6447,6 +6454,9 @@ void CChat::ApplySettingsLinkToLine(CLine &Line, const char *pSourceText)
 	if(Parsed.m_Kind == CUClientSettingsLink::EKind::PAGE)
 	{
 		Line.m_SettingsLinkPageOnly = true;
+		// A tab/page link to a page or tab this client doesn't have renders red like a
+		// missing setting, and gets no shortcut button (CanShowSettingsShortcut checks this).
+		Line.m_SettingsLinkMissing = !CUClientSettingsLink::IsPageLinkValid(Parsed);
 	}
 	else if(Parsed.m_Kind == CUClientSettingsLink::EKind::VAR)
 	{
@@ -6478,11 +6488,11 @@ void CChat::ApplySettingsLinkToLine(CLine &Line, const char *pSourceText)
 		str_copy(Line.m_aDisplayText, aStripped, sizeof(Line.m_aDisplayText));
 }
 
-float CChat::MeasureSettingsLinkHeight(const CLine &Line, float FontSize) const
+float CChat::MeasureSettingsLinkHeight(const CLine &Line, float FontSize, float CardWidth) const
 {
 	if(!Line.m_HasSettingsLink)
 		return 0.0f;
-	return GameClient()->m_Menus.MeasureSettingsLinkInlineHeight(Line.m_SettingsLinkParsed, Line.m_SettingsLinkMissing, Line.m_SettingsLinkPageOnly, FontSize);
+	return GameClient()->m_Menus.MeasureSettingsLinkInlineHeight(Line.m_SettingsLinkParsed, Line.m_SettingsLinkMissing, Line.m_SettingsLinkPageOnly, FontSize, CardWidth);
 }
 
 float CChat::MeasureSettingsLinkWidth(const CLine &Line, float FontSize) const
@@ -6492,9 +6502,17 @@ float CChat::MeasureSettingsLinkWidth(const CLine &Line, float FontSize) const
 	return GameClient()->m_Menus.MeasureSettingsLinkInlineWidth(Line.m_SettingsLinkParsed, Line.m_SettingsLinkMissing, Line.m_SettingsLinkPageOnly, FontSize);
 }
 
+float CChat::SettingsCardRenderWidth(const CLine &Line, float FontSize, bool ScoreboardOpen, float AvailWidth, float RealMsgPaddingX) const
+{
+	// Mirror the clamp used when rendering the bubble (see RenderSettingsLinkBubble /
+	// the OnRender call site) so the cached height matches the on-screen width.
+	const float MaxWidth = ScoreboardOpen ? AvailWidth : maximum(AvailWidth, ChatWidth() - RealMsgPaddingX);
+	return minimum(MaxWidth, maximum(MeasureSettingsLinkWidth(Line, FontSize), FontSize * 8.0f));
+}
+
 bool CChat::CanShowSettingsShortcut(const CLine &Line) const
 {
-	// Same as reply: only while chat is open, then only on line hover (checked by callers).
+	// While chat is open; the shortcut button itself stays visible (not hover-gated).
 	return m_Mode != MODE_NONE && Line.m_HasSettingsLink && !Line.m_SettingsLinkMissing;
 }
 
@@ -6506,7 +6524,7 @@ void CChat::RenderSettingsLinkBubble(CLine &Line, float X, float Y, float MaxWid
 	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 	TextRender()->SetRenderFlags(0);
 	const float CardW = minimum(MaxWidth, maximum(MeasureSettingsLinkWidth(Line, FontSize), FontSize * 8.0f));
-	const float CardH = MeasureSettingsLinkHeight(Line, FontSize);
+	const float CardH = MeasureSettingsLinkHeight(Line, FontSize, CardW);
 	Line.m_SettingsLinkRect.m_X = X;
 	Line.m_SettingsLinkRect.m_Y = Y;
 	Line.m_SettingsLinkRect.m_W = CardW;
@@ -6830,6 +6848,21 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 				Highlighted |= LocalId >= 0 && LineShouldHighlight(pHighlightText, GameClient()->m_aClients[LocalId].m_aName);
 			}
 		}
+		else if(Team == TEAM_UCLIENT && ClientId == CLIENT_MSG)
+		{
+			// Remote UClient senders have no snap client id, so the check above skips
+			// them. Highlight by local name(s) when mentioned, but ignore our own
+			// echoed line (sender name equals ours).
+			for(int LocalId : GameClient()->m_aLocalIds)
+			{
+				if(LocalId < 0)
+					continue;
+				const char *pLocalName = GameClient()->m_aClients[LocalId].m_aName;
+				if(m_aPendingUClientName[0] != '\0' && str_comp(m_aPendingUClientName, pLocalName) == 0)
+					continue;
+				Highlighted |= LineShouldHighlight(pHighlightText, pLocalName);
+			}
+		}
 	}
 	else
 	{
@@ -6910,7 +6943,12 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	}
 	else if(CurrentLine.m_ClientId == CLIENT_MSG)
 	{
-		str_copy(CurrentLine.m_aName, "— ");
+		// Remote UClient lines carry the sender's presence name via m_aPendingUClientName so
+		// the console log (printed just below) shows "Name: text" instead of the "— " dash.
+		if(Team == TEAM_UCLIENT && m_aPendingUClientName[0] != '\0')
+			str_copy(CurrentLine.m_aName, m_aPendingUClientName);
+		else
+			str_copy(CurrentLine.m_aName, "— ");
 	}
 	else
 	{
@@ -6988,7 +7026,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 			}
 		}
 	}
-	else if(ClientId == CLIENT_MSG)
+	else if(ClientId == CLIENT_MSG && !(CurrentLine.m_UClient && Highlighted))
 	{
 		// No sound yet
 	}
@@ -7036,6 +7074,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 }
 
 void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const char *pLine, const char *pServerAddress,
+	const CUuid &MessageId, bool Mine,
 	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet)
 {
 	if(!g_Config.m_UcChat || !pName || !pLine || pName[0] == '\0' || pLine[0] == '\0')
@@ -7067,18 +7106,31 @@ void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const c
 		}
 	}
 
+	// Provide the sender's display name to AddLine so its console log prints "Name: text"
+	// (remote lines use CLIENT_MSG, which would otherwise log the "— " dash prefix).
+	if(ClientId == CLIENT_MSG)
+	{
+		const char *pFilteredName = FilterText(pName);
+		GameClient()->m_BestClient.SanitizePlayerName(pFilteredName, m_aPendingUClientName, sizeof(m_aPendingUClientName), -1);
+	}
+
 	const int PrevShowClient = g_Config.m_TcShowChatClient;
 	if(ClientId == CLIENT_MSG)
 		g_Config.m_TcShowChatClient = 1;
 	AddLine(ClientId, TEAM_UCLIENT, pLine);
 	if(ClientId == CLIENT_MSG)
 		g_Config.m_TcShowChatClient = PrevShowClient;
+	m_aPendingUClientName[0] = '\0';
 
 	CLine &Line = m_aLines[m_CurrentLine];
 	if(!Line.m_Initialized || !Line.m_UClient)
 		return;
 
 	Line.m_UClientFromCurrentServer = SameServer;
+	Line.m_UClientMessageId = MessageId;
+	Line.m_UClientMine = Mine;
+	// Monotonic order used as the read high-water mark (newer lines sort later).
+	Line.m_UClientSeq = ++m_UcSeqCounter;
 
 	// Remote / unmatched senders: show the presence name instead of the client-msg dash prefix.
 	if(ClientId == CLIENT_MSG)
@@ -7086,7 +7138,6 @@ void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const c
 		const char *pFiltered = FilterText(pName);
 		GameClient()->m_BestClient.SanitizePlayerName(pFiltered, Line.m_aName, sizeof(Line.m_aName), -1);
 		Line.m_CustomColor = std::nullopt;
-		Line.m_Friend = false;
 		Line.m_pManagedTeeRenderInfo.reset();
 		if(pSkinName && pSkinName[0] != '\0')
 		{
@@ -7105,6 +7156,29 @@ void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const c
 		Graphics()->DeleteQuadContainer(Line.m_QuadContainerIndex);
 		Line.m_aYOffset[0] = -1.0f;
 		Line.m_aYOffset[1] = -1.0f;
+	}
+
+	// Same-server lines already inherit m_Friend from the snap client. Remote UClient
+	// senders use CLIENT_MSG and have no snap entry — resolve friends by player name
+	// so the ♥ marker matches normal chat (clan-only entries are ignored).
+	if(ClientId == CLIENT_MSG && Line.m_aName[0] != '\0')
+	{
+		Line.m_Friend = false;
+		IFriends *pFriends = GameClient()->Friends();
+		if(pFriends)
+		{
+			for(int i = 0; i < pFriends->NumFriends(); ++i)
+			{
+				const CFriendInfo *pFriend = pFriends->GetFriend(i);
+				if(pFriend->m_aName[0] == '\0')
+					continue;
+				if(!str_comp(pFriend->m_aName, Line.m_aName) || !str_comp(pFriend->m_aName, pName))
+				{
+					Line.m_Friend = true;
+					break;
+				}
+			}
+		}
 	}
 }
 
@@ -7196,7 +7270,8 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 		// Rebuild when settings-card layout metrics change (size / checkbox proportions).
 		const bool SettingsLinkLayoutStale = Line.m_HasSettingsLink &&
 			(Line.m_aSettingsLinkWidth[OffsetType] <= 0.0f ||
-				absolute(Line.m_aSettingsLinkHeight[OffsetType] - MeasureSettingsLinkHeight(Line, FontSize)) > 0.5f);
+				absolute(Line.m_aSettingsLinkHeight[OffsetType] - MeasureSettingsLinkHeight(Line, FontSize, SettingsCardRenderWidth(Line, FontSize, IsScoreBoardOpen, LineWidth, RealMsgPaddingX))) > 0.5f ||
+				absolute(Line.m_aSettingsLinkWidth[OffsetType] - MeasureSettingsLinkWidth(Line, FontSize)) > 0.5f);
 		if(Line.m_TextContainerIndex.Valid() && Line.m_aYOffset[OffsetType] >= 0.0f && !ForceRecreate && !SettingsLinkLayoutStale)
 			continue;
 
@@ -7451,8 +7526,9 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			Line.m_aSettingsLinkWidth[OffsetType] = 0.0f;
 			if(Line.m_HasSettingsLink)
 			{
-				Line.m_aSettingsLinkHeight[OffsetType] = MeasureSettingsLinkHeight(Line, FontSize);
 				Line.m_aSettingsLinkWidth[OffsetType] = MeasureSettingsLinkWidth(Line, FontSize);
+				const float SettingsCardW = SettingsCardRenderWidth(Line, FontSize, IsScoreBoardOpen, LineWidth, RealMsgPaddingX);
+				Line.m_aSettingsLinkHeight[OffsetType] = MeasureSettingsLinkHeight(Line, FontSize, SettingsCardW);
 				TotalHeight += FontSize * 0.25f + Line.m_aSettingsLinkHeight[OffsetType];
 			}
 
@@ -7492,12 +7568,12 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			Color = *Line.m_CustomColor;
 		else if(Line.m_ClientId == SERVER_MSG)
 			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageSystemColor));
+		else if(Line.m_Highlighted)
+			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageHighlightColor));
 		else if(Line.m_UClient)
 			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
 		else if(Line.m_ClientId == CLIENT_MSG)
 			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
-		else if(Line.m_Highlighted)
-			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageHighlightColor));
 		else if(Line.m_Team)
 			Color = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageTeamColor));
 		else // regular message
@@ -7684,9 +7760,13 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 				const float SettingsWidth = Line.m_aSettingsLinkWidth[OffsetType] + (TextBegin - Begin) + RealMsgPaddingX;
 				FullWidth = maximum(FullWidth, SettingsWidth);
 			}
-			// Settings/media natural width can exceed the compact scoreboard column while the
-			// rendered card is clamped — keep the background bubble matching that column.
-			const float MaxBubbleWidth = LineWidth + (RealMsgPaddingX * 1.5f) + RealMsgPaddingTee;
+			// When the scoreboard shrinks the chat column, clamp the bubble to that
+			// column so the background doesn't outrun the clamped settings/media card.
+			// With scoreboard off, allow the bubble to grow up to ChatWidth() so a
+			// page-only settings card can show its full hint line.
+			const float MaxBubbleWidth = IsScoreBoardOpen ?
+				(LineWidth + (RealMsgPaddingX * 1.5f) + RealMsgPaddingTee) :
+				ChatWidth();
 			FullWidth = minimum(FullWidth, MaxBubbleWidth);
 			Graphics()->SetColor(1, 1, 1, 1);
 			Line.m_QuadContainerIndex = Graphics()->CreateRectQuadContainer(Begin, y, FullWidth, Line.m_aYOffset[OffsetType], MessageRounding(), IGraphics::CORNER_ALL);
@@ -7757,6 +7837,9 @@ void CChat::OnRender()
 	m_HoveredLinkAlwaysConfirm = false;
 	m_HoveredReplyLineIndex = -1;
 	m_HoveredSettingsShortcutLineIndex = -1;
+	m_HoveredReactionLineIndex = -1;
+	m_HoveredReactionIndex = -1;
+	m_HoveredReadLineIndex = -1;
 	m_ReplyCancelButtonRectValid = false;
 	for(int LineIndex = 0; LineIndex < MAX_LINES; ++LineIndex)
 	{
@@ -7782,7 +7865,9 @@ void CChat::OnRender()
 		Line.m_MediaRetryRectValid = false;
 		Line.m_LineRectValid = false;
 		Line.m_ReplyButtonRectValid = false;
+		Line.m_SettingsShortcutRectValid = false;
 		Line.m_ReactionRectsValid = false;
+		Line.m_ReadLabelRectValid = false;
 	}
 	m_TranslateButtonRectValid = false;
 	m_GiphyButtonRectValid = false;
@@ -8253,6 +8338,11 @@ void CChat::OnRender()
 	std::string SelectionString;
 	bool HasChatSelection = false;
 
+	// UClient read receipts: newest other-authored UClient message that is actually visible
+	// (and not faded out) this frame. Used after the loop to advance our own read marker.
+	int MaxVisibleReadSeq = -1;
+	CUuid MaxVisibleReadMsgId = UUID_ZEROED;
+
 	for(int i = m_BacklogCurLine; i < MAX_LINES; i++)
 	{
 		const int LineIndex = ((m_CurrentLine - i) + MAX_LINES) % MAX_LINES;
@@ -8273,6 +8363,15 @@ void CChat::OnRender()
 		float Blend = Now > Line.m_Time + 14 * time_freq() && !m_PrevShowChat ? 1.0f - (Now - Line.m_Time - 14 * time_freq()) / (2.0f * time_freq()) : 1.0f;
 		if(KeepLinesAlive && LineIndex == m_MediaViewerLineIndex)
 			Blend = 1.0f;
+
+		// A visibly-rendered message from someone else counts as "read": remember the newest
+		// one so we can move our read marker forward once (only while the window is focused).
+		if(Line.m_UClient && !Line.m_UClientMine && Line.m_UClientMessageId != UUID_ZEROED &&
+			Blend > 0.5f && Line.m_UClientSeq > MaxVisibleReadSeq)
+		{
+			MaxVisibleReadSeq = Line.m_UClientSeq;
+			MaxVisibleReadMsgId = Line.m_UClientMessageId;
+		}
 
 		// BestClient: lift newly received messages from the bottom.
 		float BcLineXOffset = 0.0f;
@@ -8402,7 +8501,46 @@ void CChat::OnRender()
 				RenderReplyQuoteConnector(Graphics(), TeeCenterX, QuoteY, QuoteLineH, Line.m_ReplyQuoteHeight, FontSize(), Blend);
 			}
 
-			if(CanShowReplyButton(Line) && Line.m_ReplyButtonAnchorValid && !IsPendingReplyTarget)
+			// UClient read receipts: build the "<name> read" label for this line (if it is the
+			// read marker of one or more peers), so we can reserve room for it before the
+			// reply/settings buttons and draw it right after the message text.
+			std::string ReadLabelText;
+			int ReadCount = 0;
+			if(Line.m_UClient && Line.m_UClientMessageId != UUID_ZEROED && !m_UcReadMarkers.empty())
+			{
+				std::string Representative;
+				int BestOrder = -1;
+				for(const auto &Entry : m_UcReadMarkers)
+				{
+					const SReadMarker &Marker = Entry.second;
+					if(Marker.m_MessageId != Line.m_UClientMessageId)
+						continue;
+					++ReadCount;
+					if(Marker.m_Order > BestOrder)
+					{
+						BestOrder = Marker.m_Order;
+						Representative = Marker.m_Name;
+					}
+				}
+				if(ReadCount == 1)
+				{
+					ReadLabelText = Representative + " read";
+				}
+				else if(ReadCount >= 2)
+				{
+					const int Others = ReadCount - 1;
+					char aReadLabel[128];
+					str_format(aReadLabel, sizeof(aReadLabel), "%s and %d %s read", Representative.c_str(), Others, Others == 1 ? "other" : "others");
+					ReadLabelText = aReadLabel;
+				}
+			}
+			const float ReadLabelFont = FontSize() * 0.6f;
+			const float ReadLabelW = ReadCount > 0 ? TextRender()->TextWidth(ReadLabelFont, ReadLabelText.c_str()) : 0.0f;
+			const float ReadLabelSpacing = FontSize() * 0.5f;
+
+			const bool ShowReplyActions = CanShowReplyButton(Line) && Line.m_ReplyButtonAnchorValid && !IsPendingReplyTarget;
+			const bool ShowSettingsShortcut = CanShowSettingsShortcut(Line) && Line.m_ReplyButtonAnchorValid;
+			if(ShowReplyActions || ShowSettingsShortcut)
 			{
 				const float LineH = maximum(Line.m_aYOffset[OffsetType], FontSize() + RealMsgPaddingY);
 				Line.m_LineRect.m_X = LineRenderX;
@@ -8413,41 +8551,44 @@ void CChat::OnRender()
 
 				const bool HoveredLine = MousePos.x >= Line.m_LineRect.m_X && MousePos.x <= Line.m_LineRect.m_X + Line.m_LineRect.m_W &&
 					MousePos.y >= Line.m_LineRect.m_Y && MousePos.y <= Line.m_LineRect.m_Y + Line.m_LineRect.m_H;
-				if(HoveredLine || HoveredName)
+				const float BtnSize = maximum(6.5f, FontSize() * 0.34f);
+				const float BtnGap = FontSize() * 0.6f;
+				const float BtnSpacing = FontSize() * 0.18f;
+				// Keep the read label (drawn separately below) leftmost; buttons follow it.
+				float NextX = Line.m_ReplyButtonAnchorX + ChatOpenOffsetX + BcLineXOffset + BtnGap +
+					(ReadCount > 0 ? ReadLabelW + ReadLabelSpacing : 0.0f);
+				const float BtnY = Line.m_ReplyButtonAnchorY + TextOffsetY + maximum(0.0f, (FontSize() - BtnSize) * 0.5f) - FontSize() * 0.08f;
+
+				// Settings shortcut stays visible whenever chat is open (hint text refers to it).
+				if(ShowSettingsShortcut)
 				{
-					const float BtnSize = maximum(6.5f, FontSize() * 0.34f);
-					const float BtnGap = FontSize() * 0.6f;
-					const float BtnSpacing = FontSize() * 0.18f;
-					float NextX = Line.m_ReplyButtonAnchorX + ChatOpenOffsetX + BcLineXOffset + BtnGap;
-					const float BtnY = Line.m_ReplyButtonAnchorY + TextOffsetY + maximum(0.0f, (FontSize() - BtnSize) * 0.5f) - FontSize() * 0.08f;
+					const float ShortcutX = NextX;
+					Line.m_SettingsShortcutRect.m_X = ShortcutX;
+					Line.m_SettingsShortcutRect.m_Y = BtnY;
+					Line.m_SettingsShortcutRect.m_W = BtnSize;
+					Line.m_SettingsShortcutRect.m_H = BtnSize;
+					Line.m_SettingsShortcutRectValid = true;
+					m_HoveredSettingsShortcutLineIndex = LineIndex;
+					const bool HoveredShortcut = MousePos.x >= ShortcutX && MousePos.x <= ShortcutX + BtnSize &&
+						MousePos.y >= BtnY && MousePos.y <= BtnY + BtnSize;
+					const ColorRGBA ShortcutColor = HoveredShortcut ? ColorRGBA(0.22f, 0.48f, 0.42f, 0.90f * Blend) : ColorRGBA(0.14f, 0.14f, 0.14f, 0.72f * Blend);
+					CUIRect ShortcutRect(ShortcutX, BtnY, BtnSize, BtnSize);
+					ShortcutRect.Draw(ShortcutColor, IGraphics::CORNER_ALL, maximum(2.0f, BtnSize * 0.24f));
+					CUIRect ShortcutIcon;
+					ShortcutRect.Margin(0.5f, &ShortcutIcon);
+					TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+					TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
+					TextRender()->TextColor(0.92f, 0.92f, 0.92f, Blend);
+					Ui()->DoLabel(&ShortcutIcon, FontIcon::ARROW_UP_RIGHT_FROM_SQUARE, ShortcutIcon.h * CUi::ms_FontmodHeight, TEXTALIGN_MC);
+					TextRender()->SetRenderFlags(0);
+					TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+					TextRender()->TextColor(TextRender()->DefaultTextColor());
+					NextX += BtnSize + BtnSpacing;
+				}
 
-					Line.m_SettingsShortcutRectValid = false;
-					if(CanShowSettingsShortcut(Line))
-					{
-						const float ShortcutX = NextX;
-						Line.m_SettingsShortcutRect.m_X = ShortcutX;
-						Line.m_SettingsShortcutRect.m_Y = BtnY;
-						Line.m_SettingsShortcutRect.m_W = BtnSize;
-						Line.m_SettingsShortcutRect.m_H = BtnSize;
-						Line.m_SettingsShortcutRectValid = true;
-						m_HoveredSettingsShortcutLineIndex = LineIndex;
-						const bool HoveredShortcut = MousePos.x >= ShortcutX && MousePos.x <= ShortcutX + BtnSize &&
-							MousePos.y >= BtnY && MousePos.y <= BtnY + BtnSize;
-						const ColorRGBA ShortcutColor = HoveredShortcut ? ColorRGBA(0.22f, 0.48f, 0.42f, 0.90f * Blend) : ColorRGBA(0.14f, 0.14f, 0.14f, 0.72f * Blend);
-						CUIRect ShortcutRect(ShortcutX, BtnY, BtnSize, BtnSize);
-						ShortcutRect.Draw(ShortcutColor, IGraphics::CORNER_ALL, maximum(2.0f, BtnSize * 0.24f));
-						CUIRect ShortcutIcon;
-						ShortcutRect.Margin(0.5f, &ShortcutIcon);
-						TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
-						TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
-						TextRender()->TextColor(0.92f, 0.92f, 0.92f, Blend);
-						Ui()->DoLabel(&ShortcutIcon, FontIcon::ARROW_UP_RIGHT_FROM_SQUARE, ShortcutIcon.h * CUi::ms_FontmodHeight, TEXTALIGN_MC);
-						TextRender()->SetRenderFlags(0);
-						TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
-						TextRender()->TextColor(TextRender()->DefaultTextColor());
-						NextX += BtnSize + BtnSpacing;
-					}
-
+				// Reply button remains hover-only.
+				if(ShowReplyActions && (HoveredLine || HoveredName))
+				{
 					const float BtnX = NextX;
 					Line.m_ReplyButtonRect.m_X = BtnX;
 					Line.m_ReplyButtonRect.m_Y = BtnY;
@@ -8473,45 +8614,36 @@ void CChat::OnRender()
 					TextRender()->TextColor(TextRender()->DefaultTextColor());
 				}
 			}
-			else if(CanShowSettingsShortcut(Line) && Line.m_ReplyButtonAnchorValid)
-			{
-				// Settings shortcut without reply button (e.g. server lines): hover-only, same as reply.
-				const float LineH = maximum(Line.m_aYOffset[OffsetType], FontSize() + RealMsgPaddingY);
-				Line.m_LineRect.m_X = LineRenderX;
-				Line.m_LineRect.m_Y = LineRenderY;
-				Line.m_LineRect.m_W = maximum(1.0f, ChatWidth());
-				Line.m_LineRect.m_H = LineH;
-				Line.m_LineRectValid = true;
 
-				const bool HoveredLine = MousePos.x >= Line.m_LineRect.m_X && MousePos.x <= Line.m_LineRect.m_X + Line.m_LineRect.m_W &&
-					MousePos.y >= Line.m_LineRect.m_Y && MousePos.y <= Line.m_LineRect.m_Y + Line.m_LineRect.m_H;
-				if(HoveredLine || HoveredName)
+			// UClient read receipts: draw the "<name> read" label at the end of the message.
+			// It sits just past the text (leftmost of the action buttons) and is hoverable to
+			// reveal the full list of readers in a tooltip below.
+			if(ReadCount > 0)
+			{
+				const float LabelX = Line.m_ReplyButtonAnchorX + ChatOpenOffsetX + BcLineXOffset + FontSize() * 0.6f;
+				// Bottom-align the small read label to the message line (sits low, not centered).
+				const float LabelY = Line.m_ReplyButtonAnchorY + TextOffsetY + maximum(0.0f, FontSize() - ReadLabelFont);
+				Line.m_ReadLabelRect.m_X = LabelX;
+				Line.m_ReadLabelRect.m_Y = LabelY;
+				Line.m_ReadLabelRect.m_W = maximum(1.0f, ReadLabelW);
+				Line.m_ReadLabelRect.m_H = ReadLabelFont;
+				Line.m_ReadLabelRectValid = true;
+
+				const bool HoveredRead = ChatInteractionActive &&
+					MousePos.x >= LabelX && MousePos.x <= LabelX + ReadLabelW &&
+					MousePos.y >= LabelY && MousePos.y <= LabelY + ReadLabelFont;
+				if(HoveredRead)
 				{
-					const float BtnSize = maximum(6.5f, FontSize() * 0.34f);
-					const float BtnGap = FontSize() * 0.6f;
-					const float BtnX = Line.m_ReplyButtonAnchorX + ChatOpenOffsetX + BcLineXOffset + BtnGap;
-					const float BtnY = Line.m_ReplyButtonAnchorY + TextOffsetY + maximum(0.0f, (FontSize() - BtnSize) * 0.5f) - FontSize() * 0.08f;
-					Line.m_SettingsShortcutRect.m_X = BtnX;
-					Line.m_SettingsShortcutRect.m_Y = BtnY;
-					Line.m_SettingsShortcutRect.m_W = BtnSize;
-					Line.m_SettingsShortcutRect.m_H = BtnSize;
-					Line.m_SettingsShortcutRectValid = true;
-					m_HoveredSettingsShortcutLineIndex = LineIndex;
-					const bool HoveredShortcut = MousePos.x >= BtnX && MousePos.x <= BtnX + BtnSize &&
-						MousePos.y >= BtnY && MousePos.y <= BtnY + BtnSize;
-					const ColorRGBA ShortcutColor = HoveredShortcut ? ColorRGBA(0.22f, 0.48f, 0.42f, 0.90f * Blend) : ColorRGBA(0.14f, 0.14f, 0.14f, 0.72f * Blend);
-					CUIRect ShortcutRect(BtnX, BtnY, BtnSize, BtnSize);
-					ShortcutRect.Draw(ShortcutColor, IGraphics::CORNER_ALL, maximum(2.0f, BtnSize * 0.24f));
-					CUIRect ShortcutIcon;
-					ShortcutRect.Margin(0.5f, &ShortcutIcon);
-					TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
-					TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
-					TextRender()->TextColor(0.92f, 0.92f, 0.92f, Blend);
-					Ui()->DoLabel(&ShortcutIcon, FontIcon::ARROW_UP_RIGHT_FROM_SQUARE, ShortcutIcon.h * CUi::ms_FontmodHeight, TEXTALIGN_MC);
-					TextRender()->SetRenderFlags(0);
-					TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
-					TextRender()->TextColor(TextRender()->DefaultTextColor());
+					m_HoveredReadLineIndex = LineIndex;
+					m_HoveredReadRect = Line.m_ReadLabelRect;
 				}
+
+				CTextCursor ReadCursor;
+				ReadCursor.SetPosition(vec2(LabelX, LabelY));
+				ReadCursor.m_FontSize = ReadLabelFont;
+				TextRender()->TextColor(0.62f, 0.66f, 0.72f, Blend);
+				TextRender()->TextEx(&ReadCursor, ReadLabelText.c_str());
+				TextRender()->TextColor(TextRender()->DefaultTextColor());
 			}
 
 			if((m_Mode != MODE_NONE || m_Show) && !Line.m_vLinks.empty())
@@ -8638,6 +8770,12 @@ void CChat::OnRender()
 						const bool HoveredPill = ChatInteractionActive &&
 							MousePos.x >= PillR.m_X && MousePos.x <= PillR.m_X + PillR.m_W &&
 							MousePos.y >= PillR.m_Y && MousePos.y <= PillR.m_Y + PillR.m_H;
+						if(HoveredPill)
+						{
+							m_HoveredReactionLineIndex = LineIndex;
+							m_HoveredReactionIndex = (int)r;
+							m_HoveredReactionRect = PillR;
+						}
 						ColorRGBA Fill;
 						if(Mine)
 							Fill = HoveredPill ? ColorRGBA(0.30f, 0.46f, 0.74f, 0.95f * Blend) : ColorRGBA(0.22f, 0.36f, 0.62f, 0.88f * Blend);
@@ -8899,8 +9037,192 @@ void CChat::OnRender()
 					if(HasMapAttachment(Line) && Line.m_aMapCardHeight[OffsetType] > 0.0f)
 						CardY += FontSize() * 0.25f + Line.m_aMapCardHeight[OffsetType];
 					const float CardX = LineRenderX + RealMsgPaddingX / 2.0f;
-					RenderSettingsLinkBubble(Line, CardX, CardY, ReactionAvailWidth, FontSize(), Blend);
+					// Scoreboard keeps the compact column; otherwise let page/settings
+					// cards use the full chat width (minus side padding) so hints like
+					// "Press the shortcut button to go to settings." are not ellipsized.
+					const float SettingsMaxWidth = IsScoreBoardOpen ?
+						ReactionAvailWidth :
+						maximum(ReactionAvailWidth, ChatWidth() - RealMsgPaddingX);
+					RenderSettingsLinkBubble(Line, CardX, CardY, SettingsMaxWidth, FontSize(), Blend);
 				}
+		}
+	}
+
+	// UClient read receipts: advance our own read marker to the newest other-authored UClient
+	// message that was visible this frame, but only while the DDNet window is focused. Broadcast
+	// once whenever the marker actually moves forward so peers can update their "read" labels.
+	if(MaxVisibleReadSeq > m_UcLocalReadMarkerSeq && MaxVisibleReadMsgId != UUID_ZEROED)
+	{
+		// WindowActive() lives on IEngineGraphics (the game-facing IGraphics doesn't expose it).
+		IEngineGraphics *pEngineGraphics = Kernel()->RequestInterface<IEngineGraphics>();
+		if(pEngineGraphics && pEngineGraphics->WindowActive())
+		{
+			m_UcLocalReadMarkerSeq = MaxVisibleReadSeq;
+			m_UcLocalReadMarkerMsgId = MaxVisibleReadMsgId;
+			GameClient()->m_ClientIndicator.SendChatReadMarker(MaxVisibleReadMsgId);
+		}
+	}
+
+	// UClient read receipts: tooltip listing everyone who has read up to the hovered message.
+	if(m_HoveredReadLineIndex >= 0 && m_HoveredReadLineIndex < MAX_LINES)
+	{
+		const CLine &Line = m_aLines[m_HoveredReadLineIndex];
+		std::vector<std::string> vReaderNames;
+		if(Line.m_UClientMessageId != UUID_ZEROED)
+		{
+			for(const auto &Entry : m_UcReadMarkers)
+			{
+				if(Entry.second.m_MessageId == Line.m_UClientMessageId)
+					vReaderNames.push_back(Entry.second.m_Name);
+			}
+		}
+		if(!vReaderNames.empty())
+		{
+			TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+			TextRender()->SetRenderFlags(0);
+
+			const float TipFont = maximum(4.5f, FontSize() * 0.85f);
+			const float PadX = TipFont * 0.6f;
+			const float PadY = TipFont * 0.45f;
+			const float LineH = TipFont * 1.32f;
+			const float HeaderGap = TipFont * 0.35f;
+
+			const size_t Total = vReaderNames.size();
+			const size_t MaxShown = 14;
+			const size_t Shown = minimum(Total, MaxShown);
+			char aMore[32] = "";
+			if(Total > MaxShown)
+				str_format(aMore, sizeof(aMore), "and %d more…", (int)(Total - MaxShown));
+
+			char aHeader[32];
+			str_format(aHeader, sizeof(aHeader), "%d read", (int)Total);
+
+			float MaxTextW = TextRender()->TextWidth(TipFont, aHeader);
+			for(size_t i = 0; i < Shown; ++i)
+				MaxTextW = maximum(MaxTextW, TextRender()->TextWidth(TipFont, vReaderNames[i].c_str()));
+			if(aMore[0] != '\0')
+				MaxTextW = maximum(MaxTextW, TextRender()->TextWidth(TipFont, aMore));
+
+			const int TotalTipLines = 1 + (int)Shown + (aMore[0] != '\0' ? 1 : 0);
+			const float BoxW = MaxTextW + PadX * 2.0f;
+			const float BoxH = TotalTipLines * LineH + PadY * 2.0f + HeaderGap;
+
+			const SRenderRect &Label = m_HoveredReadRect;
+			float BoxX = Label.m_X + Label.m_W * 0.5f - BoxW * 0.5f;
+			float BoxY = Label.m_Y - BoxH - TipFont * 0.4f;
+			BoxX = std::clamp(BoxX, 1.0f, maximum(1.0f, Width - BoxW - 1.0f));
+			if(BoxY < 1.0f)
+				BoxY = Label.m_Y + Label.m_H + TipFont * 0.4f; // flip below if no room above
+
+			CUIRect Box(BoxX, BoxY, BoxW, BoxH);
+			Box.Draw(ColorRGBA(0.055f, 0.06f, 0.07f, 0.98f), IGraphics::CORNER_ALL, maximum(3.0f, TipFont * 0.4f));
+
+			float TextY = BoxY + PadY;
+			CTextCursor HeadCursor;
+			HeadCursor.SetPosition(vec2(BoxX + PadX, TextY));
+			HeadCursor.m_FontSize = TipFont;
+			TextRender()->TextColor(0.78f, 0.80f, 0.86f, 1.0f);
+			TextRender()->TextEx(&HeadCursor, aHeader);
+			TextY += LineH + HeaderGap;
+
+			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+			for(size_t i = 0; i < Shown; ++i)
+			{
+				CTextCursor NameCursor;
+				NameCursor.SetPosition(vec2(BoxX + PadX, TextY));
+				NameCursor.m_FontSize = TipFont;
+				TextRender()->TextEx(&NameCursor, vReaderNames[i].c_str());
+				TextY += LineH;
+			}
+			if(aMore[0] != '\0')
+			{
+				CTextCursor MoreCursor;
+				MoreCursor.SetPosition(vec2(BoxX + PadX, TextY));
+				MoreCursor.m_FontSize = TipFont;
+				TextRender()->TextColor(0.65f, 0.67f, 0.72f, 1.0f);
+				TextRender()->TextEx(&MoreCursor, aMore);
+			}
+			TextRender()->TextColor(TextRender()->DefaultTextColor());
+		}
+	}
+
+	// UClient: Discord-style tooltip listing who reacted, drawn on top of everything.
+	if(m_HoveredReactionLineIndex >= 0 && m_HoveredReactionIndex >= 0)
+	{
+		const CLine &Line = m_aLines[m_HoveredReactionLineIndex];
+		if(m_HoveredReactionIndex < (int)Line.m_vReactions.size())
+		{
+			const CLine::SReaction &Reaction = Line.m_vReactions[m_HoveredReactionIndex];
+			const size_t Total = Reaction.m_vReactorNames.size();
+			if(Total > 0)
+			{
+				TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+				TextRender()->SetRenderFlags(0);
+
+				const float TipFont = maximum(4.5f, FontSize() * 0.85f);
+				const float PadX = TipFont * 0.6f;
+				const float PadY = TipFont * 0.45f;
+				const float LineH = TipFont * 1.32f;
+				const float EmojiGap = TipFont * 0.35f;
+
+				const size_t MaxShown = 14;
+				const size_t Shown = minimum(Total, MaxShown);
+				char aMore[32] = "";
+				if(Total > MaxShown)
+					str_format(aMore, sizeof(aMore), "and %d more…", (int)(Total - MaxShown));
+
+				// Header line: "<emoji>  N reacted" — the emoji is drawn with the count row.
+				char aHeader[48];
+				str_format(aHeader, sizeof(aHeader), "%s  %d reacted", Reaction.m_aEmoji, (int)Total);
+
+				float MaxTextW = TextRender()->TextWidth(TipFont, aHeader);
+				for(size_t i = 0; i < Shown; ++i)
+					MaxTextW = maximum(MaxTextW, TextRender()->TextWidth(TipFont, Reaction.m_vReactorNames[i].c_str()));
+				if(aMore[0] != '\0')
+					MaxTextW = maximum(MaxTextW, TextRender()->TextWidth(TipFont, aMore));
+
+				const int TotalLines = 1 + (int)Shown + (aMore[0] != '\0' ? 1 : 0);
+				const float BoxW = MaxTextW + PadX * 2.0f;
+				const float BoxH = TotalLines * LineH + PadY * 2.0f + EmojiGap;
+
+				const SRenderRect &Pill = m_HoveredReactionRect;
+				float BoxX = Pill.m_X + Pill.m_W * 0.5f - BoxW * 0.5f;
+				float BoxY = Pill.m_Y - BoxH - TipFont * 0.4f;
+				BoxX = std::clamp(BoxX, 1.0f, maximum(1.0f, Width - BoxW - 1.0f));
+				if(BoxY < 1.0f)
+					BoxY = Pill.m_Y + Pill.m_H + TipFont * 0.4f; // flip below if no room above
+
+				CUIRect Box(BoxX, BoxY, BoxW, BoxH);
+				Box.Draw(ColorRGBA(0.055f, 0.06f, 0.07f, 0.98f), IGraphics::CORNER_ALL, maximum(3.0f, TipFont * 0.4f));
+
+				float TextY = BoxY + PadY;
+				// Header (emoji + count) in a slightly brighter tone.
+				CTextCursor HeadCursor;
+				HeadCursor.SetPosition(vec2(BoxX + PadX, TextY));
+				HeadCursor.m_FontSize = TipFont;
+				TextRender()->TextColor(0.78f, 0.80f, 0.86f, 1.0f);
+				TextRender()->TextEx(&HeadCursor, aHeader);
+				TextY += LineH + EmojiGap;
+
+				TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+				for(size_t i = 0; i < Shown; ++i)
+				{
+					CTextCursor NameCursor;
+					NameCursor.SetPosition(vec2(BoxX + PadX, TextY));
+					NameCursor.m_FontSize = TipFont;
+					TextRender()->TextEx(&NameCursor, Reaction.m_vReactorNames[i].c_str());
+					TextY += LineH;
+				}
+				if(aMore[0] != '\0')
+				{
+					CTextCursor MoreCursor;
+					MoreCursor.SetPosition(vec2(BoxX + PadX, TextY));
+					MoreCursor.m_FontSize = TipFont;
+					TextRender()->TextColor(0.65f, 0.67f, 0.72f, 1.0f);
+					TextRender()->TextEx(&MoreCursor, aMore);
+				}
+				TextRender()->TextColor(TextRender()->DefaultTextColor());
+			}
 		}
 	}
 
@@ -9151,6 +9473,15 @@ void CChat::SendChatQueued(const char *pLine)
 			return;
 		AddHistoryEntry(TEAM_UCLIENT, pLine);
 
+		// Auto-translate outgoing UClient messages just like normal chat. When a
+		// translation job is queued it sends asynchronously via
+		// SendTranslatedChatQueued(TEAM_UCLIENT, ...) once the response arrives.
+		if(GameClient()->m_Translate.TryTranslateOutgoingChat(TEAM_UCLIENT, pLine))
+		{
+			ClearPendingReply();
+			return;
+		}
+
 		const char *pPayload = pLine;
 		char aPayload[MAX_LINE_LENGTH];
 		if(m_PendingReplyActive && CUClientChatReply::IsReplyFeatureEnabled())
@@ -9276,6 +9607,15 @@ void CChat::MaybeOfferAutoLoginFromChat(const char *pLine)
 
 void CChat::SendTranslatedChatQueued(int Team, const char *pLine)
 {
+	// Outgoing translation for UClient chat routes back to the UClient sender
+	// instead of a normal Cl_Say message.
+	if(Team == TEAM_UCLIENT)
+	{
+		if(!pLine || *str_utf8_skip_whitespaces(pLine) == '\0' || !g_Config.m_UcChat)
+			return;
+		GameClient()->m_ClientIndicator.SendUClientChat(pLine);
+		return;
+	}
 	SendChatPayloadQueued(Team, pLine);
 }
 
@@ -10202,7 +10542,7 @@ int CChat::FindLineForReaction(int TargetClientId, uint64_t MessageHash) const
 	return -1;
 }
 
-void CChat::ApplyReactionToLineData(CLine &Line, const char *pEmoji, int ReactorClientId, bool Add)
+void CChat::ApplyReactionToLineData(CLine &Line, const char *pEmoji, int ReactorClientId, const char *pReactorName, bool Add)
 {
 	if(!pEmoji || pEmoji[0] == '\0')
 		return;
@@ -10217,6 +10557,17 @@ void CChat::ApplyReactionToLineData(CLine &Line, const char *pEmoji, int Reactor
 		}
 	}
 
+	// Prefer the live in-game name for same-server reactors; fall back to the name carried
+	// in the reaction packet (remote reactors that aren't in our client list).
+	auto ResolveReactorName = [&]() -> std::string {
+		if(ReactorClientId >= 0 && ReactorClientId < MAX_CLIENTS && GameClient()->m_aClients[ReactorClientId].m_Active &&
+			GameClient()->m_aClients[ReactorClientId].m_aName[0] != '\0')
+			return GameClient()->m_aClients[ReactorClientId].m_aName;
+		if(pReactorName && pReactorName[0] != '\0')
+			return pReactorName;
+		return "?";
+	};
+
 	if(Add)
 	{
 		if(Idx < 0)
@@ -10227,6 +10578,7 @@ void CChat::ApplyReactionToLineData(CLine &Line, const char *pEmoji, int Reactor
 			Idx = (int)Line.m_vReactions.size() - 1;
 		}
 		auto &vIds = Line.m_vReactions[Idx].m_vReactorClientIds;
+		auto &vNames = Line.m_vReactions[Idx].m_vReactorNames;
 		bool Found = false;
 		for(int Id : vIds)
 		{
@@ -10237,16 +10589,22 @@ void CChat::ApplyReactionToLineData(CLine &Line, const char *pEmoji, int Reactor
 			}
 		}
 		if(!Found)
+		{
 			vIds.push_back(ReactorClientId);
+			vNames.push_back(ResolveReactorName());
+		}
 	}
 	else if(Idx >= 0)
 	{
 		auto &vIds = Line.m_vReactions[Idx].m_vReactorClientIds;
+		auto &vNames = Line.m_vReactions[Idx].m_vReactorNames;
 		for(size_t i = 0; i < vIds.size(); ++i)
 		{
 			if(vIds[i] == ReactorClientId)
 			{
 				vIds.erase(vIds.begin() + i);
+				if(i < vNames.size())
+					vNames.erase(vNames.begin() + i);
 				break;
 			}
 		}
@@ -10287,7 +10645,8 @@ void CChat::ToggleLocalReaction(int LineIndex, const char *pEmoji)
 	}
 
 	const bool Add = !Mine;
-	ApplyReactionToLineData(Line, pEmoji, LocalId, Add);
+	const char *pLocalName = (LocalId >= 0 && LocalId < MAX_CLIENTS) ? GameClient()->m_aClients[LocalId].m_aName : "";
+	ApplyReactionToLineData(Line, pEmoji, LocalId, pLocalName, Add);
 	GameClient()->m_ClientIndicator.SendChatReaction(Line.m_ClientId, ComputeMessageHash(Line.m_aText), pEmoji, Add);
 }
 
@@ -10338,7 +10697,6 @@ float CChat::LayoutReactionRow(const CLine &Line, float FontSize, float AvailWid
 
 void CChat::OnChatReactionReceived(int TargetClientId, uint64_t MessageHash, const char *pEmoji, int ReactorClientId, const char *pReactorName, bool Add)
 {
-	(void)pReactorName;
 	// The server excludes the sender's own session, but our dummy is a separate session
 	// on the same socket and would echo our reaction back to us. Ignore anything from a
 	// local client id since we already applied it optimistically.
@@ -10347,7 +10705,26 @@ void CChat::OnChatReactionReceived(int TargetClientId, uint64_t MessageHash, con
 	const int LineIndex = FindLineForReaction(TargetClientId, MessageHash);
 	if(LineIndex < 0)
 		return;
-	ApplyReactionToLineData(m_aLines[LineIndex], pEmoji, ReactorClientId, Add);
+	ApplyReactionToLineData(m_aLines[LineIndex], pEmoji, ReactorClientId, pReactorName, Add);
+}
+
+static std::string UcReaderKeyString(const CUuid &Key)
+{
+	char aBuf[UUID_MAXSTRSIZE];
+	FormatUuid(Key, aBuf, sizeof(aBuf));
+	return aBuf;
+}
+
+void CChat::OnChatReadReceived(const CUuid &ReaderKey, const char *pReaderName, const CUuid &MessageId)
+{
+	if(MessageId == UUID_ZEROED)
+		return;
+	// One marker per reader: the map key is the reader's stable client-instance uuid, so a
+	// newer read simply moves that reader's marker to the newer message (KakaoTalk-style).
+	SReadMarker &Marker = m_UcReadMarkers[UcReaderKeyString(ReaderKey)];
+	Marker.m_MessageId = MessageId;
+	Marker.m_Name = (pReaderName && pReaderName[0] != '\0') ? pReaderName : "?";
+	Marker.m_Order = ++m_UcReadOrderCounter;
 }
 
 void CChat::OpenReactionPicker(int LineIndex, float X, float Y)

@@ -40,6 +40,9 @@ enum EPacketType : uint8_t
 	// Cross-server UClient chat channel.
 	PACKET_CHAT = 12, // Client -> Server (proof protected)
 	PACKET_CHAT_BROADCAST = 13, // Server -> Client
+	// Read receipts for UClient chat (KakaoTalk-style "read up to here" markers).
+	PACKET_READ = 14, // Client -> Server (proof protected)
+	PACKET_READ_BROADCAST = 15, // Server -> Client (relayed globally)
 };
 
 enum EChatScope : uint8_t
@@ -123,6 +126,18 @@ struct CChatBroadcast
 	uint8_t m_UseCustomColor = 0;
 	int32_t m_ColorBody = 0;
 	int32_t m_ColorFeet = 0;
+	// Globally unique message id so read receipts can target this exact message
+	// even across servers (client ids are only unique per game server).
+	CUuid m_MessageId = UUID_ZEROED;
+};
+
+// UClient chat read receipt as received by peers (server -> client broadcast).
+struct CReadBroadcast
+{
+	std::string m_ServerAddress;
+	std::string m_ReaderName;
+	CUuid m_ReaderKey = UUID_ZEROED; // stable per-reader identity (client instance uuid)
+	CUuid m_MessageId = UUID_ZEROED; // last message the reader has read up to
 };
 
 using BestClientIndicator::AppendProof;
@@ -176,10 +191,18 @@ bool ReadCursorBroadcast(const uint8_t *pData, int DataSize, CCursorBroadcast &O
 
 void WriteChatClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
 	const char *pServerAddress, const char *pSenderName, int SenderClientId, uint8_t Scope, const char *pMessage,
-	const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet);
+	const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet, CUuid MessageId);
 void WriteChatBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pSenderName, int SenderClientId,
-	uint8_t Scope, const char *pMessage, const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet);
+	uint8_t Scope, const char *pMessage, const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet, CUuid MessageId);
 bool ReadChatBroadcast(const uint8_t *pData, int DataSize, CChatBroadcast &Out);
+
+// Read receipt packets. The client->server body (proof covered) is written by
+// WriteReadClientBody; the caller appends the proof afterwards. The server->client
+// broadcast is written by WriteReadBroadcast and parsed with ReadReadBroadcast.
+void WriteReadClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId);
+void WriteReadBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId);
+bool ReadReadBroadcast(const uint8_t *pData, int DataSize, CReadBroadcast &Out);
 }
 
 #endif

@@ -5,26 +5,31 @@ on:
     branches-ignore:
       - gh-readonly-queue/**
 
+concurrency:
+  group: fast-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-cmake:
     runs-on: ${{ matrix.os }}
     env:
       CARGO_HTTP_MULTIPLEXING: false
+      CCACHE_COMPILERCHECK: content
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, macOS-latest, windows-latest]
         include:
         - os: ubuntu-22.04
-          cmake-args: -G Ninja -DCMAKE_BUILD_TYPE=Release -DDISCORD=ON -DDISCORD_DYNAMIC=ON -DWEBSOCKETS=OFF -DPREFER_BUNDLED_LIBS=ON -DAUTOUPDATE=ON
-          cmake-init-env: CXXFLAGS= 
+          cmake-args: -G Ninja -DCMAKE_BUILD_TYPE=Release -DDISCORD=ON -DDISCORD_DYNAMIC=ON -DWEBSOCKETS=OFF -DPREFER_BUNDLED_LIBS=ON -DAUTOUPDATE=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake-init-env: CXXFLAGS=
           package-file: "*-linux_x86_64.tar.xz"
         - os: macOS-latest
-          cmake-args: -G Ninja -DCMAKE_BUILD_TYPE=Release -DDISCORD=ON -DWEBSOCKETS=OFF -DPREFER_BUNDLED_LIBS=ON -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_SYSTEM_IGNORE_PATH=/usr/lib -DCMAKE_FIND_FRAMEWORK=LAST
-          cmake-init-env: CXXFLAGS= 
+          cmake-args: -G Ninja -DCMAKE_BUILD_TYPE=Release -DDISCORD=ON -DWEBSOCKETS=OFF -DPREFER_BUNDLED_LIBS=ON -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_SYSTEM_IGNORE_PATH=/usr/lib -DCMAKE_FIND_FRAMEWORK=LAST -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake-init-env: CXXFLAGS=
           package-file: "*-macos.dmg"
         - os: windows-latest
-          cmake-args: -A x64 -DDISCORD=ON -DTOOLS=OFF -DAUTOUPDATE=ON -DVULKAN=ON
+          cmake-args: -A x64 -DDISCORD=ON -DTOOLS=OFF -DAUTOUPDATE=ON -DVULKAN=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake-init-env: CXXFLAGS= LDFLAGS=
           package-file: "*-win64.zip"
         # - os: windows-latest
@@ -42,14 +47,14 @@ jobs:
         sudo apt-get update -y
         # mount: /var/lib/grub/esp: special device /dev/disk/by-id/scsi-... does not exist.
         # sudo apt-get upgrade -y
-        sudo apt-get install pkg-config cmake ninja-build libfreetype6-dev libnotify-dev libsdl2-dev libsqlite3-dev libvulkan-dev glslang-tools spirv-tools libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libx264-dev libpng-dev valgrind gcovr libglew-dev -y
+        sudo apt-get install pkg-config cmake ninja-build ccache libfreetype6-dev libnotify-dev libsdl2-dev libsqlite3-dev libvulkan-dev glslang-tools spirv-tools libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libx264-dev libpng-dev valgrind gcovr libglew-dev -y
 
     - name: Prepare macOS
       if: contains(matrix.os, 'macOS')
       run: |
-        brew update || true
-        brew install pkg-config ninja molten-vk vulkan-headers glslang spirv-tools glew googletest libpng molten-vk opusfile wavpack x264 || true
-        brew upgrade freetype
+        # Skip `brew update` — it is usually the slowest macOS CI step.
+        brew install pkg-config ninja ccache molten-vk vulkan-headers glslang spirv-tools glew googletest libpng molten-vk opusfile wavpack x264 || true
+        brew upgrade freetype || true
         pip3 install --break-system-packages dmgbuild
         echo /Library/Frameworks/Python.framework/Versions/3.12/bin >> $GITHUB_PATH
         sudo rm -rf /Library/Developer/CommandLineTools
@@ -69,6 +74,13 @@ jobs:
 
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
+
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: fast-build-${{ matrix.os }}
+        max-size: 2G
+        verbose: 1
 
     - name: Install Vulkan SDK
       uses: humbletim/install-vulkan-sdk@v1.2
@@ -100,6 +112,7 @@ jobs:
         cd release
         ${{ matrix.cmake-path }}cmake -E env ${{ matrix.cmake-init-env }} $ENVFLAGS ${{ matrix.cmake-path }}cmake ${{ matrix.cmake-args }} $POST_FLAGS -DCMAKE_BUILD_TYPE=Release -DDOWNLOAD_GTEST=ON -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=. ..
         ${{ matrix.cmake-path }}cmake --build . --config Release --target everything ${{ matrix.build-args }}
+        ccache -s || true
 
     - name: Package
       run: |
@@ -113,4 +126,3 @@ jobs:
       with:
         name: ddnet-${{ matrix.os }}
         path: release/artifacts
-

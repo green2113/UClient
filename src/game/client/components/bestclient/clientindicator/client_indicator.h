@@ -33,6 +33,7 @@ struct CPeerList;
 struct CReactionBroadcast;
 struct CCursorBroadcast;
 struct CChatBroadcast;
+struct CReadBroadcast;
 }
 
 class CClientIndicator : public CComponent
@@ -65,6 +66,9 @@ public:
 	// Chat reactions: send a reaction add/remove for a message authored by TargetClientId,
 	// identified across clients by MessageHash. Relayed via the UClient presence UDP server.
 	void SendChatReaction(int TargetClientId, uint64_t MessageHash, const char *pEmoji, bool Add);
+
+	// UClient chat read receipts: broadcast that we have read up to the given message id.
+	void SendChatReadMarker(const CUuid &MessageId);
 
 	// UClient chat channel (cross-server by default; optional same-server scope).
 	void SendUClientChat(const char *pMessage);
@@ -172,6 +176,7 @@ private:
 	void ApplyUcPeerRemove(const UClientPresence::CPeerState &State);
 	void ApplyUcPeerList(const UClientPresence::CPeerList &PeerList);
 	void ApplyUcReactionBroadcast(const UClientPresence::CReactionBroadcast &Reaction);
+	void ApplyUcReadBroadcast(const UClientPresence::CReadBroadcast &Read);
 	void ClearUcPeersForServer(const char *pNormalizedServer);
 	void PruneStaleUcPeers();
 	void SyncLocalRegistrations(bool Force = false);

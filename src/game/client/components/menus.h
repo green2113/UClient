@@ -80,7 +80,7 @@ public:
 	void NavigateToSettingsLink(const CUClientSettingsLink::SNavigateRequest &Request);
 	void SetSettingsLinkScrollRegion(CScrollRegion *pRegion);
 	// Chat preview: compact settings-styled controls (chat coordinate space; clicks handled by chat).
-	float MeasureSettingsLinkInlineHeight(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, float FontSize) const;
+	float MeasureSettingsLinkInlineHeight(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, float FontSize, float CardWidth = -1.0f) const;
 	float MeasureSettingsLinkInlineWidth(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, float FontSize) const;
 	void RenderSettingsLinkInline(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, CUIRect Rect, float FontSize, float Blend, vec2 MousePos);
 	bool TryClickSettingsLinkInline(const CUClientSettingsLink::SParsed &Parsed, bool Missing, bool PageOnly, const CUIRect &Rect, float FontSize, vec2 MousePos);

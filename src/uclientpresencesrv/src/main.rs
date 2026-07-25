@@ -49,6 +49,8 @@ const PACKET_CURSOR: u8 = 10;
 const PACKET_CURSOR_BROADCAST: u8 = 11;
 const PACKET_CHAT: u8 = 12;
 const PACKET_CHAT_BROADCAST: u8 = 13;
+const PACKET_READ: u8 = 14;
+const PACKET_READ_BROADCAST: u8 = 15;
 const CHAT_SCOPE_SAME_SERVER: u8 = 0;
 const CHAT_SCOPE_GLOBAL: u8 = 1;
 const CHAT_MESSAGE_MAX_BYTES: usize = 512;
@@ -850,6 +852,7 @@ fn handle_udp_packet(
             chat.use_custom_color,
             chat.color_body,
             chat.color_feet,
+            chat.message_id,
         );
         let peers = if chat.scope == CHAT_SCOPE_SAME_SERVER {
             state.peers_on_server(&chat.server_address, Some(&sender_key))
@@ -857,6 +860,33 @@ fn handle_udp_packet(
             state.peers_all(Some(&sender_key))
         };
         for peer in peers {
+            outcome.outbound.push((peer.return_addr, packet.clone()));
+        }
+        return outcome;
+    }
+
+    // UClient chat read receipts: always relayed globally (the message author may be on a
+    // different game server). Self-echo is suppressed on the client by reader key.
+    if packet_type == PACKET_READ {
+        let Some(read) = read_read_packet(data) else {
+            state.log_invalid(ip, now, "bad read payload");
+            return outcome;
+        };
+        if !validate_proof(shared_token, data) {
+            state.log_invalid(ip, now, "invalid read proof");
+            return outcome;
+        }
+        if !state.remember_nonce(read.session_id, read.nonce, now) {
+            state.log_invalid(ip, now, "read nonce replay");
+            return outcome;
+        }
+        let packet = encode_read_broadcast(
+            &read.server_address,
+            &read.reader_name,
+            read.reader_key,
+            read.message_id,
+        );
+        for peer in state.peers_all(None) {
             outcome.outbound.push((peer.return_addr, packet.clone()));
         }
         return outcome;
@@ -1143,6 +1173,7 @@ fn encode_chat_broadcast(
     use_custom_color: u8,
     color_body: i32,
     color_feet: i32,
+    message_id: [u8; 16],
 ) -> Vec<u8> {
     let mut out = Vec::new();
     write_header(&mut out, PACKET_CHAT_BROADCAST);
@@ -1155,6 +1186,22 @@ fn encode_chat_broadcast(
     out.push(use_custom_color);
     out.extend_from_slice(&color_body.to_be_bytes());
     out.extend_from_slice(&color_feet.to_be_bytes());
+    out.extend_from_slice(&message_id);
+    out
+}
+
+fn encode_read_broadcast(
+    server_address: &str,
+    reader_name: &str,
+    reader_key: [u8; 16],
+    message_id: [u8; 16],
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_header(&mut out, PACKET_READ_BROADCAST);
+    write_string(&mut out, server_address);
+    write_string(&mut out, reader_name);
+    out.extend_from_slice(&reader_key);
+    out.extend_from_slice(&message_id);
     out
 }
 
@@ -1386,6 +1433,7 @@ struct ChatPacket {
     use_custom_color: u8,
     color_body: i32,
     color_feet: i32,
+    message_id: [u8; 16],
 }
 
 fn read_chat_packet(data: &[u8]) -> Option<ChatPacket> {
@@ -1411,6 +1459,12 @@ fn read_chat_packet(data: &[u8]) -> Option<ChatPacket> {
     let use_custom_color = reader.u8()?;
     let color_body = reader.i32()?;
     let color_feet = reader.i32()?;
+    // Message id is optional so pre-read-receipt clients still parse.
+    let message_id = if reader.remaining() >= 16 {
+        reader.uuid()?
+    } else {
+        [0u8; 16]
+    };
     if reader.remaining() != 0 {
         return None;
     }
@@ -1430,6 +1484,47 @@ fn read_chat_packet(data: &[u8]) -> Option<ChatPacket> {
         use_custom_color,
         color_body,
         color_feet,
+        message_id,
+    })
+}
+
+struct ReadPacket {
+    session_id: [u8; 16],
+    nonce: [u8; 16],
+    server_address: String,
+    reader_name: String,
+    reader_key: [u8; 16],
+    message_id: [u8; 16],
+}
+
+fn read_read_packet(data: &[u8]) -> Option<ReadPacket> {
+    if packet_type(data)? != PACKET_READ {
+        return None;
+    }
+    if data.len() < PROOF_SIZE {
+        return None;
+    }
+    let payload_len = data.len().checked_sub(PROOF_SIZE)?;
+    let mut reader = Reader::new(&data[..payload_len]);
+    reader.skip(6)?;
+    let _player_id = reader.string()?;
+    let session_id = reader.uuid()?;
+    let nonce = reader.uuid()?;
+    let _timestamp = reader.u64()?;
+    let server_address = reader.string()?;
+    let reader_name = reader.string()?;
+    let reader_key = reader.uuid()?;
+    let message_id = reader.uuid()?;
+    if reader.remaining() != 0 {
+        return None;
+    }
+    Some(ReadPacket {
+        session_id,
+        nonce,
+        server_address,
+        reader_name,
+        reader_key,
+        message_id,
     })
 }
 

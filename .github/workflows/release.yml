@@ -17,7 +17,7 @@ on:
         description: 'Release description'
         required: false
       run_id:
-        description: 'Optional Build workflow run ID. If set, reuse that run''s artifacts (old flow). If empty, build in this workflow.'
+        description: 'Optional Fast Build (or Build) workflow run ID. If set, reuse that run''s ddnet-* artifacts and skip rebuilding. If empty, build in this workflow.'
         required: false
         type: string
         default: ''
