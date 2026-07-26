@@ -26,6 +26,9 @@ public:
 	virtual void GetCurrentFile(char *pBuf, int BufSize) = 0;
 	virtual int GetCurrentPercent() = 0;
 	virtual const char *GetLatestVersionString() = 0;
+	// True once an update check has finished this session, whether it found something or failed.
+	// Lets callers tell "no update" apart from "haven't looked yet".
+	virtual bool HasCompletedCheck() = 0;
 };
 
 #endif

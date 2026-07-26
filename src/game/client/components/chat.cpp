@@ -486,6 +486,12 @@ CChat::CLine::CLine()
 	m_UClientSeq = 0;
 	m_UClientMine = false;
 	m_ReadLabelRectValid = false;
+	m_ServerAnnouncement = false;
+	m_HasServerJoinLink = false;
+	m_aServerJoinAddress[0] = '\0';
+	m_aServerJoinServerName[0] = '\0';
+	m_ServerJoinBoundsValid = false;
+	m_ServerJoinFontSize = 0.0f;
 	m_ShowAboveHead = false;
 	m_HasSettingsLink = false;
 	m_SettingsLinkMissing = false;
@@ -560,6 +566,12 @@ void CChat::CLine::Reset(CChat &This)
 	m_UClientSeq = 0;
 	m_UClientMine = false;
 	m_ReadLabelRectValid = false;
+	m_ServerAnnouncement = false;
+	m_HasServerJoinLink = false;
+	m_aServerJoinAddress[0] = '\0';
+	m_aServerJoinServerName[0] = '\0';
+	m_ServerJoinBoundsValid = false;
+	m_ServerJoinFontSize = 0.0f;
 	m_ShowAboveHead = false;
 	m_HasSettingsLink = false;
 	m_SettingsLinkMissing = false;
@@ -2722,6 +2734,56 @@ static void AppendTextWithUrlColors(ITextRender *pTextRender, STextContainerInde
 		pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, pText + SegmentStart);
 }
 
+// Lays out a server-join announcement body ("joined <ServerName>"): the leading prefix is drawn
+// as normal text, and the trailing server-name span is colored like a link and its (single-line)
+// bounds captured for hover/click. Mirrors the single-line branch of MeasureLinkBounds.
+static void AppendServerJoinBody(ITextRender *pTextRender, STextContainerIndex &TextContainerIndex, CTextCursor &Cursor,
+	const char *pBody, const char *pServerName, STextBoundingBox &OutBounds, bool &OutBoundsValid, float &OutFontSize)
+{
+	OutBoundsValid = false;
+	const int BodyLen = str_length(pBody);
+	const int NameLen = str_length(pServerName);
+	// The server name is the trailing span of the body; locate it (last occurrence) so the
+	// coloring/bounds stay correct even if the prefix text changed.
+	int NameStart = maximum(0, BodyLen - NameLen);
+	if(NameLen > 0 && (NameStart + NameLen > BodyLen || str_comp(pBody + NameStart, pServerName) != 0))
+	{
+		const char *pFound = nullptr;
+		for(const char *pScan = pBody; (pScan = str_find(pScan, pServerName)) != nullptr; ++pScan)
+			pFound = pScan;
+		NameStart = pFound ? (int)(pFound - pBody) : BodyLen;
+	}
+
+	if(NameStart > 0)
+		pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, pBody, NameStart);
+
+	const char *pNameText = pBody + NameStart;
+	const int NameTextLen = BodyLen - NameStart;
+	if(NameTextLen <= 0)
+		return;
+
+	CTextCursor LinkCursor = Cursor;
+	LinkCursor.m_LongestLineWidth = 0.0f;
+	LinkCursor.m_LineCount = 1;
+	LinkCursor.m_GlyphCount = 0;
+	LinkCursor.m_CharCount = 0;
+	LinkCursor.m_MaxCharacterHeight = 0.0f;
+	LinkCursor.m_vColorSplits.clear();
+	pTextRender->TextEx(&LinkCursor, pNameText, NameTextLen);
+
+	OutBounds.m_X = Cursor.m_X;
+	OutBounds.m_Y = Cursor.m_Y;
+	OutBounds.m_W = maximum(0.0f, LinkCursor.m_X - Cursor.m_X);
+	OutBounds.m_H = LinkCursor.m_FontSize;
+	OutFontSize = LinkCursor.m_FontSize;
+	OutBoundsValid = true;
+
+	const auto SavedColorSplits = Cursor.m_vColorSplits;
+	Cursor.m_vColorSplits.emplace_back(Cursor.m_CharCount, NameTextLen, ChatLinkColor());
+	pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, pNameText, NameTextLen);
+	Cursor.m_vColorSplits = SavedColorSplits;
+}
+
 static ColorRGBA UClientReplyQuotePreviewColor(const ColorRGBA &BodyColor)
 {
 	return ColorRGBA(0.72f, 0.72f, 0.72f, BodyColor.a);
@@ -3107,6 +3169,13 @@ static bool IsDirectDownloadPath(std::string_view Url)
 bool CChat::LineNeedsNameColon(const CLine &Line)
 {
 	return Line.m_aName[0] != '\0' && (Line.m_ClientId >= 0 || Line.m_UClient);
+}
+
+// Announcements read as a sentence ("Name joined X"), so the colon is dropped: with it they look
+// like a chat message the user typed.
+const char *CChat::LineNameSeparator(const CLine &Line)
+{
+	return Line.m_ServerAnnouncement ? " " : ": ";
 }
 
 bool CChat::LineNeedsTeePadding(const CLine &Line)
@@ -4770,7 +4839,7 @@ std::string CChat::BuildPlainTextLine(const CLine &Line) const
 	Result += Line.m_aName;
 	Result += aCount;
 	if(LineNeedsNameColon(Line))
-		Result += ": ";
+		Result += LineNameSeparator(Line);
 	if(pTranslatedText)
 	{
 		Result += pTranslatedText;
@@ -4919,7 +4988,7 @@ void CChat::RenderTextLine(CLine &Line, float y, float FontSize, float LineWidth
 	if(LineNeedsNameColon(Line))
 	{
 		TextRender()->TextColor(NameColor);
-		TextRender()->TextEx(&LineCursor, ": ");
+		TextRender()->TextEx(&LineCursor, LineNameSeparator(Line));
 	}
 
 	ColorRGBA Color;
@@ -5086,6 +5155,17 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		}
 	}
 
+	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 &&
+		m_HoveredServerJoinLineIndex >= 0 && m_HoveredServerJoinLineIndex < MAX_LINES)
+	{
+		const CLine &Line = m_aLines[m_HoveredServerJoinLineIndex];
+		if(Line.m_HasServerJoinLink && Line.m_aServerJoinAddress[0] != '\0')
+		{
+			GameClient()->m_Menus.RequestUClientServerJoin(Line.m_aServerJoinAddress, Line.m_aServerJoinServerName);
+			return true;
+		}
+	}
+
 	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && !m_HoveredLink.empty())
 	{
 		HandleLinkActivation(m_HoveredLink, m_HoveredLinkAlwaysConfirm);
@@ -5159,7 +5239,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 					GameClient()->m_BestClient.SanitizePlayerName(GameClient()->m_aClients[Line.m_ClientId].m_aName, aSanitizedName, sizeof(aSanitizedName), Line.m_ClientId);
 					pReplyName = aSanitizedName;
 				}
-				if(Line.m_UClient && g_Config.m_UcChat && g_Config.m_UcChatSendSameServerOnly && !Line.m_UClientFromCurrentServer)
+				if(Line.m_UClient && g_Config.m_UcChat && !g_Config.m_UcChatFriendsOnly && g_Config.m_UcChatSendSameServerOnly && !Line.m_UClientFromCurrentServer)
 				{
 					StashUcReplySendScopePrompt(Line.m_ClientId, pReplyName, m_HoveredReplyLineIndex, GetLineDisplayText(Line));
 					GameClient()->m_Menus.OfferDisableUcChatSendSameServerForReply();
@@ -6474,7 +6554,7 @@ void CChat::ApplySettingsLinkToLine(CLine &Line, const char *pSourceText)
 				str_copy(Line.m_SettingsLinkParsed.m_aaParents[i], Loc.m_aaParents[i], sizeof(Line.m_SettingsLinkParsed.m_aaParents[i]));
 				Line.m_SettingsLinkParsed.m_aaParentLabels[i][0] = '\0';
 				CUClientSettingsLink::SVarLocation ParentLoc;
-				if(CUClientSettingsLink::LookupVarLocation(Loc.m_aaParents[i], ParentLoc) && ParentLoc.m_aLabel[0] != '\0')
+				if(CUClientSettingsLink::LookupVarLocation(CUClientSettingsLink::ParentScriptName(Loc.m_aaParents[i]), ParentLoc) && ParentLoc.m_aLabel[0] != '\0')
 					str_copy(Line.m_SettingsLinkParsed.m_aaParentLabels[i], ParentLoc.m_aLabel, sizeof(Line.m_SettingsLinkParsed.m_aaParentLabels[i]));
 			}
 		}
@@ -6709,7 +6789,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 
 	auto &&FChatMsgCheckAndPrint = [this](const CLine &Line) {
 		char aBuf[1024];
-		str_format(aBuf, sizeof(aBuf), "%s%s%s", Line.m_aName, LineNeedsNameColon(Line) ? ": " : "", Line.m_aText);
+		str_format(aBuf, sizeof(aBuf), "%s%s%s", Line.m_aName, LineNeedsNameColon(Line) ? LineNameSeparator(Line) : "", Line.m_aText);
 
 		ColorRGBA ChatLogColor = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
 		if(Line.m_Highlighted)
@@ -7162,24 +7242,94 @@ void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const c
 	// senders use CLIENT_MSG and have no snap entry — resolve friends by player name
 	// so the ♥ marker matches normal chat (clan-only entries are ignored).
 	if(ClientId == CLIENT_MSG && Line.m_aName[0] != '\0')
+		Line.m_Friend = IsUClientFriendName(Line.m_aName) || IsUClientFriendName(pName);
+}
+
+bool CChat::IsUClientFriendName(const char *pName) const
+{
+	if(!pName || pName[0] == '\0')
+		return false;
+	IFriends *pFriends = GameClient()->Friends();
+	if(!pFriends)
+		return false;
+	// UClient only knows the player name, so match by name and ignore clan-only entries.
+	for(int i = 0; i < pFriends->NumFriends(); ++i)
 	{
-		Line.m_Friend = false;
-		IFriends *pFriends = GameClient()->Friends();
-		if(pFriends)
-		{
-			for(int i = 0; i < pFriends->NumFriends(); ++i)
-			{
-				const CFriendInfo *pFriend = pFriends->GetFriend(i);
-				if(pFriend->m_aName[0] == '\0')
-					continue;
-				if(!str_comp(pFriend->m_aName, Line.m_aName) || !str_comp(pFriend->m_aName, pName))
-				{
-					Line.m_Friend = true;
-					break;
-				}
-			}
-		}
+		const CFriendInfo *pFriend = pFriends->GetFriend(i);
+		if(pFriend->m_aName[0] == '\0')
+			continue;
+		if(!str_comp(pFriend->m_aName, pName))
+			return true;
 	}
+	return false;
+}
+
+void CChat::AddServerLeaveLine(const char *pLeaverName, const char *pServerAddress,
+	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet)
+{
+	if(!g_Config.m_UcChat || !pLeaverName || pLeaverName[0] == '\0')
+		return;
+
+	// Plain announcement: no server name and nothing clickable.
+	AddUClientChatLine(pLeaverName, -1, Localize("left the server."), pServerAddress, UUID_ZEROED, false,
+		pSkinName, UseCustomColor, ColorBody, ColorFeet);
+
+	CLine &Line = m_aLines[m_CurrentLine];
+	if(!Line.m_Initialized || !Line.m_UClient)
+		return;
+	Line.m_ServerAnnouncement = true;
+	// Force a fresh layout so the name separator change is picked up.
+	TextRender()->DeleteTextContainer(Line.m_TextContainerIndex);
+	Graphics()->DeleteQuadContainer(Line.m_QuadContainerIndex);
+	Line.m_aYOffset[0] = -1.0f;
+	Line.m_aYOffset[1] = -1.0f;
+}
+
+void CChat::AddServerJoinLine(const char *pJoinerName, const char *pServerAddress, const char *pServerName,
+	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet, bool Moved)
+{
+	if(!g_Config.m_UcChat || !pJoinerName || !pServerAddress || pJoinerName[0] == '\0' || pServerAddress[0] == '\0')
+		return;
+
+	const char *pName = (pServerName && pServerName[0] != '\0') ? pServerName : pServerAddress;
+
+	// Truncate very long server names with a trailing ellipsis so the announcement stays short.
+	char aServerName[128];
+	const int MaxNameBytes = 40;
+	if(str_length(pName) > MaxNameBytes)
+	{
+		char aTruncated[128];
+		str_utf8_truncate(aTruncated, sizeof(aTruncated), pName, MaxNameBytes - 3);
+		str_format(aServerName, sizeof(aServerName), "%s...", aTruncated);
+	}
+	else
+	{
+		str_copy(aServerName, pName, sizeof(aServerName));
+	}
+
+	// Body is "joined <ServerName>" / "moved to <ServerName>"; only the server-name suffix
+	// becomes the clickable link.
+	char aBody[CHAT_LINE_LENGTH];
+	str_format(aBody, sizeof(aBody), "%s%s", Moved ? Localize("moved to ") : Localize("joined "), aServerName);
+
+	// Reuse the remote-UClient line path (tee/name/friend-heart/UClient color). No message id so
+	// it never participates in read receipts. Not mine.
+	AddUClientChatLine(pJoinerName, -1, aBody, pServerAddress, UUID_ZEROED, false,
+		pSkinName, UseCustomColor, ColorBody, ColorFeet);
+
+	CLine &Line = m_aLines[m_CurrentLine];
+	if(!Line.m_Initialized || !Line.m_UClient)
+		return;
+	Line.m_ServerAnnouncement = true;
+	Line.m_HasServerJoinLink = true;
+	str_copy(Line.m_aServerJoinAddress, pServerAddress, sizeof(Line.m_aServerJoinAddress));
+	str_copy(Line.m_aServerJoinServerName, aServerName, sizeof(Line.m_aServerJoinServerName));
+	Line.m_ServerJoinBoundsValid = false;
+	// Force a fresh layout so the dedicated server-join append runs.
+	TextRender()->DeleteTextContainer(Line.m_TextContainerIndex);
+	Graphics()->DeleteQuadContainer(Line.m_QuadContainerIndex);
+	Line.m_aYOffset[0] = -1.0f;
+	Line.m_aYOffset[1] = -1.0f;
 }
 
 void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex)
@@ -7424,7 +7574,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 
 			if(LineNeedsNameColon(Line))
 			{
-				TextRender()->TextEx(&MeasureCursor, ": ");
+				TextRender()->TextEx(&MeasureCursor, LineNameSeparator(Line));
 			}
 
 			const float PrefixWidth = MeasureCursor.m_LongestLineWidth;
@@ -7636,7 +7786,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 		if(LineNeedsNameColon(Line))
 		{
 			TextRender()->TextColor(NameColor);
-			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &LineCursor, ": ");
+			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &LineCursor, LineNameSeparator(Line));
 		}
 
 		TextRender()->TextColor(Color);
@@ -7710,6 +7860,17 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &LineCursor, pTranslatedError);
 			LineCursor.m_FontSize /= 0.8f;
 			TextRender()->TextColor(Color);
+		}
+		else if(Line.m_HasServerJoinLink)
+		{
+			// Server-join announcement: draw "joined " normally and the server name as a link.
+			// Skip generic URL/mention detection (server names commonly contain dots).
+			Line.m_TranslateRectValid = false;
+			Line.m_TranslateLanguageRectValid = false;
+			ColoredParts.AddSplitsToCursor(LineCursor);
+			AppendServerJoinBody(TextRender(), Line.m_TextContainerIndex, LineCursor, pMessageText,
+				Line.m_aServerJoinServerName, Line.m_ServerJoinBounds, Line.m_ServerJoinBoundsValid, Line.m_ServerJoinFontSize);
+			LineCursor.m_vColorSplits.clear();
 		}
 		else
 		{
@@ -7840,6 +8001,7 @@ void CChat::OnRender()
 	m_HoveredReactionLineIndex = -1;
 	m_HoveredReactionIndex = -1;
 	m_HoveredReadLineIndex = -1;
+	m_HoveredServerJoinLineIndex = -1;
 	m_ReplyCancelButtonRectValid = false;
 	for(int LineIndex = 0; LineIndex < MAX_LINES; ++LineIndex)
 	{
@@ -8672,6 +8834,32 @@ void CChat::OnRender()
 				}
 			}
 
+			// UClient server-join: the server-name span is a clickable link. Draw the hover
+			// underline and record the hovered rect for the click handler + hint tooltip.
+			if(Line.m_HasServerJoinLink && Line.m_ServerJoinBoundsValid)
+			{
+				const float OffX = ChatOpenOffsetX + BcLineXOffset;
+				const float OffY = TextOffsetY;
+				const SRenderRect JoinRect = {
+					Line.m_ServerJoinBounds.m_X + OffX, Line.m_ServerJoinBounds.m_Y + OffY,
+					Line.m_ServerJoinBounds.m_W, Line.m_ServerJoinBounds.m_H};
+				const bool HoveredJoin = (m_Mode != MODE_NONE || m_Show) &&
+					MousePos.x >= JoinRect.m_X && MousePos.x <= JoinRect.m_X + JoinRect.m_W &&
+					MousePos.y >= JoinRect.m_Y && MousePos.y <= JoinRect.m_Y + JoinRect.m_H;
+				if(HoveredJoin)
+				{
+					m_HoveredServerJoinLineIndex = LineIndex;
+					m_HoveredServerJoinRect = JoinRect;
+					const float UnderlineY = JoinRect.m_Y + JoinRect.m_H + 0.35f;
+					Graphics()->TextureClear();
+					Graphics()->SetColor(ChatLinkColor().WithMultipliedAlpha(Blend));
+					Graphics()->LinesBegin();
+					const IGraphics::CLineItem Underline(JoinRect.m_X, UnderlineY, JoinRect.m_X + JoinRect.m_W, UnderlineY);
+					Graphics()->LinesDraw(&Underline, 1);
+					Graphics()->LinesEnd();
+				}
+			}
+
 			if(Line.m_TranslateRectValid || Line.m_TranslateLanguageRectValid)
 			{
 				const SRenderRect ActualTranslateRect = {
@@ -9142,6 +9330,43 @@ void CChat::OnRender()
 				TextRender()->TextColor(0.65f, 0.67f, 0.72f, 1.0f);
 				TextRender()->TextEx(&MoreCursor, aMore);
 			}
+			TextRender()->TextColor(TextRender()->DefaultTextColor());
+		}
+	}
+
+	// UClient server-join: hint tooltip inviting the user to click the server name to connect.
+	if(m_HoveredServerJoinLineIndex >= 0 && m_HoveredServerJoinLineIndex < MAX_LINES)
+	{
+		const CLine &Line = m_aLines[m_HoveredServerJoinLineIndex];
+		if(Line.m_HasServerJoinLink)
+		{
+			TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+			TextRender()->SetRenderFlags(0);
+
+			const char *pHint = Localize("Click to join the server your friend is on.");
+			const float TipFont = maximum(4.5f, FontSize() * 0.85f);
+			const float PadX = TipFont * 0.6f;
+			const float PadY = TipFont * 0.45f;
+
+			const float TextW = TextRender()->TextWidth(TipFont, pHint);
+			const float BoxW = TextW + PadX * 2.0f;
+			const float BoxH = TipFont * 1.32f + PadY * 2.0f;
+
+			const SRenderRect &Anchor = m_HoveredServerJoinRect;
+			float BoxX = Anchor.m_X + Anchor.m_W * 0.5f - BoxW * 0.5f;
+			float BoxY = Anchor.m_Y - BoxH - TipFont * 0.4f;
+			BoxX = std::clamp(BoxX, 1.0f, maximum(1.0f, Width - BoxW - 1.0f));
+			if(BoxY < 1.0f)
+				BoxY = Anchor.m_Y + Anchor.m_H + TipFont * 0.4f; // flip below if no room above
+
+			CUIRect Box(BoxX, BoxY, BoxW, BoxH);
+			Box.Draw(ColorRGBA(0.055f, 0.06f, 0.07f, 0.98f), IGraphics::CORNER_ALL, maximum(3.0f, TipFont * 0.4f));
+
+			CTextCursor HintCursor;
+			HintCursor.SetPosition(vec2(BoxX + PadX, BoxY + PadY));
+			HintCursor.m_FontSize = TipFont;
+			TextRender()->TextColor(0.90f, 0.92f, 0.96f, 1.0f);
+			TextRender()->TextEx(&HintCursor, pHint);
 			TextRender()->TextColor(TextRender()->DefaultTextColor());
 		}
 	}

@@ -446,7 +446,18 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			static float s_UcChatPhase = 0.0f;
 			const bool ChatExpanded = g_Config.m_UcChat != 0;
 			UpdateRevealPhase(s_UcChatPhase, ChatExpanded);
-			const float ExpandedTargetHeight = MarginSmall + LineSize * 2.0f + ColorPickerLineSize + ColorPickerLineSpacing;
+			// Friends-only overrides the same-server scope, so those two options reveal/collapse
+			// with their own phase just like the whole section does for "Enable UClient chat".
+			static float s_UcChatSameServerPhase = 0.0f;
+			UpdateRevealPhase(s_UcChatSameServerPhase, g_Config.m_UcChatFriendsOnly == 0);
+			const float SameServerTargetHeight = LineSize * 2.0f;
+			const float SameServerHeight = SameServerTargetHeight * s_UcChatSameServerPhase;
+			// Same idea for the join/leave announce options once they are friends-only.
+			static float s_UcJoinOptionsPhase = 0.0f;
+			UpdateRevealPhase(s_UcJoinOptionsPhase, g_Config.m_UcServerJoinFriendsOnly == 0);
+			const float JoinOptionsTargetHeight = LineSize * 2.0f;
+			const float JoinOptionsHeight = JoinOptionsTargetHeight * s_UcJoinOptionsPhase;
+			const float ExpandedTargetHeight = MarginSmall + LineSize * 2.0f + SameServerHeight + JoinOptionsHeight + ColorPickerLineSize + ColorPickerLineSpacing;
 			const float ExpandedHeight = ExpandedTargetHeight * s_UcChatPhase;
 			const float ContentHeight = LineSize + MarginSmall + LineSize + ExpandedHeight;
 			CUIRect Content, Label, Visible;
@@ -472,46 +483,81 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 				CUIRect Expand = {Visible.x, Visible.y, Visible.w, ExpandedTargetHeight};
 				Expand.HSplitTop(MarginSmall, nullptr, &Expand);
 
-				// "채팅 보기" (show) couples with "유저 전송" (send):
-				// show 0→1 with send 0 => send 1
-				// send 1→0 while show 1 => show 0
-				// show 1→0 while send was auto-coupled => send 0
-				static bool s_UcChatSendCoupledWithShow = false;
-				const int OldShow = g_Config.m_UcChatShowSameServerOnly;
-				const int OldSend = g_Config.m_UcChatSendSameServerOnly;
+				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcChatFriendsOnly, "Only send to and show chats from friends", &g_Config.m_UcChatFriendsOnly, &Expand, LineSize);
 
-				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcChatSendSameServerOnly, "Only send to users on the same server", &g_Config.m_UcChatSendSameServerOnly, &Expand, LineSize);
-				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcChatShowSameServerOnly, "Only show chats from users on the same server", &g_Config.m_UcChatShowSameServerOnly, &Expand, LineSize);
+				if(SameServerHeight > 0.0f)
+				{
+					CUIRect SameServerVisible;
+					Expand.HSplitTop(SameServerHeight, &SameServerVisible, &Expand);
+					Ui()->ClipEnable(&SameServerVisible);
+					SScopedClip SameServerClipGuard{Ui()};
+					CUIRect SameServer = {SameServerVisible.x, SameServerVisible.y, SameServerVisible.w, SameServerTargetHeight};
 
-				if(OldSend && !g_Config.m_UcChatSendSameServerOnly && g_Config.m_UcChatShowSameServerOnly)
-				{
-					g_Config.m_UcChatShowSameServerOnly = 0;
-					s_UcChatSendCoupledWithShow = false;
-				}
-				else if(g_Config.m_UcChatSendSameServerOnly != OldSend)
-				{
-					s_UcChatSendCoupledWithShow = false;
-				}
+					// Inverted parent: these rows only exist while friends-only is off, so a copied
+					// link has to carry it and clear it instead of enabling it.
+					PushSettingsLinkParent("!uc_chat_friends_only");
 
-				if(g_Config.m_UcChatShowSameServerOnly != OldShow)
-				{
-					if(g_Config.m_UcChatShowSameServerOnly)
+					// "채팅 보기" (show) couples with "유저 전송" (send):
+					// show 0→1 with send 0 => send 1
+					// send 1→0 while show 1 => show 0
+					// show 1→0 while send was auto-coupled => send 0
+					static bool s_UcChatSendCoupledWithShow = false;
+					const int OldShow = g_Config.m_UcChatShowSameServerOnly;
+					const int OldSend = g_Config.m_UcChatSendSameServerOnly;
+
+					DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcChatSendSameServerOnly, "Only send to users on the same server", &g_Config.m_UcChatSendSameServerOnly, &SameServer, LineSize);
+					DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcChatShowSameServerOnly, "Only show chats from users on the same server", &g_Config.m_UcChatShowSameServerOnly, &SameServer, LineSize);
+
+					if(OldSend && !g_Config.m_UcChatSendSameServerOnly && g_Config.m_UcChatShowSameServerOnly)
 					{
-						if(OldSend == 0)
+						g_Config.m_UcChatShowSameServerOnly = 0;
+						s_UcChatSendCoupledWithShow = false;
+					}
+					else if(g_Config.m_UcChatSendSameServerOnly != OldSend)
+					{
+						s_UcChatSendCoupledWithShow = false;
+					}
+
+					if(g_Config.m_UcChatShowSameServerOnly != OldShow)
+					{
+						if(g_Config.m_UcChatShowSameServerOnly)
 						{
-							g_Config.m_UcChatSendSameServerOnly = 1;
-							s_UcChatSendCoupledWithShow = true;
+							if(OldSend == 0)
+							{
+								g_Config.m_UcChatSendSameServerOnly = 1;
+								s_UcChatSendCoupledWithShow = true;
+							}
+							else
+							{
+								s_UcChatSendCoupledWithShow = false;
+							}
 						}
-						else
+						else if(s_UcChatSendCoupledWithShow)
 						{
+							g_Config.m_UcChatSendSameServerOnly = 0;
 							s_UcChatSendCoupledWithShow = false;
 						}
 					}
-					else if(s_UcChatSendCoupledWithShow)
-					{
-						g_Config.m_UcChatSendSameServerOnly = 0;
-						s_UcChatSendCoupledWithShow = false;
-					}
+
+					PopSettingsLinkParent();
+				}
+
+				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcServerJoinFriendsOnly, "Only announce to and show join/leave from friends", &g_Config.m_UcServerJoinFriendsOnly, &Expand, LineSize);
+
+				if(JoinOptionsHeight > 0.0f)
+				{
+					CUIRect JoinOptionsVisible;
+					Expand.HSplitTop(JoinOptionsHeight, &JoinOptionsVisible, &Expand);
+					Ui()->ClipEnable(&JoinOptionsVisible);
+					SScopedClip JoinOptionsClipGuard{Ui()};
+					CUIRect JoinOptions = {JoinOptionsVisible.x, JoinOptionsVisible.y, JoinOptionsVisible.w, JoinOptionsTargetHeight};
+
+					PushSettingsLinkParent("!uc_server_join_friends_only");
+
+					DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcServerJoinSend, "Announce when I join or leave a server", &g_Config.m_UcServerJoinSend, &JoinOptions, LineSize);
+					DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcServerJoinShow, "Show server join/leave messages", &g_Config.m_UcServerJoinShow, &JoinOptions, LineSize);
+
+					PopSettingsLinkParent();
 				}
 
 				static CButtonContainer s_UcMessageColor;

@@ -51,8 +51,16 @@ const PACKET_CHAT: u8 = 12;
 const PACKET_CHAT_BROADCAST: u8 = 13;
 const PACKET_READ: u8 = 14;
 const PACKET_READ_BROADCAST: u8 = 15;
+const PACKET_SERVER_JOIN: u8 = 16;
+const PACKET_SERVER_JOIN_BROADCAST: u8 = 17;
+const SERVER_PRESENCE_JOIN: u8 = 0;
+const SERVER_PRESENCE_LEAVE: u8 = 1;
+const SERVER_PRESENCE_MOVE: u8 = 2;
+const SERVER_JOIN_MIN_INTERVAL: Duration = Duration::from_secs(5);
 const CHAT_SCOPE_SAME_SERVER: u8 = 0;
 const CHAT_SCOPE_GLOBAL: u8 = 1;
+/// Relayed globally; the friend check runs entirely on the receiving client.
+const CHAT_SCOPE_FRIENDS: u8 = 2;
 const CHAT_MESSAGE_MAX_BYTES: usize = 512;
 const CHAT_MIN_INTERVAL: Duration = Duration::from_millis(400);
 
@@ -147,6 +155,7 @@ struct ServerState {
     recent_nonces: HashMap<([u8; 16], [u8; 16]), Instant>,
     last_heartbeat_sync: HashMap<SessionKey, Instant>,
     last_chat_send: HashMap<SessionKey, Instant>,
+    last_server_join: HashMap<(SessionKey, u8), Instant>,
     invalid_rate_by_ip: HashMap<IpAddr, Instant>,
     json_path: PathBuf,
 }
@@ -158,6 +167,7 @@ impl ServerState {
             recent_nonces: HashMap::new(),
             last_heartbeat_sync: HashMap::new(),
             last_chat_send: HashMap::new(),
+            last_server_join: HashMap::new(),
             invalid_rate_by_ip: HashMap::new(),
             json_path,
         }
@@ -168,6 +178,18 @@ impl ServerState {
             Some(last) if now.saturating_duration_since(*last) < CHAT_MIN_INTERVAL => false,
             _ => {
                 self.last_chat_send.insert(key.clone(), now);
+                true
+            }
+        }
+    }
+
+    /// Rate limit is per session AND per kind, so a quick join-then-leave is not swallowed.
+    fn allow_server_join(&mut self, key: &SessionKey, kind: u8, now: Instant) -> bool {
+        let entry = (key.clone(), kind);
+        match self.last_server_join.get(&entry) {
+            Some(last) if now.saturating_duration_since(*last) < SERVER_JOIN_MIN_INTERVAL => false,
+            _ => {
+                self.last_server_join.insert(entry, now);
                 true
             }
         }
@@ -822,7 +844,10 @@ fn handle_udp_packet(
             state.log_invalid(ip, now, "invalid chat message length");
             return outcome;
         }
-        if chat.scope != CHAT_SCOPE_SAME_SERVER && chat.scope != CHAT_SCOPE_GLOBAL {
+        if chat.scope != CHAT_SCOPE_SAME_SERVER
+            && chat.scope != CHAT_SCOPE_GLOBAL
+            && chat.scope != CHAT_SCOPE_FRIENDS
+        {
             state.log_invalid(ip, now, "invalid chat scope");
             return outcome;
         }
@@ -885,6 +910,55 @@ fn handle_udp_packet(
             &read.reader_name,
             read.reader_key,
             read.message_id,
+        );
+        for peer in state.peers_all(None) {
+            outcome.outbound.push((peer.return_addr, packet.clone()));
+        }
+        return outcome;
+    }
+
+    // UClient server join/leave announcements: relayed globally to every UC user (the point is
+    // to let peers on OTHER servers see it). Self/same-server suppression is done on the
+    // receiving client using the joiner key. Rate-limited per session and kind to prevent spam.
+    if packet_type == PACKET_SERVER_JOIN {
+        let Some(join) = read_server_join_packet(data) else {
+            state.log_invalid(ip, now, "bad server-join payload");
+            return outcome;
+        };
+        if !validate_proof(shared_token, data) {
+            state.log_invalid(ip, now, "invalid server-join proof");
+            return outcome;
+        }
+        if join.kind != SERVER_PRESENCE_JOIN
+            && join.kind != SERVER_PRESENCE_LEAVE
+            && join.kind != SERVER_PRESENCE_MOVE
+        {
+            state.log_invalid(ip, now, "invalid server-join kind");
+            return outcome;
+        }
+        if !state.remember_nonce(join.session_id, join.nonce, now) {
+            state.log_invalid(ip, now, "server-join nonce replay");
+            return outcome;
+        }
+        let sender_key = SessionKey {
+            player_id: join.player_id.clone(),
+            session_id: format_uuid(join.session_id),
+        };
+        if !state.allow_server_join(&sender_key, join.kind, now) {
+            state.log_invalid(ip, now, "server-join rate limited");
+            return outcome;
+        }
+        let packet = encode_server_join_broadcast(
+            &join.server_address,
+            &join.server_name,
+            &join.joiner_name,
+            join.joiner_key,
+            join.kind,
+            join.friends_only,
+            &join.skin_name,
+            join.use_custom_color,
+            join.color_body,
+            join.color_feet,
         );
         for peer in state.peers_all(None) {
             outcome.outbound.push((peer.return_addr, packet.clone()));
@@ -1202,6 +1276,33 @@ fn encode_read_broadcast(
     write_string(&mut out, reader_name);
     out.extend_from_slice(&reader_key);
     out.extend_from_slice(&message_id);
+    out
+}
+
+fn encode_server_join_broadcast(
+    server_address: &str,
+    server_name: &str,
+    joiner_name: &str,
+    joiner_key: [u8; 16],
+    kind: u8,
+    friends_only: u8,
+    skin_name: &str,
+    use_custom_color: u8,
+    color_body: i32,
+    color_feet: i32,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_header(&mut out, PACKET_SERVER_JOIN_BROADCAST);
+    write_string(&mut out, server_address);
+    write_string(&mut out, server_name);
+    write_string(&mut out, joiner_name);
+    out.extend_from_slice(&joiner_key);
+    out.push(kind);
+    out.push(friends_only);
+    write_string(&mut out, skin_name);
+    out.push(use_custom_color);
+    out.extend_from_slice(&color_body.to_be_bytes());
+    out.extend_from_slice(&color_feet.to_be_bytes());
     out
 }
 
@@ -1525,6 +1626,69 @@ fn read_read_packet(data: &[u8]) -> Option<ReadPacket> {
         reader_name,
         reader_key,
         message_id,
+    })
+}
+
+struct ServerJoinPacket {
+    player_id: String,
+    session_id: [u8; 16],
+    nonce: [u8; 16],
+    server_address: String,
+    server_name: String,
+    joiner_name: String,
+    joiner_key: [u8; 16],
+    kind: u8,
+    friends_only: u8,
+    skin_name: String,
+    use_custom_color: u8,
+    color_body: i32,
+    color_feet: i32,
+}
+
+fn read_server_join_packet(data: &[u8]) -> Option<ServerJoinPacket> {
+    if packet_type(data)? != PACKET_SERVER_JOIN {
+        return None;
+    }
+    if data.len() < PROOF_SIZE {
+        return None;
+    }
+    let payload_len = data.len().checked_sub(PROOF_SIZE)?;
+    let mut reader = Reader::new(&data[..payload_len]);
+    reader.skip(6)?;
+    let player_id = reader.string()?;
+    let session_id = reader.uuid()?;
+    let nonce = reader.uuid()?;
+    let _timestamp = reader.u64()?;
+    let server_address = reader.string()?;
+    let server_name = reader.string()?;
+    let joiner_name = reader.string()?;
+    let joiner_key = reader.uuid()?;
+    let kind = reader.u8()?;
+    let friends_only = reader.u8()?;
+    let skin_name = reader.string()?;
+    let use_custom_color = reader.u8()?;
+    let color_body = reader.i32()?;
+    let color_feet = reader.i32()?;
+    if reader.remaining() != 0 {
+        return None;
+    }
+    if skin_name.len() > 64 {
+        return None;
+    }
+    Some(ServerJoinPacket {
+        player_id,
+        session_id,
+        nonce,
+        server_address,
+        server_name,
+        joiner_name,
+        joiner_key,
+        kind,
+        friends_only,
+        skin_name,
+        use_custom_color,
+        color_body,
+        color_feet,
     })
 }
 

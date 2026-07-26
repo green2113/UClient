@@ -450,6 +450,11 @@ const char *CUpdater::GetLatestVersionString()
 	return m_aLatestVersion;
 }
 
+bool CUpdater::HasCompletedCheck()
+{
+	return m_CheckCompleted;
+}
+
 void CUpdater::ResetTask()
 {
 	if(m_pCurrentTask)
@@ -483,6 +488,8 @@ void CUpdater::StartReleaseFetch()
 
 void CUpdater::ParseReleaseTask()
 {
+	m_CheckCompleted = true;
+
 	json_value *pJson = m_pCurrentTask ? m_pCurrentTask->ResultJson() : nullptr;
 	if(!pJson)
 	{
@@ -861,6 +868,10 @@ void CUpdater::Update()
 
 	if(m_pCurrentTask->State() != EHttpState::DONE || m_pCurrentTask->StatusCode() >= 400)
 	{
+		// A failed check still counts as completed: waiting forever would keep callers that gate on
+		// the check result (the mandatory update) hanging whenever the update host is unreachable.
+		if(m_TaskKind == ETaskKind::FETCH_RELEASE)
+			m_CheckCompleted = true;
 		ResetTask();
 		SetStatus("Update check failed");
 		SetCurrentState(IUpdater::FAIL);

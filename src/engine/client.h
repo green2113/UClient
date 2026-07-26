@@ -190,6 +190,10 @@ public:
 	virtual void Connect(const char *pAddress, const char *pPassword = nullptr) = 0;
 	virtual void Disconnect() = 0;
 
+	// True while a mandatory update is pending. Joining game servers is refused until it is applied;
+	// everything offline (settings, editor, demos) stays available.
+	virtual bool UpdateRequired() = 0;
+
 	// dummy
 	virtual void DummyDisconnect(const char *pReason) = 0;
 	virtual void DummyConnect() = 0;

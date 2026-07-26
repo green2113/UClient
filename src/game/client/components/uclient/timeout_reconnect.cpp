@@ -468,6 +468,13 @@ void CTimeoutReconnect::TryAutoReconnect()
 		return;
 	}
 
+	// A pending mandatory update refuses every connect, so drop the schedule instead of retrying.
+	if(Client()->UpdateRequired())
+	{
+		ClearAutoReconnect();
+		return;
+	}
+
 	if(Client()->State() != IClient::STATE_ONLINE)
 	{
 		ClearAutoReconnect();

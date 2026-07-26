@@ -1319,6 +1319,55 @@ void CMenus::PopupConfirm(const char *pTitle, const char *pMessage, const char *
 	m_PopupConfirmHasCheckbox = false;
 }
 
+bool CMenus::PopupUpdateRequired()
+{
+	if(!Client()->UpdateRequired())
+		return false;
+
+#if defined(CONF_AUTOUPDATE)
+	const IUpdater::EUpdaterState State = Updater()->GetCurrentState();
+	if(State == IUpdater::NEED_RESTART)
+	{
+		PopupConfirm(Localize("Update required"),
+			Localize("The update has been downloaded. Restart to finish updating, then you can join a server."),
+			Localize("Restart"), Localize("Not now"), &CMenus::PopupConfirmStartUpdate);
+	}
+	else if(State == IUpdater::DOWNLOADING || State == IUpdater::GETTING_MANIFEST)
+	{
+		PopupMessage(Localize("Update required"),
+			Localize("The update is downloading. You can join a server as soon as it has been installed."),
+			Localize("Ok"));
+	}
+	else
+	{
+		char aMessage[256];
+		str_format(aMessage, sizeof(aMessage),
+			Localize("UClient %s is available. You have to update before you can join a server."),
+			Updater()->GetLatestVersionString());
+		PopupConfirm(Localize("Update required"), aMessage, Localize("Update now"), Localize("Not now"), &CMenus::PopupConfirmStartUpdate);
+	}
+#else
+	PopupMessage(Localize("Update required"),
+		Localize("A new version of UClient is available. You have to update before you can join a server."),
+		Localize("Ok"));
+#endif
+
+	// Keep the menu open afterwards so the update progress stays visible.
+	m_PopupDeactivateAfterButton = false;
+	SetActive(true);
+	return true;
+}
+
+void CMenus::PopupConfirmStartUpdate()
+{
+#if defined(CONF_AUTOUPDATE)
+	if(Updater()->GetCurrentState() == IUpdater::NEED_RESTART)
+		Updater()->ApplyUpdateAndRestart();
+	else
+		Updater()->InitiateUpdate();
+#endif
+}
+
 void CMenus::PopupConfirmWithCheckbox(const char *pTitle, const char *pMessage, const char *pConfirmButtonLabel, const char *pCancelButtonLabel,
 	const char *pCheckboxLabel, bool CheckboxValue, FPopupButtonCallback pfnConfirmButtonCallback, int ConfirmNextPopup,
 	FPopupButtonCallback pfnCancelButtonCallback, int CancelNextPopup)
@@ -1357,6 +1406,38 @@ void CMenus::PopupOpenStoredLink()
 
 void CMenus::PopupCancelStoredLink()
 {
+	if(m_PopupDeactivateAfterButton)
+		SetActive(false);
+	m_PopupDeactivateAfterButton = false;
+}
+
+void CMenus::RequestUClientServerJoin(const char *pAddr, const char *pServerName)
+{
+	if(!pAddr || pAddr[0] == '\0')
+		return;
+	if(PopupUpdateRequired())
+		return;
+	str_copy(m_aUClientJoinServerAddr, pAddr, sizeof(m_aUClientJoinServerAddr));
+
+	const char *pDisplayName = (pServerName && pServerName[0] != '\0') ? pServerName : pAddr;
+	char aMessage[256];
+	str_format(aMessage, sizeof(aMessage), Localize("Do you really want to move to %s?"), pDisplayName);
+
+	const bool WasActive = IsActive();
+	PopupConfirm(Localize("Join server"), aMessage, Localize("Yes"), Localize("No"),
+		&CMenus::PopupConfirmJoinUClientServer, POPUP_NONE, &CMenus::PopupCancelStoredLink);
+	m_PopupDeactivateAfterButton = !WasActive;
+	SetActive(true);
+}
+
+void CMenus::PopupConfirmJoinUClientServer()
+{
+	if(m_aUClientJoinServerAddr[0] != '\0')
+	{
+		// Connect directly (not via the menus Connect() helper) to avoid a second confirm.
+		Client()->Connect(m_aUClientJoinServerAddr);
+		m_aUClientJoinServerAddr[0] = '\0';
+	}
 	if(m_PopupDeactivateAfterButton)
 		SetActive(false);
 	m_PopupDeactivateAfterButton = false;
@@ -3640,12 +3721,21 @@ void CMenus::NavigateToSettingsLink(const CUClientSettingsLink::SNavigateRequest
 		// Expand parent toggles so nested rows (e.g. AntiPing children) are actually rendered.
 		for(int i = 0; i < Request.m_NumParents; ++i)
 		{
-			const SConfigVariable *pParent = CUClientSettingsLink::FindVariable(ConfigManager(), Request.m_aaParents[i]);
+			const char *pParentName = CUClientSettingsLink::ParentScriptName(Request.m_aaParents[i]);
+			const SConfigVariable *pParent = CUClientSettingsLink::FindVariable(ConfigManager(), pParentName);
 			if(!pParent || pParent->m_Type != SConfigVariable::VAR_INT)
 				continue;
 			auto *pInt = static_cast<SIntConfigVariable *>(const_cast<SConfigVariable *>(pParent));
-			if(pInt->m_Min == 0 && pInt->m_Max == 1 && *pInt->m_pVariable == 0)
-				*pInt->m_pVariable = 1;
+			if(pInt->m_Min != 0 || pInt->m_Max != 1)
+				continue;
+			// An inverted parent hides the target while it is on, so it has to be cleared instead.
+			const int Wanted = CUClientSettingsLink::IsInvertedParent(Request.m_aaParents[i]) ? 0 : 1;
+			if(*pInt->m_pVariable == Wanted)
+				continue;
+			// Through the console so registered conchains fire (coupled toggles).
+			char aCmd[192];
+			str_format(aCmd, sizeof(aCmd), "%s %d", pParent->m_pScriptName, Wanted);
+			Console()->ExecuteLine(aCmd, IConsole::CLIENT_ID_UNSPECIFIED);
 		}
 	}
 	else
@@ -3832,7 +3922,7 @@ float CMenus::MeasureSettingsLinkInlineHeight(const CUClientSettingsLink::SParse
 
 	Height += Layout.CrumbH + Layout.CrumbGap;
 	for(int i = 0; i < Parsed.m_NumParents; ++i)
-		Height += SettingsLinkControlHeight(CUClientSettingsLink::FindVariable(ConfigManager(), Parsed.m_aaParents[i]), Layout);
+		Height += SettingsLinkControlHeight(CUClientSettingsLink::FindVariable(ConfigManager(), CUClientSettingsLink::ParentScriptName(Parsed.m_aaParents[i])), Layout);
 	Height += SettingsLinkControlHeight(CUClientSettingsLink::FindVariable(ConfigManager(), Parsed.m_aScriptName), Layout);
 	Height += Page.HintGap + HintH;
 	return Height;
@@ -3891,7 +3981,8 @@ float CMenus::MeasureSettingsLinkInlineWidth(const CUClientSettingsLink::SParsed
 	for(int i = 0; i < Parsed.m_NumParents; ++i)
 	{
 		const char *pParentLabel = Parsed.m_aaParentLabels[i][0] != '\0' ? Parsed.m_aaParentLabels[i] : nullptr;
-		Widen(Parsed.m_aaParents[i], ResolveLabel(Parsed.m_aaParents[i], pParentLabel));
+		const char *pParentName = CUClientSettingsLink::ParentScriptName(Parsed.m_aaParents[i]);
+		Widen(pParentName, ResolveLabel(pParentName, pParentLabel));
 	}
 	Widen(Parsed.m_aScriptName, ResolveLabel(Parsed.m_aScriptName, Parsed.m_aLabel[0] != '\0' ? Parsed.m_aLabel : nullptr));
 	const float HintW = TextRender()->TextWidth(Page.HintFont, SETTINGS_LINK_PAGE_HINT) * 1.12f;
@@ -4051,7 +4142,8 @@ void CMenus::RenderSettingsLinkInline(const CUClientSettingsLink::SParsed &Parse
 	for(int i = 0; i < Parsed.m_NumParents; ++i)
 	{
 		const char *pParentLabel = Parsed.m_aaParentLabels[i][0] != '\0' ? Parsed.m_aaParentLabels[i] : nullptr;
-		DrawControl(Parsed.m_aaParents[i], ResolveLabel(Parsed.m_aaParents[i], pParentLabel));
+		const char *pParentName = CUClientSettingsLink::ParentScriptName(Parsed.m_aaParents[i]);
+		DrawControl(pParentName, ResolveLabel(pParentName, pParentLabel));
 	}
 	DrawControl(Parsed.m_aScriptName, ResolveLabel(Parsed.m_aScriptName, Parsed.m_aLabel[0] != '\0' ? Parsed.m_aLabel : nullptr));
 	DrawShortcutHint(HintRow);
@@ -4111,7 +4203,7 @@ bool CMenus::TryClickSettingsLinkInline(const CUClientSettingsLink::SParsed &Par
 
 	for(int i = 0; i < Parsed.m_NumParents; ++i)
 	{
-		if(TryToggle(Parsed.m_aaParents[i]))
+		if(TryToggle(CUClientSettingsLink::ParentScriptName(Parsed.m_aaParents[i])))
 			return true;
 	}
 	return TryToggle(Parsed.m_aScriptName);

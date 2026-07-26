@@ -435,6 +435,10 @@ void CClientIndicator::OnStateChange(int NewState, int OldState)
 	(void)OldState;
 	if(NewState == IClient::STATE_OFFLINE)
 	{
+		// A map change only drops to STATE_LOADING, so reaching STATE_OFFLINE means we left the
+		// server. The announcement itself waits: connecting elsewhere disconnects first, and
+		// that should read as a single "moved to" message rather than leave + join.
+		BeginPendingUClientServerLeave();
 		StopPresence(true);
 		ResetTokenState();
 	}
@@ -452,6 +456,9 @@ void CClientIndicator::OnStateChange(int NewState, int OldState)
 
 void CClientIndicator::OnShutdown()
 {
+	// No more ticks after this, so the pending leave has to go out right now.
+	BeginPendingUClientServerLeave();
+	FlushPendingUClientServerLeave(true);
 	StopPresence(true);
 	ResetBrowserTask();
 	ResetTokenTask();
@@ -656,6 +663,11 @@ void CClientIndicator::RefreshToken(bool Force)
 void CClientIndicator::OnUpdate()
 {
 	const int64_t PerfStart = time_get();
+
+	// Resolves a deferred leave once it is clear we are not switching servers. This has to run
+	// before the early-outs below, which skip everything while the client sits in the menu.
+	FlushPendingUClientServerLeave(false);
+
 	if(!IsBrowserSnapshotEnabled() && !ShouldRunUcPresence())
 	{
 		m_RuntimeState = ESubsystemRuntimeState::DISABLED;
@@ -1267,6 +1279,164 @@ void CClientIndicator::ApplyUcReadBroadcast(const UClientPresence::CReadBroadcas
 	GameClient()->m_Chat.OnChatReadReceived(Read.m_ReaderKey, Read.m_ReaderName.c_str(), Read.m_MessageId);
 }
 
+void CClientIndicator::LocalSkinSnapshot(const char *&pSkinName, uint8_t &UseCustomColor, int32_t &ColorBody, int32_t &ColorFeet) const
+{
+	pSkinName = g_Config.m_ClPlayerSkin;
+	UseCustomColor = (uint8_t)g_Config.m_ClPlayerUseCustomColor;
+	ColorBody = (int32_t)g_Config.m_ClPlayerColorBody;
+	ColorFeet = (int32_t)g_Config.m_ClPlayerColorFeet;
+
+	const int LocalId = GameClient()->m_Snap.m_LocalClientId;
+	if(LocalId >= 0 && LocalId < MAX_CLIENTS && GameClient()->m_aClients[LocalId].m_Active)
+	{
+		const auto &Local = GameClient()->m_aClients[LocalId];
+		pSkinName = Local.m_aSkinName[0] != '\0' ? Local.m_aSkinName : g_Config.m_ClPlayerSkin;
+		UseCustomColor = (uint8_t)Local.m_UseCustomColor;
+		ColorBody = (int32_t)Local.m_ColorBody;
+		ColorFeet = (int32_t)Local.m_ColorFeet;
+	}
+}
+
+bool CClientIndicator::SendUClientServerAnnounce(uint8_t Kind, const char *pServerAddress)
+{
+	// Friends-only implies announcing: the plain send toggle is hidden while it is on.
+	if((!g_Config.m_UcServerJoinSend && !g_Config.m_UcServerJoinFriendsOnly) || !g_Config.m_UcChat || !IsUcPresenceUdpEnabled())
+		return false;
+	if(!pServerAddress || pServerAddress[0] == '\0')
+		return false;
+
+	// A pending leave is sent while the client is offline, where the presence socket is already
+	// closed. Fall back to a throwaway socket: the relay keys senders by player id + session id,
+	// not by source port, so the announcement is relayed just the same.
+	NETSOCKET Socket = m_Socket;
+	NETADDR TargetAddr = m_UcServerAddr;
+	NETSOCKET TempSocket = nullptr;
+	if(!Socket || !m_HasUcServerAddr)
+	{
+		if(!UClientPresence::ParseAddress(g_Config.m_UcPresenceUdpServerAddress, UClientPresence::DEFAULT_PORT, TargetAddr))
+			return false;
+		if(IsBlockedIndicatorAddress(TargetAddr))
+			return false;
+		NETADDR Bind = NETADDR_ZEROED;
+		Bind.type = NETTYPE_ALL;
+		Bind.port = 0;
+		TempSocket = net_udp_create(Bind);
+		if(!TempSocket)
+			return false;
+		Socket = TempSocket;
+	}
+
+	// Friendly server name from the browser (falls back to the raw address when unknown).
+	const char *pServerName = pServerAddress;
+	const IServerBrowser::CServerEntry *pCurrentServer = ServerBrowser()->Find(Client()->ServerAddress());
+	if(pCurrentServer && pCurrentServer->m_Info.m_aName[0] != '\0')
+		pServerName = pCurrentServer->m_Info.m_aName;
+
+	// The snap is gone once we are offline, so fall back to the configured player name.
+	const int LocalId = GameClient()->m_Snap.m_LocalClientId;
+	const char *pJoinerName = g_Config.m_PlayerName;
+	if(LocalId >= 0 && LocalId < MAX_CLIENTS && GameClient()->m_aClients[LocalId].m_Active)
+	{
+		const char *pSnapName = PlayerNameForClient(LocalId);
+		if(pSnapName && pSnapName[0] != '\0')
+			pJoinerName = pSnapName;
+	}
+
+	const char *pSkinName = nullptr;
+	uint8_t UseCustomColor = 0;
+	int32_t ColorBody = 0;
+	int32_t ColorFeet = 0;
+	LocalSkinSnapshot(pSkinName, UseCustomColor, ColorBody, ColorFeet);
+
+	bool Sent = false;
+	if(pJoinerName[0] != '\0')
+	{
+		std::vector<uint8_t> vPacket;
+		vPacket.reserve(224);
+		UClientPresence::WriteServerJoinClientBody(vPacket,
+			g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
+			pServerAddress, pServerName, pJoinerName, m_ClientInstanceId, Kind,
+			(uint8_t)(g_Config.m_UcServerJoinFriendsOnly ? 1 : 0),
+			pSkinName, UseCustomColor, ColorBody, ColorFeet);
+		UClientPresence::AppendProof(vPacket, g_Config.m_UcPresenceUdpSharedToken);
+		net_udp_send(Socket, &TargetAddr, vPacket.data(), (int)vPacket.size());
+		Sent = true;
+	}
+
+	if(TempSocket)
+		net_udp_close(TempSocket);
+	return Sent;
+}
+
+void CClientIndicator::BeginPendingUClientServerLeave()
+{
+	// Only servers we actually announced can be left. The tracker survives map changes
+	// (STATE_LOADING), so this only runs when the client really went offline.
+	if(m_aUcLastAnnouncedJoinServer[0] == '\0')
+		return;
+	str_copy(m_aUcPendingLeaveServer, m_aUcLastAnnouncedJoinServer, sizeof(m_aUcPendingLeaveServer));
+	m_UcPendingLeaveTick = time_get();
+	m_aUcLastAnnouncedJoinServer[0] = '\0';
+}
+
+void CClientIndicator::FlushPendingUClientServerLeave(bool Force)
+{
+	if(m_aUcPendingLeaveServer[0] == '\0')
+		return;
+	if(!Force)
+	{
+		// Still connecting or loading: this may yet turn out to be a server switch.
+		if(Client()->State() != IClient::STATE_OFFLINE)
+			return;
+		// Short grace so a quick reconnect to the same server never emits a leave.
+		if(time_get() - m_UcPendingLeaveTick < 3 * time_freq())
+			return;
+	}
+	SendUClientServerAnnounce(UClientPresence::SERVER_PRESENCE_LEAVE, m_aUcPendingLeaveServer);
+	m_aUcPendingLeaveServer[0] = '\0';
+}
+
+void CClientIndicator::ApplyUcServerJoinBroadcast(const UClientPresence::CServerJoinBroadcast &Join)
+{
+	// Friends-only implies showing: the plain show toggle is hidden while it is on.
+	if((!g_Config.m_UcServerJoinShow && !g_Config.m_UcServerJoinFriendsOnly) || !g_Config.m_UcChat)
+		return;
+	// Suppress our own echo (the relay broadcasts globally to everyone including us).
+	if(Join.m_JoinerKey == m_ClientInstanceId)
+		return;
+	if(Join.m_JoinerName.empty() || Join.m_ServerAddress.empty())
+		return;
+
+	// Friends gating, same rule as UClient chat: both the sender's friends-only flag and our own
+	// setting are checked against OUR friend list.
+	if(Join.m_FriendsOnly || g_Config.m_UcServerJoinFriendsOnly)
+	{
+		if(!GameClient()->m_Chat.IsUClientFriendName(Join.m_JoinerName.c_str()))
+			return;
+	}
+
+	// Don't announce a peer on the server we are already on: they show up as a normal UClient
+	// peer anyway, and the point of these messages is cross-server visibility.
+	char aNormalizedServer[NETADDR_MAXSTRSIZE];
+	if(NormalizePresenceServerAddress(Join.m_ServerAddress.c_str(), aNormalizedServer, sizeof(aNormalizedServer)))
+	{
+		if(UcPeerAppliesToCurrentServer(aNormalizedServer))
+			return;
+	}
+
+	if(Join.m_Kind == UClientPresence::SERVER_PRESENCE_LEAVE)
+	{
+		GameClient()->m_Chat.AddServerLeaveLine(Join.m_JoinerName.c_str(), Join.m_ServerAddress.c_str(),
+			Join.m_SkinName.c_str(), Join.m_UseCustomColor, Join.m_ColorBody, Join.m_ColorFeet);
+		return;
+	}
+
+	const char *pServerName = Join.m_ServerName.empty() ? Join.m_ServerAddress.c_str() : Join.m_ServerName.c_str();
+	GameClient()->m_Chat.AddServerJoinLine(Join.m_JoinerName.c_str(), Join.m_ServerAddress.c_str(), pServerName,
+		Join.m_SkinName.c_str(), Join.m_UseCustomColor, Join.m_ColorBody, Join.m_ColorFeet,
+		Join.m_Kind == UClientPresence::SERVER_PRESENCE_MOVE);
+}
+
 void CClientIndicator::SendUClientChat(const char *pMessage)
 {
 	if(!g_Config.m_UcChat || !IsUcPresenceUdpEnabled() || !m_Socket || !m_HasUcServerAddr)
@@ -1288,9 +1458,13 @@ void CClientIndicator::SendUClientChat(const char *pMessage)
 	if(pServerAddress[0] == '\0')
 		return;
 
-	const uint8_t Scope = g_Config.m_UcChatSendSameServerOnly ?
-		(uint8_t)UClientPresence::CHAT_SCOPE_SAME_SERVER :
-		(uint8_t)UClientPresence::CHAT_SCOPE_GLOBAL;
+	// Friends-only replaces the same-server scope entirely (the UI hides those options when it
+	// is on). Friends-scoped messages are relayed globally and filtered by each receiver.
+	const uint8_t Scope = g_Config.m_UcChatFriendsOnly ?
+		(uint8_t)UClientPresence::CHAT_SCOPE_FRIENDS :
+		(g_Config.m_UcChatSendSameServerOnly ?
+				(uint8_t)UClientPresence::CHAT_SCOPE_SAME_SERVER :
+				(uint8_t)UClientPresence::CHAT_SCOPE_GLOBAL);
 
 	const char *pSkinName = g_Config.m_ClPlayerSkin;
 	uint8_t UseCustomColor = (uint8_t)g_Config.m_ClPlayerUseCustomColor;
@@ -1339,7 +1513,18 @@ void CClientIndicator::ApplyUcChatBroadcast(const UClientPresence::CChatBroadcas
 	if(!NormalizePresenceServerAddress(Chat.m_ServerAddress.c_str(), aNormalizedServer, sizeof(aNormalizedServer)))
 		return;
 
-	if(g_Config.m_UcChatShowSameServerOnly || Chat.m_Scope == UClientPresence::CHAT_SCOPE_SAME_SERVER)
+	// Friends gating. The sender's friends-only scope and our own friends-only setting are both
+	// resolved against OUR friend list: we only ever see a friends-only message from someone we
+	// added, and our messages are only shown by peers who added us.
+	if(Chat.m_Scope == UClientPresence::CHAT_SCOPE_FRIENDS || g_Config.m_UcChatFriendsOnly)
+	{
+		if(!GameClient()->m_Chat.IsUClientFriendName(Chat.m_SenderName.c_str()))
+			return;
+	}
+
+	// Our own same-server filter does not apply in friends-only mode (that option is hidden).
+	if(Chat.m_Scope == UClientPresence::CHAT_SCOPE_SAME_SERVER ||
+		(!g_Config.m_UcChatFriendsOnly && g_Config.m_UcChatShowSameServerOnly))
 	{
 		if(!UcPeerAppliesToCurrentServer(aNormalizedServer))
 			return;
@@ -2116,6 +2301,13 @@ void CClientIndicator::ProcessUcPresencePacket(const unsigned char *pData, int D
 			ApplyUcReadBroadcast(Read);
 		break;
 	}
+	case UClientPresence::PACKET_SERVER_JOIN_BROADCAST:
+	{
+		UClientPresence::CServerJoinBroadcast Join;
+		if(UClientPresence::ReadServerJoinBroadcast(pData, DataSize, Join))
+			ApplyUcServerJoinBroadcast(Join);
+		break;
+	}
 	default:
 		break;
 	}
@@ -2418,6 +2610,36 @@ void CClientIndicator::UpdatePresence()
 
 	if(UcPresence)
 		PruneStaleUcPeers();
+
+	// Announce our presence once per server. Retried each tick until the UC socket is ready; the
+	// tracker only advances when a packet is actually sent. A map change keeps the same address
+	// here and therefore stays silent.
+	if(UcPresence)
+	{
+		char aNormalizedJoinServer[NETADDR_MAXSTRSIZE];
+		if(NormalizePresenceServerAddress(pEffectiveGameServer, aNormalizedJoinServer, sizeof(aNormalizedJoinServer)) &&
+			str_comp(aNormalizedJoinServer, m_aUcLastAnnouncedJoinServer) != 0)
+		{
+			if(m_aUcPendingLeaveServer[0] != '\0' && str_comp(aNormalizedJoinServer, m_aUcPendingLeaveServer) == 0)
+			{
+				// Back on the server we just dropped from (reconnect / map reload): stay silent.
+				str_copy(m_aUcLastAnnouncedJoinServer, m_aUcPendingLeaveServer, sizeof(m_aUcLastAnnouncedJoinServer));
+				m_aUcPendingLeaveServer[0] = '\0';
+			}
+			else
+			{
+				// Coming from another server, either via a disconnect (pending leave) or a
+				// redirect that kept us online, reads as one "moved to" instead of leave + join.
+				const bool Moved = m_aUcPendingLeaveServer[0] != '\0' || m_aUcLastAnnouncedJoinServer[0] != '\0';
+				const uint8_t Kind = Moved ? UClientPresence::SERVER_PRESENCE_MOVE : UClientPresence::SERVER_PRESENCE_JOIN;
+				if(SendUClientServerAnnounce(Kind, aNormalizedJoinServer))
+				{
+					str_copy(m_aUcLastAnnouncedJoinServer, aNormalizedJoinServer, sizeof(m_aUcLastAnnouncedJoinServer));
+					m_aUcPendingLeaveServer[0] = '\0';
+				}
+			}
+		}
+	}
 
 	UpdateLiveCursorSend(UcPresence);
 

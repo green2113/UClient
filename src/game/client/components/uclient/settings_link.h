@@ -55,6 +55,13 @@ struct SNavigateRequest
 	bool m_BrowserServerFilter = false;
 };
 
+// A parent is normally a prerequisite that has to be ON for the child row to exist. A leading '!'
+// marks the inverse: the parent hides the child while it is on, so following the link has to clear
+// it instead of setting it. Use ParentScriptName() before looking the name up as a config variable.
+constexpr char PARENT_INVERT_PREFIX = '!';
+bool IsInvertedParent(const char *pParent);
+const char *ParentScriptName(const char *pParent);
+
 bool IsSettingsLinkUri(const char *pText);
 bool TryParse(const char *pUri, SParsed &Out);
 bool BuildVarUri(char *pOut, int OutSize, const char *pScriptName, const char *pLabel, const char *pPage, const char *pTab, const char *const *ppParents, int NumParents);

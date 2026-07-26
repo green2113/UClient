@@ -34,6 +34,7 @@ struct CReactionBroadcast;
 struct CCursorBroadcast;
 struct CChatBroadcast;
 struct CReadBroadcast;
+struct CServerJoinBroadcast;
 }
 
 class CClientIndicator : public CComponent
@@ -69,6 +70,10 @@ public:
 
 	// UClient chat read receipts: broadcast that we have read up to the given message id.
 	void SendChatReadMarker(const CUuid &MessageId);
+
+	// UClient server join/leave announcements: broadcast "we joined <server>" / "we left" to all
+	// UClient users. Returns true if a packet was actually sent (socket ready, feature enabled).
+	bool SendUClientServerAnnounce(uint8_t Kind, const char *pServerAddress);
 
 	// UClient chat channel (cross-server by default; optional same-server scope).
 	void SendUClientChat(const char *pMessage);
@@ -113,6 +118,16 @@ private:
 	bool m_HasUcServerAddr = false;
 	char m_aLastUcPresenceServerAddr[256] = "";
 	char m_aLastGameServerAddr[NETADDR_MAXSTRSIZE] = "";
+	// Server we have announced a UClient join for and not yet announced a leave for. It
+	// deliberately survives StopPresence/ResetPresenceState so a map change (which drops to
+	// STATE_LOADING and back) neither re-announces a join nor emits a leave. It is only cleared
+	// when the client actually goes offline, which is also when the leave is announced.
+	char m_aUcLastAnnouncedJoinServer[NETADDR_MAXSTRSIZE] = "";
+	// Going offline does not announce the leave right away: a direct server switch disconnects
+	// first, so the announcement waits a moment to see whether we come back online elsewhere
+	// (one "moved to" message), on the same server (silent reconnect) or not at all (leave).
+	char m_aUcPendingLeaveServer[NETADDR_MAXSTRSIZE] = "";
+	int64_t m_UcPendingLeaveTick = 0;
 	char m_aLastBlockedGameServerAddr[NETADDR_MAXSTRSIZE] = "";
 	int64_t m_GameServerEmptySinceTick = 0;
 	char m_aLastKnownPresenceServerAddr[NETADDR_MAXSTRSIZE] = "";
@@ -177,6 +192,10 @@ private:
 	void ApplyUcPeerList(const UClientPresence::CPeerList &PeerList);
 	void ApplyUcReactionBroadcast(const UClientPresence::CReactionBroadcast &Reaction);
 	void ApplyUcReadBroadcast(const UClientPresence::CReadBroadcast &Read);
+	void ApplyUcServerJoinBroadcast(const UClientPresence::CServerJoinBroadcast &Join);
+	void BeginPendingUClientServerLeave();
+	void FlushPendingUClientServerLeave(bool Force);
+	void LocalSkinSnapshot(const char *&pSkinName, uint8_t &UseCustomColor, int32_t &ColorBody, int32_t &ColorFeet) const;
 	void ClearUcPeersForServer(const char *pNormalizedServer);
 	void PruneStaleUcPeers();
 	void SyncLocalRegistrations(bool Force = false);

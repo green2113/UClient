@@ -218,6 +218,19 @@ class CChat : public CComponent
 		SRenderRect m_ReadLabelRect{}; // screen-space rect of the "<name> read" label, for hover
 		bool m_ReadLabelRectValid = false;
 
+		// Join/leave/move announcement: reads as a sentence about the user rather than a message
+		// they typed, so the "Name: " separator is replaced by a plain space.
+		bool m_ServerAnnouncement = false;
+
+		// UClient server-join announcement ("<name> joined <server>"). The server-name span at
+		// the end of the body is a clickable link that opens a confirm popup to connect.
+		bool m_HasServerJoinLink = false;
+		char m_aServerJoinAddress[64] = ""; // ip:port to connect to on click
+		char m_aServerJoinServerName[128] = ""; // (possibly truncated) display name shown as the link
+		STextBoundingBox m_ServerJoinBounds{}; // text-local bounds of the server-name span (offset at render)
+		bool m_ServerJoinBoundsValid = false;
+		float m_ServerJoinFontSize = 0.0f;
+
 		// Set when the whole line is a single allowed gif-bubble-domain media link; drives the
 		// floating gif bubble rendered above the sender's head (see CGifBubbles).
 		bool m_ShowAboveHead;
@@ -402,6 +415,10 @@ class CChat : public CComponent
 	int m_HoveredReadLineIndex = -1;
 	SRenderRect m_HoveredReadRect{};
 
+	// Server-join server-name link the mouse is over this frame (for the hint tooltip + click).
+	int m_HoveredServerJoinLineIndex = -1;
+	SRenderRect m_HoveredServerJoinRect{};
+
 	// Display name for a remote UClient chat line (ClientId == CLIENT_MSG). AddLine reads this
 	// so the console log prints the sender's name instead of the "— " client-message dash.
 	char m_aPendingUClientName[64] = "";
@@ -573,6 +590,7 @@ class CChat : public CComponent
 	bool CanShowSettingsShortcut(const CLine &Line) const;
 	bool TryHandleSettingsLinkClick(CLine &Line, vec2 MousePos, float FontSize);
 	static bool LineNeedsNameColon(const CLine &Line);
+	static const char *LineNameSeparator(const CLine &Line);
 	static bool LineNeedsTeePadding(const CLine &Line);
 	float ReplyBannerHeight(float ScaledFontSize) const;
 	void RenderReplyBanner(float x, float InputY, float ScaledFontSize);
@@ -764,6 +782,20 @@ public:
 
 	// Called by the client indicator when a read-receipt broadcast arrives over UDP.
 	void OnChatReadReceived(const CUuid &ReaderKey, const char *pReaderName, const CUuid &MessageId);
+
+	// True when pName matches a name-based entry in the friend list. UClient only ever knows a
+	// player name, so clan-only friend entries never match.
+	bool IsUClientFriendName(const char *pName) const;
+
+	// Called by the client indicator when a UClient user joins a (different) server, or switches
+	// straight from one server to another (Moved). Adds an announcement line with a clickable
+	// server-name link that opens a connect-confirm popup.
+	void AddServerJoinLine(const char *pJoinerName, const char *pServerAddress, const char *pServerName,
+		const char *pSkinName = nullptr, int UseCustomColor = 0, int ColorBody = 0, int ColorFeet = 0, bool Moved = false);
+
+	// Called by the client indicator when a UClient user disconnects from a server.
+	void AddServerLeaveLine(const char *pLeaverName, const char *pServerAddress,
+		const char *pSkinName = nullptr, int UseCustomColor = 0, int ColorBody = 0, int ColorFeet = 0);
 
 	void RebuildChat();
 	void ClearLines();

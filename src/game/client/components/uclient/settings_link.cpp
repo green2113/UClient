@@ -219,6 +219,18 @@ bool BuildVarUri(char *pOut, int OutSize, const char *pScriptName, const char *p
 	return true;
 }
 
+bool IsInvertedParent(const char *pParent)
+{
+	return pParent != nullptr && pParent[0] == PARENT_INVERT_PREFIX;
+}
+
+const char *ParentScriptName(const char *pParent)
+{
+	if(pParent == nullptr)
+		return "";
+	return IsInvertedParent(pParent) ? pParent + 1 : pParent;
+}
+
 bool BuildPageUri(char *pOut, int OutSize, const char *pPage, const char *pTab)
 {
 	if(!pOut || OutSize <= 0 || !pPage || pPage[0] == '\0')

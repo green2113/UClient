@@ -64,6 +64,8 @@ class CUpdater : public IUpdater
 	ETaskKind m_TaskKind = ETaskKind::NONE;
 	bool m_bAutoCheckPending = false;
 
+	bool m_CheckCompleted = false;
+
 	char m_aLatestVersion[64];
 	char m_aArchiveName[128];
 	char m_aArchiveUrl[2048];
@@ -93,6 +95,7 @@ public:
 	void InitiateUpdate() REQUIRES(!m_Lock) override;
 	void ApplyUpdateAndRestart() REQUIRES(!m_Lock) override;
 	const char *GetLatestVersionString() override REQUIRES(!m_Lock);
+	bool HasCompletedCheck() override;
 	void Init(CHttp *pHttp);
 	void Update() REQUIRES(!m_Lock) override;
 };

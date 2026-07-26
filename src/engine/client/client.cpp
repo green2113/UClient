@@ -651,11 +651,65 @@ void CClient::GenerateTimeoutCodes(const NETADDR *pAddrs, int NumAddrs)
 	}
 }
 
+void CClient::UpdateStartupUpdateCheck()
+{
+	if(m_UpdateCheckLatched || m_pUpdater == nullptr)
+		return;
+
+	// Leaving the menu ends the startup window. Whatever a check finds from here on (a slow first
+	// check, or the user pressing "Check now" mid-session) must never interrupt a running session
+	// by blocking a server switch or a reconnect.
+	if(m_State != IClient::STATE_OFFLINE)
+	{
+		m_UpdateCheckLatched = true;
+		return;
+	}
+
+	// Still in the menu, so the verdict may still change: the startup check may not have answered
+	// yet, and a failed one can be retried with "Check now". A non-empty latest version means the
+	// check found a newer release than this build.
+	if(m_pUpdater->HasCompletedCheck())
+		m_UpdateRequired = m_pUpdater->GetLatestVersionString()[0] != '\0';
+}
+
+bool CClient::UpdateRequired()
+{
+	return m_UpdateRequired;
+}
+
+// Loopback targets are the tutorial's local server and the editor's map test, which are not
+// affected by an outdated client, so they stay reachable while an update is pending.
+static bool IsLoopbackConnectAddress(const char *pAddress)
+{
+	if(pAddress == nullptr)
+		return false;
+	while(*pAddress == ' ')
+		++pAddress;
+	return str_startswith_nocase(pAddress, "localhost") != nullptr ||
+	       str_startswith(pAddress, "127.") != nullptr ||
+	       str_startswith(pAddress, "[::1]") != nullptr ||
+	       str_comp(pAddress, "::1") == 0;
+}
+
 void CClient::Connect(const char *pAddress, const char *pPassword)
 {
 	// Disconnect will not change the state if we are already quitting/restarting
 	if(m_State == IClient::STATE_QUITTING || m_State == IClient::STATE_RESTARTING)
 		return;
+
+	// Last line of defence for the mandatory update: every way into a game server (browser,
+	// console, ddnet:// links, auto reconnect, Steam/Discord invites) ends up here. Refuse before
+	// disconnecting so a blocked attempt cannot drop the player from where they already are.
+	if(UpdateRequired() && !IsLoopbackConnectAddress(pAddress))
+	{
+		log_error("client", "refusing to connect to '%s': a mandatory update is available", pAddress);
+		SWarning Warning(Localize("Update required"),
+			Localize("A new version of UClient is available. You have to update before you can join a server."));
+		Warning.m_AutoHide = false;
+		AddWarning(Warning);
+		return;
+	}
+
 	Disconnect();
 	dbg_assert(m_State == IClient::STATE_OFFLINE, "Disconnect must ensure that client is offline");
 
@@ -3387,6 +3441,7 @@ void CClient::Run()
 
 #if defined(CONF_AUTOUPDATE)
 		Updater()->Update();
+		UpdateStartupUpdateCheck();
 #endif
 
 		// update sound

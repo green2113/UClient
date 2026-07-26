@@ -2850,17 +2850,12 @@ void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
 	Column.HSplitTop(10.0f, nullptr, &Column);
 	RightColumn.HSplitTop(10.0f, nullptr, &RightColumn);
 
-#if defined(CONF_AUTOUPDATE)
-	const float AutoUpdateHeight = LineSize;
-#else
-	const float AutoUpdateHeight = 0.0f;
-#endif
 	const float RealHitboxColorLineSize = 25.0f;
 	const float RealHitboxColorLineSpacing = 5.0f;
 	const float RealHitboxColorHeight = g_Config.m_BcShowRealHitbox ? RealHitboxColorLineSize + RealHitboxColorLineSpacing : 0.0f;
 	const float AutoLockDelayHeight = g_Config.m_BcAutoTeamLock ? LineSize : 0.0f;
 	const float SpecMovedNotifyTextHeight = g_Config.m_BcSpecMovedNotify ? LineSize : 0.0f;
-	const float MiscBlockHeight = LineSize + MarginSmall + AutoUpdateHeight + 17.0f * LineSize + AutoLockDelayHeight + SpecMovedNotifyTextHeight + RealHitboxColorHeight;
+	const float MiscBlockHeight = LineSize + MarginSmall + 17.0f * LineSize + AutoLockDelayHeight + SpecMovedNotifyTextHeight + RealHitboxColorHeight;
 	CUIRect MiscBlock;
 	Column.HSplitTop(MiscBlockHeight, &MiscBlock, &Column);
 
@@ -2876,9 +2871,6 @@ void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
 	Ui()->DoLabel(&Label, Localize("Misc"), HeadlineFontSize, TEXTALIGN_ML);
 	MiscBlock.HSplitTop(MarginSmall, nullptr, &MiscBlock);
 
-#if defined(CONF_AUTOUPDATE)
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcAutoUpdate, Localize("Automatic update"), &g_Config.m_BcAutoUpdate, &MiscBlock, LineSize);
-#endif
 	static CButtonContainer s_SettingsLayoutButton;
 	int UseNewMenuLayout = g_Config.m_BcSettingsLayout == 0 ? 1 : 0;
 	DoButton_CheckBoxAutoVMarginAndSet(&s_SettingsLayoutButton, Localize("Use new menu layout"), &UseNewMenuLayout, &MiscBlock, LineSize);

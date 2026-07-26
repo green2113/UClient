@@ -43,12 +43,27 @@ enum EPacketType : uint8_t
 	// Read receipts for UClient chat (KakaoTalk-style "read up to here" markers).
 	PACKET_READ = 14, // Client -> Server (proof protected)
 	PACKET_READ_BROADCAST = 15, // Server -> Client (relayed globally)
+	// Server join/leave announcements ("<name> joined <server>" / "<name> left the server.")
+	// shown to all UClient users. The join/leave distinction is a field, not a packet type.
+	PACKET_SERVER_JOIN = 16, // Client -> Server (proof protected)
+	PACKET_SERVER_JOIN_BROADCAST = 17, // Server -> Client (relayed globally)
+};
+
+enum EServerPresenceKind : uint8_t
+{
+	SERVER_PRESENCE_JOIN = 0,
+	SERVER_PRESENCE_LEAVE = 1,
+	// Switched straight from one server to another; announced once instead of leave + join.
+	SERVER_PRESENCE_MOVE = 2,
 };
 
 enum EChatScope : uint8_t
 {
 	CHAT_SCOPE_SAME_SERVER = 0,
 	CHAT_SCOPE_GLOBAL = 1,
+	// Relayed globally, but receivers only display it when the sender is in their friend list.
+	// No friend list is ever transmitted; the check always runs against the receiver's own list.
+	CHAT_SCOPE_FRIENDS = 2,
 };
 
 enum EReactionAction : uint8_t
@@ -140,6 +155,23 @@ struct CReadBroadcast
 	CUuid m_MessageId = UUID_ZEROED; // last message the reader has read up to
 };
 
+// Server join/leave announcement as received by peers (server -> client broadcast).
+struct CServerJoinBroadcast
+{
+	std::string m_ServerAddress; // ip:port that was joined/left (used to connect on click)
+	std::string m_ServerName; // friendly server name (falls back to address on the sender)
+	std::string m_JoinerName; // display name of the UClient user who joined/left
+	CUuid m_JoinerKey = UUID_ZEROED; // joiner's client instance uuid (for self-suppression)
+	uint8_t m_Kind = SERVER_PRESENCE_JOIN;
+	// When set, receivers only display the announcement if the joiner is in their friend list.
+	uint8_t m_FriendsOnly = 0;
+	// 0.6 skin snapshot so the announcement can render the sender's tee like a chat line.
+	std::string m_SkinName;
+	uint8_t m_UseCustomColor = 0;
+	int32_t m_ColorBody = 0;
+	int32_t m_ColorFeet = 0;
+};
+
 using BestClientIndicator::AppendProof;
 using BestClientIndicator::ComputeProof;
 using BestClientIndicator::ParseAddress;
@@ -203,6 +235,16 @@ void WriteReadClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUui
 	const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId);
 void WriteReadBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId);
 bool ReadReadBroadcast(const uint8_t *pData, int DataSize, CReadBroadcast &Out);
+
+// Server join/leave announcement packets. The client->server body (proof covered) is written by
+// WriteServerJoinClientBody; the caller appends the proof afterwards. The server->client
+// broadcast is written by WriteServerJoinBroadcast and parsed with ReadServerJoinBroadcast.
+void WriteServerJoinClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pServerAddress, const char *pServerName, const char *pJoinerName, CUuid JoinerKey, uint8_t Kind, uint8_t FriendsOnly,
+	const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet);
+void WriteServerJoinBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pServerName, const char *pJoinerName,
+	CUuid JoinerKey, uint8_t Kind, uint8_t FriendsOnly, const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet);
+bool ReadServerJoinBroadcast(const uint8_t *pData, int DataSize, CServerJoinBroadcast &Out);
 }
 
 #endif

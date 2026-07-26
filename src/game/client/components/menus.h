@@ -374,6 +374,7 @@ protected:
 	char m_aMessageButton[512];
 
 	char m_aPopupLinkUrl[2048] = "";
+	char m_aUClientJoinServerAddr[64] = ""; // stashed for the UClient server-join confirm popup
 	bool m_PopupDangerousConfirmButton = false;
 	char m_aPopupDangerousHoverLabel[256] = "";
 	bool m_PopupDeactivateAfterButton = false;
@@ -411,6 +412,11 @@ protected:
 		const char *pConfirmButtonLabel, const char *pCancelButtonLabel,
 		FPopupButtonCallback pfnConfirmButtonCallback = &CMenus::DefaultButtonCallback, int ConfirmNextPopup = POPUP_NONE,
 		FPopupButtonCallback pfnCancelButtonCallback = &CMenus::DefaultButtonCallback, int CancelNextPopup = POPUP_NONE);
+
+	// Explains the mandatory update and offers to start it. Returns true when a pending update
+	// blocks the attempted server join, in which case the caller must not connect.
+	bool PopupUpdateRequired();
+	void PopupConfirmStartUpdate();
 
 	// some settings
 	static float ms_ButtonHeight;
@@ -1105,6 +1111,10 @@ public:
 	void PopupConfirmOpenLink(const char *pTitle, const char *pMessage, const char *pConfirmButtonLabel, const char *pCancelButtonLabel, const char *pUrl, bool Dangerous);
 	void PopupOpenStoredLink();
 	void PopupCancelStoredLink();
+
+	// UClient server-join: show a "Move to <ServerName>?" confirm popup and connect on confirm.
+	void RequestUClientServerJoin(const char *pAddr, const char *pServerName);
+	void PopupConfirmJoinUClientServer();
 
 	void OpenSoundboardDeletePopup(bool LocalFile = false);
 	void PopupConfirmSoundboardDelete();

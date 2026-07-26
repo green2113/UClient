@@ -328,6 +328,71 @@ bool ReadReadBroadcast(const uint8_t *pData, int DataSize, CReadBroadcast &Out)
 	return Offset == DataSize;
 }
 
+void WriteServerJoinClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pServerAddress, const char *pServerName, const char *pJoinerName, CUuid JoinerKey, uint8_t Kind, uint8_t FriendsOnly,
+	const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet)
+{
+	WriteHeader(vOut, PACKET_SERVER_JOIN);
+	WriteString(vOut, pPlayerId);
+	WriteUuid(vOut, SessionId);
+	WriteUuid(vOut, Nonce);
+	WriteU64(vOut, Timestamp);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pServerName);
+	WriteString(vOut, pJoinerName);
+	WriteUuid(vOut, JoinerKey);
+	WriteU8(vOut, Kind);
+	WriteU8(vOut, FriendsOnly);
+	WriteString(vOut, pSkinName && pSkinName[0] != '\0' ? pSkinName : "default");
+	WriteU8(vOut, UseCustomColor);
+	WriteI32(vOut, ColorBody);
+	WriteI32(vOut, ColorFeet);
+}
+
+void WriteServerJoinBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pServerName, const char *pJoinerName,
+	CUuid JoinerKey, uint8_t Kind, uint8_t FriendsOnly, const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet)
+{
+	vOut.clear();
+	WriteHeader(vOut, PACKET_SERVER_JOIN_BROADCAST);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pServerName);
+	WriteString(vOut, pJoinerName);
+	WriteUuid(vOut, JoinerKey);
+	WriteU8(vOut, Kind);
+	WriteU8(vOut, FriendsOnly);
+	WriteString(vOut, pSkinName && pSkinName[0] != '\0' ? pSkinName : "default");
+	WriteU8(vOut, UseCustomColor);
+	WriteI32(vOut, ColorBody);
+	WriteI32(vOut, ColorFeet);
+}
+
+bool ReadServerJoinBroadcast(const uint8_t *pData, int DataSize, CServerJoinBroadcast &Out)
+{
+	int Offset = 0;
+	EPacketType Type;
+	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != PACKET_SERVER_JOIN_BROADCAST)
+		return false;
+
+	int32_t ColorBody = 0;
+	int32_t ColorFeet = 0;
+	if(!ReadString(pData, DataSize, Offset, Out.m_ServerAddress) ||
+		!ReadString(pData, DataSize, Offset, Out.m_ServerName) ||
+		!ReadString(pData, DataSize, Offset, Out.m_JoinerName) ||
+		!ReadUuid(pData, DataSize, Offset, Out.m_JoinerKey) ||
+		!ReadU8(pData, DataSize, Offset, Out.m_Kind) ||
+		!ReadU8(pData, DataSize, Offset, Out.m_FriendsOnly) ||
+		!ReadString(pData, DataSize, Offset, Out.m_SkinName) ||
+		!ReadU8(pData, DataSize, Offset, Out.m_UseCustomColor) ||
+		!ReadI32(pData, DataSize, Offset, ColorBody) ||
+		!ReadI32(pData, DataSize, Offset, ColorFeet))
+	{
+		return false;
+	}
+	Out.m_ColorBody = ColorBody;
+	Out.m_ColorFeet = ColorFeet;
+	return Offset == DataSize;
+}
+
 bool ReadClientPresencePacket(const uint8_t *pData, int DataSize, CClientPresencePacket &Out)
 {
 	int Offset = 0;

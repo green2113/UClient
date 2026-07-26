@@ -88,6 +88,11 @@ class CClient : public IClient, public CDemoPlayer::IListener
 	CFriends m_Friends;
 	CFriends m_Foes;
 
+	// Verdict of the startup update check, latched once (see UpdateStartupUpdateCheck) so that an
+	// update appearing later in the session cannot lock the player out of servers mid-game.
+	bool m_UpdateRequired = false;
+	bool m_UpdateCheckLatched = false;
+
 	char m_aConnectAddressStr[MAX_SERVER_ADDRESSES * NETADDR_MAXSTRSIZE] = "";
 
 	CUuid m_ConnectionId = UUID_ZEROED;
@@ -343,6 +348,9 @@ public:
 	void Connect(const char *pAddress, const char *pPassword = nullptr) override;
 	void DisconnectWithReason(const char *pReason);
 	void Disconnect() override;
+
+	bool UpdateRequired() override;
+	void UpdateStartupUpdateCheck();
 
 	void DummyDisconnect(const char *pReason) override;
 	void DummyConnect() override;
