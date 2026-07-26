@@ -1499,7 +1499,7 @@ void CClientIndicator::SendUClientChat(const char *pMessage)
 	GameClient()->m_Chat.AddUClientChatLine(
 		SenderClientId >= 0 ? PlayerNameForClient(SenderClientId) : g_Config.m_PlayerName,
 		SenderClientId, aMessage, pServerAddress, MessageId, true,
-		pSkinName, UseCustomColor, ColorBody, ColorFeet);
+		pSkinName, UseCustomColor, ColorBody, ColorFeet, (int)Scope);
 }
 
 void CClientIndicator::ApplyUcChatBroadcast(const UClientPresence::CChatBroadcast &Chat)
@@ -1541,7 +1541,7 @@ void CClientIndicator::ApplyUcChatBroadcast(const UClientPresence::CChatBroadcas
 
 	GameClient()->m_Chat.AddUClientChatLine(Chat.m_SenderName.c_str(), Chat.m_SenderClientId,
 		Chat.m_Message.c_str(), aNormalizedServer, Chat.m_MessageId, false,
-		Chat.m_SkinName.c_str(), Chat.m_UseCustomColor, Chat.m_ColorBody, Chat.m_ColorFeet);
+		Chat.m_SkinName.c_str(), Chat.m_UseCustomColor, Chat.m_ColorBody, Chat.m_ColorFeet, (int)Chat.m_Scope);
 }
 
 bool CClientIndicator::IsLiveCursorBlockedByPlayerSpectate() const

@@ -222,6 +222,10 @@ class CChat : public CComponent
 		// they typed, so the "Name: " separator is replaced by a plain space.
 		bool m_ServerAnnouncement = false;
 
+		// Audience the sender picked for this message (UClientPresence::EChatScope), or -1 when
+		// there is none to show (announcements, or lines that never carried a scope).
+		int m_UClientScope = -1;
+
 		// UClient server-join announcement ("<name> joined <server>"). The server-name span at
 		// the end of the body is a clickable link that opens a confirm popup to connect.
 		bool m_HasServerJoinLink = false;
@@ -418,6 +422,10 @@ class CChat : public CComponent
 	// Server-join server-name link the mouse is over this frame (for the hint tooltip + click).
 	int m_HoveredServerJoinLineIndex = -1;
 	SRenderRect m_HoveredServerJoinRect{};
+
+	// UClient message the mouse is over this frame, for the "who can see this" note below it.
+	int m_HoveredScopeLineIndex = -1;
+	SRenderRect m_HoveredScopeRect{};
 
 	// Display name for a remote UClient chat line (ClientId == CLIENT_MSG). AddLine reads this
 	// so the console log prints the sender's name instead of the "— " client-message dash.
@@ -759,7 +767,7 @@ public:
 	void AddLine(int ClientId, int Team, const char *pLine);
 	void AddUClientChatLine(const char *pName, int SuggestedClientId, const char *pLine, const char *pServerAddress,
 		const CUuid &MessageId, bool Mine,
-		const char *pSkinName = nullptr, int UseCustomColor = 0, int ColorBody = 0, int ColorFeet = 0);
+		const char *pSkinName = nullptr, int UseCustomColor = 0, int ColorBody = 0, int ColorFeet = 0, int Scope = -1);
 	const char *FilterText(const char *pMessage, int ClientId = -2, bool IsChat = false);
 	void EnableMode(int Team);
 	void DisableMode();

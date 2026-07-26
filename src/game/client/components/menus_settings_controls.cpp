@@ -663,6 +663,21 @@ const std::vector<SKeyCap> &KeyboardLayout()
 	};
 	return s_Layout;
 }
+
+// Optional numpad block, right of the nav cluster and sharing its rows like on a real keyboard.
+// Adding it widens the grid from 18.5 to NUMPAD_GRID_W_UNITS without making it any taller.
+constexpr float NUMPAD_GRID_W_UNITS = 23.0f;
+const std::vector<SKeyCap> &NumpadLayout()
+{
+	static const std::vector<SKeyCap> s_Layout = {
+		{KEY_NUMLOCKCLEAR, "Num", 19.0f, 1.5f, 1.0f, 1.0f}, {KEY_KP_DIVIDE, "/", 20.0f, 1.5f, 1.0f, 1.0f}, {KEY_KP_MULTIPLY, "*", 21.0f, 1.5f, 1.0f, 1.0f}, {KEY_KP_MINUS, "-", 22.0f, 1.5f, 1.0f, 1.0f},
+		{KEY_KP_7, "7", 19.0f, 2.5f, 1.0f, 1.0f}, {KEY_KP_8, "8", 20.0f, 2.5f, 1.0f, 1.0f}, {KEY_KP_9, "9", 21.0f, 2.5f, 1.0f, 1.0f}, {KEY_KP_PLUS, "+", 22.0f, 2.5f, 1.0f, 2.0f},
+		{KEY_KP_4, "4", 19.0f, 3.5f, 1.0f, 1.0f}, {KEY_KP_5, "5", 20.0f, 3.5f, 1.0f, 1.0f}, {KEY_KP_6, "6", 21.0f, 3.5f, 1.0f, 1.0f},
+		{KEY_KP_1, "1", 19.0f, 4.5f, 1.0f, 1.0f}, {KEY_KP_2, "2", 20.0f, 4.5f, 1.0f, 1.0f}, {KEY_KP_3, "3", 21.0f, 4.5f, 1.0f, 1.0f}, {KEY_KP_ENTER, "Ent", 22.0f, 4.5f, 1.0f, 2.0f},
+		{KEY_KP_0, "0", 19.0f, 5.5f, 2.0f, 1.0f}, {KEY_KP_PERIOD, ".", 21.0f, 5.5f, 1.0f, 1.0f},
+	};
+	return s_Layout;
+}
 } // namespace
 
 const char *CMenusSettingsControls::BindDisplayName(const char *pCommand) const
@@ -747,10 +762,13 @@ void CMenusSettingsControls::RenderVisualBinds(CUIRect View)
 {
 	RenderBindPresets(View);
 
-	// Top row: modifier toggles on the left (combine freely, e.g. Ctrl+Alt), reset on the right.
-	CUIRect TogglesRow, ResetButton;
+	// Top row: modifier toggles on the left (combine freely, e.g. Ctrl+Alt), reset and the numpad
+	// toggle on the right. Both right-hand items are carved out before the toggles claim the rest.
+	CUIRect TogglesRow, ResetButton, NumpadToggle;
 	View.HSplitTop(BUTTON_HEIGHT, &TogglesRow, &View);
 	View.HSplitTop(MARGIN, nullptr, &View);
+	TogglesRow.VSplitRight(120.0f, &TogglesRow, &NumpadToggle);
+	TogglesRow.VSplitRight(MARGIN, &TogglesRow, nullptr);
 	TogglesRow.VSplitRight(150.0f, &TogglesRow, &ResetButton);
 	TogglesRow.VSplitRight(MARGIN, &TogglesRow, nullptr);
 
@@ -806,6 +824,11 @@ void CMenusSettingsControls::RenderVisualBinds(CUIRect View)
 	{
 		GameClient()->m_Menus.PopupConfirm(Localize("Reset controls"), Localize("Are you sure that you want to reset the controls to their defaults?"),
 			Localize("Reset"), Localize("Cancel"), &CMenus::ResetSettingsControls);
+	}
+
+	if(GameClient()->m_Menus.DoButton_CheckBox(&g_Config.m_UcBindKeyboardNumpad, Localize("Show numpad"), g_Config.m_UcBindKeyboardNumpad, &NumpadToggle))
+	{
+		g_Config.m_UcBindKeyboardNumpad ^= 1;
 	}
 
 	// Help line
@@ -889,7 +912,8 @@ void CMenusSettingsControls::DoVisualKey(CUIRect Cell, int Key, const char *pLab
 void CMenusSettingsControls::RenderKeyboardLayout(CUIRect View)
 {
 	const std::vector<SKeyCap> &Caps = KeyboardLayout();
-	const float GridWUnits = 18.5f;
+	const bool ShowNumpad = g_Config.m_UcBindKeyboardNumpad != 0;
+	const float GridWUnits = ShowNumpad ? NUMPAD_GRID_W_UNITS : 18.5f;
 	const float GridHUnits = 6.5f;
 	const float Spacing = 3.0f;
 
@@ -911,17 +935,24 @@ void CMenusSettingsControls::RenderKeyboardLayout(CUIRect View)
 	const float OriginX = View.x + maximum(0.0f, (View.w - GridPixW) / 2.0f);
 	const float OriginY = View.y;
 
+	// The main block is always drawn first so every key keeps the same button container across
+	// frames, whether or not the numpad is showing.
 	int Index = 0;
-	for(const SKeyCap &Cap : Caps)
-	{
-		CUIRect Cell;
-		Cell.x = OriginX + Cap.m_X * UnitW;
-		Cell.y = OriginY + Cap.m_Y * UnitW;
-		Cell.w = Cap.m_W * UnitW - Spacing;
-		Cell.h = Cap.m_H * UnitW - Spacing;
-		DoVisualKey(Cell, Cap.m_Key, Cap.m_pLabel, &m_aKeyCapButtons[Index % 256], IGraphics::CORNER_ALL, 3.0f);
-		Index++;
-	}
+	const auto DrawCaps = [&](const std::vector<SKeyCap> &vCaps) {
+		for(const SKeyCap &Cap : vCaps)
+		{
+			CUIRect Cell;
+			Cell.x = OriginX + Cap.m_X * UnitW;
+			Cell.y = OriginY + Cap.m_Y * UnitW;
+			Cell.w = Cap.m_W * UnitW - Spacing;
+			Cell.h = Cap.m_H * UnitW - Spacing;
+			DoVisualKey(Cell, Cap.m_Key, Cap.m_pLabel, &m_aKeyCapButtons[Index % 256], IGraphics::CORNER_ALL, 3.0f);
+			Index++;
+		}
+	};
+	DrawCaps(Caps);
+	if(ShowNumpad)
+		DrawCaps(NumpadLayout());
 
 	// Mouse section (label + mouse-shaped widget), centered below the keyboard.
 	CUIRect MouseArea;

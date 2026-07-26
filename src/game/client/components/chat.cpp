@@ -22,6 +22,7 @@
 #include <engine/shared/config.h>
 #include <engine/shared/csv.h>
 #include <engine/shared/http.h>
+#include <engine/shared/uclient_presence_protocol.h>
 #include <engine/textrender.h>
 
 #include <generated/protocol.h>
@@ -487,6 +488,7 @@ CChat::CLine::CLine()
 	m_UClientMine = false;
 	m_ReadLabelRectValid = false;
 	m_ServerAnnouncement = false;
+	m_UClientScope = -1;
 	m_HasServerJoinLink = false;
 	m_aServerJoinAddress[0] = '\0';
 	m_aServerJoinServerName[0] = '\0';
@@ -567,6 +569,7 @@ void CChat::CLine::Reset(CChat &This)
 	m_UClientMine = false;
 	m_ReadLabelRectValid = false;
 	m_ServerAnnouncement = false;
+	m_UClientScope = -1;
 	m_HasServerJoinLink = false;
 	m_aServerJoinAddress[0] = '\0';
 	m_aServerJoinServerName[0] = '\0';
@@ -7174,7 +7177,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 
 void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const char *pLine, const char *pServerAddress,
 	const CUuid &MessageId, bool Mine,
-	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet)
+	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet, int Scope)
 {
 	if(!g_Config.m_UcChat || !pName || !pLine || pName[0] == '\0' || pLine[0] == '\0')
 		return;
@@ -7228,6 +7231,7 @@ void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const c
 	Line.m_UClientFromCurrentServer = SameServer;
 	Line.m_UClientMessageId = MessageId;
 	Line.m_UClientMine = Mine;
+	Line.m_UClientScope = Scope;
 	// Monotonic order used as the read high-water mark (newer lines sort later).
 	Line.m_UClientSeq = ++m_UcSeqCounter;
 
@@ -8021,6 +8025,7 @@ void CChat::OnRender()
 	m_HoveredReactionIndex = -1;
 	m_HoveredReadLineIndex = -1;
 	m_HoveredServerJoinLineIndex = -1;
+	m_HoveredScopeLineIndex = -1;
 	m_ReplyCancelButtonRectValid = false;
 	for(int LineIndex = 0; LineIndex < MAX_LINES; ++LineIndex)
 	{
@@ -8796,6 +8801,23 @@ void CChat::OnRender()
 				}
 			}
 
+			// UClient: hovering anywhere on a message reveals the audience the sender picked for
+			// it. Deliberately not tied to the reply/shortcut buttons, which only exist on some
+			// lines, so this works on every UClient message including our own.
+			if(ChatInteractionActive && Line.m_UClient && !Line.m_ServerAnnouncement && Line.m_UClientScope >= 0)
+			{
+				const float HoverW = maximum(1.0f, ChatWidth());
+				if(MousePos.x >= LineRenderX && MousePos.x <= LineRenderX + HoverW &&
+					MousePos.y >= LineRenderY && MousePos.y <= LineRenderY + LineH)
+				{
+					m_HoveredScopeLineIndex = LineIndex;
+					m_HoveredScopeRect.m_X = LineRenderX;
+					m_HoveredScopeRect.m_Y = LineRenderY;
+					m_HoveredScopeRect.m_W = HoverW;
+					m_HoveredScopeRect.m_H = LineH;
+				}
+			}
+
 			// UClient read receipts: draw the "<name> read" label at the end of the message.
 			// It sits just past the text (leftmost of the action buttons) and is hoverable to
 			// reveal the full list of readers in a tooltip below.
@@ -9346,6 +9368,56 @@ void CChat::OnRender()
 			}
 			TextRender()->TextColor(TextRender()->DefaultTextColor());
 		}
+	}
+
+	// UClient: small note under the hovered message naming who it could reach.
+	if(m_HoveredScopeLineIndex >= 0 && m_HoveredScopeLineIndex < MAX_LINES)
+	{
+		const CLine &Line = m_aLines[m_HoveredScopeLineIndex];
+		char aNote[192];
+		if(Line.m_UClientScope == UClientPresence::CHAT_SCOPE_FRIENDS)
+		{
+			if(Line.m_UClientMine)
+				str_copy(aNote, Localize("This message is only visible to your friends."));
+			else
+				str_format(aNote, sizeof(aNote), Localize("This message is only visible to %s's friends."), Line.m_aName);
+		}
+		else if(Line.m_UClientScope == UClientPresence::CHAT_SCOPE_SAME_SERVER)
+		{
+			str_copy(aNote, Localize("This message is only visible to UClient users on the same server."));
+		}
+		else
+		{
+			str_copy(aNote, Localize("This message is visible to all UClient users."));
+		}
+
+		TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+		TextRender()->SetRenderFlags(0);
+
+		const float NoteFont = maximum(4.0f, FontSize() * 0.62f);
+		const float PadX = NoteFont * 0.6f;
+		const float PadY = NoteFont * 0.45f;
+		const float BoxW = TextRender()->TextWidth(NoteFont, aNote) + PadX * 2.0f;
+		const float BoxH = NoteFont * 1.32f + PadY * 2.0f;
+
+		// Left-aligned with the message and tucked right under it, rather than centred like the
+		// pointer-style tooltips: this reads as a footnote belonging to that line.
+		const SRenderRect &Anchor = m_HoveredScopeRect;
+		float BoxX = Anchor.m_X + FontSize() * 0.3f;
+		float BoxY = Anchor.m_Y + Anchor.m_H + NoteFont * 0.2f;
+		BoxX = std::clamp(BoxX, 1.0f, maximum(1.0f, Width - BoxW - 1.0f));
+		if(BoxY + BoxH > Height - 1.0f)
+			BoxY = maximum(1.0f, Anchor.m_Y - BoxH - NoteFont * 0.2f); // flip above at the screen edge
+
+		CUIRect Box(BoxX, BoxY, BoxW, BoxH);
+		Box.Draw(ColorRGBA(0.055f, 0.06f, 0.07f, 0.96f), IGraphics::CORNER_ALL, maximum(2.5f, NoteFont * 0.4f));
+
+		CTextCursor NoteCursor;
+		NoteCursor.SetPosition(vec2(BoxX + PadX, BoxY + PadY));
+		NoteCursor.m_FontSize = NoteFont;
+		TextRender()->TextColor(0.72f, 0.75f, 0.82f, 1.0f);
+		TextRender()->TextEx(&NoteCursor, aNote);
+		TextRender()->TextColor(TextRender()->DefaultTextColor());
 	}
 
 	// UClient server-join: hint tooltip inviting the user to click the server name to connect.
