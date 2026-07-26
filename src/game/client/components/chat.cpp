@@ -6143,6 +6143,25 @@ void CChat::SetUiMousePos(vec2 Pos)
 	Ui()->OnCursorMove(Pos.x - UpdatedMousePos.x, Pos.y - UpdatedMousePos.y);
 }
 
+bool CChat::IsReadingChat() const
+{
+	// WindowActive() lives on IEngineGraphics (the game-facing IGraphics doesn't expose it).
+	IEngineGraphics *pEngineGraphics = Kernel()->RequestInterface<IEngineGraphics>();
+	if(!pEngineGraphics || !pEngineGraphics->WindowActive())
+		return false;
+
+	// Being flagged AFK by the server means nobody has touched the controls in a while, so a
+	// focused window alone proves nothing: the player may have walked away from a lit screen.
+	const int LocalId = GameClient()->m_aLocalIds[g_Config.m_ClDummy];
+	const bool Afk = LocalId >= 0 && LocalId < MAX_CLIENTS && GameClient()->m_aClients[LocalId].m_Afk;
+	if(!Afk)
+		return true;
+
+	// Pulling the chat up by hand still counts. +show_chat deliberately sends no input, so it
+	// never clears the server-side AFK flag even though the player is clearly at the keyboard.
+	return m_Show || m_Mode != MODE_NONE;
+}
+
 bool CChat::WasChatAutoHidden() const
 {
 	if(g_Config.m_ClShowChat == 0 || g_Config.m_ClShowChat == 2 || m_Mode != MODE_NONE)
@@ -8526,8 +8545,8 @@ void CChat::OnRender()
 		if(KeepLinesAlive && LineIndex == m_MediaViewerLineIndex)
 			Blend = 1.0f;
 
-		// A visibly-rendered message from someone else counts as "read": remember the newest
-		// one so we can move our read marker forward once (only while the window is focused).
+		// A visibly-rendered message from someone else counts as "read": remember the newest one
+		// so we can move our read marker forward once (see IsReadingChat for when that applies).
 		if(Line.m_UClient && !Line.m_UClientMine && Line.m_UClientMessageId != UUID_ZEROED &&
 			Blend > 0.5f && Line.m_UClientSeq > MaxVisibleReadSeq)
 		{
@@ -9237,18 +9256,13 @@ void CChat::OnRender()
 	}
 
 	// UClient read receipts: advance our own read marker to the newest other-authored UClient
-	// message that was visible this frame, but only while the DDNet window is focused. Broadcast
-	// once whenever the marker actually moves forward so peers can update their "read" labels.
-	if(MaxVisibleReadSeq > m_UcLocalReadMarkerSeq && MaxVisibleReadMsgId != UUID_ZEROED)
+	// message that was visible this frame. Broadcast once whenever the marker actually moves
+	// forward so peers can update their "read" labels.
+	if(MaxVisibleReadSeq > m_UcLocalReadMarkerSeq && MaxVisibleReadMsgId != UUID_ZEROED && IsReadingChat())
 	{
-		// WindowActive() lives on IEngineGraphics (the game-facing IGraphics doesn't expose it).
-		IEngineGraphics *pEngineGraphics = Kernel()->RequestInterface<IEngineGraphics>();
-		if(pEngineGraphics && pEngineGraphics->WindowActive())
-		{
-			m_UcLocalReadMarkerSeq = MaxVisibleReadSeq;
-			m_UcLocalReadMarkerMsgId = MaxVisibleReadMsgId;
-			GameClient()->m_ClientIndicator.SendChatReadMarker(MaxVisibleReadMsgId);
-		}
+		m_UcLocalReadMarkerSeq = MaxVisibleReadSeq;
+		m_UcLocalReadMarkerMsgId = MaxVisibleReadMsgId;
+		GameClient()->m_ClientIndicator.SendChatReadMarker(MaxVisibleReadMsgId);
 	}
 
 	// UClient read receipts: tooltip listing everyone who has read up to the hovered message.

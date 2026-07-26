@@ -598,6 +598,8 @@ class CChat : public CComponent
 	void SyncTypingAnimationBaseline();
 	void RefreshTypingAnimation();
 	bool WasChatAutoHidden() const;
+	// True when the local player counts as reading what is on screen (see the read-receipt update).
+	bool IsReadingChat() const;
 	void StoreSave(const char *pText);
 	void SetUiMousePos(vec2 Pos);
 
