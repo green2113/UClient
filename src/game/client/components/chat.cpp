@@ -489,6 +489,9 @@ CChat::CLine::CLine()
 	m_ReadLabelRectValid = false;
 	m_ServerAnnouncement = false;
 	m_UClientScope = -1;
+	m_ScopeHoverRectValid = false;
+	m_aScopeNoteHeight[0] = 0.0f;
+	m_aScopeNoteHeight[1] = 0.0f;
 	m_HasServerJoinLink = false;
 	m_aServerJoinAddress[0] = '\0';
 	m_aServerJoinServerName[0] = '\0';
@@ -570,6 +573,9 @@ void CChat::CLine::Reset(CChat &This)
 	m_ReadLabelRectValid = false;
 	m_ServerAnnouncement = false;
 	m_UClientScope = -1;
+	m_ScopeHoverRectValid = false;
+	m_aScopeNoteHeight[0] = 0.0f;
+	m_aScopeNoteHeight[1] = 0.0f;
 	m_HasServerJoinLink = false;
 	m_aServerJoinAddress[0] = '\0';
 	m_aServerJoinServerName[0] = '\0';
@@ -3179,6 +3185,36 @@ bool CChat::LineNeedsNameColon(const CLine &Line)
 const char *CChat::LineNameSeparator(const CLine &Line)
 {
 	return Line.m_ServerAnnouncement ? " " : ": ";
+}
+
+// UClient chat can be addressed to everyone, to one game server, or to the sender's friends, and
+// none of that is visible in the message itself. Hovering spells it out.
+bool CChat::UClientScopeNoteText(const CLine &Line, char *pBuf, size_t BufSize)
+{
+	if(!Line.m_UClient || Line.m_ServerAnnouncement || Line.m_UClientScope < 0)
+		return false;
+
+	if(Line.m_UClientScope == UClientPresence::CHAT_SCOPE_FRIENDS)
+	{
+		if(Line.m_UClientMine)
+			str_copy(pBuf, Localize("This message is only visible to your friends."), BufSize);
+		else
+			str_format(pBuf, BufSize, Localize("This message is only visible to %s's friends."), Line.m_aName);
+	}
+	else if(Line.m_UClientScope == UClientPresence::CHAT_SCOPE_SAME_SERVER)
+	{
+		str_copy(pBuf, Localize("This message is only visible to UClient users on the same server."), BufSize);
+	}
+	else
+	{
+		str_copy(pBuf, Localize("This message is visible to all UClient users."), BufSize);
+	}
+	return true;
+}
+
+float CChat::ScopeNoteFontSize() const
+{
+	return maximum(3.5f, FontSize() * 0.55f);
 }
 
 bool CChat::LineNeedsTeePadding(const CLine &Line)
@@ -7355,7 +7391,7 @@ void CChat::AddServerJoinLine(const char *pJoinerName, const char *pServerAddres
 	Line.m_aYOffset[1] = -1.0f;
 }
 
-void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex)
+void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex, int HoveredScopeLineIndex)
 {
 	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 
@@ -7445,7 +7481,21 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			(Line.m_aSettingsLinkWidth[OffsetType] <= 0.0f ||
 				absolute(Line.m_aSettingsLinkHeight[OffsetType] - MeasureSettingsLinkHeight(Line, FontSize, SettingsCardRenderWidth(Line, FontSize, IsScoreBoardOpen, LineWidth, RealMsgPaddingX))) > 0.5f ||
 				absolute(Line.m_aSettingsLinkWidth[OffsetType] - MeasureSettingsLinkWidth(Line, FontSize)) > 0.5f);
-		if(Line.m_TextContainerIndex.Valid() && Line.m_aYOffset[OffsetType] >= 0.0f && !ForceRecreate && !SettingsLinkLayoutStale)
+
+		// UClient: the hovered message gets an extra row for its audience note. Deriving the
+		// wanted height here (rather than folding the hover into ForceRecreate) keeps the rebuild
+		// to the two lines whose height actually changes, and repairs any row left reserved on a
+		// line that scrolled out of view while it was hovered.
+		float WantScopeNoteHeight = 0.0f;
+		if(LineIndex == HoveredScopeLineIndex)
+		{
+			char aScopeNote[192];
+			if(UClientScopeNoteText(Line, aScopeNote, sizeof(aScopeNote)))
+				WantScopeNoteHeight = ScopeNoteFontSize() * 1.3f;
+		}
+		const bool ScopeNoteStale = absolute(Line.m_aScopeNoteHeight[OffsetType] - WantScopeNoteHeight) > 0.01f;
+
+		if(Line.m_TextContainerIndex.Valid() && Line.m_aYOffset[OffsetType] >= 0.0f && !ForceRecreate && !SettingsLinkLayoutStale && !ScopeNoteStale)
 			continue;
 
 		TextRender()->DeleteTextContainer(Line.m_TextContainerIndex);
@@ -7708,6 +7758,11 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			// UClient: reserve space for the emoji reaction row below the message/media.
 			Line.m_aReactionRowHeight[OffsetType] = LayoutReactionRow(Line, FontSize, LineWidth, 0.0f, 0.0f, nullptr);
 			TotalHeight += Line.m_aReactionRowHeight[OffsetType];
+
+			// UClient: the audience note row. The bubble extends upwards from a fixed bottom, so
+			// the pointer stays inside the message it just grew and the note cannot flicker.
+			Line.m_aScopeNoteHeight[OffsetType] = WantScopeNoteHeight;
+			TotalHeight += Line.m_aScopeNoteHeight[OffsetType];
 
 			Line.m_aYOffset[OffsetType] = TotalHeight;
 		}
@@ -8025,8 +8080,25 @@ void CChat::OnRender()
 	m_HoveredReactionIndex = -1;
 	m_HoveredReadLineIndex = -1;
 	m_HoveredServerJoinLineIndex = -1;
-	m_HoveredScopeLineIndex = -1;
 	m_ReplyCancelButtonRectValid = false;
+	// UClient audience note: resolved before OnPrepareLines because it changes the line's height.
+	// The bubble rects come from the previous frame, like the translate hover above.
+	int HoveredScopeLineIndex = -1;
+	if(m_Mode != MODE_NONE)
+	{
+		for(int LineIndex = 0; LineIndex < MAX_LINES; ++LineIndex)
+		{
+			const CLine &Line = m_aLines[LineIndex];
+			if(!Line.m_ScopeHoverRectValid)
+				continue;
+			if(MousePos.x >= Line.m_ScopeHoverRect.m_X && MousePos.x <= Line.m_ScopeHoverRect.m_X + Line.m_ScopeHoverRect.m_W &&
+				MousePos.y >= Line.m_ScopeHoverRect.m_Y && MousePos.y <= Line.m_ScopeHoverRect.m_Y + Line.m_ScopeHoverRect.m_H)
+			{
+				HoveredScopeLineIndex = LineIndex;
+				break;
+			}
+		}
+	}
 	for(int LineIndex = 0; LineIndex < MAX_LINES; ++LineIndex)
 	{
 		const CLine &Line = m_aLines[LineIndex];
@@ -8054,6 +8126,7 @@ void CChat::OnRender()
 		Line.m_SettingsShortcutRectValid = false;
 		Line.m_ReactionRectsValid = false;
 		Line.m_ReadLabelRectValid = false;
+		Line.m_ScopeHoverRectValid = false;
 	}
 	m_TranslateButtonRectValid = false;
 	m_GiphyButtonRectValid = false;
@@ -8520,7 +8593,7 @@ void CChat::OnRender()
 		m_ScrollbarDragging = false;
 	}
 
-	OnPrepareLines(y, m_BacklogCurLine, HoveredTranslateLineIndex);
+	OnPrepareLines(y, m_BacklogCurLine, HoveredTranslateLineIndex, HoveredScopeLineIndex);
 	std::string SelectionString;
 	bool HasChatSelection = false;
 
@@ -8801,20 +8874,33 @@ void CChat::OnRender()
 				}
 			}
 
-			// UClient: hovering anywhere on a message reveals the audience the sender picked for
-			// it. Deliberately not tied to the reply/shortcut buttons, which only exist on some
-			// lines, so this works on every UClient message including our own.
-			if(ChatInteractionActive && Line.m_UClient && !Line.m_ServerAnnouncement && Line.m_UClientScope >= 0)
+			// UClient: publish the message bubble so next frame's hover test can decide whether to
+			// open a row for the audience note, and draw that note once the row exists. Restricted
+			// to the bubble rather than the full chat column so the note only follows the message
+			// the pointer is actually on.
 			{
-				const float HoverW = maximum(1.0f, ChatWidth());
-				if(MousePos.x >= LineRenderX && MousePos.x <= LineRenderX + HoverW &&
-					MousePos.y >= LineRenderY && MousePos.y <= LineRenderY + LineH)
+				char aScopeNote[192];
+				if(UClientScopeNoteText(Line, aScopeNote, sizeof(aScopeNote)))
 				{
-					m_HoveredScopeLineIndex = LineIndex;
-					m_HoveredScopeRect.m_X = LineRenderX;
-					m_HoveredScopeRect.m_Y = LineRenderY;
-					m_HoveredScopeRect.m_W = HoverW;
-					m_HoveredScopeRect.m_H = LineH;
+					Line.m_ScopeHoverRect.m_X = LineRenderX;
+					Line.m_ScopeHoverRect.m_Y = LineRenderY;
+					Line.m_ScopeHoverRect.m_W = maximum(1.0f, Line.m_MessageFullWidth > 0.0f ? Line.m_MessageFullWidth : ChatWidth());
+					Line.m_ScopeHoverRect.m_H = LineH;
+					Line.m_ScopeHoverRectValid = true;
+
+					if(Line.m_aScopeNoteHeight[OffsetType] > 0.0f)
+					{
+						const float NoteFont = ScopeNoteFontSize();
+						const float NoteX = LineRenderX + RealMsgPaddingX / 2.0f + RealMsgPaddingTee;
+						// Bottom of the bubble, inside the padding the layout already leaves there.
+						const float NoteY = LineRenderY + LineH - RealMsgPaddingY / 2.0f - Line.m_aScopeNoteHeight[OffsetType];
+						CTextCursor NoteCursor;
+						NoteCursor.SetPosition(vec2(NoteX, NoteY));
+						NoteCursor.m_FontSize = NoteFont;
+						TextRender()->TextColor(0.62f, 0.66f, 0.72f, Blend);
+						TextRender()->TextEx(&NoteCursor, aScopeNote);
+						TextRender()->TextColor(TextRender()->DefaultTextColor());
+					}
 				}
 			}
 
@@ -9368,56 +9454,6 @@ void CChat::OnRender()
 			}
 			TextRender()->TextColor(TextRender()->DefaultTextColor());
 		}
-	}
-
-	// UClient: small note under the hovered message naming who it could reach.
-	if(m_HoveredScopeLineIndex >= 0 && m_HoveredScopeLineIndex < MAX_LINES)
-	{
-		const CLine &Line = m_aLines[m_HoveredScopeLineIndex];
-		char aNote[192];
-		if(Line.m_UClientScope == UClientPresence::CHAT_SCOPE_FRIENDS)
-		{
-			if(Line.m_UClientMine)
-				str_copy(aNote, Localize("This message is only visible to your friends."));
-			else
-				str_format(aNote, sizeof(aNote), Localize("This message is only visible to %s's friends."), Line.m_aName);
-		}
-		else if(Line.m_UClientScope == UClientPresence::CHAT_SCOPE_SAME_SERVER)
-		{
-			str_copy(aNote, Localize("This message is only visible to UClient users on the same server."));
-		}
-		else
-		{
-			str_copy(aNote, Localize("This message is visible to all UClient users."));
-		}
-
-		TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
-		TextRender()->SetRenderFlags(0);
-
-		const float NoteFont = maximum(4.0f, FontSize() * 0.62f);
-		const float PadX = NoteFont * 0.6f;
-		const float PadY = NoteFont * 0.45f;
-		const float BoxW = TextRender()->TextWidth(NoteFont, aNote) + PadX * 2.0f;
-		const float BoxH = NoteFont * 1.32f + PadY * 2.0f;
-
-		// Left-aligned with the message and tucked right under it, rather than centred like the
-		// pointer-style tooltips: this reads as a footnote belonging to that line.
-		const SRenderRect &Anchor = m_HoveredScopeRect;
-		float BoxX = Anchor.m_X + FontSize() * 0.3f;
-		float BoxY = Anchor.m_Y + Anchor.m_H + NoteFont * 0.2f;
-		BoxX = std::clamp(BoxX, 1.0f, maximum(1.0f, Width - BoxW - 1.0f));
-		if(BoxY + BoxH > Height - 1.0f)
-			BoxY = maximum(1.0f, Anchor.m_Y - BoxH - NoteFont * 0.2f); // flip above at the screen edge
-
-		CUIRect Box(BoxX, BoxY, BoxW, BoxH);
-		Box.Draw(ColorRGBA(0.055f, 0.06f, 0.07f, 0.96f), IGraphics::CORNER_ALL, maximum(2.5f, NoteFont * 0.4f));
-
-		CTextCursor NoteCursor;
-		NoteCursor.SetPosition(vec2(BoxX + PadX, BoxY + PadY));
-		NoteCursor.m_FontSize = NoteFont;
-		TextRender()->TextColor(0.72f, 0.75f, 0.82f, 1.0f);
-		TextRender()->TextEx(&NoteCursor, aNote);
-		TextRender()->TextColor(TextRender()->DefaultTextColor());
 	}
 
 	// UClient server-join: hint tooltip inviting the user to click the server name to connect.

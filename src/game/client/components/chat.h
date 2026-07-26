@@ -225,6 +225,11 @@ class CChat : public CComponent
 		// Audience the sender picked for this message (UClientPresence::EChatScope), or -1 when
 		// there is none to show (announcements, or lines that never carried a scope).
 		int m_UClientScope = -1;
+		// Message bubble, hover-tested one frame later to decide where the audience note goes.
+		SRenderRect m_ScopeHoverRect{};
+		bool m_ScopeHoverRectValid = false;
+		// Room reserved inside the bubble for that note; non-zero only while hovered.
+		float m_aScopeNoteHeight[2] = {0.0f, 0.0f};
 
 		// UClient server-join announcement ("<name> joined <server>"). The server-name span at
 		// the end of the body is a clickable link that opens a confirm popup to connect.
@@ -423,10 +428,6 @@ class CChat : public CComponent
 	int m_HoveredServerJoinLineIndex = -1;
 	SRenderRect m_HoveredServerJoinRect{};
 
-	// UClient message the mouse is over this frame, for the "who can see this" note below it.
-	int m_HoveredScopeLineIndex = -1;
-	SRenderRect m_HoveredScopeRect{};
-
 	// Display name for a remote UClient chat line (ClientId == CLIENT_MSG). AddLine reads this
 	// so the console log prints the sender's name instead of the "— " client-message dash.
 	char m_aPendingUClientName[64] = "";
@@ -599,6 +600,10 @@ class CChat : public CComponent
 	bool TryHandleSettingsLinkClick(CLine &Line, vec2 MousePos, float FontSize);
 	static bool LineNeedsNameColon(const CLine &Line);
 	static const char *LineNameSeparator(const CLine &Line);
+	// Fills pBuf with the "who can see this" note for a UClient message, or returns false when
+	// the line has no audience worth spelling out.
+	static bool UClientScopeNoteText(const CLine &Line, char *pBuf, size_t BufSize);
+	float ScopeNoteFontSize() const;
 	static bool LineNeedsTeePadding(const CLine &Line);
 	float ReplyBannerHeight(float ScaledFontSize) const;
 	void RenderReplyBanner(float x, float InputY, float ScaledFontSize);
@@ -779,7 +784,7 @@ public:
 	void OnConsoleInit() override;
 	void OnStateChange(int NewState, int OldState) override;
 	void OnRender() override;
-	void OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex = -1);
+	void OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex = -1, int HoveredScopeLineIndex = -1);
 	void Reset();
 	void OnRelease() override;
 	void OnMessage(int MsgType, void *pRawMsg) override;
