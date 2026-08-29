@@ -431,6 +431,7 @@ const char *UClientTabToken(int Tab)
 	{
 	case 0: return "Gameplay";
 	case 1: return "Others";
+	case 2: return "ChatRooms";
 	default: return "";
 	}
 }
@@ -440,6 +441,7 @@ int UClientTabFromToken(const char *pTab)
 	if(!pTab) return -1;
 	if(str_comp_nocase(pTab, "Gameplay") == 0 || str_comp_nocase(pTab, "Game_Play") == 0) return 0;
 	if(str_comp_nocase(pTab, "Others") == 0) return 1;
+	if(str_comp_nocase(pTab, "ChatRooms") == 0 || str_comp_nocase(pTab, "Chat_Rooms") == 0) return 2;
 	return -1;
 }
 

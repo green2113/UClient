@@ -1,9 +1,9 @@
 use constant_time_eq::constant_time_eq;
 use hmac::{Hmac, Mac};
 use hyper::server::conn::Http;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::env;
 use std::fs;
@@ -15,6 +15,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::time;
 use tokio_rustls::{rustls::ServerConfig, TlsAcceptor};
+use warp::http::StatusCode;
 use warp::Filter;
 
 const PROTOCOL_MAGIC: [u8; 4] = [0x55, 0x43, 0x50, 0x31]; // UCP1
@@ -53,6 +54,8 @@ const PACKET_READ: u8 = 14;
 const PACKET_READ_BROADCAST: u8 = 15;
 const PACKET_SERVER_JOIN: u8 = 16;
 const PACKET_SERVER_JOIN_BROADCAST: u8 = 17;
+const PACKET_ROOM_CHAT: u8 = 18;
+const PACKET_ROOM_CHAT_BROADCAST: u8 = 19;
 const SERVER_PRESENCE_JOIN: u8 = 0;
 const SERVER_PRESENCE_LEAVE: u8 = 1;
 const SERVER_PRESENCE_MOVE: u8 = 2;
@@ -63,6 +66,7 @@ const CHAT_SCOPE_GLOBAL: u8 = 1;
 const CHAT_SCOPE_FRIENDS: u8 = 2;
 const CHAT_MESSAGE_MAX_BYTES: usize = 512;
 const CHAT_MIN_INTERVAL: Duration = Duration::from_millis(400);
+const ROOM_CACHE_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 struct Config {
@@ -79,6 +83,8 @@ struct Config {
     sync_url: String,
     sync_secret: String,
     heartbeat_sync_debounce: Duration,
+    rooms_api_url: String,
+    rooms_relay_secret: String,
 }
 
 #[derive(Clone, Hash, Eq, PartialEq)]
@@ -152,6 +158,9 @@ struct SyncPayload<'a> {
 
 struct ServerState {
     entries: HashMap<SessionKey, PresenceEntry>,
+    sessions_by_player: HashMap<String, HashSet<SessionKey>>,
+    room_cache: HashMap<String, RoomMembership>,
+    banned_players: HashSet<String>,
     recent_nonces: HashMap<([u8; 16], [u8; 16]), Instant>,
     last_heartbeat_sync: HashMap<SessionKey, Instant>,
     last_chat_send: HashMap<SessionKey, Instant>,
@@ -160,10 +169,41 @@ struct ServerState {
     json_path: PathBuf,
 }
 
+#[derive(Clone)]
+struct RoomMembership {
+    name: String,
+    install_ids: HashSet<String>,
+}
+
+#[derive(Deserialize)]
+struct MembershipResponse {
+    rooms: Vec<MembershipRoom>,
+}
+
+#[derive(Deserialize)]
+struct MembershipRoom {
+    room_id: String,
+    room_name: String,
+    install_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct BansResponse {
+    install_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct InvalidateRequest {
+    room_id: String,
+}
+
 impl ServerState {
     fn new(json_path: PathBuf) -> Self {
         Self {
             entries: HashMap::new(),
+            sessions_by_player: HashMap::new(),
+            room_cache: HashMap::new(),
+            banned_players: HashSet::new(),
             recent_nonces: HashMap::new(),
             last_heartbeat_sync: HashMap::new(),
             last_chat_send: HashMap::new(),
@@ -218,10 +258,9 @@ impl ServerState {
     }
 
     fn log_invalid(&mut self, ip: IpAddr, now: Instant, reason: &str) {
-        let should_log = self
-            .invalid_rate_by_ip
-            .get(&ip)
-            .map_or(true, |last| now.saturating_duration_since(*last) >= Duration::from_secs(10));
+        let should_log = self.invalid_rate_by_ip.get(&ip).map_or(true, |last| {
+            now.saturating_duration_since(*last) >= Duration::from_secs(10)
+        });
         if should_log {
             eprintln!("invalid uclient presence packet from {ip}: {reason}");
             self.invalid_rate_by_ip.insert(ip, now);
@@ -252,6 +291,10 @@ impl ServerState {
             return_addr: from,
         };
         self.entries.insert(key.clone(), entry.clone());
+        self.sessions_by_player
+            .entry(key.player_id.clone())
+            .or_default()
+            .insert(key.clone());
         Some(entry)
     }
 
@@ -259,6 +302,12 @@ impl ServerState {
         let removed = self.entries.remove(key);
         if removed.is_some() {
             self.last_heartbeat_sync.remove(key);
+            if let Some(sessions) = self.sessions_by_player.get_mut(&key.player_id) {
+                sessions.remove(key);
+                if sessions.is_empty() {
+                    self.sessions_by_player.remove(&key.player_id);
+                }
+            }
         }
         removed
     }
@@ -291,8 +340,7 @@ impl ServerState {
         }
         let mut removed_entries = Vec::with_capacity(stale_keys.len());
         for key in &stale_keys {
-            if let Some(entry) = self.entries.remove(key) {
-                self.last_heartbeat_sync.remove(key);
+            if let Some(entry) = self.remove_entry(key) {
                 removed_entries.push(entry);
             }
         }
@@ -333,17 +381,40 @@ impl ServerState {
             .collect()
     }
 
-    fn cleanup(&mut self, now: Instant) -> Vec<PresenceEntry> {
-        let mut removed = Vec::new();
-        self.entries.retain(|_, entry| {
-            let expired = now.saturating_duration_since(entry.last_seen) > HEARTBEAT_TIMEOUT;
-            if expired {
-                removed.push(entry.clone());
+    fn peers_for_players<'a>(
+        &'a self,
+        player_ids: &HashSet<String>,
+        except: Option<&SessionKey>,
+    ) -> Vec<&'a PresenceEntry> {
+        let mut peers = Vec::new();
+        for player_id in player_ids {
+            let Some(sessions) = self.sessions_by_player.get(player_id) else {
+                continue;
+            };
+            for key in sessions {
+                if except.is_some_and(|skip| skip == key) {
+                    continue;
+                }
+                if let Some(entry) = self.entries.get(key) {
+                    peers.push(entry);
+                }
             }
-            !expired
-        });
-        for entry in &removed {
-            self.last_heartbeat_sync.remove(&entry.key);
+        }
+        peers
+    }
+
+    fn cleanup(&mut self, now: Instant) -> Vec<PresenceEntry> {
+        let stale_keys: Vec<SessionKey> = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| now.saturating_duration_since(entry.last_seen) > HEARTBEAT_TIMEOUT)
+            .map(|(key, _)| key.clone())
+            .collect();
+        let mut removed = Vec::with_capacity(stale_keys.len());
+        for key in stale_keys {
+            if let Some(entry) = self.remove_entry(&key) {
+                removed.push(entry);
+            }
         }
         self.cleanup_nonces(now);
         self.invalid_rate_by_ip
@@ -351,7 +422,12 @@ impl ServerState {
         removed
     }
 
-    fn should_sync_heartbeat(&mut self, key: &SessionKey, now: Instant, debounce: Duration) -> bool {
+    fn should_sync_heartbeat(
+        &mut self,
+        key: &SessionKey,
+        now: Instant,
+        debounce: Duration,
+    ) -> bool {
         match self.last_heartbeat_sync.get(key) {
             Some(last) if now.saturating_duration_since(*last) < debounce => false,
             _ => {
@@ -364,7 +440,10 @@ impl ServerState {
     fn snapshot_json(&self) -> String {
         let mut servers: HashMap<&str, Vec<&PresenceEntry>> = HashMap::new();
         for entry in self.entries.values() {
-            servers.entry(entry.server_address.as_str()).or_default().push(entry);
+            servers
+                .entry(entry.server_address.as_str())
+                .or_default()
+                .push(entry);
         }
 
         let mut server_addresses: Vec<&str> = servers.keys().copied().collect();
@@ -443,7 +522,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
     eprintln!("uclient presence JSON path {}", config.json_path.display());
     if config.sync_enabled {
-        eprintln!("uclient presence legacy KV sync enabled: {}", config.sync_url);
+        eprintln!(
+            "uclient presence legacy KV sync enabled: {}",
+            config.sync_url
+        );
     } else {
         eprintln!("uclient presence legacy KV sync disabled (JSON snapshot mode)");
     }
@@ -461,11 +543,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         client.clone(),
     ));
     let web_task = tokio::spawn(web_loop(Arc::clone(&state), Arc::clone(&config)));
+    let rooms_task = tokio::spawn(room_cache_refresh_loop(
+        Arc::clone(&state),
+        Arc::clone(&config),
+        client,
+    ));
 
     tokio::select! {
         result = udp_task => result??,
         result = cleanup_task => result??,
         result = web_task => result??,
+        result = rooms_task => result??,
         _ = tokio::signal::ctrl_c() => {},
     }
     Ok(())
@@ -473,8 +561,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 impl Config {
     fn load() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let state_dir = env::var("STATE_DIR").unwrap_or_else(|_| "run/uclientpresencesrv".to_string());
-        let token_path = env::var("TOKEN_PATH").unwrap_or_else(|_| format!("{state_dir}/shared-token.txt"));
+        let state_dir =
+            env::var("STATE_DIR").unwrap_or_else(|_| "run/uclientpresencesrv".to_string());
+        let token_path =
+            env::var("TOKEN_PATH").unwrap_or_else(|_| format!("{state_dir}/shared-token.txt"));
         let shared_token = env::var("UC_PRESENCE_UDP_SHARED_TOKEN")
             .ok()
             .filter(|token| !token.trim().is_empty())
@@ -482,7 +572,10 @@ impl Config {
             .trim()
             .to_string();
         if shared_token.is_empty() {
-            return Err("UC_PRESENCE_UDP_SHARED_TOKEN or TOKEN_PATH must provide a non-empty shared token".into());
+            return Err(
+                "UC_PRESENCE_UDP_SHARED_TOKEN or TOKEN_PATH must provide a non-empty shared token"
+                    .into(),
+            );
         }
 
         let sync_url = env::var("PRESENCE_SYNC_URL")
@@ -495,7 +588,9 @@ impl Config {
             .to_string();
         let sync_enabled = !sync_url.is_empty() && !sync_secret.is_empty();
         if !sync_url.is_empty() && sync_secret.is_empty() {
-            return Err("PRESENCE_UDP_SYNC_SECRET must be set when PRESENCE_SYNC_URL is configured".into());
+            return Err(
+                "PRESENCE_UDP_SYNC_SECRET must be set when PRESENCE_SYNC_URL is configured".into(),
+            );
         }
 
         let udp_bind = env::var("UDP_BIND")
@@ -523,17 +618,33 @@ impl Config {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
-        let tls_handshake_timeout =
-            env_duration_ms("WEB_TLS_HANDSHAKE_TIMEOUT_MS", DEFAULT_TLS_HANDSHAKE_TIMEOUT);
+        let tls_handshake_timeout = env_duration_ms(
+            "WEB_TLS_HANDSHAKE_TIMEOUT_MS",
+            DEFAULT_TLS_HANDSHAKE_TIMEOUT,
+        );
         let http_header_timeout =
             env_duration_ms("WEB_HTTP_HEADER_TIMEOUT_MS", DEFAULT_HTTP_HEADER_TIMEOUT);
-        let https_connection_timeout =
-            env_duration_ms("WEB_HTTPS_CONNECTION_TIMEOUT_MS", DEFAULT_HTTPS_CONNECTION_TIMEOUT);
+        let https_connection_timeout = env_duration_ms(
+            "WEB_HTTPS_CONNECTION_TIMEOUT_MS",
+            DEFAULT_HTTPS_CONNECTION_TIMEOUT,
+        );
         let heartbeat_sync_debounce = env::var("HEARTBEAT_SYNC_DEBOUNCE_SEC")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .map(Duration::from_secs)
             .unwrap_or(DEFAULT_HEARTBEAT_SYNC_DEBOUNCE);
+        let rooms_api_url = env::var("ROOMS_API_URL")
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .trim()
+            .to_string();
+        let rooms_relay_secret = env::var("ROOMS_RELAY_SECRET")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if !rooms_api_url.is_empty() && rooms_relay_secret.is_empty() {
+            return Err("ROOMS_RELAY_SECRET must be set when ROOMS_API_URL is configured".into());
+        }
 
         Ok(Self {
             udp_bind,
@@ -549,6 +660,8 @@ impl Config {
             sync_url,
             sync_secret,
             heartbeat_sync_debounce,
+            rooms_api_url,
+            rooms_relay_secret,
         })
     }
 }
@@ -660,6 +773,84 @@ async fn cleanup_loop(
     }
 }
 
+async fn refresh_room_cache_once(
+    state: &Arc<Mutex<ServerState>>,
+    config: &Config,
+    client: &reqwest::Client,
+) -> Result<(), String> {
+    let response = client
+        .get(format!("{}/internal/memberships", config.rooms_api_url))
+        .header(
+            "authorization",
+            format!("Bearer {}", config.rooms_relay_secret),
+        )
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+    let payload = response
+        .json::<MembershipResponse>()
+        .await
+        .map_err(|err| err.to_string())?;
+    let rooms = payload
+        .rooms
+        .into_iter()
+        .filter(|room| !room.room_name.is_empty())
+        .map(|room| {
+            (
+                room.room_id,
+                RoomMembership {
+                    name: room.room_name,
+                    install_ids: room.install_ids.into_iter().collect(),
+                },
+            )
+        })
+        .collect();
+    state.lock().unwrap().room_cache = rooms;
+    Ok(())
+}
+
+async fn room_cache_refresh_loop(
+    state: Arc<Mutex<ServerState>>,
+    config: Arc<Config>,
+    client: reqwest::Client,
+) -> io::Result<()> {
+    if config.rooms_api_url.is_empty() {
+        std::future::pending::<()>().await;
+        return Ok(());
+    }
+    let mut interval = time::interval(ROOM_CACHE_REFRESH_INTERVAL);
+    loop {
+        interval.tick().await;
+        let authorization = format!("Bearer {}", config.rooms_relay_secret);
+
+        if let Err(err) = refresh_room_cache_once(&state, &config, &client).await {
+            eprintln!("room membership refresh failed: {err}");
+        }
+
+        match client
+            .get(format!("{}/internal/bans", config.rooms_api_url))
+            .header("authorization", &authorization)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => {
+                match response.json::<BansResponse>().await {
+                    Ok(payload) => {
+                        state.lock().unwrap().banned_players =
+                            payload.install_ids.into_iter().collect();
+                    }
+                    Err(err) => eprintln!("ban response parse failed: {err}"),
+                }
+            }
+            Ok(response) => eprintln!("ban refresh failed with {}", response.status()),
+            Err(err) => eprintln!("ban refresh failed: {err}"),
+        }
+    }
+}
+
 struct SyncJob {
     event: &'static str,
     player_id: String,
@@ -758,6 +949,11 @@ fn handle_udp_packet(
         state.log_invalid(ip, now, "bad header");
         return outcome;
     };
+    if client_packet_player_id(data)
+        .is_some_and(|player_id| state.banned_players.contains(&player_id))
+    {
+        return outcome;
+    }
 
     // Chat reactions are relayed to every UC peer on the same game server.
     if packet_type == PACKET_REACTION {
@@ -857,11 +1053,7 @@ fn handle_udp_packet(
         }
         let sender_key = SessionKey {
             player_id: chat.player_id.clone(),
-            session_id: format!(
-                "{}:{}",
-                format_uuid(chat.session_id),
-                chat.sender_client_id
-            ),
+            session_id: format!("{}:{}", format_uuid(chat.session_id), chat.sender_client_id),
         };
         if !state.allow_chat_send(&sender_key, now) {
             state.log_invalid(ip, now, "chat rate limited");
@@ -885,6 +1077,58 @@ fn handle_udp_packet(
             state.peers_all(Some(&sender_key))
         };
         for peer in peers {
+            outcome.outbound.push((peer.return_addr, packet.clone()));
+        }
+        return outcome;
+    }
+
+    if packet_type == PACKET_ROOM_CHAT {
+        let Some(chat) = read_room_chat_packet(data) else {
+            state.log_invalid(ip, now, "bad room chat payload");
+            return outcome;
+        };
+        if !validate_proof(shared_token, data) {
+            state.log_invalid(ip, now, "invalid room chat proof");
+            return outcome;
+        }
+        if chat.message.is_empty() || chat.message.len() > CHAT_MESSAGE_MAX_BYTES {
+            state.log_invalid(ip, now, "invalid room chat message length");
+            return outcome;
+        }
+        if !state.remember_nonce(chat.session_id, chat.nonce, now) {
+            state.log_invalid(ip, now, "room chat nonce replay");
+            return outcome;
+        }
+        let sender_key = SessionKey {
+            player_id: chat.player_id.clone(),
+            session_id: format!("{}:{}", format_uuid(chat.session_id), chat.sender_client_id),
+        };
+        if !state.allow_chat_send(&sender_key, now) {
+            state.log_invalid(ip, now, "room chat rate limited");
+            return outcome;
+        }
+        let Some(room) = state.room_cache.get(&chat.room_id).cloned() else {
+            state.log_invalid(ip, now, "unknown room");
+            return outcome;
+        };
+        if !room.install_ids.contains(&chat.player_id) {
+            state.log_invalid(ip, now, "room membership rejected");
+            return outcome;
+        }
+        let packet = encode_room_chat_broadcast(
+            &chat.room_id,
+            &room.name,
+            &chat.server_address,
+            &chat.sender_name,
+            chat.sender_client_id,
+            &chat.message,
+            &chat.skin_name,
+            chat.use_custom_color,
+            chat.color_body,
+            chat.color_feet,
+            chat.message_id,
+        );
+        for peer in state.peers_for_players(&room.install_ids, Some(&sender_key)) {
             outcome.outbound.push((peer.return_addr, packet.clone()));
         }
         return outcome;
@@ -1264,6 +1508,35 @@ fn encode_chat_broadcast(
     out
 }
 
+fn encode_room_chat_broadcast(
+    room_id: &str,
+    room_name: &str,
+    server_address: &str,
+    sender_name: &str,
+    sender_client_id: i16,
+    message: &str,
+    skin_name: &str,
+    use_custom_color: u8,
+    color_body: i32,
+    color_feet: i32,
+    message_id: [u8; 16],
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_header(&mut out, PACKET_ROOM_CHAT_BROADCAST);
+    write_string(&mut out, room_id);
+    write_string(&mut out, room_name);
+    write_string(&mut out, server_address);
+    write_string(&mut out, sender_name);
+    out.extend_from_slice(&sender_client_id.to_be_bytes());
+    write_string(&mut out, message);
+    write_string(&mut out, skin_name);
+    out.push(use_custom_color);
+    out.extend_from_slice(&color_body.to_be_bytes());
+    out.extend_from_slice(&color_feet.to_be_bytes());
+    out.extend_from_slice(&message_id);
+    out
+}
+
 fn encode_read_broadcast(
     server_address: &str,
     reader_name: &str,
@@ -1334,7 +1607,11 @@ fn write_string(out: &mut Vec<u8>, value: &str) {
     out.extend_from_slice(bytes);
 }
 
-async fn post_sync(client: &reqwest::Client, config: &Config, job: SyncJob) -> Result<(), reqwest::Error> {
+async fn post_sync(
+    client: &reqwest::Client,
+    config: &Config,
+    job: SyncJob,
+) -> Result<(), reqwest::Error> {
     if !config.sync_enabled {
         return Ok(());
     }
@@ -1379,6 +1656,14 @@ fn wire_protocol_version(data: &[u8]) -> Option<u8> {
 fn packet_type(data: &[u8]) -> Option<u8> {
     wire_protocol_version(data)?;
     Some(data[4])
+}
+
+fn client_packet_player_id(data: &[u8]) -> Option<String> {
+    wire_protocol_version(data)?;
+    let payload_len = data.len().checked_sub(PROOF_SIZE)?;
+    let mut reader = Reader::new(&data[..payload_len]);
+    reader.skip(6)?;
+    reader.string()
 }
 
 fn read_presence_packet(data: &[u8]) -> Option<PresencePacket> {
@@ -1580,6 +1865,63 @@ fn read_chat_packet(data: &[u8]) -> Option<ChatPacket> {
         sender_name,
         sender_client_id,
         scope,
+        message,
+        skin_name,
+        use_custom_color,
+        color_body,
+        color_feet,
+        message_id,
+    })
+}
+
+struct RoomChatPacket {
+    player_id: String,
+    session_id: [u8; 16],
+    nonce: [u8; 16],
+    room_id: String,
+    server_address: String,
+    sender_name: String,
+    sender_client_id: i16,
+    message: String,
+    skin_name: String,
+    use_custom_color: u8,
+    color_body: i32,
+    color_feet: i32,
+    message_id: [u8; 16],
+}
+
+fn read_room_chat_packet(data: &[u8]) -> Option<RoomChatPacket> {
+    if packet_type(data)? != PACKET_ROOM_CHAT || data.len() < PROOF_SIZE {
+        return None;
+    }
+    let payload_len = data.len().checked_sub(PROOF_SIZE)?;
+    let mut reader = Reader::new(&data[..payload_len]);
+    reader.skip(6)?;
+    let player_id = reader.string()?;
+    let session_id = reader.uuid()?;
+    let nonce = reader.uuid()?;
+    let _timestamp = reader.u64()?;
+    let room_id = reader.string()?;
+    let server_address = reader.string()?;
+    let sender_name = reader.string()?;
+    let sender_client_id = reader.i16()?;
+    let message = reader.string()?;
+    let skin_name = reader.string()?;
+    let use_custom_color = reader.u8()?;
+    let color_body = reader.i32()?;
+    let color_feet = reader.i32()?;
+    let message_id = reader.uuid()?;
+    if reader.remaining() != 0 || room_id.len() > 64 || skin_name.len() > 64 {
+        return None;
+    }
+    Some(RoomChatPacket {
+        player_id,
+        session_id,
+        nonce,
+        room_id,
+        server_address,
+        sender_name,
+        sender_client_id,
         message,
         skin_name,
         use_custom_color,
@@ -1855,9 +2197,65 @@ async fn web_loop(
             }
         });
 
+    let invalidate_state = Arc::clone(&state);
+    let invalidate_config = Arc::clone(&config);
+    let invalidate_client = reqwest::Client::new();
+    let invalidate_room = warp::path!("internal" / "rooms" / "invalidate")
+        .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
+        .and(warp::body::content_length_limit(1024))
+        .and(warp::body::json())
+        .and_then(
+            move |authorization: Option<String>, request: InvalidateRequest| {
+                let state = Arc::clone(&invalidate_state);
+                let config = Arc::clone(&invalidate_config);
+                let client = invalidate_client.clone();
+                async move {
+                    let provided = authorization
+                        .as_deref()
+                        .and_then(|value| value.strip_prefix("Bearer "))
+                        .unwrap_or("");
+                    let authorized = !config.rooms_relay_secret.is_empty()
+                        && provided.len() == config.rooms_relay_secret.len()
+                        && constant_time_eq(
+                            provided.as_bytes(),
+                            config.rooms_relay_secret.as_bytes(),
+                        );
+                    if !authorized {
+                        return Ok::<_, Infallible>(warp::reply::with_status(
+                            warp::reply::json(&serde_json::json!({"error": "unauthorized"})),
+                            StatusCode::UNAUTHORIZED,
+                        ));
+                    }
+                    if request.room_id.is_empty() {
+                        return Ok(warp::reply::with_status(
+                            warp::reply::json(&serde_json::json!({"error": "invalid_room"})),
+                            StatusCode::BAD_REQUEST,
+                        ));
+                    }
+                    match refresh_room_cache_once(&state, &config, &client).await {
+                        Ok(()) => Ok(warp::reply::with_status(
+                            warp::reply::json(
+                                &serde_json::json!({"ok": true, "room_id": request.room_id}),
+                            ),
+                            StatusCode::OK,
+                        )),
+                        Err(err) => {
+                            eprintln!("room membership invalidate refresh failed: {err}");
+                            Ok(warp::reply::with_status(
+                                warp::reply::json(&serde_json::json!({"error": "refresh_failed"})),
+                                StatusCode::BAD_GATEWAY,
+                            ))
+                        }
+                    }
+                }
+            },
+        );
+
     let routes = healthz
         .or(api_presence)
         .or(presence_file)
+        .or(invalidate_room)
         .with(warp::reply::with::header("cache-control", "no-store"))
         .with(warp::reply::with::header("connection", "close"));
 
@@ -1903,7 +2301,9 @@ async fn web_loop(
                     match connection {
                         Ok(Ok(())) => {}
                         Ok(Err(err)) => {
-                            eprintln!("uclient presence HTTPS request failed from {peer_addr}: {err}")
+                            eprintln!(
+                                "uclient presence HTTPS request failed from {peer_addr}: {err}"
+                            )
                         }
                         Err(_) => {
                             eprintln!("uclient presence HTTPS request timeout from {peer_addr}")
@@ -1921,7 +2321,9 @@ async fn web_loop(
                     match connection {
                         Ok(Ok(())) => {}
                         Ok(Err(err)) => {
-                            eprintln!("uclient presence HTTP request failed from {peer_addr}: {err}")
+                            eprintln!(
+                                "uclient presence HTTP request failed from {peer_addr}: {err}"
+                            )
                         }
                         Err(_) => {
                             eprintln!("uclient presence HTTP request timeout from {peer_addr}")
@@ -2030,11 +2432,15 @@ mod tests {
 
     #[test]
     fn session_ids_differ_by_client_id() {
-        let mut packet_a = read_presence_packet(&write_presence_packet(PACKET_JOIN, "shared", None)).unwrap();
+        let mut packet_a =
+            read_presence_packet(&write_presence_packet(PACKET_JOIN, "shared", None)).unwrap();
         packet_a.client_id = 1;
         let mut packet_b = packet_a.clone();
         packet_b.client_id = 2;
-        assert_ne!(session_id_for_packet(&packet_a), session_id_for_packet(&packet_b));
+        assert_ne!(
+            session_id_for_packet(&packet_a),
+            session_id_for_packet(&packet_b)
+        );
     }
 
     #[test]
@@ -2042,6 +2448,9 @@ mod tests {
         let packet = write_presence_packet(PACKET_SWITCH, "shared", Some("127.0.0.1:8302"));
         let parsed = read_presence_packet(&packet).unwrap();
         assert_eq!(parsed.packet_type, PACKET_SWITCH);
-        assert_eq!(parsed.from_server_address.as_deref(), Some("127.0.0.1:8302"));
+        assert_eq!(
+            parsed.from_server_address.as_deref(),
+            Some("127.0.0.1:8302")
+        );
     }
 }

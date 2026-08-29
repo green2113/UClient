@@ -1,5 +1,6 @@
 #include "timeout_reconnect.h"
 
+#include <base/process.h>
 #include <base/system.h>
 #include <base/time.h>
 
@@ -14,7 +15,111 @@
 
 #include <game/client/gameclient.h>
 
+#include <cerrno>
 #include <cstdio>
+
+#if defined(CONF_FAMILY_WINDOWS)
+#include <windows.h>
+#elif defined(CONF_FAMILY_UNIX)
+#include <signal.h>
+#endif
+
+namespace
+{
+constexpr const char *SESSION_FILE_PREFIX = "timeout_reconnect.";
+constexpr const char *SESSION_FILE_SUFFIX = ".session";
+
+bool IsProcessIdAlive(int ProcessId)
+{
+	if(ProcessId <= 0 || ProcessId == process_id())
+		return false;
+#if defined(CONF_FAMILY_WINDOWS)
+	HANDLE Process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)ProcessId);
+	if(!Process)
+		return false;
+	DWORD ExitCode = 0;
+	const bool Alive = GetExitCodeProcess(Process, &ExitCode) && ExitCode == STILL_ACTIVE;
+	CloseHandle(Process);
+	return Alive;
+#elif defined(CONF_FAMILY_UNIX)
+	return kill(ProcessId, 0) == 0 || errno == EPERM;
+#else
+	return false;
+#endif
+}
+
+bool ReadTimeoutSession(IStorage *pStorage, const char *pPath, char *pServer, int ServerSize, int64_t *pLastUnix, int *pTimeoutSec)
+{
+	IOHANDLE File = pStorage->OpenFile(pPath, IOFLAG_READ, IStorage::TYPE_SAVE);
+	if(!File)
+		return false;
+	char aBuf[512] = "";
+	const unsigned Read = io_read(File, aBuf, sizeof(aBuf) - 1);
+	io_close(File);
+	aBuf[Read] = '\0';
+
+	char aServer[NETADDR_MAXSTRSIZE] = "";
+	long long LastUnix = 0;
+	int TimeoutSec = 100;
+	if(Read == 0 || sscanf(aBuf, "%255s %lld %d", aServer, &LastUnix, &TimeoutSec) < 2 ||
+		aServer[0] == '\0' || LastUnix <= 0)
+		return false;
+	if(TimeoutSec <= 0)
+		TimeoutSec = 100;
+	str_copy(pServer, aServer, ServerSize);
+	*pLastUnix = (int64_t)LastUnix;
+	*pTimeoutSec = TimeoutSec;
+	return true;
+}
+
+struct STimeoutSessionScan
+{
+	IStorage *m_pStorage;
+	char *m_pServer;
+	int m_ServerSize;
+	int64_t *m_pLastUnix;
+	int *m_pTimeoutSec;
+	bool m_Found = false;
+};
+
+int ScanTimeoutSession(const char *pName, int IsDir, int DirType, void *pUser)
+{
+	(void)DirType;
+	auto *pScan = static_cast<STimeoutSessionScan *>(pUser);
+	const char *pProcessId = IsDir ? nullptr : str_startswith(pName, SESSION_FILE_PREFIX);
+	if(!pProcessId)
+		return 0;
+	const char *pSuffix = str_find(pProcessId, SESSION_FILE_SUFFIX);
+	if(!pSuffix || pSuffix[str_length(SESSION_FILE_SUFFIX)] != '\0' || pSuffix == pProcessId)
+		return 0;
+
+	int ProcessId = 0;
+	for(const char *pDigit = pProcessId; pDigit < pSuffix; ++pDigit)
+	{
+		if(*pDigit < '0' || *pDigit > '9')
+			return 0;
+		ProcessId = ProcessId * 10 + (*pDigit - '0');
+	}
+	if(IsProcessIdAlive(ProcessId))
+		return 0;
+
+	char aPath[IO_MAX_PATH_LENGTH];
+	str_format(aPath, sizeof(aPath), "uclient/%s", pName);
+	char aServer[NETADDR_MAXSTRSIZE];
+	int64_t LastUnix;
+	int TimeoutSec;
+	if(ReadTimeoutSession(pScan->m_pStorage, aPath, aServer, sizeof(aServer), &LastUnix, &TimeoutSec) &&
+		(!pScan->m_Found || LastUnix > *pScan->m_pLastUnix))
+	{
+		str_copy(pScan->m_pServer, aServer, pScan->m_ServerSize);
+		*pScan->m_pLastUnix = LastUnix;
+		*pScan->m_pTimeoutSec = TimeoutSec;
+		pScan->m_Found = true;
+	}
+	pScan->m_pStorage->RemoveFile(aPath, IStorage::TYPE_SAVE);
+	return 0;
+}
+}
 
 void CTimeoutReconnect::OnInit()
 {
@@ -160,6 +265,11 @@ bool CTimeoutReconnect::ShouldShowHud() const
 		RemainingSeconds() > 0;
 }
 
+void CTimeoutReconnect::SessionPath(char *pBuf, int BufSize) const
+{
+	str_format(pBuf, BufSize, "%s/%s%d%s", SESSION_DIR, SESSION_FILE_PREFIX, process_id(), SESSION_FILE_SUFFIX);
+}
+
 void CTimeoutReconnect::CurrentServerAddr(char *pBuf, int BufSize) const
 {
 	if(!pBuf || BufSize <= 0)
@@ -170,6 +280,9 @@ void CTimeoutReconnect::CurrentServerAddr(char *pBuf, int BufSize) const
 
 bool CTimeoutReconnect::LoadSession(char *pServer, int ServerSize, int64_t *pLastUnix, int *pTimeoutSec) const
 {
+	char aFallbackServer[NETADDR_MAXSTRSIZE] = "";
+	int64_t FallbackLastUnix = 0;
+	int FallbackTimeoutSec = DEFAULT_TIMEOUT_SEC;
 	if(pServer && ServerSize > 0)
 		pServer[0] = '\0';
 	if(pLastUnix)
@@ -177,34 +290,16 @@ bool CTimeoutReconnect::LoadSession(char *pServer, int ServerSize, int64_t *pLas
 	if(pTimeoutSec)
 		*pTimeoutSec = DEFAULT_TIMEOUT_SEC;
 
-	IOHANDLE File = Storage()->OpenFile(SESSION_PATH, IOFLAG_READ, IStorage::TYPE_SAVE);
-	if(!File)
-		return false;
-
-	char aBuf[512] = "";
-	const unsigned Read = io_read(File, aBuf, sizeof(aBuf) - 1);
-	io_close(File);
-	aBuf[Read] = '\0';
-	if(Read == 0)
-		return false;
-
-	char aServer[NETADDR_MAXSTRSIZE] = "";
-	long long LastUnix = 0;
-	int TimeoutSec = DEFAULT_TIMEOUT_SEC;
-	if(sscanf(aBuf, "%255s %lld %d", aServer, &LastUnix, &TimeoutSec) < 2)
-		return false;
-	if(aServer[0] == '\0' || LastUnix <= 0)
-		return false;
-	if(TimeoutSec <= 0)
-		TimeoutSec = DEFAULT_TIMEOUT_SEC;
-
-	if(pServer && ServerSize > 0)
-		str_copy(pServer, aServer, ServerSize);
-	if(pLastUnix)
-		*pLastUnix = (int64_t)LastUnix;
-	if(pTimeoutSec)
-		*pTimeoutSec = TimeoutSec;
-	return true;
+	// The old shared file cannot distinguish a crash from another live client.
+	Storage()->RemoveFile(LEGACY_SESSION_PATH, IStorage::TYPE_SAVE);
+	STimeoutSessionScan Scan = {
+		Storage(),
+		pServer && ServerSize > 0 ? pServer : aFallbackServer,
+		pServer && ServerSize > 0 ? ServerSize : (int)sizeof(aFallbackServer),
+		pLastUnix ? pLastUnix : &FallbackLastUnix,
+		pTimeoutSec ? pTimeoutSec : &FallbackTimeoutSec};
+	Storage()->ListDirectory(IStorage::TYPE_SAVE, SESSION_DIR, ScanTimeoutSession, &Scan);
+	return Scan.m_Found;
 }
 
 void CTimeoutReconnect::SaveSession(const char *pServer, int64_t LastUnix, int TimeoutSec) const
@@ -212,8 +307,10 @@ void CTimeoutReconnect::SaveSession(const char *pServer, int64_t LastUnix, int T
 	if(!pServer || pServer[0] == '\0' || LastUnix <= 0 || TimeoutSec <= 0)
 		return;
 
-	Storage()->CreateFolder("uclient", IStorage::TYPE_SAVE);
-	IOHANDLE File = Storage()->OpenFile(SESSION_PATH, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+	Storage()->CreateFolder(SESSION_DIR, IStorage::TYPE_SAVE);
+	char aPath[IO_MAX_PATH_LENGTH];
+	SessionPath(aPath, sizeof(aPath));
+	IOHANDLE File = Storage()->OpenFile(aPath, IOFLAG_WRITE, IStorage::TYPE_SAVE);
 	if(!File)
 		return;
 
@@ -225,7 +322,9 @@ void CTimeoutReconnect::SaveSession(const char *pServer, int64_t LastUnix, int T
 
 void CTimeoutReconnect::ClearSession() const
 {
-	Storage()->RemoveFile(SESSION_PATH, IStorage::TYPE_SAVE);
+	char aPath[IO_MAX_PATH_LENGTH];
+	SessionPath(aPath, sizeof(aPath));
+	Storage()->RemoveFile(aPath, IStorage::TYPE_SAVE);
 }
 
 void CTimeoutReconnect::LoadCrashSnapshotOnce()

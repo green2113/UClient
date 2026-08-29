@@ -47,6 +47,9 @@ enum EPacketType : uint8_t
 	// shown to all UClient users. The join/leave distinction is a field, not a packet type.
 	PACKET_SERVER_JOIN = 16, // Client -> Server (proof protected)
 	PACKET_SERVER_JOIN_BROADCAST = 17, // Server -> Client (relayed globally)
+	// Server-authoritative chat rooms.
+	PACKET_ROOM_CHAT = 18, // Client -> Server (proof protected)
+	PACKET_ROOM_CHAT_BROADCAST = 19, // Server -> Client
 };
 
 enum EServerPresenceKind : uint8_t
@@ -146,6 +149,21 @@ struct CChatBroadcast
 	CUuid m_MessageId = UUID_ZEROED;
 };
 
+struct CRoomChatBroadcast
+{
+	std::string m_RoomId;
+	std::string m_RoomName;
+	std::string m_ServerAddress;
+	std::string m_SenderName;
+	int m_SenderClientId = -1;
+	std::string m_Message;
+	std::string m_SkinName;
+	uint8_t m_UseCustomColor = 0;
+	int32_t m_ColorBody = 0;
+	int32_t m_ColorFeet = 0;
+	CUuid m_MessageId = UUID_ZEROED;
+};
+
 // UClient chat read receipt as received by peers (server -> client broadcast).
 struct CReadBroadcast
 {
@@ -227,6 +245,14 @@ void WriteChatClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUui
 void WriteChatBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pSenderName, int SenderClientId,
 	uint8_t Scope, const char *pMessage, const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet, CUuid MessageId);
 bool ReadChatBroadcast(const uint8_t *pData, int DataSize, CChatBroadcast &Out);
+
+void WriteRoomChatClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pRoomId, const char *pServerAddress, const char *pSenderName, int SenderClientId, const char *pMessage,
+	const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet, CUuid MessageId);
+void WriteRoomChatBroadcast(std::vector<uint8_t> &vOut, const char *pRoomId, const char *pRoomName, const char *pServerAddress,
+	const char *pSenderName, int SenderClientId, const char *pMessage, const char *pSkinName, uint8_t UseCustomColor,
+	int32_t ColorBody, int32_t ColorFeet, CUuid MessageId);
+bool ReadRoomChatBroadcast(const uint8_t *pData, int DataSize, CRoomChatBroadcast &Out);
 
 // Read receipt packets. The client->server body (proof covered) is written by
 // WriteReadClientBody; the caller appends the proof afterwards. The server->client

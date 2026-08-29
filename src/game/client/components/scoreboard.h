@@ -12,6 +12,7 @@
 
 #include <array>
 #include <memory>
+#include <vector>
 
 class CHttpRequest;
 
@@ -63,6 +64,16 @@ class CScoreboard : public CComponent
 		bool m_Gores = false;
 	};
 	std::array<STabPlayerPointsEntry, MAX_CLIENTS> m_aTabPlayerPoints;
+
+	struct SSwapRequest
+	{
+		char m_aName[MAX_NAME_LENGTH] = "";
+		int64_t m_ReceivedAt = 0;
+		int64_t m_ReadyAt = 0;
+	};
+	std::vector<SSwapRequest> m_vSwapRequests;
+	void RemoveSwapRequest(const char *pName);
+	int SwapRequestState(const char *pName) const;
 
 	void SetUiMousePos(vec2 Pos);
 	void LockMouse();
@@ -138,6 +149,7 @@ public:
 	bool IsShown() const;
 	bool IsMouseUnlocked() const { return IsActive() && m_MouseUnlocked; }
 	void OpenPlayerPopup(int ClientId, bool IsSpectating, float PopupX, float PopupY);
+	void OnServerSwapMessage(const char *pMessage);
 };
 
 #endif

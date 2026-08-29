@@ -1,0 +1,30 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "uclient-rooms-server",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-08-29",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"observability": {
+		"enabled": true,
+		"head_sampling_rate": 1
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "uclient-rooms",
+			"database_id": "263c3209-ee3f-45f8-ac6d-b8bff8cc5638",
+			"migrations_dir": "migrations"
+		},
+		{
+			"binding": "uclient_rooms",
+			"database_name": "uclient-rooms",
+			"database_id": "263c3209-ee3f-45f8-ac6d-b8bff8cc5638"
+		}
+	],
+	"vars": {
+		"ENVIRONMENT": "development",
+		"RELAY_INVALIDATE_URL": ""
+	}
+}

@@ -27,6 +27,12 @@ Important variables:
 - `UDP_BIND`, `WEB_HOST`, `WEB_PORT`: UDP and HTTPS bind addresses (default web port `8780`).
 - `TLS_CERT_FILE`, `TLS_KEY_FILE`: HTTPS certificate files.
 - `PRESENCE_SYNC_URL` / `PRESENCE_UDP_SYNC_SECRET`: optional legacy KV sync. Leave empty for JSON-only mode.
+- `ROOMS_API_URL` / `ROOMS_RELAY_SECRET`: optional UClient rooms Worker URL and shared relay secret. The relay refreshes room memberships and bans every 60 seconds.
+
+The room Worker can invalidate one cached room immediately with
+`POST /internal/rooms/invalidate`. Existing presence and global chat remain
+available if the Worker cannot be reached; room chat fails closed until a valid
+membership snapshot is available.
 
 ## Run
 

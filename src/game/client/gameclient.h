@@ -29,6 +29,8 @@
 // components
 #include "components/background.h"
 #include "components/bestclient/bestclient.h"
+#include "components/uclient/account.h"
+#include "components/uclient/chat_rooms.h"
 #include "components/uclient/timeout_reconnect.h"
 #include "components/uclient/uclient.h"
 #include "components/binds.h"
@@ -1158,6 +1160,8 @@ public:
 	void SetConnectInfo(const NETADDR *pAddress) override;
 
 	CUClient m_UClient;
+	CUClientAccount m_UClientAccount;
+	CUClientChatRooms m_UClientChatRooms;
 	CTimeoutReconnect m_TimeoutReconnect;
 };
 

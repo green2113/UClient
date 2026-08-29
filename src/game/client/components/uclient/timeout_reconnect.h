@@ -15,7 +15,8 @@
  */
 class CTimeoutReconnect : public CComponent
 {
-	static constexpr const char *SESSION_PATH = "uclient/timeout_reconnect.session";
+	static constexpr const char *SESSION_DIR = "uclient";
+	static constexpr const char *LEGACY_SESSION_PATH = "uclient/timeout_reconnect.session";
 	static constexpr int DEFAULT_TIMEOUT_SEC = 100;
 	static constexpr int64_t HEARTBEAT_INTERVAL_MS = 1000;
 	static constexpr int64_t QUERY_DELAY_MS = 1500;
@@ -52,6 +53,7 @@ class CTimeoutReconnect : public CComponent
 
 	bool m_IntentionalLeave = false;
 
+	void SessionPath(char *pBuf, int BufSize) const;
 	void CurrentServerAddr(char *pBuf, int BufSize) const;
 	bool LoadSession(char *pServer, int ServerSize, int64_t *pLastUnix, int *pTimeoutSec) const;
 	void SaveSession(const char *pServer, int64_t LastUnix, int TimeoutSec) const;

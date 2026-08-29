@@ -1,0 +1,5 @@
+# Local development only. Generate values with `npm run keygen`.
+ACCOUNT_PEPPER=replace-with-a-long-random-secret
+GRACE_PRIVATE_KEY_SEED_HEX=replace-with-64-hex-characters
+RELAY_SECRET=replace-with-a-long-random-secret
+RELAY_INVALIDATE_SECRET=replace-with-a-long-random-secret

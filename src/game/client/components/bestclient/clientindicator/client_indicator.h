@@ -33,6 +33,7 @@ struct CPeerList;
 struct CReactionBroadcast;
 struct CCursorBroadcast;
 struct CChatBroadcast;
+struct CRoomChatBroadcast;
 struct CReadBroadcast;
 struct CServerJoinBroadcast;
 }
@@ -77,6 +78,8 @@ public:
 
 	// UClient chat channel (cross-server by default; optional same-server scope).
 	void SendUClientChat(const char *pMessage);
+	// Reason why SendUClientChat would drop a message right now, or nullptr when it can send.
+	const char *UClientChatUnavailableReason();
 	bool UcPeerAppliesToCurrentServer(const char *pServerAddress) const;
 
 	// Draws the "Sharing cursor" indicator. Called from the HUD after the timer/music player so
@@ -94,6 +97,7 @@ private:
 	void RenderLiveCursorIndicatorPill(const char *pText, const ColorRGBA &DotColor);
 	void ApplyUcCursorBroadcast(const UClientPresence::CCursorBroadcast &Cursor);
 	void ApplyUcChatBroadcast(const UClientPresence::CChatBroadcast &Chat);
+	void ApplyUcRoomChatBroadcast(const UClientPresence::CRoomChatBroadcast &Chat);
 	void PruneStaleRemoteCursors();
 
 	bool m_LiveCursorActive = false;

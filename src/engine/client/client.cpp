@@ -5142,6 +5142,7 @@ int main(int argc, const char **argv)
 	pConsole->SetUnknownCommandCallback(UnknownArgumentCallback, pClient);
 	pConsole->ParseArguments(argc - 1, &argv[1]);
 	pConsole->SetUnknownCommandCallback(IConsole::EmptyUnknownCommandCallback, nullptr);
+	pConfigManager->SetReadOnly("uc_install_uuid", true);
 
 	if(pSteam->GetConnectAddress())
 	{

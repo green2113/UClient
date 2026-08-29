@@ -565,6 +565,134 @@ void CScoreboard::OnReset()
 	m_Active = false;
 	m_MouseUnlocked = false;
 	m_LastMousePos = std::nullopt;
+	m_vSwapRequests.clear();
+}
+
+void CScoreboard::OnServerSwapMessage(const char *pMessage)
+{
+	if(!pMessage)
+		return;
+	const auto SpanMatches = [](const char *pName, const char *pStart, int Length) {
+		return str_length(pName) == Length && str_comp_num(pName, pStart, Length) == 0;
+	};
+	const auto IsLocalName = [&](const char *pStart, int Length) {
+		for(const int LocalId : GameClient()->m_aLocalIds)
+		{
+			if(LocalId >= 0 && LocalId < MAX_CLIENTS &&
+				SpanMatches(GameClient()->m_aClients[LocalId].m_aName, pStart, Length))
+				return true;
+		}
+		return false;
+	};
+
+	constexpr const char *pCanceledMarker = " has canceled swap with you.";
+	if(const char *pCanceled = str_find(pMessage, pCanceledMarker))
+	{
+		const int NameLength = (int)(pCanceled - pMessage);
+		if(NameLength > 0 && NameLength < MAX_NAME_LENGTH &&
+			pCanceled[str_length(pCanceledMarker)] == '\0')
+		{
+			char aName[MAX_NAME_LENGTH];
+			mem_copy(aName, pMessage, NameLength);
+			aName[NameLength] = '\0';
+			RemoveSwapRequest(aName);
+		}
+		return;
+	}
+
+	constexpr const char *pSwappedMarker = " has swapped with ";
+	if(const char *pSwapped = str_find(pMessage, pSwappedMarker))
+	{
+		const int FirstNameLength = (int)(pSwapped - pMessage);
+		const char *pSecondName = pSwapped + str_length(pSwappedMarker);
+		int SecondNameLength = str_length(pSecondName);
+		if(SecondNameLength > 0 && pSecondName[SecondNameLength - 1] == '.')
+			--SecondNameLength;
+		if(FirstNameLength > 0 && FirstNameLength < MAX_NAME_LENGTH &&
+			SecondNameLength > 0 && SecondNameLength < MAX_NAME_LENGTH)
+		{
+			for(auto It = m_vSwapRequests.begin(); It != m_vSwapRequests.end();)
+			{
+				const bool RequesterIsFirst = SpanMatches(It->m_aName, pMessage, FirstNameLength);
+				const bool RequesterIsSecond = SpanMatches(It->m_aName, pSecondName, SecondNameLength);
+				if((RequesterIsFirst && IsLocalName(pSecondName, SecondNameLength)) ||
+					(RequesterIsSecond && IsLocalName(pMessage, FirstNameLength)))
+					It = m_vSwapRequests.erase(It);
+				else
+					++It;
+			}
+		}
+		return;
+	}
+
+	constexpr const char *pRequestMarker = " has requested to swap with you.";
+	constexpr const char *pWaitMarker = "To complete the swap process please wait ";
+	const char *pRequest = str_find(pMessage, pRequestMarker);
+	if(!pRequest)
+		return;
+	const int NameLength = (int)(pRequest - pMessage);
+	if(NameLength <= 0 || NameLength >= MAX_NAME_LENGTH)
+		return;
+	const char *pSeconds = str_find(pRequest + str_length(pRequestMarker), pWaitMarker);
+	if(!pSeconds)
+		return;
+	pSeconds += str_length(pWaitMarker);
+	if(!std::isdigit((unsigned char)*pSeconds))
+		return;
+	int WaitSeconds = 0;
+	while(std::isdigit((unsigned char)*pSeconds))
+	{
+		WaitSeconds = minimum(3600, WaitSeconds * 10 + (*pSeconds - '0'));
+		++pSeconds;
+	}
+	const char *pSwapName = str_startswith(pSeconds, " seconds and then type /swap ");
+	if(!pSwapName)
+		pSwapName = str_startswith(pSeconds, " second and then type /swap ");
+	if(!pSwapName || str_comp_num(pSwapName, pMessage, NameLength) != 0 ||
+		(pSwapName[NameLength] != '.' && pSwapName[NameLength] != '\0'))
+		return;
+
+	char aName[MAX_NAME_LENGTH];
+	mem_copy(aName, pMessage, NameLength);
+	aName[NameLength] = '\0';
+	const int64_t ReadyAt = time_get() + (int64_t)WaitSeconds * time_freq();
+	for(SSwapRequest &Request : m_vSwapRequests)
+	{
+		if(str_comp(Request.m_aName, aName) == 0)
+		{
+			Request.m_ReceivedAt = time_get();
+			Request.m_ReadyAt = ReadyAt;
+			return;
+		}
+	}
+	SSwapRequest Request;
+	str_copy(Request.m_aName, aName);
+	Request.m_ReceivedAt = time_get();
+	Request.m_ReadyAt = ReadyAt;
+	m_vSwapRequests.push_back(Request);
+}
+
+void CScoreboard::RemoveSwapRequest(const char *pName)
+{
+	m_vSwapRequests.erase(
+		std::remove_if(m_vSwapRequests.begin(), m_vSwapRequests.end(), [&](const SSwapRequest &Request) {
+			return str_comp(Request.m_aName, pName) == 0;
+		}),
+		m_vSwapRequests.end());
+}
+
+int CScoreboard::SwapRequestState(const char *pName) const
+{
+	for(const SSwapRequest &Request : m_vSwapRequests)
+	{
+		if(str_comp(Request.m_aName, pName) == 0)
+		{
+			if(time_get() - Request.m_ReceivedAt >= (int64_t)g_Config.m_UcSwapHighlightSeconds * time_freq())
+				return 0;
+			return time_get() < Request.m_ReadyAt ? 1 : 2;
+		}
+	}
+	return 0;
 }
 
 void CScoreboard::OnRelease()
@@ -1118,6 +1246,12 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 				}
 			}
 			PrevDDTeam = DDTeam;
+
+			const int SwapState = SwapRequestState(GameClient()->m_aClients[pInfo->m_ClientId].m_aName);
+			if(SwapState == 1)
+				Row.Draw(ColorRGBA(0.95f, 0.58f, 0.16f, 0.38f), IGraphics::CORNER_ALL, RoundRadius);
+			else if(SwapState == 2)
+				Row.Draw(ColorRGBA(0.30f, 0.72f, 0.48f, 0.38f), IGraphics::CORNER_ALL, RoundRadius);
 
 			// background so it's easy to find the local player or the followed one in spectator mode
 			if((!GameClient()->m_Snap.m_SpecInfo.m_Active && pInfo->m_Local) ||

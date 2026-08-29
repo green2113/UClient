@@ -458,6 +458,8 @@ void CGameClient::OnConsoleInit()
 					      &m_QuickBinds, // BestClient
 					      &m_Ghost,
 					      &m_BestClient, // BestClient binds
+					      &m_UClientAccount,
+					      &m_UClientChatRooms,
 					      &m_TimeoutReconnect,
 					      &m_TClient, // TClient (Must be before chat and players)
 					      &m_Players,

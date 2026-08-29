@@ -287,6 +287,70 @@ bool ReadChatBroadcast(const uint8_t *pData, int DataSize, CChatBroadcast &Out)
 	return Offset == DataSize;
 }
 
+void WriteRoomChatClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pRoomId, const char *pServerAddress, const char *pSenderName, int SenderClientId, const char *pMessage,
+	const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet, CUuid MessageId)
+{
+	WriteHeader(vOut, PACKET_ROOM_CHAT);
+	WriteString(vOut, pPlayerId);
+	WriteUuid(vOut, SessionId);
+	WriteUuid(vOut, Nonce);
+	WriteU64(vOut, Timestamp);
+	WriteString(vOut, pRoomId);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pSenderName);
+	WriteS16(vOut, (int16_t)SenderClientId);
+	WriteString(vOut, pMessage);
+	WriteString(vOut, pSkinName && pSkinName[0] != '\0' ? pSkinName : "default");
+	WriteU8(vOut, UseCustomColor);
+	WriteI32(vOut, ColorBody);
+	WriteI32(vOut, ColorFeet);
+	WriteUuid(vOut, MessageId);
+}
+
+void WriteRoomChatBroadcast(std::vector<uint8_t> &vOut, const char *pRoomId, const char *pRoomName, const char *pServerAddress,
+	const char *pSenderName, int SenderClientId, const char *pMessage, const char *pSkinName, uint8_t UseCustomColor,
+	int32_t ColorBody, int32_t ColorFeet, CUuid MessageId)
+{
+	vOut.clear();
+	WriteHeader(vOut, PACKET_ROOM_CHAT_BROADCAST);
+	WriteString(vOut, pRoomId);
+	WriteString(vOut, pRoomName);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pSenderName);
+	WriteS16(vOut, (int16_t)SenderClientId);
+	WriteString(vOut, pMessage);
+	WriteString(vOut, pSkinName && pSkinName[0] != '\0' ? pSkinName : "default");
+	WriteU8(vOut, UseCustomColor);
+	WriteI32(vOut, ColorBody);
+	WriteI32(vOut, ColorFeet);
+	WriteUuid(vOut, MessageId);
+}
+
+bool ReadRoomChatBroadcast(const uint8_t *pData, int DataSize, CRoomChatBroadcast &Out)
+{
+	int Offset = 0;
+	EPacketType Type;
+	int16_t SenderClientId = -1;
+	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != PACKET_ROOM_CHAT_BROADCAST ||
+		!ReadString(pData, DataSize, Offset, Out.m_RoomId) ||
+		!ReadString(pData, DataSize, Offset, Out.m_RoomName) ||
+		!ReadString(pData, DataSize, Offset, Out.m_ServerAddress) ||
+		!ReadString(pData, DataSize, Offset, Out.m_SenderName) ||
+		!ReadS16(pData, DataSize, Offset, SenderClientId) ||
+		!ReadString(pData, DataSize, Offset, Out.m_Message) ||
+		!ReadString(pData, DataSize, Offset, Out.m_SkinName) ||
+		!ReadU8(pData, DataSize, Offset, Out.m_UseCustomColor) ||
+		!ReadI32(pData, DataSize, Offset, Out.m_ColorBody) ||
+		!ReadI32(pData, DataSize, Offset, Out.m_ColorFeet) ||
+		!ReadUuid(pData, DataSize, Offset, Out.m_MessageId))
+	{
+		return false;
+	}
+	Out.m_SenderClientId = SenderClientId;
+	return Offset == DataSize;
+}
+
 void WriteReadClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
 	const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId)
 {

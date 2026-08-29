@@ -463,6 +463,7 @@ CChat::CLine::CLine()
 	m_vLinks.clear();
 	m_vLinkFontSizes.clear();
 	m_vLinkAlwaysConfirm.clear();
+	m_vLinkGroups.clear();
 	m_HasReply = false;
 	m_ReplyToClientId = -1;
 	m_ReplyMessageIndex = 0;
@@ -489,6 +490,7 @@ CChat::CLine::CLine()
 	m_ReadLabelRectValid = false;
 	m_ServerAnnouncement = false;
 	m_UClientScope = -1;
+	m_aUClientRoomName[0] = '\0';
 	m_ScopeHoverRectValid = false;
 	m_aScopeNoteHeight[0] = 0.0f;
 	m_aScopeNoteHeight[1] = 0.0f;
@@ -547,6 +549,11 @@ void CChat::CLine::Reset(CChat &This)
 	m_MapDownloadBtnRectValid = false;
 	m_UClient = false;
 	m_UClientFromCurrentServer = false;
+	m_vLinkBounds.clear();
+	m_vLinks.clear();
+	m_vLinkFontSizes.clear();
+	m_vLinkAlwaysConfirm.clear();
+	m_vLinkGroups.clear();
 	m_HasReply = false;
 	m_ReplyToClientId = -1;
 	m_ReplyMessageIndex = 0;
@@ -573,6 +580,7 @@ void CChat::CLine::Reset(CChat &This)
 	m_ReadLabelRectValid = false;
 	m_ServerAnnouncement = false;
 	m_UClientScope = -1;
+	m_aUClientRoomName[0] = '\0';
 	m_ScopeHoverRectValid = false;
 	m_aScopeNoteHeight[0] = 0.0f;
 	m_aScopeNoteHeight[1] = 0.0f;
@@ -616,6 +624,8 @@ CChat::CChat()
 	m_TranslateButtonRectValid = false;
 	m_GiphyButtonPressed = false;
 	m_GiphyButtonRectValid = false;
+	m_RoomButtonPressed = false;
+	m_RoomButtonRectValid = false;
 	m_PendingReplyActive = false;
 	m_PendingReplyClientId = -1;
 	m_PendingReplySourceLineIndex = -1;
@@ -812,6 +822,8 @@ void CChat::Reset()
 	m_LastMousePos = std::nullopt;
 	m_TranslateButtonPressed = false;
 	m_TranslateButtonRectValid = false;
+	m_RoomButtonPressed = false;
+	m_RoomButtonRectValid = false;
 	m_HideMediaByBind = false;
 	if(m_LinkPreflight.m_pRequest)
 		m_LinkPreflight.m_pRequest->Abort();
@@ -997,6 +1009,29 @@ void CChat::ConSayTeam(IConsole::IResult *pResult, void *pUserData)
 	((CChat *)pUserData)->SendChat(1, pResult->GetString(0));
 }
 
+void CChat::ConSayUClient(IConsole::IResult *pResult, void *pUserData)
+{
+	((CChat *)pUserData)->SayUClient(pResult->GetString(0));
+}
+
+// Shown in the chat window rather than the console so it is still visible when the command that
+// hit it came from a bind. Tinted like any other UClient line.
+void CChat::EchoUClientNotice(const char *pText)
+{
+	const int PrevShowClient = g_Config.m_TcShowChatClient;
+	g_Config.m_TcShowChatClient = 1;
+	Echo(pText);
+	g_Config.m_TcShowChatClient = PrevShowClient;
+	CLine &Line = m_aLines[m_CurrentLine];
+	if(Line.m_Initialized && Line.m_ClientId == CLIENT_MSG)
+		Line.m_CustomColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
+}
+
+void CChat::EchoUClientDisabled()
+{
+	EchoUClientNotice("UClient chat is disabled.");
+}
+
 void CChat::ConChat(IConsole::IResult *pResult, void *pUserData)
 {
 	CChat *pChat = (CChat *)pUserData;
@@ -1009,13 +1044,7 @@ void CChat::ConChat(IConsole::IResult *pResult, void *pUserData)
 	{
 		if(!g_Config.m_UcChat)
 		{
-			const int PrevShowClient = g_Config.m_TcShowChatClient;
-			g_Config.m_TcShowChatClient = 1;
-			pChat->Echo("UClient chat is disabled.");
-			g_Config.m_TcShowChatClient = PrevShowClient;
-			CLine &Line = pChat->m_aLines[pChat->m_CurrentLine];
-			if(Line.m_Initialized && Line.m_ClientId == CLIENT_MSG)
-				Line.m_CustomColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
+			pChat->EchoUClientDisabled();
 			return;
 		}
 		pChat->EnableMode(TEAM_UCLIENT);
@@ -1109,6 +1138,7 @@ void CChat::OnConsoleInit()
 {
 	Console()->Register("say", "r[message]", CFGFLAG_CLIENT, ConSay, this, "Say in chat");
 	Console()->Register("say_team", "r[message]", CFGFLAG_CLIENT, ConSayTeam, this, "Say in team chat");
+	Console()->Register("say_uclient", "r[message]", CFGFLAG_CLIENT, ConSayUClient, this, "Say in UClient chat");
 	Console()->Register("chat", "s['team'|'all'|'uclient'] ?r[message]", CFGFLAG_CLIENT, ConChat, this, "Enable chat with all/team/uclient mode");
 	Console()->Register("+show_chat", "", CFGFLAG_CLIENT, ConShowChat, this, "Show chat");
 	Console()->Register("echo", "r[message]", CFGFLAG_CLIENT | CFGFLAG_STORE, ConEcho, this, "Echo the text in chat window");
@@ -1327,6 +1357,120 @@ void CChat::RenderTranslateSettingsButton(const CUIRect &ButtonRect)
 	if(Hovered)
 		Ui()->SetHotItem(&m_TranslateSettingsButton);
 	GameClient()->m_Tooltips.DoToolTip(&m_TranslateSettingsButton, &ButtonRect, Localize("Chat translate settings"));
+}
+
+void CChat::OpenRoomSelectPopup(const CUIRect &ButtonRect)
+{
+	const float ChatHeight = 300.0f;
+	const float ChatWidth = ChatHeight * Graphics()->ScreenAspect();
+	const CUIRect *pUiScreen = Ui()->Screen();
+	const float ScaleX = pUiScreen->w / ChatWidth;
+	const float ScaleY = pUiScreen->h / ChatHeight;
+	const float PopupWidth = 330.0f;
+	const float PopupHeight = 330.0f;
+	const float Margin = 6.0f;
+	const float UiButtonRight = (ButtonRect.x + ButtonRect.w) * ScaleX;
+	const float UiButtonTop = ButtonRect.y * ScaleY;
+	const float PopupX = std::clamp(UiButtonRight - PopupWidth, Margin, pUiScreen->w - PopupWidth - Margin);
+	const float PopupY = std::clamp(UiButtonTop - PopupHeight - 6.0f, Margin, pUiScreen->h - PopupHeight - Margin);
+	Ui()->DoPopupMenu(&m_RoomSelectPopupId, PopupX, PopupY, PopupWidth, PopupHeight, this, PopupRoomSelect);
+}
+
+CUi::EPopupMenuFunctionResult CChat::PopupRoomSelect(void *pContext, CUIRect View, bool Active)
+{
+	CChat *pChat = static_cast<CChat *>(pContext);
+	(void)Active;
+	static int s_CurTab = 0;
+	static CButtonContainer s_aTabs[2];
+	CUIRect TabBar, TabButton;
+	View.HSplitTop(22.0f, &TabBar, &View);
+	const char *apTabNames[] = {Localize("UClient Chat"), Localize("Translation")};
+	for(int Tab = 0; Tab < 2; ++Tab)
+	{
+		TabBar.VSplitLeft(TabBar.w / (2 - Tab), &TabButton, &TabBar);
+		const int Corners = Tab == 0 ? IGraphics::CORNER_L : IGraphics::CORNER_R;
+		if(pChat->GameClient()->m_Menus.DoButton_MenuTab(&s_aTabs[Tab], apTabNames[Tab], s_CurTab == Tab, &TabButton, Corners))
+			s_CurTab = Tab;
+	}
+	View.HSplitTop(8.0f, nullptr, &View);
+	if(s_CurTab == 1)
+		return PopupTranslateSettings(pContext, View, Active);
+
+	const auto &vRooms = pChat->GameClient()->m_UClientChatRooms.Rooms();
+	std::vector<std::string> vLabels = {
+		"All UClient users",
+		"Same server",
+	};
+	vLabels.reserve(2 + vRooms.size());
+	for(const auto &Room : vRooms)
+		vLabels.emplace_back(Room.m_aName);
+	std::vector<const char *> vpLabels;
+	vpLabels.reserve(vLabels.size());
+	for(const std::string &Label : vLabels)
+		vpLabels.push_back(Label.c_str());
+
+	int CurrentSelection = 0;
+	if(g_Config.m_UcChatSendRoom[0])
+	{
+		for(size_t i = 0; i < vRooms.size(); ++i)
+			if(!str_comp(g_Config.m_UcChatSendRoom, vRooms[i].m_aId))
+				CurrentSelection = 2 + (int)i;
+	}
+	else if(g_Config.m_UcChatSendSameServerOnly)
+		CurrentSelection = 1;
+	if(!g_Config.m_UcChatSendRoom[0] && g_Config.m_UcChatFriendsOnly)
+	{
+		g_Config.m_UcChatFriendsOnly = 0;
+		g_Config.m_UcChatSendSameServerOnly = 0;
+		pChat->ConfigManager()->Save();
+	}
+
+	CUIRect Row, Label, DropDown;
+	View.HSplitTop(20.0f, &Row, &View);
+	Row.VSplitLeft(82.0f, &Label, &DropDown);
+	DropDown.VSplitLeft(6.0f, nullptr, &DropDown);
+	pChat->Ui()->DoLabel(&Label, Localize("Send target"), 11.0f, TEXTALIGN_ML);
+	static CUi::SDropDownState s_SendTargetDropDownState;
+	static CScrollRegion s_SendTargetDropDownScrollRegion;
+	s_SendTargetDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_SendTargetDropDownScrollRegion;
+	const int NewSelection = pChat->Ui()->DoDropDown(&DropDown, CurrentSelection, vpLabels.data(), (int)vpLabels.size(), s_SendTargetDropDownState);
+	if(NewSelection != CurrentSelection)
+	{
+		if(NewSelection >= 2 && NewSelection < 2 + (int)vRooms.size())
+			pChat->GameClient()->m_UClientChatRooms.SelectSendRoom(vRooms[NewSelection - 2].m_aId);
+		else
+		{
+			pChat->GameClient()->m_UClientChatRooms.SelectSendRoom("");
+			g_Config.m_UcChatFriendsOnly = 0;
+			g_Config.m_UcChatSendSameServerOnly = NewSelection == 1;
+			pChat->ConfigManager()->Save();
+		}
+	}
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+void CChat::RenderRoomSelectButton(const CUIRect &ButtonRect)
+{
+	m_RoomButtonRect = {ButtonRect.x, ButtonRect.y, ButtonRect.w, ButtonRect.h};
+	m_RoomButtonRectValid = true;
+	const vec2 MousePos = ChatMousePos();
+	const bool Hovered = MousePos.x >= ButtonRect.x && MousePos.x <= ButtonRect.x + ButtonRect.w &&
+		MousePos.y >= ButtonRect.y && MousePos.y <= ButtonRect.y + ButtonRect.h;
+	const ColorRGBA ButtonColor = Hovered ? ColorRGBA(0.28f, 0.28f, 0.28f, 0.90f) :
+		ColorRGBA(0.16f, 0.16f, 0.16f, 0.82f);
+	ButtonRect.Draw(ButtonColor, IGraphics::CORNER_ALL, maximum(3.0f, ButtonRect.h * 0.28f));
+	CUIRect IconRect;
+	ButtonRect.Margin(1.0f, &IconRect);
+	TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+	TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
+	TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.95f);
+	Ui()->DoLabel(&IconRect, FontIcon::GEAR, IconRect.h * CUi::ms_FontmodHeight, TEXTALIGN_MC);
+	TextRender()->SetRenderFlags(0);
+	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+	if(Hovered)
+		Ui()->SetHotItem(&m_RoomSelectButton);
+	GameClient()->m_Tooltips.DoToolTip(&m_RoomSelectButton, &ButtonRect, Localize("UClient chat settings"));
 }
 
 namespace
@@ -2643,8 +2787,17 @@ static int MaxFittingUrlChars(ITextRender *pTextRender, const CTextCursor &Curso
 	return Best;
 }
 
-static void MeasureLinkBounds(ITextRender *pTextRender, const CTextCursor &Cursor, const char *pDisplayText, int DisplayLength, const std::string &TargetUrl, bool AlwaysConfirm, std::vector<STextBoundingBox> &vBounds, std::vector<std::string> &vLinks, std::vector<float> &vFontSizes, std::vector<bool> &vAlwaysConfirm)
+static void MeasureLinkBounds(ITextRender *pTextRender, const CTextCursor &Cursor, const char *pDisplayText, int DisplayLength, const std::string &TargetUrl, bool AlwaysConfirm, std::vector<STextBoundingBox> &vBounds, std::vector<std::string> &vLinks, std::vector<float> &vFontSizes, std::vector<bool> &vAlwaysConfirm, std::vector<int> *pLinkGroups)
 {
+	const int LinkGroup = pLinkGroups == nullptr || pLinkGroups->empty() ? 0 : pLinkGroups->back() + 1;
+	const auto AddLinkPart = [&](const STextBoundingBox &Bounds, float FontSize) {
+		vBounds.push_back(Bounds);
+		vLinks.push_back(TargetUrl);
+		vFontSizes.push_back(FontSize);
+		vAlwaysConfirm.push_back(AlwaysConfirm);
+		if(pLinkGroups)
+			pLinkGroups->push_back(LinkGroup);
+	};
 	CTextCursor LinkCursor = Cursor;
 	LinkCursor.m_LongestLineWidth = 0.0f;
 	LinkCursor.m_LineCount = 1;
@@ -2661,10 +2814,7 @@ static void MeasureLinkBounds(ITextRender *pTextRender, const CTextCursor &Curso
 		Bounds.m_Y = Cursor.m_Y;
 		Bounds.m_W = maximum(0.0f, LinkCursor.m_X - Cursor.m_X);
 		Bounds.m_H = LinkCursor.m_FontSize;
-		vBounds.push_back(Bounds);
-		vLinks.push_back(TargetUrl);
-		vFontSizes.push_back(LinkCursor.m_FontSize);
-		vAlwaysConfirm.push_back(AlwaysConfirm);
+		AddLinkPart(Bounds, LinkCursor.m_FontSize);
 		return;
 	}
 
@@ -2679,10 +2829,7 @@ static void MeasureLinkBounds(ITextRender *pTextRender, const CTextCursor &Curso
 	{
 		const int SegmentLength = MaxFittingUrlChars(pTextRender, LinkCursor, pDisplayText + RemainingStart, RemainingLength, AvailableWidth);
 		const float SegmentWidth = pTextRender->TextWidth(LinkCursor.m_FontSize, pDisplayText + RemainingStart, SegmentLength, -1.0f, LinkCursor.m_Flags);
-		vBounds.push_back({SegmentX, SegmentY, SegmentWidth, LinkCursor.m_FontSize});
-		vLinks.push_back(TargetUrl);
-		vFontSizes.push_back(LinkCursor.m_FontSize);
-		vAlwaysConfirm.push_back(AlwaysConfirm);
+		AddLinkPart({SegmentX, SegmentY, SegmentWidth, LinkCursor.m_FontSize}, LinkCursor.m_FontSize);
 
 		RemainingStart += SegmentLength;
 		RemainingLength -= SegmentLength;
@@ -2692,7 +2839,7 @@ static void MeasureLinkBounds(ITextRender *pTextRender, const CTextCursor &Curso
 	}
 }
 
-static void AppendTextWithUrlColors(ITextRender *pTextRender, STextContainerIndex &TextContainerIndex, CTextCursor &Cursor, const char *pText, const std::unordered_set<std::string> &vSafeDomains, std::vector<STextBoundingBox> *pLinkBounds, std::vector<std::string> *pLinks, std::vector<float> *pFontSizes, std::vector<bool> *pAlwaysConfirm)
+static void AppendTextWithUrlColors(ITextRender *pTextRender, STextContainerIndex &TextContainerIndex, CTextCursor &Cursor, const char *pText, const std::unordered_set<std::string> &vSafeDomains, std::vector<STextBoundingBox> *pLinkBounds, std::vector<std::string> *pLinks, std::vector<float> *pFontSizes, std::vector<bool> *pAlwaysConfirm, std::vector<int> *pLinkGroups)
 {
 	int SegmentStart = 0;
 	for(int i = 0; pText[i] != '\0';)
@@ -2728,7 +2875,7 @@ static void AppendTextWithUrlColors(ITextRender *pTextRender, STextContainerInde
 		if(!DisplayText.empty())
 		{
 			if(pLinkBounds != nullptr && pLinks != nullptr && pFontSizes != nullptr && pAlwaysConfirm != nullptr)
-				MeasureLinkBounds(pTextRender, Cursor, DisplayText.c_str(), (int)DisplayText.size(), TargetUrl, HasMarkdownLink, *pLinkBounds, *pLinks, *pFontSizes, *pAlwaysConfirm);
+				MeasureLinkBounds(pTextRender, Cursor, DisplayText.c_str(), (int)DisplayText.size(), TargetUrl, HasMarkdownLink, *pLinkBounds, *pLinks, *pFontSizes, *pAlwaysConfirm, pLinkGroups);
 
 			const auto SavedColorSplits = Cursor.m_vColorSplits;
 			Cursor.m_vColorSplits.emplace_back(Cursor.m_CharCount, (int)DisplayText.size(), ChatLinkColor());
@@ -2915,7 +3062,7 @@ static void BuildReplyQuoteLine(ITextRender *pTextRender, float QuoteFontSize, f
 	str_format(pOut, OutSize, "%s%s%s", aPrefix, aPreview, aEllipsis);
 }
 
-static void AppendTextWithUrlAndMentionColors(ITextRender *pTextRender, STextContainerIndex &TextContainerIndex, CTextCursor &Cursor, const char *pText, const std::unordered_set<std::string> &vSafeDomains, std::vector<STextBoundingBox> *pLinkBounds, std::vector<std::string> *pLinks, std::vector<float> *pFontSizes, std::vector<bool> *pAlwaysConfirm)
+static void AppendTextWithUrlAndMentionColors(ITextRender *pTextRender, STextContainerIndex &TextContainerIndex, CTextCursor &Cursor, const char *pText, const std::unordered_set<std::string> &vSafeDomains, std::vector<STextBoundingBox> *pLinkBounds, std::vector<std::string> *pLinks, std::vector<float> *pFontSizes, std::vector<bool> *pAlwaysConfirm, std::vector<int> *pLinkGroups)
 {
 	int SegmentStart = 0;
 
@@ -2948,7 +3095,7 @@ static void AppendTextWithUrlAndMentionColors(ITextRender *pTextRender, STextCon
 			if(!DisplayText.empty())
 			{
 				if(pLinkBounds != nullptr && pLinks != nullptr && pFontSizes != nullptr && pAlwaysConfirm != nullptr)
-					MeasureLinkBounds(pTextRender, Cursor, DisplayText.c_str(), (int)DisplayText.size(), TargetUrl, HasMarkdownLink, *pLinkBounds, *pLinks, *pFontSizes, *pAlwaysConfirm);
+					MeasureLinkBounds(pTextRender, Cursor, DisplayText.c_str(), (int)DisplayText.size(), TargetUrl, HasMarkdownLink, *pLinkBounds, *pLinks, *pFontSizes, *pAlwaysConfirm, pLinkGroups);
 
 				const auto SavedColorSplits = Cursor.m_vColorSplits;
 				Cursor.m_vColorSplits.emplace_back(Cursor.m_CharCount, (int)DisplayText.size(), ChatLinkColor());
@@ -3191,7 +3338,14 @@ const char *CChat::LineNameSeparator(const CLine &Line)
 // none of that is visible in the message itself. Hovering spells it out.
 bool CChat::UClientScopeNoteText(const CLine &Line, char *pBuf, size_t BufSize)
 {
-	if(!Line.m_UClient || Line.m_ServerAnnouncement || Line.m_UClientScope < 0)
+	if(!Line.m_UClient || Line.m_ServerAnnouncement)
+		return false;
+	if(Line.m_aUClientRoomName[0])
+	{
+		str_format(pBuf, BufSize, Localize("This message was sent to the room \"%s\"."), Line.m_aUClientRoomName);
+		return true;
+	}
+	if(Line.m_UClientScope < 0)
 		return false;
 
 	if(Line.m_UClientScope == UClientPresence::CHAT_SCOPE_FRIENDS)
@@ -4872,6 +5026,12 @@ std::string CChat::BuildPlainTextLine(const CLine &Line) const
 	}
 
 	std::string Result;
+	if(Line.m_aUClientRoomName[0])
+	{
+		Result += "[";
+		Result += Line.m_aUClientRoomName;
+		Result += "] ";
+	}
 	if(LineNeedsNameColon(Line) && ShouldShowFriendMarker(Line))
 		Result += "♥ ";
 	Result += aClientId;
@@ -4989,6 +5149,14 @@ void CChat::RenderTextLine(CLine &Line, float y, float FontSize, float LineWidth
 			TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageFriendColor)).WithAlpha(Blend));
 			TextRender()->TextEx(&LineCursor, "♥ ");
 		}
+	}
+
+	if(Line.m_aUClientRoomName[0])
+	{
+		char aRoomLabel[72];
+		str_format(aRoomLabel, sizeof(aRoomLabel), "[%s] ", Line.m_aUClientRoomName);
+		TextRender()->TextColor(ColorRGBA(0.55f, 0.78f, 1.0f, Blend));
+		TextRender()->TextEx(&LineCursor, aRoomLabel);
 	}
 
 	ColorRGBA NameColor;
@@ -5348,6 +5516,8 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 
 	if(ChatInputActive && Ui()->IsPopupOpen(&m_TranslateSettingsPopupId) && Ui()->OnInput(Event))
 		return true;
+	if(ChatInputActive && Ui()->IsPopupOpen(&m_RoomSelectPopupId) && Ui()->OnInput(Event))
+		return true;
 
 	if(ChatInputActive && Ui()->IsPopupOpen(&m_GiphyPopupId) && Ui()->OnInput(Event))
 		return true;
@@ -5417,6 +5587,38 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 					Ui()->ClosePopupMenu(&m_TranslateSettingsPopupId);
 				else
 					OpenTranslateSettingsPopup(ButtonRect);
+				return true;
+			}
+		}
+	}
+
+	if(ChatInputActive && Event.m_Key == KEY_MOUSE_1 && m_RoomButtonRectValid)
+	{
+		const vec2 MousePos = ChatMousePos();
+		const bool InsideRoomButton =
+			MousePos.x >= m_RoomButtonRect.m_X && MousePos.x <= m_RoomButtonRect.m_X + m_RoomButtonRect.m_W &&
+			MousePos.y >= m_RoomButtonRect.m_Y && MousePos.y <= m_RoomButtonRect.m_Y + m_RoomButtonRect.m_H;
+		if(Event.m_Flags & IInput::FLAG_PRESS)
+		{
+			m_RoomButtonPressed = InsideRoomButton;
+			if(InsideRoomButton)
+			{
+				m_MouseIsPress = false;
+				m_HasSelection = false;
+				return true;
+			}
+		}
+		else if(Event.m_Flags & IInput::FLAG_RELEASE)
+		{
+			const bool ActivateButton = m_RoomButtonPressed && InsideRoomButton;
+			m_RoomButtonPressed = false;
+			if(ActivateButton)
+			{
+				CUIRect ButtonRect = {m_RoomButtonRect.m_X, m_RoomButtonRect.m_Y, m_RoomButtonRect.m_W, m_RoomButtonRect.m_H};
+				if(Ui()->IsPopupOpen(&m_RoomSelectPopupId))
+					Ui()->ClosePopupMenu(&m_RoomSelectPopupId);
+				else
+					OpenRoomSelectPopup(ButtonRect);
 				return true;
 			}
 		}
@@ -5561,7 +5763,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		}
 	}
 
-	// UClient: right-click a player message (not over a media preview) to open the reaction picker.
+	// UClient: right-click a chat message (not over a media preview) to open the reaction picker.
 	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_2 && !m_MediaViewerOpen && !m_pMediaSaveRequest)
 	{
 		const vec2 MousePos = ChatMousePos();
@@ -5571,7 +5773,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			CLine &Line = m_aLines[LineIndex];
 			if(!Line.m_Initialized)
 				break;
-			if(!Line.m_LineRectValid || Line.m_ClientId < 0)
+			if(!Line.m_LineRectValid || !CanReactToLine(Line))
 				continue;
 			const SRenderRect &Rect = Line.m_LineRect;
 			if(MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
@@ -6189,6 +6391,16 @@ bool CChat::IsReadingChat() const
 	if(!pEngineGraphics || !pEngineGraphics->WindowActive())
 		return false;
 
+	// The editor takes over the whole screen.
+	if(g_Config.m_ClEditor)
+		return false;
+
+	// Of the ESC-menu tabs only "Game" leaves the chat visible; the rest (settings, demos,
+	// clans, server info, ...) draw a full-height panel over it. The chat still renders
+	// underneath, so nothing here can be assumed to have been seen.
+	if(GameClient()->m_Menus.IsActive() && !GameClient()->m_Menus.IsIngameGamePage())
+		return false;
+
 	// Being flagged AFK by the server means nobody has touched the controls in a while, so a
 	// focused window alone proves nothing: the player may have walked away from a lit screen.
 	const int LocalId = GameClient()->m_aLocalIds[g_Config.m_ClDummy];
@@ -6281,6 +6493,7 @@ void CChat::DisableMode()
 		m_Input.Deactivate();
 		m_GiphySearchInput.Deactivate();
 		m_GiphyButtonPressed = false;
+		m_RoomButtonPressed = false;
 
 		}
 	}
@@ -6293,6 +6506,8 @@ void CChat::OnMessage(int MsgType, void *pRawMsg)
 	if(MsgType == NETMSGTYPE_SV_CHAT)
 	{
 		CNetMsg_Sv_Chat *pMsg = (CNetMsg_Sv_Chat *)pRawMsg;
+		if(pMsg->m_ClientId == SERVER_MSG)
+			GameClient()->m_Scoreboard.OnServerSwapMessage(pMsg->m_pMessage);
 
 		// Silently consume the response to our automatic `/settings timeout` query.
 		if(GameClient()->m_TimeoutReconnect.TryConsumeTimeoutSettingsMessage(pMsg->m_ClientId, pMsg->m_pMessage))
@@ -6561,6 +6776,17 @@ bool CChat::CanShowReplyButton(const CLine &Line) const
 	if(Line.m_UClient)
 		return g_Config.m_UcChat != 0;
 	return Line.m_ClientId >= 0;
+}
+
+// A reaction is addressed by (author client id, hash of the message text), so peers can only agree
+// on the target if the line came from the game server: player chat and server messages both do.
+// CLIENT_MSG lines are excluded because they either exist on this client alone (echoes, hints) or
+// are remote UClient chat, where every sender shares CLIENT_MSG and the hashes would collide.
+bool CChat::CanReactToLine(const CLine &Line) const
+{
+	if(!Line.m_Initialized || Line.m_aText[0] == '\0')
+		return false;
+	return Line.m_ClientId >= 0 || Line.m_ClientId == SERVER_MSG;
 }
 
 void CChat::ApplySettingsLinkToLine(CLine &Line, const char *pSourceText)
@@ -7213,7 +7439,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 
 void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const char *pLine, const char *pServerAddress,
 	const CUuid &MessageId, bool Mine,
-	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet, int Scope)
+	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet, int Scope, const char *pRoomName)
 {
 	if(!g_Config.m_UcChat || !pName || !pLine || pName[0] == '\0' || pLine[0] == '\0')
 		return;
@@ -7268,6 +7494,7 @@ void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const c
 	Line.m_UClientMessageId = MessageId;
 	Line.m_UClientMine = Mine;
 	Line.m_UClientScope = Scope;
+	str_copy(Line.m_aUClientRoomName, pRoomName ? pRoomName : "", sizeof(Line.m_aUClientRoomName));
 	// Monotonic order used as the read high-water mark (newer lines sort later).
 	Line.m_UClientSeq = ++m_UcSeqCounter;
 
@@ -7504,6 +7731,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 		Line.m_vLinks.clear();
 		Line.m_vLinkFontSizes.clear();
 		Line.m_vLinkAlwaysConfirm.clear();
+		Line.m_vLinkGroups.clear();
 		Line.m_aYOffset[OffsetType] = -1.0f;
 		Line.m_aTextHeight[OffsetType] = -1.0f;
 		Line.m_ReplyQuoteRectValid = false;
@@ -7515,6 +7743,9 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 		{
 			GameClient()->FormatClientId(Line.m_ClientId, aClientId, EClientIdFormat::INDENT_AUTO);
 		}
+		char aRoomLabel[72] = "";
+		if(Line.m_aUClientRoomName[0])
+			str_format(aRoomLabel, sizeof(aRoomLabel), "[%s] ", Line.m_aUClientRoomName);
 
 		char aCount[12];
 		if(Line.m_ClientId < 0)
@@ -7640,6 +7871,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 				}
 			}
 
+			TextRender()->TextEx(&MeasureCursor, aRoomLabel);
 			TextRender()->TextEx(&MeasureCursor, aClientId);
 			TextRender()->TextEx(&MeasureCursor, Line.m_aName);
 			if(Line.m_TimesRepeated > 0)
@@ -7826,6 +8058,12 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			}
 		}
 
+		if(aRoomLabel[0])
+		{
+			TextRender()->TextColor(ColorRGBA(0.55f, 0.78f, 1.0f, 1.0f));
+			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &LineCursor, aRoomLabel);
+		}
+
 		// render name
 		ColorRGBA NameColor;
 		if(Line.m_CustomColor)
@@ -7957,7 +8195,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			ColoredParts.AddSplitsToCursor(LineCursor);
 			AppendTextWithUrlAndMentionColors(TextRender(), Line.m_TextContainerIndex, LineCursor, pMessageText,
 				m_LinkPolicyCache.m_vSafeDomains,
-				&Line.m_vLinkBounds, &Line.m_vLinks, &Line.m_vLinkFontSizes, &Line.m_vLinkAlwaysConfirm);
+				&Line.m_vLinkBounds, &Line.m_vLinks, &Line.m_vLinkFontSizes, &Line.m_vLinkAlwaysConfirm, &Line.m_vLinkGroups);
 			LineCursor.m_vColorSplits.clear();
 		}
 
@@ -8238,7 +8476,7 @@ void CChat::OnRender()
 
 		const float TranslateButtonSize = maximum(16.0f, ScaledFontSize * 1.35f);
 		const float TranslateButtonGap = 4.0f;
-		const float MessageMaxWidth = maximum(40.0f, InputCursor.m_LineWidth - (InputCursor.m_X - InputCursor.m_StartX) - TranslateButtonSize - TranslateButtonGap);
+		const float MessageMaxWidth = maximum(40.0f, InputCursor.m_LineWidth - (InputCursor.m_X - InputCursor.m_StartX) - 2.0f * (TranslateButtonSize + TranslateButtonGap));
 		const CUIRect ClippingRect = {InputCursor.m_X, InputCursor.m_Y, MessageMaxWidth, 2.25f * InputCursor.m_FontSize};
 		const float TypingTravel = 30.0f;
 		const CUIRect ChatInputClipRect = {0.0f, ClippingRect.y - TypingTravel, Width, ClippingRect.h + TypingTravel};
@@ -8361,9 +8599,10 @@ void CChat::OnRender()
 
 		CUIRect GiphyButtonRect = {ClippingRect.x + ClippingRect.w + TranslateButtonGap, ClippingRect.y, TranslateButtonSize, maximum(InputCursor.m_FontSize + 4.0f, 16.0f)};
 		RenderGiphyButton(GiphyButtonRect);
-		CUIRect TranslateButtonRect = {GiphyButtonRect.x + GiphyButtonRect.w + TranslateButtonGap, ClippingRect.y, TranslateButtonSize, maximum(InputCursor.m_FontSize + 4.0f, 16.0f)};
-		RenderTranslateSettingsButton(TranslateButtonRect);
-		if(Ui()->HotItem() == &m_TranslateSettingsButton || Ui()->HotItem() == &m_GiphyButton || m_TranslateButtonPressed || m_GiphyButtonPressed)
+		CUIRect RoomButtonRect = {GiphyButtonRect.x + GiphyButtonRect.w + TranslateButtonGap, ClippingRect.y, TranslateButtonSize, maximum(InputCursor.m_FontSize + 4.0f, 16.0f)};
+		RenderRoomSelectButton(RoomButtonRect);
+		if(Ui()->HotItem() == &m_GiphyButton || Ui()->HotItem() == &m_RoomSelectButton ||
+			m_GiphyButtonPressed || m_RoomButtonPressed)
 		{
 			m_MouseIsPress = false;
 			m_HasSelection = false;
@@ -8719,6 +8958,12 @@ void CChat::OnRender()
 					NameRectX += RealMsgPaddingTee;
 				if(ShouldShowFriendMarker(Line))
 					NameRectX += TextRender()->TextWidth(FontSize(), "♥ ");
+				if(Line.m_aUClientRoomName[0])
+				{
+					char aRoomLabel[72];
+					str_format(aRoomLabel, sizeof(aRoomLabel), "[%s] ", Line.m_aUClientRoomName);
+					NameRectX += TextRender()->TextWidth(FontSize(), aRoomLabel);
+				}
 				NameRectX += TextRender()->TextWidth(FontSize(), aClientId);
 				Line.m_NameRect.m_X = NameRectX;
 				Line.m_NameRect.m_Y = Line.m_TextYOffset + TextOffsetY + Line.m_ReplyQuoteHeight;
@@ -8799,15 +9044,21 @@ void CChat::OnRender()
 
 			const bool ShowReplyActions = CanShowReplyButton(Line) && Line.m_ReplyButtonAnchorValid && !IsPendingReplyTarget;
 			const bool ShowSettingsShortcut = CanShowSettingsShortcut(Line) && Line.m_ReplyButtonAnchorValid;
-			if(ShowReplyActions || ShowSettingsShortcut)
+
+			// The line rect doubles as the right-click target for the reaction picker, so it has to
+			// exist on lines that show no buttons at all: server messages carry no name, which rules
+			// out the reply button.
+			if(ShowReplyActions || ShowSettingsShortcut || CanReactToLine(Line))
 			{
-				const float LineH = maximum(Line.m_aYOffset[OffsetType], FontSize() + RealMsgPaddingY);
 				Line.m_LineRect.m_X = LineRenderX;
 				Line.m_LineRect.m_Y = LineRenderY;
 				Line.m_LineRect.m_W = maximum(1.0f, ChatWidth());
-				Line.m_LineRect.m_H = LineH;
+				Line.m_LineRect.m_H = maximum(Line.m_aYOffset[OffsetType], FontSize() + RealMsgPaddingY);
 				Line.m_LineRectValid = true;
+			}
 
+			if(ShowReplyActions || ShowSettingsShortcut)
+			{
 				const bool HoveredLine = MousePos.x >= Line.m_LineRect.m_X && MousePos.x <= Line.m_LineRect.m_X + Line.m_LineRect.m_W &&
 					MousePos.y >= Line.m_LineRect.m_Y && MousePos.y <= Line.m_LineRect.m_Y + Line.m_LineRect.m_H;
 				const float BtnSize = maximum(6.5f, FontSize() * 0.34f);
@@ -8891,7 +9142,7 @@ void CChat::OnRender()
 					if(Line.m_aScopeNoteHeight[OffsetType] > 0.0f)
 					{
 						const float NoteFont = ScopeNoteFontSize();
-						const float NoteX = LineRenderX + RealMsgPaddingX / 2.0f + RealMsgPaddingTee;
+						const float NoteX = LineRenderX + RealMsgPaddingX / 2.0f + (LineNeedsTeePadding(Line) ? RealMsgPaddingTee : 0.0f);
 						// Bottom of the bubble, inside the padding the layout already leaves there.
 						const float NoteY = LineRenderY + LineH - RealMsgPaddingY / 2.0f - Line.m_aScopeNoteHeight[OffsetType];
 						CTextCursor NoteCursor;
@@ -8939,6 +9190,7 @@ void CChat::OnRender()
 			{
 				const float OffX = ChatOpenOffsetX + BcLineXOffset;
 				const float OffY = TextOffsetY;
+				int HoveredLinkPart = -1;
 				for(size_t Li = 0; Li < Line.m_vLinkBounds.size(); ++Li)
 				{
 					const STextBoundingBox Bounds = TightenLinkHoverBounds(
@@ -8948,16 +9200,33 @@ void CChat::OnRender()
 					if(MousePos.x >= Bounds.m_X && MousePos.x <= Bounds.m_X + Bounds.m_W &&
 						MousePos.y >= Bounds.m_Y && MousePos.y <= Bounds.m_Y + Bounds.m_H)
 					{
-						m_HoveredLink = Line.m_vLinks[Li];
-						m_HoveredLinkAlwaysConfirm = Li < Line.m_vLinkAlwaysConfirm.size() && Line.m_vLinkAlwaysConfirm[Li];
+						HoveredLinkPart = (int)Li;
+						break;
+					}
+				}
+				if(HoveredLinkPart >= 0)
+				{
+					m_HoveredLink = Line.m_vLinks[HoveredLinkPart];
+					m_HoveredLinkAlwaysConfirm = HoveredLinkPart < (int)Line.m_vLinkAlwaysConfirm.size() && Line.m_vLinkAlwaysConfirm[HoveredLinkPart];
+					const int HoveredGroup = HoveredLinkPart < (int)Line.m_vLinkGroups.size() ?
+						Line.m_vLinkGroups[HoveredLinkPart] : HoveredLinkPart;
+					Graphics()->TextureClear();
+					Graphics()->SetColor(ChatLinkColor().WithMultipliedAlpha(Blend));
+					Graphics()->LinesBegin();
+					for(size_t Li = 0; Li < Line.m_vLinkBounds.size(); ++Li)
+					{
+						const int LinkGroup = Li < Line.m_vLinkGroups.size() ? Line.m_vLinkGroups[Li] : (int)Li;
+						if(LinkGroup != HoveredGroup)
+							continue;
+						const STextBoundingBox Bounds = TightenLinkHoverBounds(
+							{Line.m_vLinkBounds[Li].m_X + OffX, Line.m_vLinkBounds[Li].m_Y + OffY,
+								Line.m_vLinkBounds[Li].m_W, Line.m_vLinkBounds[Li].m_H},
+							Li < Line.m_vLinkFontSizes.size() ? Line.m_vLinkFontSizes[Li] : FontSize());
 						const float UnderlineY = Bounds.m_Y + Bounds.m_H + 0.35f;
-						Graphics()->TextureClear();
-						Graphics()->SetColor(ChatLinkColor().WithMultipliedAlpha(Blend));
-						Graphics()->LinesBegin();
 						const IGraphics::CLineItem Underline(Bounds.m_X, UnderlineY, Bounds.m_X + Bounds.m_W, UnderlineY);
 						Graphics()->LinesDraw(&Underline, 1);
-						Graphics()->LinesEnd();
 					}
+					Graphics()->LinesEnd();
 				}
 			}
 
@@ -9059,7 +9328,9 @@ void CChat::OnRender()
 						ReactionOriginY += FontSize() * 0.25f + Line.m_aMapCardHeight[OffsetType];
 					if(Line.m_HasSettingsLink && Line.m_aSettingsLinkHeight[OffsetType] > 0.0f)
 						ReactionOriginY += FontSize() * 0.25f + Line.m_aSettingsLinkHeight[OffsetType];
-					const float ReactionOriginX = LineRenderX + RealMsgPaddingX / 2.0f + RealMsgPaddingTee;
+					// Align with the message text, which is only inset by the tee when there is one
+					// (server messages have no name and therefore no tee).
+					const float ReactionOriginX = LineRenderX + RealMsgPaddingX / 2.0f + (LineNeedsTeePadding(Line) ? RealMsgPaddingTee : 0.0f);
 
 					Line.m_vReactionRects.clear();
 					LayoutReactionRow(Line, FontSize(), ReactionAvailWidth, ReactionOriginX, ReactionOriginY, &Line.m_vReactionRects);
@@ -9671,7 +9942,7 @@ CUIRect CChat::GetHudRect(float HudWidth, float HudHeight, bool ForcePreview) co
 	float VisibleWidth = ChatWidth();
 
 	// In HUD editor preview and while chat input is open, include the input row and
-	// translate settings button in the hitbox/outline area.
+	// both input action buttons in the hitbox/outline area.
 	if(ForcePreview || m_Mode != MODE_NONE)
 	{
 		const float ScaledFontSize = FontSize() * (8.0f / 6.0f);
@@ -9686,7 +9957,7 @@ CUIRect CChat::GetHudRect(float HudWidth, float HudHeight, bool ForcePreview) co
 				maximum(
 					TextRender()->TextWidth(ScaledFontSize, "UClient") + ModeSuffixWidth,
 					TextRender()->TextWidth(ScaledFontSize, Localize("Chat")) + ModeSuffixWidth)));
-		const float InputAndTranslateWidth = maximum(InputLineWidth, PrefixWidth + 40.0f + TranslateButtonGap + TranslateButtonSize);
+		const float InputAndTranslateWidth = maximum(InputLineWidth, PrefixWidth + 40.0f + 2.0f * (TranslateButtonGap + TranslateButtonSize));
 
 		VisibleWidth = maximum(VisibleWidth, InputAndTranslateWidth);
 		float ReplyExtra = m_PendingReplyActive ? ReplyBannerHeight(ScaledFontSize) : 0.0f;
@@ -9774,6 +10045,17 @@ void CChat::SendChat(int Team, const char *pLine)
 	Msg.m_Team = Team;
 	Msg.m_pMessage = pLine;
 	Client()->SendPackMsgActive(&Msg, MSGFLAG_VITAL);
+}
+
+// `say` for UClient chat: sends without touching the chat input, so it works from a bind
+// regardless of the current chat mode. Like `say`, it skips what only the interactive path adds:
+// input history, auto-translation and reply threading.
+void CChat::SayUClient(const char *pLine)
+{
+	if(!pLine || *str_utf8_skip_whitespaces(pLine) == '\0')
+		return;
+
+	GameClient()->m_ClientIndicator.SendUClientChat(pLine);
 }
 
 void CChat::AddHistoryEntry(int Team, const char *pLine)
@@ -10969,7 +11251,7 @@ void CChat::ToggleLocalReaction(int LineIndex, const char *pEmoji)
 	if(LineIndex < 0 || LineIndex >= MAX_LINES)
 		return;
 	CLine &Line = m_aLines[LineIndex];
-	if(!Line.m_Initialized || Line.m_ClientId < 0)
+	if(!CanReactToLine(Line))
 		return;
 	const int LocalId = GameClient()->m_Snap.m_LocalClientId;
 	if(LocalId < 0)
@@ -11079,7 +11361,7 @@ void CChat::OpenReactionPicker(int LineIndex, float X, float Y)
 	if(LineIndex < 0 || LineIndex >= MAX_LINES)
 		return;
 	CLine &Line = m_aLines[LineIndex];
-	if(!Line.m_Initialized || Line.m_ClientId < 0)
+	if(!CanReactToLine(Line))
 		return;
 
 	m_ReactionPickerLineIndex = LineIndex;

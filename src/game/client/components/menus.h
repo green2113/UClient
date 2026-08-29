@@ -648,6 +648,7 @@ protected:
 
 	// found in menus.cpp
 	void Render();
+	void RenderUClientAccountGate(CUIRect Screen);
 	void RenderPopupFullscreen(CUIRect Screen);
 	void RenderPopupConnecting(CUIRect Screen);
 	void RenderPopupLoading(CUIRect Screen);
@@ -754,6 +755,9 @@ protected:
 	void RenderServerbrowserFriends(CUIRect View);
 	void FriendlistOnUpdate();
 	void PopupConfirmRemoveFriend();
+	void PopupConfirmUClientRoomAction();
+	char m_aPendingUClientRoomId[64] = "";
+	char m_aPendingUClientRoomMemberId[64] = "";
 	void RenderServerbrowserTabBar(CUIRect TabBar);
 	void RenderServerbrowserToolBox(CUIRect ToolBox);
 	void RenderServerbrowser(CUIRect MainView);

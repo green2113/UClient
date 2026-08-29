@@ -131,6 +131,7 @@ class CChat : public CComponent
 		std::vector<std::string> m_vLinks;
 		std::vector<float> m_vLinkFontSizes;
 		std::vector<bool> m_vLinkAlwaysConfirm;
+		std::vector<int> m_vLinkGroups;
 
 		EMediaState m_MediaState;
 		EMediaKind m_MediaKind;
@@ -225,6 +226,7 @@ class CChat : public CComponent
 		// Audience the sender picked for this message (UClientPresence::EChatScope), or -1 when
 		// there is none to show (announcements, or lines that never carried a scope).
 		int m_UClientScope = -1;
+		char m_aUClientRoomName[64] = "";
 		// Message bubble, hover-tested one frame later to decide where the audience note goes.
 		SRenderRect m_ScopeHoverRect{};
 		bool m_ScopeHoverRectValid = false;
@@ -397,6 +399,11 @@ class CChat : public CComponent
 	bool m_TranslateButtonRectValid;
 	SRenderRect m_TranslateButtonRect; // chat-space, for ChatMousePos() click detection
 	CUIRect m_TranslateButtonUiRect = {0, 0, 0, 0}; // UI-space, for DoPopupMenu
+	CButtonContainer m_RoomSelectButton;
+	SPopupMenuId m_RoomSelectPopupId;
+	bool m_RoomButtonPressed = false;
+	bool m_RoomButtonRectValid = false;
+	SRenderRect m_RoomButtonRect;
 	int m_HoveredTranslateLineIndex = -1;
 	std::string m_HoveredPlayerName;
 	std::string m_HoveredLink;
@@ -554,12 +561,17 @@ class CChat : public CComponent
 	void OpenTranslateSettingsPopup(const CUIRect &ButtonRect);
 	void RenderTranslateSettingsButton(const CUIRect &ButtonRect);
 	static CUi::EPopupMenuFunctionResult PopupTranslateSettings(void *pContext, CUIRect View, bool Active);
+	void OpenRoomSelectPopup(const CUIRect &ButtonRect);
+	void RenderRoomSelectButton(const CUIRect &ButtonRect);
+	static CUi::EPopupMenuFunctionResult PopupRoomSelect(void *pContext, CUIRect View, bool Active);
 	void SendChatQueuedInternal(int Team, const char *pLine);
 	bool HasServerCommand(const char *pName) const;
 	bool TryConvertWrongLayoutSlashCommand(const char *pLine, char *pOut, int OutSize) const;
 
 	static void ConSay(IConsole::IResult *pResult, void *pUserData);
 	static void ConSayTeam(IConsole::IResult *pResult, void *pUserData);
+	static void ConSayUClient(IConsole::IResult *pResult, void *pUserData);
+	void EchoUClientDisabled();
 	static void ConChat(IConsole::IResult *pResult, void *pUserData);
 	static void ConShowChat(IConsole::IResult *pResult, void *pUserData);
 	static void ConEcho(IConsole::IResult *pResult, void *pUserData);
@@ -605,6 +617,8 @@ class CChat : public CComponent
 	static bool UClientScopeNoteText(const CLine &Line, char *pBuf, size_t BufSize);
 	float ScopeNoteFontSize() const;
 	static bool LineNeedsTeePadding(const CLine &Line);
+	// Whether a line's identity is shared with peers, so a reaction on it can be relayed.
+	bool CanReactToLine(const CLine &Line) const;
 	float ReplyBannerHeight(float ScaledFontSize) const;
 	void RenderReplyBanner(float x, float InputY, float ScaledFontSize);
 	void ResetTypingAnimation();
@@ -772,13 +786,17 @@ public:
 	void AddLine(int ClientId, int Team, const char *pLine);
 	void AddUClientChatLine(const char *pName, int SuggestedClientId, const char *pLine, const char *pServerAddress,
 		const CUuid &MessageId, bool Mine,
-		const char *pSkinName = nullptr, int UseCustomColor = 0, int ColorBody = 0, int ColorFeet = 0, int Scope = -1);
+		const char *pSkinName = nullptr, int UseCustomColor = 0, int ColorBody = 0, int ColorFeet = 0, int Scope = -1,
+		const char *pRoomName = nullptr);
 	const char *FilterText(const char *pMessage, int ClientId = -2, bool IsChat = false);
 	void EnableMode(int Team);
 	void DisableMode();
 	void RegisterCommand(const char *pName, const char *pParams, const char *pHelpText);
 	void UnregisterCommand(const char *pName);
 	void Echo(const char *pString);
+	// Client-only chat line in the UClient message color, used to explain why a
+	// UClient chat message could not be sent instead of dropping it silently.
+	void EchoUClientNotice(const char *pText);
 
 	void OnWindowResize() override;
 	void OnConsoleInit() override;
@@ -834,6 +852,9 @@ public:
 	// @param Team MODE_ALL=0 MODE_TEAM=1
 	// @param pLine the chat message
 	void SendChat(int Team, const char *pLine);
+
+	// Same immediate, mode-independent send, but to UClient chat (the `say_uclient` command).
+	void SayUClient(const char *pLine);
 
 	// Sends a chat message to the server.
 	//

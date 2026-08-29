@@ -2750,6 +2750,10 @@ if(CLIENT)
     component.h
     components/background.cpp
     components/background.h
+    components/uclient/account.cpp
+    components/uclient/account.h
+    components/uclient/chat_rooms.cpp
+    components/uclient/chat_rooms.h
     components/uclient/chat_nearby_tab.cpp
     components/uclient/chat_nearby_tab.h
     components/uclient/chat_paste_image.cpp

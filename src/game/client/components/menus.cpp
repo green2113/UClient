@@ -1488,6 +1488,95 @@ bool CMenus::CanDisplayWarning() const
 	return m_Popup == POPUP_NONE;
 }
 
+void CMenus::RenderUClientAccountGate(CUIRect Screen)
+{
+	const CUClientAccount &Account = GameClient()->m_UClientAccount;
+	CUIRect Box = {
+		Screen.x + maximum(0.0f, (Screen.w - 520.0f) / 2.0f),
+		Screen.y + maximum(0.0f, (Screen.h - 340.0f) / 2.0f),
+		minimum(Screen.w, 520.0f),
+		minimum(Screen.h, 340.0f)};
+	Box.Draw(ColorRGBA(0.03f, 0.03f, 0.05f, 0.94f), IGraphics::CORNER_ALL, 10.0f);
+	CUIRect Content;
+	Box.Margin(24.0f, &Content);
+
+	CUIRect Row;
+	Content.HSplitTop(38.0f, &Row, &Content);
+	const bool Banned = Account.State() == CUClientAccount::EState::BLOCKED_BANNED;
+	Ui()->DoLabel(&Row,
+		Account.IsPending() ? Localize("Verifying UClient account...") :
+		Banned ? Localize("Your UClient has been blocked") :
+		Localize("UClient account verification failed"),
+		24.0f, TEXTALIGN_MC);
+
+	Content.HSplitTop(12.0f, nullptr, &Content);
+	Content.HSplitTop(46.0f, &Row, &Content);
+	Ui()->DoLabel(&Row,
+		Account.IsPending() ? Localize("Please wait while your account is verified.") : Account.ErrorMessage(),
+		13.0f, TEXTALIGN_MC, {.m_MaxWidth = Row.w});
+
+	if(!Account.IsPending() && Account.ErrorCode()[0])
+	{
+		Content.HSplitTop(28.0f, &Row, &Content);
+		CUIRect ErrorCodeLabel, CopyButton;
+		Row.VSplitRight(76.0f, &ErrorCodeLabel, &CopyButton);
+		ErrorCodeLabel.VSplitRight(8.0f, &ErrorCodeLabel, nullptr);
+		char aErrorCode[192];
+		str_format(aErrorCode, sizeof(aErrorCode), Localize("Error code: %s"), Account.ErrorCode());
+		Ui()->DoLabel(&ErrorCodeLabel, aErrorCode, 12.0f, TEXTALIGN_MR, {.m_MaxWidth = ErrorCodeLabel.w});
+		static CButtonContainer s_CopyAccountErrorCodeButton;
+		if(DoButton_Menu(&s_CopyAccountErrorCodeButton, Localize("Copy"), 0, &CopyButton))
+			Input()->SetClipboardText(Account.ErrorCode());
+	}
+
+	if(Banned)
+	{
+		char aLine[384];
+		str_format(aLine, sizeof(aLine), Localize("Reason: %s"),
+			Account.BanReason()[0] ? Account.BanReason() : Localize("No reason was provided."));
+		Content.HSplitTop(28.0f, &Row, &Content);
+		Ui()->DoLabel(&Row, aLine, 13.0f, TEXTALIGN_MC, {.m_MaxWidth = Row.w});
+
+		if(Account.BanExpiresAt() > 0)
+		{
+			char aTimestamp[64];
+			str_timestamp_ex((time_t)Account.BanExpiresAt(), aTimestamp, sizeof(aTimestamp), TimestampFormat::SPACE);
+			str_format(aLine, sizeof(aLine), Localize("Expires: %s"), aTimestamp);
+		}
+		else
+			str_copy(aLine, Localize("Duration: Permanent"), sizeof(aLine));
+		Content.HSplitTop(24.0f, &Row, &Content);
+		Ui()->DoLabel(&Row, aLine, 13.0f, TEXTALIGN_MC);
+
+		Content.HSplitTop(42.0f, &Row, &Content);
+		Ui()->DoLabel(&Row,
+			Localize("If you believe this ban is unjustified, please join the Discord below and contact an administrator."),
+			12.0f, TEXTALIGN_MC, {.m_MaxWidth = Row.w});
+	}
+
+	constexpr float ButtonWidth = 120.0f;
+	constexpr float RestartButtonWidth = 34.0f;
+	constexpr float ButtonGap = 10.0f;
+	constexpr float ButtonsWidth = ButtonWidth * 2.0f + RestartButtonWidth + ButtonGap * 2.0f;
+	const float ButtonsX = Box.x + (Box.w - ButtonsWidth) / 2.0f;
+	CUIRect DiscordButton = {ButtonsX, Box.y + Box.h - 48.0f, ButtonWidth, 30.0f};
+	CUIRect QuitButton = {DiscordButton.x + DiscordButton.w + ButtonGap, DiscordButton.y, ButtonWidth, DiscordButton.h};
+	CUIRect RestartButton = {QuitButton.x + QuitButton.w + ButtonGap, QuitButton.y, RestartButtonWidth, QuitButton.h};
+	static CButtonContainer s_DiscordButton;
+	static CButtonContainer s_QuitButton;
+	static CButtonContainer s_RestartButton;
+	if(DoButton_Menu(&s_DiscordButton, "Discord", 0, &DiscordButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.2f))
+		Client()->ViewLink("https://discord.gg/EN4yYypsPs");
+	if(DoButton_Menu(&s_QuitButton, Localize("Quit"), 0, &QuitButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.2f))
+		Client()->Quit();
+	TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+	const bool Restart = DoButton_Menu(&s_RestartButton, FontIcon::ARROWS_ROTATE, 0, &RestartButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.15f);
+	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+	GameClient()->m_Tooltips.DoToolTip(&s_RestartButton, &RestartButton, Localize("Restart client"));
+	if(Restart)
+		Client()->Restart();
+}
+
 void CMenus::Render()
 {
 	Ui()->MapScreen();
@@ -1595,6 +1684,11 @@ void CMenus::Render()
 	if(Client()->State() != IClient::STATE_DEMOPLAYBACK || m_Popup != POPUP_NONE)
 	{
 		Screen.Margin(10.0f, &Screen);
+	}
+	if(!GameClient()->m_UClientAccount.IsReady())
+	{
+		RenderUClientAccountGate(Screen);
+		return;
 	}
 
 	switch(ClientState)

@@ -1,0 +1,22 @@
+-- Replace the values below before running this file.
+-- expires_at:
+--   NULL                    = permanent ban
+--   unixepoch('2026-08-30T22:01:24+09:00') = exact Korean local time
+--   unixepoch() + 86400     = 1 day
+--   unixepoch() + 604800    = 7 days
+--   unixepoch() + 2592000   = 30 days
+
+INSERT INTO user_bans(
+	install_id,
+	reason,
+	banned_at,
+	expires_at,
+	banned_by
+)
+VALUES(
+	'00000000-0000-0000-0000-000000000000',
+	'Reason in English',
+	unixepoch(),
+	unixepoch('2026-08-30T22:01:24+09:00'),
+	'admin'
+);

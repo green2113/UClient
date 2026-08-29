@@ -16,6 +16,7 @@
 #include <engine/shared/uclient_presence_protocol.h>
 
 #include <game/client/gameclient.h>
+#include <game/localization.h>
 #include <game/version.h>
 
 #include <generated/client_data.h>
@@ -230,6 +231,10 @@ namespace
 			return "uc_read";
 		case UClientPresence::PACKET_READ_BROADCAST:
 			return "uc_read_broadcast";
+		case UClientPresence::PACKET_ROOM_CHAT:
+			return "uc_room_chat";
+		case UClientPresence::PACKET_ROOM_CHAT_BROADCAST:
+			return "uc_room_chat_broadcast";
 		default:
 			return "unknown";
 		}
@@ -1437,16 +1442,43 @@ void CClientIndicator::ApplyUcServerJoinBroadcast(const UClientPresence::CServer
 		Join.m_Kind == UClientPresence::SERVER_PRESENCE_MOVE);
 }
 
+const char *CClientIndicator::UClientChatUnavailableReason()
+{
+	if(!g_Config.m_UcChat)
+		return Localize("UClient chat is disabled.");
+	if(!GameClient()->m_UClientAccount.IsReady())
+		return Localize("UClient chat is unavailable: account verification has not completed.");
+	if(g_Config.m_UcPresenceUdpServerAddress[0] == '\0')
+		return Localize("UClient chat is unavailable: uc_presence_udp_server_address is empty.");
+	if(g_Config.m_UcPresenceUdpSharedToken[0] == '\0')
+		return Localize("UClient chat is unavailable: uc_presence_udp_shared_token is empty.");
+	if(g_Config.m_UcInstallUuid[0] == '\0')
+		return Localize("UClient chat is unavailable: uc_install_uuid is not set yet.");
+	if(!m_Socket || !m_HasUcServerAddr)
+		return Localize("UClient chat is unavailable: no connection to the presence relay.");
+	if(EffectivePresenceServerAddress()[0] == '\0')
+		return Localize("UClient chat is unavailable: join a server first.");
+	if(g_Config.m_UcChatSendRoom[0] && !GameClient()->m_UClientChatRooms.RoomNameById(g_Config.m_UcChatSendRoom))
+		return Localize("UClient chat is unavailable: the selected room no longer exists or you are no longer a member.");
+	return nullptr;
+}
+
 void CClientIndicator::SendUClientChat(const char *pMessage)
 {
-	if(!g_Config.m_UcChat || !IsUcPresenceUdpEnabled() || !m_Socket || !m_HasUcServerAddr)
-		return;
 	if(!pMessage)
 		return;
 
 	const char *pTrimmed = str_utf8_skip_whitespaces(pMessage);
 	if(pTrimmed[0] == '\0')
 		return;
+
+	// Tell the sender why the message is going nowhere; a silent drop looks like the
+	// message was sent and lets misconfigured presence settings go unnoticed.
+	if(const char *pReason = UClientChatUnavailableReason())
+	{
+		GameClient()->m_Chat.EchoUClientNotice(pReason);
+		return;
+	}
 
 	char aMessage[UClientPresence::CHAT_MESSAGE_MAX_BYTES];
 	str_copy(aMessage, pTrimmed, sizeof(aMessage));
@@ -1455,8 +1487,6 @@ void CClientIndicator::SendUClientChat(const char *pMessage)
 
 	const int SenderClientId = GameClient()->m_Snap.m_LocalClientId;
 	const char *pServerAddress = EffectivePresenceServerAddress();
-	if(pServerAddress[0] == '\0')
-		return;
 
 	// Friends-only replaces the same-server scope entirely (the UI hides those options when it
 	// is on). Friends-scoped messages are relayed globally and filtered by each receiver.
@@ -1465,6 +1495,8 @@ void CClientIndicator::SendUClientChat(const char *pMessage)
 		(g_Config.m_UcChatSendSameServerOnly ?
 				(uint8_t)UClientPresence::CHAT_SCOPE_SAME_SERVER :
 				(uint8_t)UClientPresence::CHAT_SCOPE_GLOBAL);
+	const char *pRoomId = GameClient()->m_UClientChatRooms.SelectedSendRoomId();
+	const char *pRoomName = pRoomId[0] ? GameClient()->m_UClientChatRooms.RoomNameById(pRoomId) : nullptr;
 
 	const char *pSkinName = g_Config.m_ClPlayerSkin;
 	uint8_t UseCustomColor = (uint8_t)g_Config.m_ClPlayerUseCustomColor;
@@ -1484,13 +1516,25 @@ void CClientIndicator::SendUClientChat(const char *pMessage)
 
 	std::vector<uint8_t> vPacket;
 	vPacket.reserve(128 + str_length(aMessage));
-	UClientPresence::WriteChatClientBody(vPacket,
-		g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
-		pServerAddress,
-		SenderClientId >= 0 ? PlayerNameForClient(SenderClientId) : g_Config.m_PlayerName,
-		SenderClientId >= 0 ? SenderClientId : -1,
-		Scope, aMessage,
-		pSkinName, UseCustomColor, ColorBody, ColorFeet, MessageId);
+	if(pRoomName)
+	{
+		UClientPresence::WriteRoomChatClientBody(vPacket,
+			g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
+			pRoomId, pServerAddress,
+			SenderClientId >= 0 ? PlayerNameForClient(SenderClientId) : g_Config.m_PlayerName,
+			SenderClientId >= 0 ? SenderClientId : -1, aMessage,
+			pSkinName, UseCustomColor, ColorBody, ColorFeet, MessageId);
+	}
+	else
+	{
+		UClientPresence::WriteChatClientBody(vPacket,
+			g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
+			pServerAddress,
+			SenderClientId >= 0 ? PlayerNameForClient(SenderClientId) : g_Config.m_PlayerName,
+			SenderClientId >= 0 ? SenderClientId : -1,
+			Scope, aMessage,
+			pSkinName, UseCustomColor, ColorBody, ColorFeet, MessageId);
+	}
 	UClientPresence::AppendProof(vPacket, g_Config.m_UcPresenceUdpSharedToken);
 	net_udp_send(m_Socket, &m_UcServerAddr, vPacket.data(), (int)vPacket.size());
 
@@ -1499,7 +1543,7 @@ void CClientIndicator::SendUClientChat(const char *pMessage)
 	GameClient()->m_Chat.AddUClientChatLine(
 		SenderClientId >= 0 ? PlayerNameForClient(SenderClientId) : g_Config.m_PlayerName,
 		SenderClientId, aMessage, pServerAddress, MessageId, true,
-		pSkinName, UseCustomColor, ColorBody, ColorFeet, (int)Scope);
+		pSkinName, UseCustomColor, ColorBody, ColorFeet, (int)Scope, pRoomName);
 }
 
 void CClientIndicator::ApplyUcChatBroadcast(const UClientPresence::CChatBroadcast &Chat)
@@ -1542,6 +1586,19 @@ void CClientIndicator::ApplyUcChatBroadcast(const UClientPresence::CChatBroadcas
 	GameClient()->m_Chat.AddUClientChatLine(Chat.m_SenderName.c_str(), Chat.m_SenderClientId,
 		Chat.m_Message.c_str(), aNormalizedServer, Chat.m_MessageId, false,
 		Chat.m_SkinName.c_str(), Chat.m_UseCustomColor, Chat.m_ColorBody, Chat.m_ColorFeet, (int)Chat.m_Scope);
+}
+
+void CClientIndicator::ApplyUcRoomChatBroadcast(const UClientPresence::CRoomChatBroadcast &Chat)
+{
+	if(!g_Config.m_UcChat || Chat.m_Message.empty() || Chat.m_SenderName.empty() || Chat.m_RoomName.empty())
+		return;
+	char aNormalizedServer[NETADDR_MAXSTRSIZE];
+	if(!NormalizePresenceServerAddress(Chat.m_ServerAddress.c_str(), aNormalizedServer, sizeof(aNormalizedServer)))
+		return;
+	GameClient()->m_Chat.AddUClientChatLine(Chat.m_SenderName.c_str(), Chat.m_SenderClientId,
+		Chat.m_Message.c_str(), aNormalizedServer, Chat.m_MessageId, false,
+		Chat.m_SkinName.c_str(), Chat.m_UseCustomColor, Chat.m_ColorBody, Chat.m_ColorFeet,
+		(int)UClientPresence::CHAT_SCOPE_GLOBAL, Chat.m_RoomName.c_str());
 }
 
 bool CClientIndicator::IsLiveCursorBlockedByPlayerSpectate() const
@@ -2292,6 +2349,13 @@ void CClientIndicator::ProcessUcPresencePacket(const unsigned char *pData, int D
 		UClientPresence::CChatBroadcast Chat;
 		if(UClientPresence::ReadChatBroadcast(pData, DataSize, Chat))
 			ApplyUcChatBroadcast(Chat);
+		break;
+	}
+	case UClientPresence::PACKET_ROOM_CHAT_BROADCAST:
+	{
+		UClientPresence::CRoomChatBroadcast Chat;
+		if(UClientPresence::ReadRoomChatBroadcast(pData, DataSize, Chat))
+			ApplyUcRoomChatBroadcast(Chat);
 		break;
 	}
 	case UClientPresence::PACKET_READ_BROADCAST:
