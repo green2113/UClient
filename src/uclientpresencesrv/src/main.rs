@@ -56,6 +56,10 @@ const PACKET_SERVER_JOIN: u8 = 16;
 const PACKET_SERVER_JOIN_BROADCAST: u8 = 17;
 const PACKET_ROOM_CHAT: u8 = 18;
 const PACKET_ROOM_CHAT_BROADCAST: u8 = 19;
+const PACKET_ROOM_SERVER_JOIN: u8 = 20;
+const PACKET_ROOM_SERVER_JOIN_BROADCAST: u8 = 21;
+const PACKET_UCLIENT_REACTION: u8 = 22;
+const PACKET_UCLIENT_REACTION_BROADCAST: u8 = 23;
 const SERVER_PRESENCE_JOIN: u8 = 0;
 const SERVER_PRESENCE_LEAVE: u8 = 1;
 const SERVER_PRESENCE_MOVE: u8 = 2;
@@ -64,6 +68,9 @@ const CHAT_SCOPE_SAME_SERVER: u8 = 0;
 const CHAT_SCOPE_GLOBAL: u8 = 1;
 /// Relayed globally; the friend check runs entirely on the receiving client.
 const CHAT_SCOPE_FRIENDS: u8 = 2;
+const REACTION_REMOVE: u8 = 0;
+const REACTION_ADD: u8 = 1;
+const REACTION_EMOJI_MAX_BYTES: usize = 64;
 const CHAT_MESSAGE_MAX_BYTES: usize = 512;
 const CHAT_MIN_INTERVAL: Duration = Duration::from_millis(400);
 const ROOM_CACHE_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
@@ -361,7 +368,7 @@ impl ServerState {
                 if entry.server_address != server_address {
                     return None;
                 }
-                if except.is_some_and(|skip| skip == key) {
+                if except.is_some_and(|skip| same_session(skip, key)) {
                     return None;
                 }
                 Some(entry)
@@ -373,7 +380,7 @@ impl ServerState {
         self.entries
             .iter()
             .filter_map(|(key, entry)| {
-                if except.is_some_and(|skip| skip == key) {
+                if except.is_some_and(|skip| same_session(skip, key)) {
                     return None;
                 }
                 Some(entry)
@@ -392,7 +399,7 @@ impl ServerState {
                 continue;
             };
             for key in sessions {
-                if except.is_some_and(|skip| skip == key) {
+                if except.is_some_and(|skip| same_session(skip, key)) {
                     continue;
                 }
                 if let Some(entry) = self.entries.get(key) {
@@ -1134,6 +1141,134 @@ fn handle_udp_packet(
         return outcome;
     }
 
+    if packet_type == PACKET_ROOM_SERVER_JOIN {
+        let Some(join) = read_room_server_join_packet(data) else {
+            state.log_invalid(ip, now, "bad room server-join payload");
+            return outcome;
+        };
+        if !validate_proof(shared_token, data) {
+            state.log_invalid(ip, now, "invalid room server-join proof");
+            return outcome;
+        }
+        if join.kind != SERVER_PRESENCE_JOIN
+            && join.kind != SERVER_PRESENCE_LEAVE
+            && join.kind != SERVER_PRESENCE_MOVE
+        {
+            state.log_invalid(ip, now, "invalid room server-join kind");
+            return outcome;
+        }
+        if !state.remember_nonce(join.session_id, join.nonce, now) {
+            state.log_invalid(ip, now, "room server-join nonce replay");
+            return outcome;
+        }
+        let sender_key = SessionKey {
+            player_id: join.player_id.clone(),
+            session_id: format_uuid(join.session_id),
+        };
+        if !state.allow_server_join(&sender_key, join.kind, now) {
+            state.log_invalid(ip, now, "room server-join rate limited");
+            return outcome;
+        }
+        let Some(room) = state.room_cache.get(&join.room_id).cloned() else {
+            state.log_invalid(ip, now, "unknown room");
+            return outcome;
+        };
+        if !room.install_ids.contains(&join.player_id) {
+            state.log_invalid(ip, now, "room membership rejected");
+            return outcome;
+        }
+        let packet = encode_room_server_join_broadcast(
+            &join.room_id,
+            &room.name,
+            &join.server_address,
+            &join.server_name,
+            &join.joiner_name,
+            join.joiner_key,
+            join.kind,
+            join.friends_only,
+            &join.skin_name,
+            join.use_custom_color,
+            join.color_body,
+            join.color_feet,
+        );
+        for peer in state.peers_for_players(&room.install_ids, Some(&sender_key)) {
+            outcome.outbound.push((peer.return_addr, packet.clone()));
+        }
+        return outcome;
+    }
+
+    if packet_type == PACKET_UCLIENT_REACTION {
+        let Some(reaction) = read_uclient_reaction_packet(data) else {
+            state.log_invalid(ip, now, "bad uclient reaction payload");
+            return outcome;
+        };
+        if !validate_proof(shared_token, data) {
+            state.log_invalid(ip, now, "invalid uclient reaction proof");
+            return outcome;
+        }
+        if reaction.emoji.is_empty() || reaction.emoji.len() > REACTION_EMOJI_MAX_BYTES {
+            state.log_invalid(ip, now, "invalid uclient reaction emoji");
+            return outcome;
+        }
+        if reaction.action != REACTION_REMOVE && reaction.action != REACTION_ADD {
+            state.log_invalid(ip, now, "invalid uclient reaction action");
+            return outcome;
+        }
+        if reaction.scope != CHAT_SCOPE_SAME_SERVER
+            && reaction.scope != CHAT_SCOPE_GLOBAL
+            && reaction.scope != CHAT_SCOPE_FRIENDS
+        {
+            state.log_invalid(ip, now, "invalid uclient reaction scope");
+            return outcome;
+        }
+        if !state.remember_nonce(reaction.session_id, reaction.nonce, now) {
+            state.log_invalid(ip, now, "uclient reaction nonce replay");
+            return outcome;
+        }
+        let sender_key = SessionKey {
+            player_id: reaction.player_id.clone(),
+            session_id: format_uuid(reaction.session_id),
+        };
+        let (room_name, peers) = if !reaction.room_id.is_empty() {
+            let Some(room) = state.room_cache.get(&reaction.room_id).cloned() else {
+                state.log_invalid(ip, now, "unknown reaction room");
+                return outcome;
+            };
+            if !room.install_ids.contains(&reaction.player_id) {
+                state.log_invalid(ip, now, "reaction room membership rejected");
+                return outcome;
+            }
+            let peers = state.peers_for_players(&room.install_ids, Some(&sender_key));
+            (room.name, peers)
+        } else if reaction.scope == CHAT_SCOPE_SAME_SERVER {
+            if reaction.original_server_address.is_empty() {
+                state.log_invalid(ip, now, "missing reaction server address");
+                return outcome;
+            }
+            (
+                String::new(),
+                state.peers_on_server(&reaction.original_server_address, Some(&sender_key)),
+            )
+        } else {
+            (String::new(), state.peers_all(Some(&sender_key)))
+        };
+        let packet = encode_uclient_reaction_broadcast(
+            reaction.scope,
+            &reaction.room_id,
+            &room_name,
+            &reaction.original_server_address,
+            reaction.message_id,
+            &reaction.reactor_name,
+            reaction.reactor_key,
+            &reaction.emoji,
+            reaction.action,
+        );
+        for peer in peers {
+            outcome.outbound.push((peer.return_addr, packet.clone()));
+        }
+        return outcome;
+    }
+
     // UClient chat read receipts: always relayed globally (the message author may be on a
     // different game server). Self-echo is suppressed on the client by reader key.
     if packet_type == PACKET_READ {
@@ -1576,6 +1711,62 @@ fn encode_server_join_broadcast(
     out.push(use_custom_color);
     out.extend_from_slice(&color_body.to_be_bytes());
     out.extend_from_slice(&color_feet.to_be_bytes());
+    out
+}
+
+fn encode_room_server_join_broadcast(
+    room_id: &str,
+    room_name: &str,
+    server_address: &str,
+    server_name: &str,
+    joiner_name: &str,
+    joiner_key: [u8; 16],
+    kind: u8,
+    friends_only: u8,
+    skin_name: &str,
+    use_custom_color: u8,
+    color_body: i32,
+    color_feet: i32,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_header(&mut out, PACKET_ROOM_SERVER_JOIN_BROADCAST);
+    write_string(&mut out, room_id);
+    write_string(&mut out, room_name);
+    write_string(&mut out, server_address);
+    write_string(&mut out, server_name);
+    write_string(&mut out, joiner_name);
+    out.extend_from_slice(&joiner_key);
+    out.push(kind);
+    out.push(friends_only);
+    write_string(&mut out, skin_name);
+    out.push(use_custom_color);
+    out.extend_from_slice(&color_body.to_be_bytes());
+    out.extend_from_slice(&color_feet.to_be_bytes());
+    out
+}
+
+fn encode_uclient_reaction_broadcast(
+    scope: u8,
+    room_id: &str,
+    room_name: &str,
+    original_server_address: &str,
+    message_id: [u8; 16],
+    reactor_name: &str,
+    reactor_key: [u8; 16],
+    emoji: &str,
+    action: u8,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_header(&mut out, PACKET_UCLIENT_REACTION_BROADCAST);
+    out.push(scope);
+    write_string(&mut out, room_id);
+    write_string(&mut out, room_name);
+    write_string(&mut out, original_server_address);
+    out.extend_from_slice(&message_id);
+    write_string(&mut out, reactor_name);
+    out.extend_from_slice(&reactor_key);
+    write_string(&mut out, emoji);
+    out.push(action);
     out
 }
 
@@ -2034,6 +2225,117 @@ fn read_server_join_packet(data: &[u8]) -> Option<ServerJoinPacket> {
     })
 }
 
+struct RoomServerJoinPacket {
+    player_id: String,
+    session_id: [u8; 16],
+    nonce: [u8; 16],
+    room_id: String,
+    server_address: String,
+    server_name: String,
+    joiner_name: String,
+    joiner_key: [u8; 16],
+    kind: u8,
+    friends_only: u8,
+    skin_name: String,
+    use_custom_color: u8,
+    color_body: i32,
+    color_feet: i32,
+}
+
+fn read_room_server_join_packet(data: &[u8]) -> Option<RoomServerJoinPacket> {
+    if packet_type(data)? != PACKET_ROOM_SERVER_JOIN || data.len() < PROOF_SIZE {
+        return None;
+    }
+    let payload_len = data.len().checked_sub(PROOF_SIZE)?;
+    let mut reader = Reader::new(&data[..payload_len]);
+    reader.skip(6)?;
+    let player_id = reader.string()?;
+    let session_id = reader.uuid()?;
+    let nonce = reader.uuid()?;
+    let _timestamp = reader.u64()?;
+    let room_id = reader.string()?;
+    let server_address = reader.string()?;
+    let server_name = reader.string()?;
+    let joiner_name = reader.string()?;
+    let joiner_key = reader.uuid()?;
+    let kind = reader.u8()?;
+    let friends_only = reader.u8()?;
+    let skin_name = reader.string()?;
+    let use_custom_color = reader.u8()?;
+    let color_body = reader.i32()?;
+    let color_feet = reader.i32()?;
+    if reader.remaining() != 0 || room_id.is_empty() || room_id.len() > 64 || skin_name.len() > 64 {
+        return None;
+    }
+    Some(RoomServerJoinPacket {
+        player_id,
+        session_id,
+        nonce,
+        room_id,
+        server_address,
+        server_name,
+        joiner_name,
+        joiner_key,
+        kind,
+        friends_only,
+        skin_name,
+        use_custom_color,
+        color_body,
+        color_feet,
+    })
+}
+
+struct UClientReactionPacket {
+    player_id: String,
+    session_id: [u8; 16],
+    nonce: [u8; 16],
+    scope: u8,
+    room_id: String,
+    original_server_address: String,
+    message_id: [u8; 16],
+    reactor_name: String,
+    reactor_key: [u8; 16],
+    emoji: String,
+    action: u8,
+}
+
+fn read_uclient_reaction_packet(data: &[u8]) -> Option<UClientReactionPacket> {
+    if packet_type(data)? != PACKET_UCLIENT_REACTION || data.len() < PROOF_SIZE {
+        return None;
+    }
+    let payload_len = data.len().checked_sub(PROOF_SIZE)?;
+    let mut reader = Reader::new(&data[..payload_len]);
+    reader.skip(6)?;
+    let player_id = reader.string()?;
+    let session_id = reader.uuid()?;
+    let nonce = reader.uuid()?;
+    let _timestamp = reader.u64()?;
+    let scope = reader.u8()?;
+    let room_id = reader.string()?;
+    let original_server_address = reader.string()?;
+    let message_id = reader.uuid()?;
+    let reactor_name = reader.string()?;
+    let reactor_key = reader.uuid()?;
+    let emoji = reader.string()?;
+    let action = reader.u8()?;
+    if reader.remaining() != 0 || room_id.len() > 64 {
+        return None;
+    }
+    Some(UClientReactionPacket {
+        player_id,
+        session_id,
+        nonce,
+        scope,
+        room_id,
+        original_server_address,
+        message_id,
+        reactor_name,
+        reactor_key,
+        emoji,
+        action,
+    })
+}
+
 struct Reader<'a> {
     data: &'a [u8],
     offset: usize,
@@ -2122,6 +2424,11 @@ fn format_uuid(uuid: [u8; 16]) -> String {
 
 fn session_id_for_packet(packet: &PresencePacket) -> String {
     format!("{}:{}", format_uuid(packet.session_id), packet.client_id)
+}
+
+fn same_session(left: &SessionKey, right: &SessionKey) -> bool {
+    left.player_id == right.player_id
+        && session_instance_of(&left.session_id) == session_instance_of(&right.session_id)
 }
 
 /// The session id is formatted as `<instance-uuid>:<client_id>`. The instance

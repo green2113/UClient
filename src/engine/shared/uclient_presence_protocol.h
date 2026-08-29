@@ -50,6 +50,10 @@ enum EPacketType : uint8_t
 	// Server-authoritative chat rooms.
 	PACKET_ROOM_CHAT = 18, // Client -> Server (proof protected)
 	PACKET_ROOM_CHAT_BROADCAST = 19, // Server -> Client
+	PACKET_ROOM_SERVER_JOIN = 20, // Client -> Server (proof protected)
+	PACKET_ROOM_SERVER_JOIN_BROADCAST = 21, // Server -> Client
+	PACKET_UCLIENT_REACTION = 22, // Client -> Server (proof protected)
+	PACKET_UCLIENT_REACTION_BROADCAST = 23, // Server -> Client
 };
 
 enum EServerPresenceKind : uint8_t
@@ -190,6 +194,35 @@ struct CServerJoinBroadcast
 	int32_t m_ColorFeet = 0;
 };
 
+struct CRoomServerJoinBroadcast
+{
+	std::string m_RoomId;
+	std::string m_RoomName;
+	std::string m_ServerAddress;
+	std::string m_ServerName;
+	std::string m_JoinerName;
+	CUuid m_JoinerKey = UUID_ZEROED;
+	uint8_t m_Kind = SERVER_PRESENCE_JOIN;
+	uint8_t m_FriendsOnly = 0;
+	std::string m_SkinName;
+	uint8_t m_UseCustomColor = 0;
+	int32_t m_ColorBody = 0;
+	int32_t m_ColorFeet = 0;
+};
+
+struct CUClientReactionBroadcast
+{
+	uint8_t m_Scope = CHAT_SCOPE_GLOBAL;
+	std::string m_RoomId;
+	std::string m_RoomName;
+	std::string m_OriginalServerAddress;
+	CUuid m_MessageId = UUID_ZEROED;
+	std::string m_ReactorName;
+	CUuid m_ReactorKey = UUID_ZEROED;
+	std::string m_Emoji;
+	uint8_t m_Action = REACTION_ADD;
+};
+
 using BestClientIndicator::AppendProof;
 using BestClientIndicator::ComputeProof;
 using BestClientIndicator::ParseAddress;
@@ -271,6 +304,16 @@ void WriteServerJoinClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId
 void WriteServerJoinBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pServerName, const char *pJoinerName,
 	CUuid JoinerKey, uint8_t Kind, uint8_t FriendsOnly, const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet);
 bool ReadServerJoinBroadcast(const uint8_t *pData, int DataSize, CServerJoinBroadcast &Out);
+
+void WriteRoomServerJoinClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pRoomId, const char *pServerAddress, const char *pServerName, const char *pJoinerName, CUuid JoinerKey, uint8_t Kind,
+	uint8_t FriendsOnly, const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet);
+bool ReadRoomServerJoinBroadcast(const uint8_t *pData, int DataSize, CRoomServerJoinBroadcast &Out);
+
+void WriteUClientReactionClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	uint8_t Scope, const char *pRoomId, const char *pOriginalServerAddress, CUuid MessageId, const char *pReactorName,
+	CUuid ReactorKey, const char *pEmoji, uint8_t Action);
+bool ReadUClientReactionBroadcast(const uint8_t *pData, int DataSize, CUClientReactionBroadcast &Out);
 }
 
 #endif

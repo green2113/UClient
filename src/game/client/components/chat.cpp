@@ -490,7 +490,9 @@ CChat::CLine::CLine()
 	m_ReadLabelRectValid = false;
 	m_ServerAnnouncement = false;
 	m_UClientScope = -1;
+	m_aUClientServerAddress[0] = '\0';
 	m_aUClientRoomName[0] = '\0';
+	m_aUClientRoomId[0] = '\0';
 	m_ScopeHoverRectValid = false;
 	m_aScopeNoteHeight[0] = 0.0f;
 	m_aScopeNoteHeight[1] = 0.0f;
@@ -580,7 +582,9 @@ void CChat::CLine::Reset(CChat &This)
 	m_ReadLabelRectValid = false;
 	m_ServerAnnouncement = false;
 	m_UClientScope = -1;
+	m_aUClientServerAddress[0] = '\0';
 	m_aUClientRoomName[0] = '\0';
+	m_aUClientRoomId[0] = '\0';
 	m_ScopeHoverRectValid = false;
 	m_aScopeNoteHeight[0] = 0.0f;
 	m_aScopeNoteHeight[1] = 0.0f;
@@ -1111,24 +1115,6 @@ void CChat::ConchainChatWidth(IConsole::IResult *pResult, void *pUserData, ICons
 	pChat->RebuildChat();
 }
 
-void CChat::ConchainUcChatShowSameServerOnly(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
-{
-	const int OldShow = g_Config.m_UcChatShowSameServerOnly;
-	pfnCallback(pResult, pCallbackUserData);
-	// Match Settings > UClient: enabling show-same-server also enables send-same-server.
-	if(!OldShow && g_Config.m_UcChatShowSameServerOnly && !g_Config.m_UcChatSendSameServerOnly)
-		g_Config.m_UcChatSendSameServerOnly = 1;
-}
-
-void CChat::ConchainUcChatSendSameServerOnly(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
-{
-	const int OldSend = g_Config.m_UcChatSendSameServerOnly;
-	pfnCallback(pResult, pCallbackUserData);
-	// Turning send off while show is on also clears show (they stay coupled).
-	if(OldSend && !g_Config.m_UcChatSendSameServerOnly && g_Config.m_UcChatShowSameServerOnly)
-		g_Config.m_UcChatShowSameServerOnly = 0;
-}
-
 void CChat::Echo(const char *pString)
 {
 	AddLine(CLIENT_MSG, 0, pString);
@@ -1155,8 +1141,6 @@ void CChat::OnInit()
 	Console()->Chain("cl_chat_size", ConchainChatFontSize, this);
 	Console()->Chain("cl_chat_width", ConchainChatWidth, this);
 	Console()->Chain("bc_regex_player_whitelist", ConchainRegexPlayerWhitelist, this);
-	Console()->Chain("uc_chat_show_same_server_only", ConchainUcChatShowSameServerOnly, this);
-	Console()->Chain("uc_chat_send_same_server_only", ConchainUcChatSendSameServerOnly, this);
 
 	if(g_Config.m_BcRegexPlayerWhitelist[0])
 	{
@@ -1396,10 +1380,23 @@ CUi::EPopupMenuFunctionResult CChat::PopupRoomSelect(void *pContext, CUIRect Vie
 	if(s_CurTab == 1)
 		return PopupTranslateSettings(pContext, View, Active);
 
-	const auto &vRooms = pChat->GameClient()->m_UClientChatRooms.Rooms();
+	CUIRect Row, Label, DropDown;
+	View.HSplitTop(20.0f, &Row, &View);
+	Row.VSplitLeft(82.0f, &Label, &DropDown);
+	DropDown.VSplitLeft(6.0f, nullptr, &DropDown);
+	pChat->Ui()->DoLabel(&Label, Localize("Send target"), 11.0f, TEXTALIGN_ML);
+	static CUi::SDropDownState s_SendTargetDropDownState;
+	static CScrollRegion s_SendTargetDropDownScrollRegion;
+	pChat->RenderUClientChatTargetDropDown(DropDown, s_SendTargetDropDownState, s_SendTargetDropDownScrollRegion);
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+void CChat::RenderUClientChatTargetDropDown(const CUIRect &Rect, CUi::SDropDownState &DropDownState, CScrollRegion &ScrollRegion)
+{
+	const auto &vRooms = GameClient()->m_UClientChatRooms.Rooms();
 	std::vector<std::string> vLabels = {
-		"All UClient users",
-		"Same server",
+		Localize("All UClient users"),
+		Localize("Same server"),
 	};
 	vLabels.reserve(2 + vRooms.size());
 	for(const auto &Room : vRooms)
@@ -1418,35 +1415,19 @@ CUi::EPopupMenuFunctionResult CChat::PopupRoomSelect(void *pContext, CUIRect Vie
 	}
 	else if(g_Config.m_UcChatSendSameServerOnly)
 		CurrentSelection = 1;
-	if(!g_Config.m_UcChatSendRoom[0] && g_Config.m_UcChatFriendsOnly)
-	{
-		g_Config.m_UcChatFriendsOnly = 0;
-		g_Config.m_UcChatSendSameServerOnly = 0;
-		pChat->ConfigManager()->Save();
-	}
-
-	CUIRect Row, Label, DropDown;
-	View.HSplitTop(20.0f, &Row, &View);
-	Row.VSplitLeft(82.0f, &Label, &DropDown);
-	DropDown.VSplitLeft(6.0f, nullptr, &DropDown);
-	pChat->Ui()->DoLabel(&Label, Localize("Send target"), 11.0f, TEXTALIGN_ML);
-	static CUi::SDropDownState s_SendTargetDropDownState;
-	static CScrollRegion s_SendTargetDropDownScrollRegion;
-	s_SendTargetDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_SendTargetDropDownScrollRegion;
-	const int NewSelection = pChat->Ui()->DoDropDown(&DropDown, CurrentSelection, vpLabels.data(), (int)vpLabels.size(), s_SendTargetDropDownState);
+	DropDownState.m_SelectionPopupContext.m_pScrollRegion = &ScrollRegion;
+	const int NewSelection = Ui()->DoDropDown(&Rect, CurrentSelection, vpLabels.data(), (int)vpLabels.size(), DropDownState);
 	if(NewSelection != CurrentSelection)
 	{
 		if(NewSelection >= 2 && NewSelection < 2 + (int)vRooms.size())
-			pChat->GameClient()->m_UClientChatRooms.SelectSendRoom(vRooms[NewSelection - 2].m_aId);
+			GameClient()->m_UClientChatRooms.SelectSendRoom(vRooms[NewSelection - 2].m_aId);
 		else
 		{
-			pChat->GameClient()->m_UClientChatRooms.SelectSendRoom("");
-			g_Config.m_UcChatFriendsOnly = 0;
+			GameClient()->m_UClientChatRooms.SelectSendRoom("");
 			g_Config.m_UcChatSendSameServerOnly = NewSelection == 1;
-			pChat->ConfigManager()->Save();
+			ConfigManager()->Save();
 		}
 	}
-	return CUi::POPUP_KEEP_OPEN;
 }
 
 void CChat::RenderRoomSelectButton(const CUIRect &ButtonRect)
@@ -5446,7 +5427,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 					GameClient()->m_BestClient.SanitizePlayerName(GameClient()->m_aClients[Line.m_ClientId].m_aName, aSanitizedName, sizeof(aSanitizedName), Line.m_ClientId);
 					pReplyName = aSanitizedName;
 				}
-				if(Line.m_UClient && g_Config.m_UcChat && !g_Config.m_UcChatFriendsOnly && g_Config.m_UcChatSendSameServerOnly && !Line.m_UClientFromCurrentServer)
+				if(Line.m_UClient && g_Config.m_UcChat && g_Config.m_UcChatSendSameServerOnly && !Line.m_UClientFromCurrentServer)
 				{
 					StashUcReplySendScopePrompt(Line.m_ClientId, pReplyName, m_HoveredReplyLineIndex, GetLineDisplayText(Line));
 					GameClient()->m_Menus.OfferDisableUcChatSendSameServerForReply();
@@ -5979,18 +5960,74 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		if(!m_CompletionUsed && m_aCompletionBuffer[0] != '/' && m_aCompletionBuffer[0] != '!')
 		{
 			m_PlayerCompletionListLength = 0;
+			m_vUClientCompletionNames.clear();
 			if(CtrlPressed)
 			{
-				// uclient: Ctrl+Tab cycles nearby player names (see chat_nearby_tab.cpp).
-				CUClientChatNearbyTab::SEntry aNearby[MAX_CLIENTS];
-				int NearbyLength = 0;
-				CUClientChatNearbyTab::BuildCompletionList(GameClient(), aNearby, NearbyLength, MAX_CLIENTS);
-				for(int i = 0; i < NearbyLength; ++i)
+				if(m_Mode == MODE_UCLIENT)
 				{
-					m_aPlayerCompletionList[i].m_ClientId = aNearby[i].m_ClientId;
-					m_aPlayerCompletionList[i].m_Score = aNearby[i].m_Score;
+					// Ctrl+Tab always uses players on the current game server.
+					for(auto &PlayerInfo : GameClient()->m_Snap.m_apInfoByName)
+					{
+						if(!PlayerInfo)
+							continue;
+						const char *pName = GameClient()->m_aClients[PlayerInfo->m_ClientId].m_aName;
+						const char *pFound = str_utf8_find_nocase(pName, m_aCompletionBuffer);
+						if(pFound)
+							m_aPlayerCompletionList[m_PlayerCompletionListLength++] = {PlayerInfo->m_ClientId, (int)(pFound - pName)};
+					}
 				}
-				m_PlayerCompletionListLength = NearbyLength;
+				else
+				{
+					// Existing Ctrl+Tab behavior outside UClient chat: nearby players.
+					CUClientChatNearbyTab::SEntry aNearby[MAX_CLIENTS];
+					int NearbyLength = 0;
+					CUClientChatNearbyTab::BuildCompletionList(GameClient(), aNearby, NearbyLength, MAX_CLIENTS);
+					for(int i = 0; i < NearbyLength; ++i)
+					{
+						m_aPlayerCompletionList[i].m_ClientId = aNearby[i].m_ClientId;
+						m_aPlayerCompletionList[i].m_Score = aNearby[i].m_Score;
+					}
+					m_PlayerCompletionListLength = NearbyLength;
+				}
+			}
+			else if(m_Mode == MODE_UCLIENT)
+			{
+				const char *pRoomId = GameClient()->m_UClientChatRooms.SelectedSendRoomId();
+				if(pRoomId[0])
+				{
+					for(const auto &Room : GameClient()->m_UClientChatRooms.Rooms())
+					{
+						if(str_comp(Room.m_aId, pRoomId) != 0)
+							continue;
+						for(const auto &Member : Room.m_vMembers)
+							if(Member.m_aDisplayName[0] && str_utf8_find_nocase(Member.m_aDisplayName, m_aCompletionBuffer))
+								m_vUClientCompletionNames.emplace_back(Member.m_aDisplayName);
+						break;
+					}
+				}
+				else if(g_Config.m_UcChatSendSameServerOnly)
+				{
+					for(auto &PlayerInfo : GameClient()->m_Snap.m_apInfoByName)
+					{
+						if(!PlayerInfo || !GameClient()->m_ClientIndicator.IsPlayerUClient(PlayerInfo->m_ClientId))
+							continue;
+						const char *pName = GameClient()->m_aClients[PlayerInfo->m_ClientId].m_aName;
+						if(str_utf8_find_nocase(pName, m_aCompletionBuffer))
+							m_vUClientCompletionNames.emplace_back(pName);
+					}
+				}
+				else
+				GameClient()->m_ClientIndicator.CollectOnlineUClientNames(m_vUClientCompletionNames);
+				std::erase_if(m_vUClientCompletionNames, [&](const std::string &Name) {
+					return str_utf8_find_nocase(Name.c_str(), m_aCompletionBuffer) == nullptr;
+				});
+				std::stable_sort(m_vUClientCompletionNames.begin(), m_vUClientCompletionNames.end(), [&](const std::string &Left, const std::string &Right) {
+					const char *pLeft = str_utf8_find_nocase(Left.c_str(), m_aCompletionBuffer);
+					const char *pRight = str_utf8_find_nocase(Right.c_str(), m_aCompletionBuffer);
+					const int LeftScore = pLeft ? (int)(pLeft - Left.c_str()) : 0;
+					const int RightScore = pRight ? (int)(pRight - Right.c_str()) : 0;
+					return LeftScore == RightScore ? str_comp_nocase(Left.c_str(), Right.c_str()) < 0 : LeftScore < RightScore;
+				});
 			}
 			else
 			{
@@ -6225,7 +6262,18 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		{
 			// find next possible name
 			const char *pCompletionString = nullptr;
-			if(m_PlayerCompletionListLength > 0)
+			if(!m_vUClientCompletionNames.empty())
+			{
+				if(ShiftPressed && m_CompletionUsed)
+					--m_CompletionChosen;
+				else if(!ShiftPressed)
+					++m_CompletionChosen;
+				const int Count = (int)m_vUClientCompletionNames.size();
+				m_CompletionChosen = (m_CompletionChosen % Count + Count) % Count;
+				m_CompletionUsed = true;
+				pCompletionString = m_vUClientCompletionNames[m_CompletionChosen].c_str();
+			}
+			else if(m_PlayerCompletionListLength > 0)
 			{
 				// We do this in a loop, if a player left the game during the repeated pressing of Tab, they are skipped
 				CGameClient::CClientData *pCompletionClientData;
@@ -6778,14 +6826,12 @@ bool CChat::CanShowReplyButton(const CLine &Line) const
 	return Line.m_ClientId >= 0;
 }
 
-// A reaction is addressed by (author client id, hash of the message text), so peers can only agree
-// on the target if the line came from the game server: player chat and server messages both do.
-// CLIENT_MSG lines are excluded because they either exist on this client alone (echoes, hints) or
-// are remote UClient chat, where every sender shares CLIENT_MSG and the hashes would collide.
 bool CChat::CanReactToLine(const CLine &Line) const
 {
 	if(!Line.m_Initialized || Line.m_aText[0] == '\0')
 		return false;
+	if(Line.m_UClient)
+		return Line.m_UClientMessageId != UUID_ZEROED;
 	return Line.m_ClientId >= 0 || Line.m_ClientId == SERVER_MSG;
 }
 
@@ -7439,7 +7485,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 
 void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const char *pLine, const char *pServerAddress,
 	const CUuid &MessageId, bool Mine,
-	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet, int Scope, const char *pRoomName)
+	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet, int Scope, const char *pRoomName, const char *pRoomId)
 {
 	if(!g_Config.m_UcChat || !pName || !pLine || pName[0] == '\0' || pLine[0] == '\0')
 		return;
@@ -7494,7 +7540,9 @@ void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const c
 	Line.m_UClientMessageId = MessageId;
 	Line.m_UClientMine = Mine;
 	Line.m_UClientScope = Scope;
+	str_copy(Line.m_aUClientServerAddress, pServerAddress ? pServerAddress : "", sizeof(Line.m_aUClientServerAddress));
 	str_copy(Line.m_aUClientRoomName, pRoomName ? pRoomName : "", sizeof(Line.m_aUClientRoomName));
+	str_copy(Line.m_aUClientRoomId, pRoomId ? pRoomId : "", sizeof(Line.m_aUClientRoomId));
 	// Monotonic order used as the read high-water mark (newer lines sort later).
 	Line.m_UClientSeq = ++m_UcSeqCounter;
 
@@ -7551,14 +7599,14 @@ bool CChat::IsUClientFriendName(const char *pName) const
 }
 
 void CChat::AddServerLeaveLine(const char *pLeaverName, const char *pServerAddress,
-	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet)
+	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet, const char *pRoomName, const char *pRoomId)
 {
 	if(!g_Config.m_UcChat || !pLeaverName || pLeaverName[0] == '\0')
 		return;
 
 	// Plain announcement: no server name and nothing clickable.
 	AddUClientChatLine(pLeaverName, -1, Localize("left the server."), pServerAddress, UUID_ZEROED, false,
-		pSkinName, UseCustomColor, ColorBody, ColorFeet);
+		pSkinName, UseCustomColor, ColorBody, ColorFeet, -1, pRoomName, pRoomId);
 
 	CLine &Line = m_aLines[m_CurrentLine];
 	if(!Line.m_Initialized || !Line.m_UClient)
@@ -7572,7 +7620,7 @@ void CChat::AddServerLeaveLine(const char *pLeaverName, const char *pServerAddre
 }
 
 void CChat::AddServerJoinLine(const char *pJoinerName, const char *pServerAddress, const char *pServerName,
-	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet, bool Moved)
+	const char *pSkinName, int UseCustomColor, int ColorBody, int ColorFeet, bool Moved, const char *pRoomName, const char *pRoomId)
 {
 	if(!g_Config.m_UcChat || !pJoinerName || !pServerAddress || pJoinerName[0] == '\0' || pServerAddress[0] == '\0')
 		return;
@@ -7601,7 +7649,7 @@ void CChat::AddServerJoinLine(const char *pJoinerName, const char *pServerAddres
 	// Reuse the remote-UClient line path (tee/name/friend-heart/UClient color). No message id so
 	// it never participates in read receipts. Not mine.
 	AddUClientChatLine(pJoinerName, -1, aBody, pServerAddress, UUID_ZEROED, false,
-		pSkinName, UseCustomColor, ColorBody, ColorFeet);
+		pSkinName, UseCustomColor, ColorBody, ColorFeet, -1, pRoomName, pRoomId);
 
 	CLine &Line = m_aLines[m_CurrentLine];
 	if(!Line.m_Initialized || !Line.m_UClient)
@@ -8671,6 +8719,27 @@ void CChat::OnRender()
 					TextRender()->TextColor(TextRender()->DefaultTextColor());
 				}
 			}
+		}
+
+		if(m_Mode == MODE_UCLIENT)
+		{
+			const char *pTarget = Localize("All UClient users");
+			if(g_Config.m_UcChatSendRoom[0])
+			{
+				if(const char *pRoomName = GameClient()->m_UClientChatRooms.RoomNameById(g_Config.m_UcChatSendRoom))
+					pTarget = pRoomName;
+			}
+			else if(g_Config.m_UcChatSendSameServerOnly)
+				pTarget = Localize("Same server");
+			char aTargetHint[160];
+			str_format(aTargetHint, sizeof(aTargetHint), Localize("Messages will be sent to '%s'."), pTarget);
+			CTextCursor HintCursor;
+			HintCursor.SetPosition(vec2(x + ChatOpenOffsetX, y + ScaledFontSize * 1.35f));
+			HintCursor.m_FontSize = maximum(7.0f, ScaledFontSize * 0.72f);
+			HintCursor.m_LineWidth = InputAreaWidth;
+			TextRender()->TextColor(0.68f, 0.68f, 0.68f, 0.9f);
+			TextRender()->TextEx(&HintCursor, aTargetHint);
+			TextRender()->TextColor(TextRender()->DefaultTextColor());
 		}
 	}
 	}
@@ -11171,7 +11240,7 @@ int CChat::FindLineForReaction(int TargetClientId, uint64_t MessageHash) const
 	return -1;
 }
 
-void CChat::ApplyReactionToLineData(CLine &Line, const char *pEmoji, int ReactorClientId, const char *pReactorName, bool Add)
+void CChat::ApplyReactionToLineData(CLine &Line, const char *pEmoji, int ReactorClientId, const char *pReactorName, bool Add, const CUuid *pReactorKey)
 {
 	if(!pEmoji || pEmoji[0] == '\0')
 		return;
@@ -11208,10 +11277,13 @@ void CChat::ApplyReactionToLineData(CLine &Line, const char *pEmoji, int Reactor
 		}
 		auto &vIds = Line.m_vReactions[Idx].m_vReactorClientIds;
 		auto &vNames = Line.m_vReactions[Idx].m_vReactorNames;
+		auto &vKeys = Line.m_vReactions[Idx].m_vReactorKeys;
 		bool Found = false;
-		for(int Id : vIds)
+		for(size_t i = 0; i < vIds.size(); ++i)
 		{
-			if(Id == ReactorClientId)
+			if(pReactorKey && *pReactorKey != UUID_ZEROED ?
+					(i < vKeys.size() && vKeys[i] == *pReactorKey) :
+					vIds[i] == ReactorClientId)
 			{
 				Found = true;
 				break;
@@ -11221,19 +11293,25 @@ void CChat::ApplyReactionToLineData(CLine &Line, const char *pEmoji, int Reactor
 		{
 			vIds.push_back(ReactorClientId);
 			vNames.push_back(ResolveReactorName());
+			vKeys.push_back(pReactorKey ? *pReactorKey : UUID_ZEROED);
 		}
 	}
 	else if(Idx >= 0)
 	{
 		auto &vIds = Line.m_vReactions[Idx].m_vReactorClientIds;
 		auto &vNames = Line.m_vReactions[Idx].m_vReactorNames;
+		auto &vKeys = Line.m_vReactions[Idx].m_vReactorKeys;
 		for(size_t i = 0; i < vIds.size(); ++i)
 		{
-			if(vIds[i] == ReactorClientId)
+			if(pReactorKey && *pReactorKey != UUID_ZEROED ?
+					(i < vKeys.size() && vKeys[i] == *pReactorKey) :
+					vIds[i] == ReactorClientId)
 			{
 				vIds.erase(vIds.begin() + i);
 				if(i < vNames.size())
 					vNames.erase(vNames.begin() + i);
+				if(i < vKeys.size())
+					vKeys.erase(vKeys.begin() + i);
 				break;
 			}
 		}
@@ -11276,7 +11354,11 @@ void CChat::ToggleLocalReaction(int LineIndex, const char *pEmoji)
 	const bool Add = !Mine;
 	const char *pLocalName = (LocalId >= 0 && LocalId < MAX_CLIENTS) ? GameClient()->m_aClients[LocalId].m_aName : "";
 	ApplyReactionToLineData(Line, pEmoji, LocalId, pLocalName, Add);
-	GameClient()->m_ClientIndicator.SendChatReaction(Line.m_ClientId, ComputeMessageHash(Line.m_aText), pEmoji, Add);
+	if(Line.m_UClient && Line.m_UClientMessageId != UUID_ZEROED)
+		GameClient()->m_ClientIndicator.SendUClientChatReaction(Line.m_UClientMessageId, Line.m_aUClientServerAddress,
+			(uint8_t)Line.m_UClientScope, Line.m_aUClientRoomId, pEmoji, Add);
+	else
+		GameClient()->m_ClientIndicator.SendChatReaction(Line.m_ClientId, ComputeMessageHash(Line.m_aText), pEmoji, Add);
 }
 
 float CChat::LayoutReactionRow(const CLine &Line, float FontSize, float AvailWidth, float OriginX, float OriginY, std::vector<SRenderRect> *pOutRects)
@@ -11335,6 +11417,20 @@ void CChat::OnChatReactionReceived(int TargetClientId, uint64_t MessageHash, con
 	if(LineIndex < 0)
 		return;
 	ApplyReactionToLineData(m_aLines[LineIndex], pEmoji, ReactorClientId, pReactorName, Add);
+}
+
+void CChat::OnUClientReactionReceived(const CUuid &MessageId, const CUuid &ReactorKey, const char *pEmoji, const char *pReactorName, bool Add)
+{
+	if(MessageId == UUID_ZEROED || ReactorKey == UUID_ZEROED)
+		return;
+	for(int i = 0; i < MAX_LINES; ++i)
+	{
+		CLine &Line = m_aLines[((m_CurrentLine - i) + MAX_LINES) % MAX_LINES];
+		if(!Line.m_Initialized || !Line.m_UClient || Line.m_UClientMessageId != MessageId)
+			continue;
+		ApplyReactionToLineData(Line, pEmoji, -1, pReactorName, Add, &ReactorKey);
+		return;
+	}
 }
 
 static std::string UcReaderKeyString(const CUuid &Key)

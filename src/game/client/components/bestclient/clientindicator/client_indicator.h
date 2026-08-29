@@ -25,6 +25,7 @@
 #include <unordered_map>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 namespace UClientPresence
 {
@@ -34,8 +35,10 @@ struct CReactionBroadcast;
 struct CCursorBroadcast;
 struct CChatBroadcast;
 struct CRoomChatBroadcast;
+struct CUClientReactionBroadcast;
 struct CReadBroadcast;
 struct CServerJoinBroadcast;
+struct CRoomServerJoinBroadcast;
 }
 
 class CClientIndicator : public CComponent
@@ -68,6 +71,7 @@ public:
 	// Chat reactions: send a reaction add/remove for a message authored by TargetClientId,
 	// identified across clients by MessageHash. Relayed via the UClient presence UDP server.
 	void SendChatReaction(int TargetClientId, uint64_t MessageHash, const char *pEmoji, bool Add);
+	void SendUClientChatReaction(const CUuid &MessageId, const char *pOriginalServerAddress, uint8_t Scope, const char *pRoomId, const char *pEmoji, bool Add);
 
 	// UClient chat read receipts: broadcast that we have read up to the given message id.
 	void SendChatReadMarker(const CUuid &MessageId);
@@ -81,6 +85,7 @@ public:
 	// Reason why SendUClientChat would drop a message right now, or nullptr when it can send.
 	const char *UClientChatUnavailableReason();
 	bool UcPeerAppliesToCurrentServer(const char *pServerAddress) const;
+	void CollectOnlineUClientNames(std::vector<std::string> &vNames) const;
 
 	// Draws the "Sharing cursor" indicator. Called from the HUD after the timer/music player so
 	// it is never hidden behind them (rendered on top, at the bottom-center of the screen).
@@ -195,8 +200,10 @@ private:
 	void ApplyUcPeerRemove(const UClientPresence::CPeerState &State);
 	void ApplyUcPeerList(const UClientPresence::CPeerList &PeerList);
 	void ApplyUcReactionBroadcast(const UClientPresence::CReactionBroadcast &Reaction);
+	void ApplyUClientReactionBroadcast(const UClientPresence::CUClientReactionBroadcast &Reaction);
 	void ApplyUcReadBroadcast(const UClientPresence::CReadBroadcast &Read);
 	void ApplyUcServerJoinBroadcast(const UClientPresence::CServerJoinBroadcast &Join);
+	void ApplyUcRoomServerJoinBroadcast(const UClientPresence::CRoomServerJoinBroadcast &Join);
 	void BeginPendingUClientServerLeave();
 	void FlushPendingUClientServerLeave(bool Force);
 	void LocalSkinSnapshot(const char *&pSkinName, uint8_t &UseCustomColor, int32_t &ColorBody, int32_t &ColorFeet) const;

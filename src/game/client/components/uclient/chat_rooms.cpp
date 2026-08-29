@@ -256,4 +256,9 @@ void CUClientChatRooms::ParseRooms(const json_value *pRoot)
 	m_vRooms = std::move(vRooms);
 	if(g_Config.m_UcChatSendRoom[0] && !RoomNameById(g_Config.m_UcChatSendRoom))
 		SelectSendRoom("");
+	if(g_Config.m_UcServerJoinSendRoom[0] && !RoomNameById(g_Config.m_UcServerJoinSendRoom))
+	{
+		g_Config.m_UcServerJoinSendRoom[0] = '\0';
+		ConfigManager()->Save();
+	}
 }

@@ -204,6 +204,7 @@ class CChat : public CComponent
 			char m_aEmoji[16] = "";
 			std::vector<int> m_vReactorClientIds; // game-server client ids of everyone who reacted
 			std::vector<std::string> m_vReactorNames; // parallel to m_vReactorClientIds, for the hover tooltip
+			std::vector<CUuid> m_vReactorKeys; // stable identities for cross-server UClient reactors
 		};
 		std::vector<SReaction> m_vReactions;
 		std::vector<SRenderRect> m_vReactionRects; // one per reaction, screen-space, for click hit testing
@@ -226,7 +227,9 @@ class CChat : public CComponent
 		// Audience the sender picked for this message (UClientPresence::EChatScope), or -1 when
 		// there is none to show (announcements, or lines that never carried a scope).
 		int m_UClientScope = -1;
+		char m_aUClientServerAddress[64] = "";
 		char m_aUClientRoomName[64] = "";
+		char m_aUClientRoomId[64] = "";
 		// Message bubble, hover-tested one frame later to decide where the audience note goes.
 		SRenderRect m_ScopeHoverRect{};
 		bool m_ScopeHoverRectValid = false;
@@ -325,6 +328,7 @@ class CChat : public CComponent
 	};
 	CRateablePlayer m_aPlayerCompletionList[MAX_CLIENTS];
 	int m_PlayerCompletionListLength;
+	std::vector<std::string> m_vUClientCompletionNames;
 
 	struct CCommand
 	{
@@ -584,8 +588,6 @@ class CChat : public CComponent
 	static void ConchainChatFontSize(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainChatWidth(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 	static void ConchainRegexPlayerWhitelist(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
-	static void ConchainUcChatShowSameServerOnly(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
-	static void ConchainUcChatSendSameServerOnly(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData);
 
 	static std::vector<std::string> SplitWords(const char *pMessage);
 	Regex m_RegexPlayerWhitelist;
@@ -759,7 +761,7 @@ class CChat : public CComponent
 	static uint64_t ComputeMessageHash(const char *pText);
 	int FindLineForReaction(int TargetClientId, uint64_t MessageHash) const;
 	bool IsLocalClientId(int ClientId) const;
-	void ApplyReactionToLineData(CLine &Line, const char *pEmoji, int ReactorClientId, const char *pReactorName, bool Add);
+	void ApplyReactionToLineData(CLine &Line, const char *pEmoji, int ReactorClientId, const char *pReactorName, bool Add, const CUuid *pReactorKey = nullptr);
 	void ToggleLocalReaction(int LineIndex, const char *pEmoji);
 	// Lays out the reaction pill row. Returns the total height it occupies (0 if none).
 	// When pOutRects is set, fills it with absolute pill rects anchored at (OriginX, OriginY).
@@ -787,7 +789,7 @@ public:
 	void AddUClientChatLine(const char *pName, int SuggestedClientId, const char *pLine, const char *pServerAddress,
 		const CUuid &MessageId, bool Mine,
 		const char *pSkinName = nullptr, int UseCustomColor = 0, int ColorBody = 0, int ColorFeet = 0, int Scope = -1,
-		const char *pRoomName = nullptr);
+		const char *pRoomName = nullptr, const char *pRoomId = nullptr);
 	const char *FilterText(const char *pMessage, int ClientId = -2, bool IsChat = false);
 	void EnableMode(int Team);
 	void DisableMode();
@@ -797,6 +799,7 @@ public:
 	// Client-only chat line in the UClient message color, used to explain why a
 	// UClient chat message could not be sent instead of dropping it silently.
 	void EchoUClientNotice(const char *pText);
+	void RenderUClientChatTargetDropDown(const CUIRect &Rect, CUi::SDropDownState &DropDownState, CScrollRegion &ScrollRegion);
 
 	void OnWindowResize() override;
 	void OnConsoleInit() override;
@@ -812,6 +815,7 @@ public:
 
 	// Called by the client indicator when a reaction broadcast arrives over UDP.
 	void OnChatReactionReceived(int TargetClientId, uint64_t MessageHash, const char *pEmoji, int ReactorClientId, const char *pReactorName, bool Add);
+	void OnUClientReactionReceived(const CUuid &MessageId, const CUuid &ReactorKey, const char *pEmoji, const char *pReactorName, bool Add);
 
 	// Called by the client indicator when a read-receipt broadcast arrives over UDP.
 	void OnChatReadReceived(const CUuid &ReaderKey, const char *pReaderName, const CUuid &MessageId);
@@ -824,11 +828,13 @@ public:
 	// straight from one server to another (Moved). Adds an announcement line with a clickable
 	// server-name link that opens a connect-confirm popup.
 	void AddServerJoinLine(const char *pJoinerName, const char *pServerAddress, const char *pServerName,
-		const char *pSkinName = nullptr, int UseCustomColor = 0, int ColorBody = 0, int ColorFeet = 0, bool Moved = false);
+		const char *pSkinName = nullptr, int UseCustomColor = 0, int ColorBody = 0, int ColorFeet = 0, bool Moved = false,
+		const char *pRoomName = nullptr, const char *pRoomId = nullptr);
 
 	// Called by the client indicator when a UClient user disconnects from a server.
 	void AddServerLeaveLine(const char *pLeaverName, const char *pServerAddress,
-		const char *pSkinName = nullptr, int UseCustomColor = 0, int ColorBody = 0, int ColorFeet = 0);
+		const char *pSkinName = nullptr, int UseCustomColor = 0, int ColorBody = 0, int ColorFeet = 0,
+		const char *pRoomName = nullptr, const char *pRoomId = nullptr);
 
 	void RebuildChat();
 	void ClearLines();

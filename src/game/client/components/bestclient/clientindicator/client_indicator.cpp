@@ -235,6 +235,14 @@ namespace
 			return "uc_room_chat";
 		case UClientPresence::PACKET_ROOM_CHAT_BROADCAST:
 			return "uc_room_chat_broadcast";
+		case UClientPresence::PACKET_ROOM_SERVER_JOIN:
+			return "uc_room_server_join";
+		case UClientPresence::PACKET_ROOM_SERVER_JOIN_BROADCAST:
+			return "uc_room_server_join_broadcast";
+		case UClientPresence::PACKET_UCLIENT_REACTION:
+			return "uc_chat_reaction";
+		case UClientPresence::PACKET_UCLIENT_REACTION_BROADCAST:
+			return "uc_chat_reaction_broadcast";
 		default:
 			return "unknown";
 		}
@@ -1252,6 +1260,33 @@ void CClientIndicator::ApplyUcReactionBroadcast(const UClientPresence::CReaction
 		Reaction.m_Action != UClientPresence::REACTION_REMOVE);
 }
 
+void CClientIndicator::SendUClientChatReaction(const CUuid &MessageId, const char *pOriginalServerAddress, uint8_t Scope, const char *pRoomId, const char *pEmoji, bool Add)
+{
+	if(!g_Config.m_UcChat || !IsUcPresenceUdpEnabled() || !m_Socket || !m_HasUcServerAddr ||
+		MessageId == UUID_ZEROED || !pEmoji || pEmoji[0] == '\0')
+		return;
+	const int LocalId = GameClient()->m_Snap.m_LocalClientId;
+	const char *pReactorName = LocalId >= 0 ? PlayerNameForClient(LocalId) : g_Config.m_PlayerName;
+	std::vector<uint8_t> vPacket;
+	vPacket.reserve(160);
+	UClientPresence::WriteUClientReactionClientBody(vPacket,
+		g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
+		Scope, pRoomId ? pRoomId : "", pOriginalServerAddress ? pOriginalServerAddress : "", MessageId,
+		pReactorName, m_ClientInstanceId, pEmoji,
+		Add ? (uint8_t)UClientPresence::REACTION_ADD : (uint8_t)UClientPresence::REACTION_REMOVE);
+	UClientPresence::AppendProof(vPacket, g_Config.m_UcPresenceUdpSharedToken);
+	net_udp_send(m_Socket, &m_UcServerAddr, vPacket.data(), (int)vPacket.size());
+}
+
+void CClientIndicator::ApplyUClientReactionBroadcast(const UClientPresence::CUClientReactionBroadcast &Reaction)
+{
+	if(Reaction.m_ReactorKey == m_ClientInstanceId)
+		return;
+	GameClient()->m_Chat.OnUClientReactionReceived(Reaction.m_MessageId, Reaction.m_ReactorKey,
+		Reaction.m_Emoji.c_str(), Reaction.m_ReactorName.c_str(),
+		Reaction.m_Action != UClientPresence::REACTION_REMOVE);
+}
+
 void CClientIndicator::SendChatReadMarker(const CUuid &MessageId)
 {
 	if(!g_Config.m_UcChat || !IsUcPresenceUdpEnabled() || !m_Socket || !m_HasUcServerAddr)
@@ -1304,8 +1339,7 @@ void CClientIndicator::LocalSkinSnapshot(const char *&pSkinName, uint8_t &UseCus
 
 bool CClientIndicator::SendUClientServerAnnounce(uint8_t Kind, const char *pServerAddress)
 {
-	// Friends-only implies announcing: the plain send toggle is hidden while it is on.
-	if((!g_Config.m_UcServerJoinSend && !g_Config.m_UcServerJoinFriendsOnly) || !g_Config.m_UcChat || !IsUcPresenceUdpEnabled())
+	if(!g_Config.m_UcServerJoinSend || !g_Config.m_UcChat || !IsUcPresenceUdpEnabled())
 		return false;
 	if(!pServerAddress || pServerAddress[0] == '\0')
 		return false;
@@ -1358,11 +1392,19 @@ bool CClientIndicator::SendUClientServerAnnounce(uint8_t Kind, const char *pServ
 	{
 		std::vector<uint8_t> vPacket;
 		vPacket.reserve(224);
-		UClientPresence::WriteServerJoinClientBody(vPacket,
-			g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
-			pServerAddress, pServerName, pJoinerName, m_ClientInstanceId, Kind,
-			(uint8_t)(g_Config.m_UcServerJoinFriendsOnly ? 1 : 0),
-			pSkinName, UseCustomColor, ColorBody, ColorFeet);
+		const char *pRoomName = g_Config.m_UcServerJoinSendRoom[0] ?
+			GameClient()->m_UClientChatRooms.RoomNameById(g_Config.m_UcServerJoinSendRoom) :
+			nullptr;
+		if(pRoomName)
+			UClientPresence::WriteRoomServerJoinClientBody(vPacket,
+				g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
+				g_Config.m_UcServerJoinSendRoom, pServerAddress, pServerName, pJoinerName, m_ClientInstanceId, Kind,
+				0, pSkinName, UseCustomColor, ColorBody, ColorFeet);
+		else
+			UClientPresence::WriteServerJoinClientBody(vPacket,
+				g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
+				pServerAddress, pServerName, pJoinerName, m_ClientInstanceId, Kind,
+				0, pSkinName, UseCustomColor, ColorBody, ColorFeet);
 		UClientPresence::AppendProof(vPacket, g_Config.m_UcPresenceUdpSharedToken);
 		net_udp_send(Socket, &TargetAddr, vPacket.data(), (int)vPacket.size());
 		Sent = true;
@@ -1403,22 +1445,16 @@ void CClientIndicator::FlushPendingUClientServerLeave(bool Force)
 
 void CClientIndicator::ApplyUcServerJoinBroadcast(const UClientPresence::CServerJoinBroadcast &Join)
 {
-	// Friends-only implies showing: the plain show toggle is hidden while it is on.
-	if((!g_Config.m_UcServerJoinShow && !g_Config.m_UcServerJoinFriendsOnly) || !g_Config.m_UcChat)
+	if(!g_Config.m_UcChat || (g_Config.m_UcServerJoinHideGlobal && !Join.m_FriendsOnly))
 		return;
 	// Suppress our own echo (the relay broadcasts globally to everyone including us).
 	if(Join.m_JoinerKey == m_ClientInstanceId)
 		return;
 	if(Join.m_JoinerName.empty() || Join.m_ServerAddress.empty())
 		return;
-
-	// Friends gating, same rule as UClient chat: both the sender's friends-only flag and our own
-	// setting are checked against OUR friend list.
-	if(Join.m_FriendsOnly || g_Config.m_UcServerJoinFriendsOnly)
-	{
-		if(!GameClient()->m_Chat.IsUClientFriendName(Join.m_JoinerName.c_str()))
-			return;
-	}
+	// Keep honoring friend-scoped announcements from older clients.
+	if(Join.m_FriendsOnly && !GameClient()->m_Chat.IsUClientFriendName(Join.m_JoinerName.c_str()))
+		return;
 
 	// Don't announce a peer on the server we are already on: they show up as a normal UClient
 	// peer anyway, and the point of these messages is cross-server visibility.
@@ -1440,6 +1476,28 @@ void CClientIndicator::ApplyUcServerJoinBroadcast(const UClientPresence::CServer
 	GameClient()->m_Chat.AddServerJoinLine(Join.m_JoinerName.c_str(), Join.m_ServerAddress.c_str(), pServerName,
 		Join.m_SkinName.c_str(), Join.m_UseCustomColor, Join.m_ColorBody, Join.m_ColorFeet,
 		Join.m_Kind == UClientPresence::SERVER_PRESENCE_MOVE);
+}
+
+void CClientIndicator::ApplyUcRoomServerJoinBroadcast(const UClientPresence::CRoomServerJoinBroadcast &Join)
+{
+	if(!g_Config.m_UcChat || Join.m_JoinerKey == m_ClientInstanceId ||
+		Join.m_JoinerName.empty() || Join.m_ServerAddress.empty() || Join.m_RoomName.empty())
+		return;
+	char aNormalizedServer[NETADDR_MAXSTRSIZE];
+	if(NormalizePresenceServerAddress(Join.m_ServerAddress.c_str(), aNormalizedServer, sizeof(aNormalizedServer)) &&
+		UcPeerAppliesToCurrentServer(aNormalizedServer))
+		return;
+	if(Join.m_Kind == UClientPresence::SERVER_PRESENCE_LEAVE)
+	{
+		GameClient()->m_Chat.AddServerLeaveLine(Join.m_JoinerName.c_str(), Join.m_ServerAddress.c_str(),
+			Join.m_SkinName.c_str(), Join.m_UseCustomColor, Join.m_ColorBody, Join.m_ColorFeet,
+			Join.m_RoomName.c_str(), Join.m_RoomId.c_str());
+		return;
+	}
+	const char *pServerName = Join.m_ServerName.empty() ? Join.m_ServerAddress.c_str() : Join.m_ServerName.c_str();
+	GameClient()->m_Chat.AddServerJoinLine(Join.m_JoinerName.c_str(), Join.m_ServerAddress.c_str(), pServerName,
+		Join.m_SkinName.c_str(), Join.m_UseCustomColor, Join.m_ColorBody, Join.m_ColorFeet,
+		Join.m_Kind == UClientPresence::SERVER_PRESENCE_MOVE, Join.m_RoomName.c_str(), Join.m_RoomId.c_str());
 }
 
 const char *CClientIndicator::UClientChatUnavailableReason()
@@ -1488,13 +1546,9 @@ void CClientIndicator::SendUClientChat(const char *pMessage)
 	const int SenderClientId = GameClient()->m_Snap.m_LocalClientId;
 	const char *pServerAddress = EffectivePresenceServerAddress();
 
-	// Friends-only replaces the same-server scope entirely (the UI hides those options when it
-	// is on). Friends-scoped messages are relayed globally and filtered by each receiver.
-	const uint8_t Scope = g_Config.m_UcChatFriendsOnly ?
-		(uint8_t)UClientPresence::CHAT_SCOPE_FRIENDS :
-		(g_Config.m_UcChatSendSameServerOnly ?
+	const uint8_t Scope = g_Config.m_UcChatSendSameServerOnly ?
 				(uint8_t)UClientPresence::CHAT_SCOPE_SAME_SERVER :
-				(uint8_t)UClientPresence::CHAT_SCOPE_GLOBAL);
+				(uint8_t)UClientPresence::CHAT_SCOPE_GLOBAL;
 	const char *pRoomId = GameClient()->m_UClientChatRooms.SelectedSendRoomId();
 	const char *pRoomName = pRoomId[0] ? GameClient()->m_UClientChatRooms.RoomNameById(pRoomId) : nullptr;
 
@@ -1543,7 +1597,7 @@ void CClientIndicator::SendUClientChat(const char *pMessage)
 	GameClient()->m_Chat.AddUClientChatLine(
 		SenderClientId >= 0 ? PlayerNameForClient(SenderClientId) : g_Config.m_PlayerName,
 		SenderClientId, aMessage, pServerAddress, MessageId, true,
-		pSkinName, UseCustomColor, ColorBody, ColorFeet, (int)Scope, pRoomName);
+		pSkinName, UseCustomColor, ColorBody, ColorFeet, (int)Scope, pRoomName, pRoomId);
 }
 
 void CClientIndicator::ApplyUcChatBroadcast(const UClientPresence::CChatBroadcast &Chat)
@@ -1557,18 +1611,13 @@ void CClientIndicator::ApplyUcChatBroadcast(const UClientPresence::CChatBroadcas
 	if(!NormalizePresenceServerAddress(Chat.m_ServerAddress.c_str(), aNormalizedServer, sizeof(aNormalizedServer)))
 		return;
 
-	// Friends gating. The sender's friends-only scope and our own friends-only setting are both
-	// resolved against OUR friend list: we only ever see a friends-only message from someone we
-	// added, and our messages are only shown by peers who added us.
-	if(Chat.m_Scope == UClientPresence::CHAT_SCOPE_FRIENDS || g_Config.m_UcChatFriendsOnly)
-	{
-		if(!GameClient()->m_Chat.IsUClientFriendName(Chat.m_SenderName.c_str()))
-			return;
-	}
-
-	// Our own same-server filter does not apply in friends-only mode (that option is hidden).
-	if(Chat.m_Scope == UClientPresence::CHAT_SCOPE_SAME_SERVER ||
-		(!g_Config.m_UcChatFriendsOnly && g_Config.m_UcChatShowSameServerOnly))
+	if(Chat.m_Scope == UClientPresence::CHAT_SCOPE_GLOBAL && g_Config.m_UcChatHideGlobal)
+		return;
+	// The setting was removed, but old clients can still send friend-scoped packets.
+	if(Chat.m_Scope == UClientPresence::CHAT_SCOPE_FRIENDS &&
+		!GameClient()->m_Chat.IsUClientFriendName(Chat.m_SenderName.c_str()))
+		return;
+	if(Chat.m_Scope == UClientPresence::CHAT_SCOPE_SAME_SERVER)
 	{
 		if(!UcPeerAppliesToCurrentServer(aNormalizedServer))
 			return;
@@ -1598,7 +1647,7 @@ void CClientIndicator::ApplyUcRoomChatBroadcast(const UClientPresence::CRoomChat
 	GameClient()->m_Chat.AddUClientChatLine(Chat.m_SenderName.c_str(), Chat.m_SenderClientId,
 		Chat.m_Message.c_str(), aNormalizedServer, Chat.m_MessageId, false,
 		Chat.m_SkinName.c_str(), Chat.m_UseCustomColor, Chat.m_ColorBody, Chat.m_ColorFeet,
-		(int)UClientPresence::CHAT_SCOPE_GLOBAL, Chat.m_RoomName.c_str());
+		(int)UClientPresence::CHAT_SCOPE_GLOBAL, Chat.m_RoomName.c_str(), Chat.m_RoomId.c_str());
 }
 
 bool CClientIndicator::IsLiveCursorBlockedByPlayerSpectate() const
@@ -2188,6 +2237,22 @@ bool CClientIndicator::UcPeerAppliesToCurrentServer(const char *pServerAddress) 
 	return str_comp(aNormalizedCurrent, aNormalizedPacket) == 0;
 }
 
+void CClientIndicator::CollectOnlineUClientNames(std::vector<std::string> &vNames) const
+{
+	std::unordered_set<std::string> UniqueNames;
+	for(const auto &[Server, Names] : m_UcPresenceByServer)
+	{
+		(void)Server;
+		for(const auto &Name : Names)
+			if(!Name.empty())
+				UniqueNames.insert(Name);
+	}
+	vNames.assign(UniqueNames.begin(), UniqueNames.end());
+	std::sort(vNames.begin(), vNames.end(), [](const std::string &Left, const std::string &Right) {
+		return str_comp_nocase(Left.c_str(), Right.c_str()) < 0;
+	});
+}
+
 void CClientIndicator::ClearUcPeersForServer(const char *pNormalizedServer)
 {
 	if(!pNormalizedServer || pNormalizedServer[0] == '\0')
@@ -2337,6 +2402,13 @@ void CClientIndicator::ProcessUcPresencePacket(const unsigned char *pData, int D
 			ApplyUcReactionBroadcast(Reaction);
 		break;
 	}
+	case UClientPresence::PACKET_UCLIENT_REACTION_BROADCAST:
+	{
+		UClientPresence::CUClientReactionBroadcast Reaction;
+		if(UClientPresence::ReadUClientReactionBroadcast(pData, DataSize, Reaction))
+			ApplyUClientReactionBroadcast(Reaction);
+		break;
+	}
 	case UClientPresence::PACKET_CURSOR_BROADCAST:
 	{
 		UClientPresence::CCursorBroadcast Cursor;
@@ -2370,6 +2442,13 @@ void CClientIndicator::ProcessUcPresencePacket(const unsigned char *pData, int D
 		UClientPresence::CServerJoinBroadcast Join;
 		if(UClientPresence::ReadServerJoinBroadcast(pData, DataSize, Join))
 			ApplyUcServerJoinBroadcast(Join);
+		break;
+	}
+	case UClientPresence::PACKET_ROOM_SERVER_JOIN_BROADCAST:
+	{
+		UClientPresence::CRoomServerJoinBroadcast Join;
+		if(UClientPresence::ReadRoomServerJoinBroadcast(pData, DataSize, Join))
+			ApplyUcRoomServerJoinBroadcast(Join);
 		break;
 	}
 	default:

@@ -457,6 +457,90 @@ bool ReadServerJoinBroadcast(const uint8_t *pData, int DataSize, CServerJoinBroa
 	return Offset == DataSize;
 }
 
+void WriteRoomServerJoinClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pRoomId, const char *pServerAddress, const char *pServerName, const char *pJoinerName, CUuid JoinerKey, uint8_t Kind,
+	uint8_t FriendsOnly, const char *pSkinName, uint8_t UseCustomColor, int32_t ColorBody, int32_t ColorFeet)
+{
+	WriteHeader(vOut, PACKET_ROOM_SERVER_JOIN);
+	WriteString(vOut, pPlayerId);
+	WriteUuid(vOut, SessionId);
+	WriteUuid(vOut, Nonce);
+	WriteU64(vOut, Timestamp);
+	WriteString(vOut, pRoomId);
+	WriteString(vOut, pServerAddress);
+	WriteString(vOut, pServerName);
+	WriteString(vOut, pJoinerName);
+	WriteUuid(vOut, JoinerKey);
+	WriteU8(vOut, Kind);
+	WriteU8(vOut, FriendsOnly);
+	WriteString(vOut, pSkinName && pSkinName[0] != '\0' ? pSkinName : "default");
+	WriteU8(vOut, UseCustomColor);
+	WriteI32(vOut, ColorBody);
+	WriteI32(vOut, ColorFeet);
+}
+
+bool ReadRoomServerJoinBroadcast(const uint8_t *pData, int DataSize, CRoomServerJoinBroadcast &Out)
+{
+	int Offset = 0;
+	EPacketType Type;
+	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != PACKET_ROOM_SERVER_JOIN_BROADCAST ||
+		!ReadString(pData, DataSize, Offset, Out.m_RoomId) ||
+		!ReadString(pData, DataSize, Offset, Out.m_RoomName) ||
+		!ReadString(pData, DataSize, Offset, Out.m_ServerAddress) ||
+		!ReadString(pData, DataSize, Offset, Out.m_ServerName) ||
+		!ReadString(pData, DataSize, Offset, Out.m_JoinerName) ||
+		!ReadUuid(pData, DataSize, Offset, Out.m_JoinerKey) ||
+		!ReadU8(pData, DataSize, Offset, Out.m_Kind) ||
+		!ReadU8(pData, DataSize, Offset, Out.m_FriendsOnly) ||
+		!ReadString(pData, DataSize, Offset, Out.m_SkinName) ||
+		!ReadU8(pData, DataSize, Offset, Out.m_UseCustomColor) ||
+		!ReadI32(pData, DataSize, Offset, Out.m_ColorBody) ||
+		!ReadI32(pData, DataSize, Offset, Out.m_ColorFeet))
+	{
+		return false;
+	}
+	return Offset == DataSize;
+}
+
+void WriteUClientReactionClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	uint8_t Scope, const char *pRoomId, const char *pOriginalServerAddress, CUuid MessageId, const char *pReactorName,
+	CUuid ReactorKey, const char *pEmoji, uint8_t Action)
+{
+	WriteHeader(vOut, PACKET_UCLIENT_REACTION);
+	WriteString(vOut, pPlayerId);
+	WriteUuid(vOut, SessionId);
+	WriteUuid(vOut, Nonce);
+	WriteU64(vOut, Timestamp);
+	WriteU8(vOut, Scope);
+	WriteString(vOut, pRoomId);
+	WriteString(vOut, pOriginalServerAddress);
+	WriteUuid(vOut, MessageId);
+	WriteString(vOut, pReactorName);
+	WriteUuid(vOut, ReactorKey);
+	WriteString(vOut, pEmoji);
+	WriteU8(vOut, Action);
+}
+
+bool ReadUClientReactionBroadcast(const uint8_t *pData, int DataSize, CUClientReactionBroadcast &Out)
+{
+	int Offset = 0;
+	EPacketType Type;
+	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != PACKET_UCLIENT_REACTION_BROADCAST ||
+		!ReadU8(pData, DataSize, Offset, Out.m_Scope) ||
+		!ReadString(pData, DataSize, Offset, Out.m_RoomId) ||
+		!ReadString(pData, DataSize, Offset, Out.m_RoomName) ||
+		!ReadString(pData, DataSize, Offset, Out.m_OriginalServerAddress) ||
+		!ReadUuid(pData, DataSize, Offset, Out.m_MessageId) ||
+		!ReadString(pData, DataSize, Offset, Out.m_ReactorName) ||
+		!ReadUuid(pData, DataSize, Offset, Out.m_ReactorKey) ||
+		!ReadString(pData, DataSize, Offset, Out.m_Emoji) ||
+		!ReadU8(pData, DataSize, Offset, Out.m_Action))
+	{
+		return false;
+	}
+	return Offset == DataSize;
+}
+
 bool ReadClientPresencePacket(const uint8_t *pData, int DataSize, CClientPresencePacket &Out)
 {
 	int Offset = 0;
