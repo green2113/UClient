@@ -108,6 +108,9 @@ jobs:
         printf '%s' "$VERSION" | base64 -d > "$VERSION_FILE"
         if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             export MSYS_ARG_CONV_EXCL="/FI"
+            MSVC_BIN="$(cygpath -u "${VCToolsInstallDir}")/bin/Hostx64/x64"
+            export PATH="$MSVC_BIN:$PATH"
+            export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER="${VCToolsInstallDir}bin\\Hostx64\\x64\\link.exe"
             POST_FLAGS="-DCMAKE_CXX_FLAGS=\"/FI$VERSION_FILE\""
             ENVFLAGS=""
         else
