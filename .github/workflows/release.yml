@@ -362,7 +362,10 @@ jobs:
 
     - name: Install rclone
       if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
-      run: curl https://rclone.org/install.sh | sudo bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends rclone
+        rclone version
 
     - name: Upload OS artifacts to versioned Cloudflare R2 paths
       if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
