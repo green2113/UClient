@@ -568,6 +568,29 @@ void CScoreboard::OnReset()
 	m_vSwapRequests.clear();
 }
 
+void CScoreboard::OnMessage(int MsgType, void *pRawMsg)
+{
+	if(GameClient()->m_SuppressEvents)
+		return;
+	if(MsgType == NETMSGTYPE_SV_KILLMSG)
+	{
+		const CNetMsg_Sv_KillMsg *pMsg = static_cast<CNetMsg_Sv_KillMsg *>(pRawMsg);
+		if(pMsg->m_Victim >= 0 && pMsg->m_Victim < MAX_CLIENTS &&
+			GameClient()->m_aClients[pMsg->m_Victim].m_Active)
+			RemoveSwapRequest(GameClient()->m_aClients[pMsg->m_Victim].m_aName);
+	}
+	else if(MsgType == NETMSGTYPE_SV_KILLMSGTEAM)
+	{
+		const CNetMsg_Sv_KillMsgTeam *pMsg = static_cast<CNetMsg_Sv_KillMsgTeam *>(pRawMsg);
+		for(int ClientId = 0; ClientId < MAX_CLIENTS; ++ClientId)
+		{
+			if(GameClient()->m_aClients[ClientId].m_Active &&
+				GameClient()->m_Teams.Team(ClientId) == pMsg->m_Team)
+				RemoveSwapRequest(GameClient()->m_aClients[ClientId].m_aName);
+		}
+	}
+}
+
 void CScoreboard::OnServerSwapMessage(const char *pMessage)
 {
 	if(!pMessage)

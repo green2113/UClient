@@ -140,6 +140,7 @@ public:
 	void OnConsoleInit() override;
 	void OnInit() override;
 	void OnReset() override;
+	void OnMessage(int MsgType, void *pRawMsg) override;
 	void OnRender() override;
 	void OnRelease() override;
 	bool OnCursorMove(float x, float y, IInput::ECursorType CursorType) override;
