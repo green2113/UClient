@@ -580,8 +580,8 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			if(DoButton_Menu(&s_CreateButton, CanCreateRoom ? Localize("Create") : Localize("Limit"), !CanCreateRoom, &CreateButton) &&
 				CanCreateRoom && s_CreateRoomInput.GetString()[0])
 			{
-				GameClient()->m_UClientChatRooms.Create(s_CreateRoomInput.GetString(), g_Config.m_PlayerName);
-				s_CreateRoomInput.Set("");
+				if(GameClient()->m_UClientChatRooms.Create(s_CreateRoomInput.GetString(), Client()->PlayerName()))
+					s_CreateRoomInput.Set("");
 			}
 
 			CUIRect JoinInput, JoinButton;
@@ -590,8 +590,8 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			Ui()->DoClearableEditBox(&s_JoinRoomInput, &JoinInput, EditBoxFontSize);
 			if(DoButton_Menu(&s_JoinButton, Localize("Join"), 0, &JoinButton) && s_JoinRoomInput.GetString()[0])
 			{
-				GameClient()->m_UClientChatRooms.Join(s_JoinRoomInput.GetString(), g_Config.m_PlayerName);
-				s_JoinRoomInput.Set("");
+				if(GameClient()->m_UClientChatRooms.Join(s_JoinRoomInput.GetString(), Client()->PlayerName()))
+					s_JoinRoomInput.Set("");
 			}
 			Page.HSplitTop(MarginBetweenSections, nullptr, &Page);
 		}

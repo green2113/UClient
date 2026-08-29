@@ -82,6 +82,8 @@ const char *CUClientChatRooms::RoomNameById(const char *pRoomId) const
 void CUClientChatRooms::SelectSendRoom(const char *pRoomId)
 {
 	str_copy(g_Config.m_UcChatSendRoom, pRoomId ? pRoomId : "", sizeof(g_Config.m_UcChatSendRoom));
+	if(g_Config.m_UcChatSendRoom[0])
+		g_Config.m_UcChatSendSameServerOnly = 0;
 	ConfigManager()->Save();
 }
 
@@ -93,17 +95,27 @@ void CUClientChatRooms::AuthHeader(CHttpRequest *pRequest) const
 	pRequest->HeaderString("x-uclient-install-id", GameClient()->m_UClientAccount.InstallId());
 }
 
-void CUClientChatRooms::Begin(std::shared_ptr<CHttpRequest> pRequest, ERequest Request)
+bool CUClientChatRooms::Begin(std::shared_ptr<CHttpRequest> pRequest, ERequest Request)
 {
-	if(m_pRequest || !GameClient()->m_UClientAccount.IsReady())
-		return;
+	if(!GameClient()->m_UClientAccount.IsReady())
+	{
+		str_copy(m_aError, Localize("UClient account is not ready yet. Try again in a moment."), sizeof(m_aError));
+		return false;
+	}
+	if(m_pRequest)
+	{
+		str_copy(m_aError, Localize("Another room request is already in progress. Try again shortly."), sizeof(m_aError));
+		return false;
+	}
 	AuthHeader(pRequest.get());
 	pRequest->FailOnErrorStatus(false);
+	pRequest->LogProgress(HTTPLOG::FAILURE);
 	pRequest->Timeout(CTimeout{5000, 15000, 500, 5});
 	m_pRequest = std::move(pRequest);
 	m_Request = Request;
 	m_aError[0] = '\0';
 	Http()->Run(m_pRequest);
+	return true;
 }
 
 void CUClientChatRooms::Refresh()
@@ -112,9 +124,11 @@ void CUClientChatRooms::Refresh()
 		return;
 	char aUrl[384];
 	str_format(aUrl, sizeof(aUrl), "%s/rooms", g_Config.m_UcApiBaseUrl);
-	Begin(HttpGet(aUrl), ERequest::REFRESH);
-	m_InitialRefresh = true;
-	m_LastRefresh = time_get();
+	if(Begin(HttpGet(aUrl), ERequest::REFRESH))
+	{
+		m_InitialRefresh = true;
+		m_LastRefresh = time_get();
+	}
 }
 
 void CUClientChatRooms::RefreshIfStale(int MaxAgeSeconds)
@@ -125,11 +139,11 @@ void CUClientChatRooms::RefreshIfStale(int MaxAgeSeconds)
 		Refresh();
 }
 
-void CUClientChatRooms::BeginJsonPost(const char *pPath, const char *pJson)
+bool CUClientChatRooms::BeginJsonPost(const char *pPath, const char *pJson)
 {
 	char aUrl[512];
 	str_format(aUrl, sizeof(aUrl), "%s%s", g_Config.m_UcApiBaseUrl, pPath);
-	Begin(HttpPostJson(aUrl, pJson), ERequest::MUTATE);
+	return Begin(HttpPostJson(aUrl, pJson), ERequest::MUTATE);
 }
 
 void CUClientChatRooms::BeginDelete(const char *pPath)
@@ -141,13 +155,18 @@ void CUClientChatRooms::BeginDelete(const char *pPath)
 	Begin(std::move(pRequest), ERequest::MUTATE);
 }
 
-void CUClientChatRooms::Create(const char *pName, const char *pDisplayName)
+bool CUClientChatRooms::Create(const char *pName, const char *pDisplayName)
 {
+	if(!pDisplayName || !pDisplayName[0])
+	{
+		str_copy(m_aError, Localize("Set a player name before creating or joining a room."), sizeof(m_aError));
+		return false;
+	}
 	const std::string Name = JsonEscape(pName);
 	const std::string DisplayName = JsonEscape(pDisplayName);
 	char aJson[384];
 	str_format(aJson, sizeof(aJson), "{\"name\":\"%s\",\"display_name\":\"%s\"}", Name.c_str(), DisplayName.c_str());
-	BeginJsonPost("/rooms", aJson);
+	return BeginJsonPost("/rooms", aJson);
 }
 
 void CUClientChatRooms::Rename(const char *pRoomId, const char *pName)
@@ -167,13 +186,27 @@ void CUClientChatRooms::RegenerateCode(const char *pRoomId)
 	BeginJsonPost(aPath, "{}");
 }
 
-void CUClientChatRooms::Join(const char *pCode, const char *pDisplayName)
+bool CUClientChatRooms::Join(const char *pCode, const char *pDisplayName)
 {
-	const std::string Code = JsonEscape(pCode);
+	if(!pDisplayName || !pDisplayName[0])
+	{
+		str_copy(m_aError, Localize("Set a player name before creating or joining a room."), sizeof(m_aError));
+		return false;
+	}
+	char aCode[40];
+	str_copy(aCode, str_utf8_skip_whitespaces(pCode ? pCode : ""), sizeof(aCode));
+	for(int i = str_length(aCode); i > 0 && str_isspace(aCode[i - 1]); --i)
+		aCode[i - 1] = '\0';
+	if(str_length(aCode) < 6)
+	{
+		str_copy(m_aError, Localize("Please enter a valid invite code."), sizeof(m_aError));
+		return false;
+	}
+	const std::string Code = JsonEscape(aCode);
 	const std::string DisplayName = JsonEscape(pDisplayName);
 	char aJson[384];
 	str_format(aJson, sizeof(aJson), "{\"code\":\"%s\",\"display_name\":\"%s\"}", Code.c_str(), DisplayName.c_str());
-	BeginJsonPost("/rooms/join", aJson);
+	return BeginJsonPost("/rooms/join", aJson);
 }
 
 void CUClientChatRooms::Kick(const char *pRoomId, const char *pMemberId)

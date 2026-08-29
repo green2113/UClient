@@ -861,9 +861,10 @@ void CMenus::RenderLoading(const char *pCaption, const char *pContent, int Incre
 		return;
 	}
 
-	// Rendering during initial component loading is not safe (separate render thread / uninitialized state).
-	// Only render after a server connection triggers the loading screen.
-	if(Client()->State() != IClient::STATE_CONNECTING && Client()->State() != IClient::STATE_LOADING)
+	const bool IsServerJoinLoading =
+		Client()->State() == IClient::STATE_CONNECTING || Client()->State() == IClient::STATE_LOADING;
+	// Initial startup loading (black screen, bottom-left status) while m_Total > 0.
+	if(!IsServerJoinLoading && Client()->State() != IClient::STATE_OFFLINE)
 		return;
 
 	const int CurLoadRenderCount = m_LoadingState.m_Current;
@@ -881,7 +882,6 @@ void CMenus::RenderLoading(const char *pCaption, const char *pContent, int Incre
 
 	m_LoadingState.m_LastRender = Now;
 
-	const bool IsServerJoinLoading = true;
 	CUIRect FullScreen = *Ui()->Screen();
 	if(IsServerJoinLoading)
 	{

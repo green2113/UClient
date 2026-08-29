@@ -41,10 +41,10 @@ public:
 
 	void Refresh();
 	void RefreshIfStale(int MaxAgeSeconds);
-	void Create(const char *pName, const char *pDisplayName);
+	bool Create(const char *pName, const char *pDisplayName);
 	void Rename(const char *pRoomId, const char *pName);
 	void RegenerateCode(const char *pRoomId);
-	void Join(const char *pCode, const char *pDisplayName);
+	bool Join(const char *pCode, const char *pDisplayName);
 	void Kick(const char *pRoomId, const char *pMemberId);
 	void Leave(const char *pRoomId);
 
@@ -57,10 +57,10 @@ private:
 	};
 
 	void AuthHeader(CHttpRequest *pRequest) const;
-	void Begin(std::shared_ptr<CHttpRequest> pRequest, ERequest Request);
+	bool Begin(std::shared_ptr<CHttpRequest> pRequest, ERequest Request);
 	void Finish();
 	void ParseRooms(const json_value *pRoot);
-	void BeginJsonPost(const char *pPath, const char *pJson);
+	bool BeginJsonPost(const char *pPath, const char *pJson);
 	void BeginDelete(const char *pPath);
 
 	std::vector<SRoom> m_vRooms;

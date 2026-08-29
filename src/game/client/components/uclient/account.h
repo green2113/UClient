@@ -28,6 +28,7 @@ public:
 	EState State() const { return m_State; }
 	bool IsReady() const { return m_State == EState::OK; }
 	bool IsPending() const { return m_State == EState::PENDING; }
+	bool IsCreating() const { return m_Request == ERequest::REGISTER; }
 	const char *InstallId() const { return m_aInstallId; }
 	const char *Secret() const { return m_aSecret; }
 	const char *BanReason() const { return m_aBanReason; }

@@ -205,7 +205,7 @@ void CUClientAccount::BeginRegister()
 {
 	char aUrl[384];
 	str_format(aUrl, sizeof(aUrl), "%s/account/register", g_Config.m_UcApiBaseUrl);
-	const std::string PlayerName = JsonEscape(g_Config.m_PlayerName);
+	const std::string PlayerName = JsonEscape(Client()->PlayerName());
 	char aJson[768];
 	str_format(aJson, sizeof(aJson),
 		"{\"install_id\":\"%s\",\"secret\":\"%s\",\"player_name\":\"%s\",\"version\":\"%s\"}",
@@ -224,7 +224,7 @@ void CUClientAccount::BeginVerify()
 {
 	char aUrl[384];
 	str_format(aUrl, sizeof(aUrl), "%s/account/verify", g_Config.m_UcApiBaseUrl);
-	const std::string PlayerName = JsonEscape(g_Config.m_PlayerName);
+	const std::string PlayerName = JsonEscape(Client()->PlayerName());
 	char aJson[768];
 	str_format(aJson, sizeof(aJson),
 		"{\"install_id\":\"%s\",\"secret\":\"%s\",\"player_name\":\"%s\",\"version\":\"%s\"}",

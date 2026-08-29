@@ -84,6 +84,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <thread>
 
 #if defined(CONF_FAMILY_WINDOWS)
 // clang-format off
@@ -823,6 +824,18 @@ void CGameClient::OnInit()
 		}
 		int Size = m_vpAll[i]->Sizeof();
 		pChecksum->m_aComponentsChecksum[i] = Size;
+	}
+
+	// Keep the startup loading screen until UClient account create/verify finishes,
+	// then hand off to the main menu (success) or the account error gate (failure).
+	while(m_UClientAccount.IsPending())
+	{
+		m_UClientAccount.OnUpdate();
+		const char *pAccountMessage = m_UClientAccount.IsCreating() ?
+						       Localize("Creating UClient account...") :
+						       Localize("Verifying UClient account...");
+		m_Menus.RenderLoading(pLoadingDDNetCaption, pAccountMessage, 0);
+		std::this_thread::sleep_for(10ms);
 	}
 
 	m_Menus.FinishLoading();

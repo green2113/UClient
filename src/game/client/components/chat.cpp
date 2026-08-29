@@ -5428,7 +5428,21 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 					GameClient()->m_BestClient.SanitizePlayerName(GameClient()->m_aClients[Line.m_ClientId].m_aName, aSanitizedName, sizeof(aSanitizedName), Line.m_ClientId);
 					pReplyName = aSanitizedName;
 				}
-				if(Line.m_UClient && g_Config.m_UcChat && g_Config.m_UcChatSendSameServerOnly && !Line.m_UClientFromCurrentServer)
+				if(Line.m_UClient && g_Config.m_UcChat)
+				{
+					// A reply must use the same audience as the quoted message. Otherwise a
+					// room reply can silently be sent globally (or to another room).
+					if(Line.m_aUClientRoomId[0])
+						GameClient()->m_UClientChatRooms.SelectSendRoom(Line.m_aUClientRoomId);
+					else
+					{
+						GameClient()->m_UClientChatRooms.SelectSendRoom("");
+						g_Config.m_UcChatSendSameServerOnly = Line.m_UClientScope == UClientPresence::CHAT_SCOPE_SAME_SERVER;
+						ConfigManager()->Save();
+					}
+				}
+				if(Line.m_UClient && g_Config.m_UcChat && !g_Config.m_UcChatSendRoom[0] &&
+					g_Config.m_UcChatSendSameServerOnly && !Line.m_UClientFromCurrentServer)
 				{
 					StashUcReplySendScopePrompt(Line.m_ClientId, pReplyName, m_HoveredReplyLineIndex, GetLineDisplayText(Line));
 					GameClient()->m_Menus.OfferDisableUcChatSendSameServerForReply();
@@ -7144,10 +7158,19 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 		}
 
 		const char *pFrom;
+		char aUClientFrom[160];
 		if(Line.m_Whisper)
 			pFrom = "chat/whisper";
 		else if(Line.m_UClient)
-			pFrom = "chat/uclient";
+		{
+			if(Line.m_aUClientRoomName[0])
+			{
+				str_format(aUClientFrom, sizeof(aUClientFrom), "chat/uclient/%s", Line.m_aUClientRoomName);
+				pFrom = aUClientFrom;
+			}
+			else
+				pFrom = "chat/uclient";
+		}
 		else if(Line.m_Team)
 			pFrom = "chat/team";
 		else if(Line.m_ClientId == SERVER_MSG)
@@ -8735,8 +8758,8 @@ void CChat::OnRender()
 			char aTargetHint[160];
 			str_format(aTargetHint, sizeof(aTargetHint), Localize("Messages will be sent to '%s'."), pTarget);
 			CTextCursor HintCursor;
-			HintCursor.SetPosition(vec2(x + ChatOpenOffsetX, y + ScaledFontSize * 1.35f));
-			HintCursor.m_FontSize = maximum(7.0f, ScaledFontSize * 0.72f);
+			HintCursor.SetPosition(vec2(x + ChatOpenOffsetX, y + ScaledFontSize * 1.15f));
+			HintCursor.m_FontSize = maximum(4.5f, ScaledFontSize * 0.45f);
 			HintCursor.m_LineWidth = InputAreaWidth;
 			TextRender()->TextColor(0.68f, 0.68f, 0.68f, 0.9f);
 			TextRender()->TextEx(&HintCursor, aTargetHint);
