@@ -1416,7 +1416,8 @@ void CChat::RenderUClientChatTargetDropDown(const CUIRect &Rect, CUi::SDropDownS
 	else if(g_Config.m_UcChatSendSameServerOnly)
 		CurrentSelection = 1;
 	DropDownState.m_SelectionPopupContext.m_pScrollRegion = &ScrollRegion;
-	const int NewSelection = Ui()->DoDropDown(&Rect, CurrentSelection, vpLabels.data(), (int)vpLabels.size(), DropDownState);
+	CUIRect DropDownRect = Rect;
+	const int NewSelection = Ui()->DoDropDown(&DropDownRect, CurrentSelection, vpLabels.data(), (int)vpLabels.size(), DropDownState);
 	if(NewSelection != CurrentSelection)
 	{
 		if(NewSelection >= 2 && NewSelection < 2 + (int)vRooms.size())
