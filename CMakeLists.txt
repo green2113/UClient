@@ -2767,6 +2767,8 @@ if(CLIENT)
     components/uclient/timeout_reconnect.h
     components/uclient/uclient.cpp
     components/uclient/uclient.h
+    components/uclient/weapon_traj_policy.cpp
+    components/uclient/weapon_traj_policy.h
     components/binds.cpp
     components/binds.h
     components/broadcast.cpp
