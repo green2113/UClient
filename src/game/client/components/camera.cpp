@@ -658,6 +658,14 @@ void CCamera::SetView(ivec2 Pos, bool Relative)
 		std::clamp(UntestedViewPos.y, 200.0f, Collision()->GetHeight() * 32 - 200.0f));
 }
 
+void CCamera::SetViewWorld(vec2 Pos)
+{
+	m_ForceFreeview = true;
+	m_ForceFreeviewPos = vec2(
+		std::clamp(Pos.x, 200.0f, Collision()->GetWidth() * 32.0f - 200.0f),
+		std::clamp(Pos.y, 200.0f, Collision()->GetHeight() * 32.0f - 200.0f));
+}
+
 void CCamera::GotoSwitch(int Number, int Offset)
 {
 	if(Collision()->SwitchLayer() == nullptr)

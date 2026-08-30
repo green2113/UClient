@@ -104,6 +104,7 @@ public:
 	void OnReset() override;
 
 	void SetView(ivec2 Pos, bool Relative = false);
+	void SetViewWorld(vec2 Pos);
 	void GotoSwitch(int Number, int Offset = -1);
 	void GotoTele(int Number, int Offset = -1);
 

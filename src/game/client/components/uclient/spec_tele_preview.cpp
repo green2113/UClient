@@ -17,7 +17,6 @@
 
 #include <generated/protocol.h>
 
-#include <algorithm>
 
 bool CUClientSpecTelePreview::IsFeatureActive() const
 {
@@ -112,13 +111,8 @@ bool CUClientSpecTelePreview::OnInput(const IInput::CEvent &Event)
 			const std::vector<vec2> &vOuts = Collision()->TeleOuts(m_TeleNumber - 1);
 			if(m_OutIndex >= 0 && m_OutIndex < (int)vOuts.size())
 			{
-				// TeleOuts already store tile centers (+16,+16); keep the camera on that center.
-				const vec2 Out = vOuts[m_OutIndex];
-				CCamera &Camera = GameClient()->m_Camera;
-				Camera.m_ForceFreeview = true;
-				Camera.m_ForceFreeviewPos = vec2(
-					std::clamp(Out.x, 200.0f, Collision()->GetWidth() * 32.0f - 200.0f),
-					std::clamp(Out.y, 200.0f, Collision()->GetHeight() * 32.0f - 200.0f));
+				// TeleOuts already store tile centers (+16,+16).
+				GameClient()->m_Camera.SetViewWorld(vOuts[m_OutIndex]);
 			}
 			return true;
 		}
