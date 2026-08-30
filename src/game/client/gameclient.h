@@ -33,6 +33,7 @@
 #include "components/uclient/chat_rooms.h"
 #include "components/uclient/timeout_reconnect.h"
 #include "components/uclient/uclient.h"
+#include "components/uclient/weapon_traj_policy.h"
 #include "components/binds.h"
 #include "components/broadcast.h"
 #include "components/camera.h"
@@ -1162,7 +1163,10 @@ public:
 	CUClient m_UClient;
 	CUClientAccount m_UClientAccount;
 	CUClientChatRooms m_UClientChatRooms;
+	CUClientWeaponTrajPolicy m_WeaponTrajPolicy;
 	CTimeoutReconnect m_TimeoutReconnect;
+
+	bool IsWeaponTrajBlocked() const { return m_WeaponTrajPolicy.IsBlockedForCurrentServer(); }
 };
 
 ColorRGBA CalculateNameColor(ColorHSLA TextColorHSL);

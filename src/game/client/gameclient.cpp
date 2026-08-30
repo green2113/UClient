@@ -461,6 +461,7 @@ void CGameClient::OnConsoleInit()
 					      &m_BestClient, // BestClient binds
 					      &m_UClientAccount,
 					      &m_UClientChatRooms,
+					      &m_WeaponTrajPolicy,
 					      &m_TimeoutReconnect,
 					      &m_TClient, // TClient (Must be before chat and players)
 					      &m_Players,

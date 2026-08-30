@@ -38,6 +38,10 @@ class CPlayers : public CComponent
 		const CNetObj_Character *pPrevChar,
 		const CNetObj_Character *pPlayerChar,
 		int ClientId);
+	void RenderWeaponTrajLine(
+		const CNetObj_Character *pPrevChar,
+		const CNetObj_Character *pPlayerChar,
+		int ClientId);
 	bool IsPlayerInfoAvailable(int ClientId) const;
 
 	int m_WeaponEmoteQuadContainerIndex;

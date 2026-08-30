@@ -537,6 +537,251 @@ void CPlayers::RenderHookCollLine(
 	}
 }
 
+void CPlayers::RenderWeaponTrajLine(
+	const CNetObj_Character *pPrevChar,
+	const CNetObj_Character *pPlayerChar,
+	int ClientId)
+{
+	if(!g_Config.m_UcWeaponTraj)
+		return;
+	if(GameClient()->IsWeaponTrajBlocked())
+		return;
+
+	dbg_assert(in_range(ClientId, MAX_CLIENTS - 1), "invalid client id (%d)", ClientId);
+
+	const bool Local = GameClient()->m_Snap.m_LocalClientId == ClientId;
+	if(!Local)
+		return;
+
+	bool Aim = false;
+	if(Client()->State() != IClient::STATE_DEMOPLAYBACK)
+		Aim = GameClient()->m_Controls.m_aShowHookColl[g_Config.m_ClDummy] != 0;
+	else
+		Aim = (pPlayerChar->m_PlayerFlags & PLAYERFLAG_AIM) != 0;
+	if(!Aim)
+		return;
+
+	const int Weapon = pPlayerChar->m_Weapon;
+	if(Weapon != WEAPON_SHOTGUN && Weapon != WEAPON_GRENADE && Weapon != WEAPON_LASER)
+		return;
+
+	CNetObj_Character Prev = *pPrevChar;
+	CNetObj_Character Player = *pPlayerChar;
+
+	float Intra = GameClient()->m_aClients[ClientId].m_IsPredicted ? Client()->PredIntraGameTick(g_Config.m_ClDummy) : Client()->IntraGameTick(g_Config.m_ClDummy);
+	float Angle = GetPlayerTargetAngle(&Prev, &Player, ClientId, Intra);
+	vec2 Direction = direction(Angle);
+	if(length(Direction) < 0.001f)
+		return;
+	Direction = normalize(Direction);
+
+	vec2 Position = GameClient()->m_aClients[ClientId].m_RenderPos;
+	if(!GameClient()->OptimizerAllowRenderPos(Position))
+		return;
+
+	const CTuningParams &Tuning = GameClient()->m_aClients[ClientId].m_Predicted.m_Tuning;
+	const bool UseLaserPath = Weapon == WEAPON_LASER || (Weapon == WEAPON_SHOTGUN && !GameClient()->m_GameWorld.m_WorldConfig.m_IsVanilla);
+
+	ColorRGBA TrajColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClHookCollColorNoColl));
+	std::vector<IGraphics::CLineItem> vLineSegments;
+
+	if(UseLaserPath)
+	{
+		float Energy = Tuning.m_LaserReach;
+		if(GameClient()->m_GameWorld.m_WorldConfig.m_IsFNG && Energy < 10.f)
+			Energy = 800.0f;
+		if(Energy <= 0.0f)
+			return;
+
+		vec2 Pos = Position;
+		vec2 Dir = Direction;
+		int Bounces = 0;
+		bool ZeroEnergyBounceInLastTick = false;
+		const int BounceLimit = maximum(0, (int)Tuning.m_LaserBounceNum);
+		const int MaxSegments = minimum(BounceLimit + 8, 64);
+
+		for(int Segment = 0; Segment < MaxSegments && Energy >= 0.0f; ++Segment)
+		{
+			vec2 Coltile;
+			vec2 To = Pos + Dir * Energy;
+			const int Res = Collision()->IntersectLineTeleWeapon(Pos, To, &Coltile, &To);
+
+			vec2 HitPos = To;
+			vec2 TeePos;
+			if(GameClient()->IntersectCharacter(Pos, HitPos, To, ClientId, &TeePos) != -1)
+			{
+				TrajColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClHookCollColorTeeColl));
+				vec2 aIntersections[2];
+				const int NumIntersections = intersect_line_circle(Pos, HitPos, TeePos, CCharacterCore::PhysicalSize() * 1.45f / 2.0f, aIntersections);
+				if(NumIntersections == 2)
+				{
+					if(distance(Pos, aIntersections[0]) < distance(Pos, aIntersections[1]))
+						vLineSegments.emplace_back(Pos, aIntersections[0]);
+					else
+						vLineSegments.emplace_back(Pos, aIntersections[1]);
+				}
+				else if(NumIntersections == 1)
+					vLineSegments.emplace_back(Pos, aIntersections[0]);
+				else
+					vLineSegments.emplace_back(Pos, HitPos);
+				break;
+			}
+
+			if(Res)
+			{
+				const vec2 From = Pos;
+				vLineSegments.emplace_back(From, To);
+
+				vec2 TempPos = To;
+				vec2 TempDir = Dir * 4.0f;
+				int f = 0;
+				if(Res == -1)
+				{
+					f = Collision()->GetTile(round_to_int(Coltile.x), round_to_int(Coltile.y));
+					Collision()->SetCollisionAt(round_to_int(Coltile.x), round_to_int(Coltile.y), TILE_SOLID);
+				}
+				Collision()->MovePoint(&TempPos, &TempDir, 1.0f, nullptr);
+				if(Res == -1)
+					Collision()->SetCollisionAt(round_to_int(Coltile.x), round_to_int(Coltile.y), f);
+
+				Pos = TempPos;
+				Dir = normalize(TempDir);
+				const float Distance = distance(From, Pos);
+				if(Distance == 0.0f && ZeroEnergyBounceInLastTick)
+				{
+					Energy = -1;
+					break;
+				}
+				Energy -= Distance + Tuning.m_LaserBounceCost;
+				ZeroEnergyBounceInLastTick = Distance == 0.0f;
+				Bounces++;
+				if(Bounces > BounceLimit)
+				{
+					Energy = -1;
+					break;
+				}
+			}
+			else
+			{
+				vLineSegments.emplace_back(Pos, To);
+				break;
+			}
+		}
+	}
+	else
+	{
+		// Grenade or vanilla shotgun projectile arc (center pellet).
+		float Curvature = 0.0f;
+		float Speed = 0.0f;
+		float Lifetime = 0.0f;
+		if(Weapon == WEAPON_GRENADE)
+		{
+			Curvature = Tuning.m_GrenadeCurvature;
+			Speed = Tuning.m_GrenadeSpeed;
+			Lifetime = Tuning.m_GrenadeLifetime;
+		}
+		else
+		{
+			Curvature = Tuning.m_ShotgunCurvature;
+			Speed = Tuning.m_ShotgunSpeed;
+			Lifetime = Tuning.m_ShotgunLifetime;
+		}
+		if(Speed <= 0.0f || Lifetime <= 0.0f)
+			return;
+
+		const vec2 StartPos = Position + Direction * CCharacterCore::PhysicalSize() * 0.75f;
+		const int LifeTicks = maximum(1, (int)(Client()->GameTickSpeed() * Lifetime));
+		vec2 PrevPos = StartPos;
+		bool HitTee = false;
+
+		for(int Tick = 1; Tick <= LifeTicks; ++Tick)
+		{
+			const float Ct = Tick / (float)Client()->GameTickSpeed();
+			const vec2 CurPos = CalcPos(StartPos, Direction, Curvature, Speed, Ct);
+			vec2 ColPos;
+			vec2 NewPos;
+			const int Collide = Collision()->IntersectLine(PrevPos, CurPos, &ColPos, &NewPos);
+
+			vec2 TeeHitPos = ColPos;
+			vec2 TeeOutPos = CurPos;
+			vec2 TeePos;
+			if(GameClient()->IntersectCharacter(PrevPos, TeeHitPos, TeeOutPos, ClientId, &TeePos) != -1)
+			{
+				TrajColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClHookCollColorTeeColl));
+				vec2 aIntersections[2];
+				const int NumIntersections = intersect_line_circle(PrevPos, TeeHitPos, TeePos, CCharacterCore::PhysicalSize() * 1.45f / 2.0f, aIntersections);
+				if(NumIntersections == 2)
+				{
+					if(distance(PrevPos, aIntersections[0]) < distance(PrevPos, aIntersections[1]))
+						vLineSegments.emplace_back(PrevPos, aIntersections[0]);
+					else
+						vLineSegments.emplace_back(PrevPos, aIntersections[1]);
+				}
+				else if(NumIntersections == 1)
+					vLineSegments.emplace_back(PrevPos, aIntersections[0]);
+				else
+					vLineSegments.emplace_back(PrevPos, TeeHitPos);
+				HitTee = true;
+				break;
+			}
+
+			if(Collide)
+			{
+				vLineSegments.emplace_back(PrevPos, ColPos);
+				break;
+			}
+
+			vLineSegments.emplace_back(PrevPos, CurPos);
+			PrevPos = CurPos;
+		}
+
+		(void)HitTee;
+	}
+
+	if(vLineSegments.empty())
+		return;
+
+	float Alpha = (float)g_Config.m_ClHookCollAlpha / 100.0f;
+	if(Alpha <= 0.0f)
+		return;
+
+	const int LineSize = g_Config.m_ClHookCollSize;
+	Graphics()->TextureClear();
+	if(LineSize > 0)
+	{
+		std::vector<IGraphics::CFreeformItem> vLineQuadSegments;
+		vLineQuadSegments.reserve(vLineSegments.size());
+		const float LineWidth = 0.5f + (float)(LineSize - 1) * 0.25f;
+
+		for(const auto &LineSegment : vLineSegments)
+		{
+			vec2 DrawInitPos(LineSegment.m_X0, LineSegment.m_Y0);
+			vec2 DrawFinishPos(LineSegment.m_X1, LineSegment.m_Y1);
+			vec2 SegDir = DrawFinishPos - DrawInitPos;
+			if(length(SegDir) < 0.001f)
+				continue;
+			const vec2 Perp = normalize(vec2(SegDir.y, -SegDir.x)) * GameClient()->m_Camera.m_Zoom;
+			vec2 Pos0 = DrawFinishPos + Perp * -LineWidth;
+			vec2 Pos1 = DrawFinishPos + Perp * LineWidth;
+			vec2 Pos2 = DrawInitPos + Perp * -LineWidth;
+			vec2 Pos3 = DrawInitPos + Perp * LineWidth;
+			vLineQuadSegments.emplace_back(Pos0.x, Pos0.y, Pos1.x, Pos1.y, Pos2.x, Pos2.y, Pos3.x, Pos3.y);
+		}
+
+		Graphics()->QuadsBegin();
+		Graphics()->SetColor(TrajColor.WithAlpha(Alpha));
+		Graphics()->QuadsDrawFreeform(vLineQuadSegments.data(), vLineQuadSegments.size());
+		Graphics()->QuadsEnd();
+	}
+	else
+	{
+		Graphics()->LinesBegin();
+		Graphics()->SetColor(TrajColor.WithAlpha(Alpha));
+		Graphics()->LinesDraw(vLineSegments.data(), vLineSegments.size());
+		Graphics()->LinesEnd();
+	}
+}
+
 void CPlayers::RenderHook(
 	const CNetObj_Character *pPrevChar,
 	const CNetObj_Character *pPlayerChar,
@@ -1776,6 +2021,7 @@ void CPlayers::OnRender()
 		}
 
 		RenderHookCollLine(&GameClient()->m_aClients[ClientId].m_RenderPrev, &GameClient()->m_aClients[ClientId].m_RenderCur, ClientId);
+		RenderWeaponTrajLine(&GameClient()->m_aClients[ClientId].m_RenderPrev, &GameClient()->m_aClients[ClientId].m_RenderCur, ClientId);
 
 		if(!in_range(GameClient()->m_aClients[ClientId].m_RenderPos.x, ScreenX0, ScreenX1) || !in_range(GameClient()->m_aClients[ClientId].m_RenderPos.y, ScreenY0, ScreenY1))
 		{
@@ -1808,6 +2054,7 @@ void CPlayers::OnRender()
 	{
 		const CGameClient::CClientData *pClientData = &GameClient()->m_aClients[RenderLastId];
 		RenderHookCollLine(&pClientData->m_RenderPrev, &pClientData->m_RenderCur, RenderLastId);
+		RenderWeaponTrajLine(&pClientData->m_RenderPrev, &pClientData->m_RenderCur, RenderLastId);
 		GameClient()->m_NamePlates.RenderFlyingNamePlateRopeGame(pClientData->m_RenderPos, GameClient()->m_Snap.m_apPlayerInfos[RenderLastId], 1.0f);
 		RenderPlayer(&pClientData->m_RenderPrev, &pClientData->m_RenderCur, &aRenderInfo[RenderLastId], RenderLastId);
 	}

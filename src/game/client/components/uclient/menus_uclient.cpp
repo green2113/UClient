@@ -117,6 +117,17 @@ void CMenus::PopupCancelDisableUcChatSendSameServerForReply()
 	SetActive(false);
 }
 
+static void DrawUcMenuBadge(IGraphics *pGraphics, CUi *pUi, ITextRender *pTextRender, CUIRect *pRow, const char *pText, float FontSize, const ColorRGBA &Top, const ColorRGBA &Bottom, float Gap)
+{
+	const float BadgeWidth = pTextRender->TextWidth(FontSize, pText) + 10.0f;
+	CUIRect Badge;
+	pRow->VSplitRight(BadgeWidth + Gap, pRow, &Badge);
+	Badge.VSplitLeft(Gap, nullptr, &Badge);
+	Badge.HMargin(2.0f, &Badge);
+	pGraphics->DrawRect4(Badge.x, Badge.y, Badge.w, Badge.h, Top, Bottom, Top, Bottom, IGraphics::CORNER_ALL, 5.0f);
+	pUi->DoLabel(&Badge, pText, FontSize, TEXTALIGN_MC);
+}
+
 void CMenus::RenderSettingsUClient(CUIRect MainView)
 {
 	enum
@@ -345,6 +356,32 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 					TextRender()->TextColor(TextRender()->DefaultTextColor());
 				}
 				PopSettingsLinkParent();
+			}
+			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+		}
+
+		// Weapon aim trajectory
+		{
+			const bool WeaponTrajBlocked = GameClient()->IsWeaponTrajBlocked();
+			const float BlockedHintHeight = WeaponTrajBlocked ? (MarginSmall + LineSize) : 0.0f;
+			const float ContentHeight = LineSize + MarginSmall + LineSize + BlockedHintHeight;
+			CUIRect Content, Label;
+			BeginBlock(Column, ContentHeight, Content);
+			Content.HSplitTop(LineSize, &Label, &Content);
+			DrawUcMenuBadge(Graphics(), Ui(), TextRender(), &Label, Localize("NEW"), 12.0f,
+				ColorRGBA(0.25f, 0.85f, 0.40f, 1.0f), ColorRGBA(0.10f, 0.60f, 0.25f, 1.0f), MarginSmall);
+			Ui()->DoLabel(&Label, Localize("Weapon trajectory"), HeadlineFontSize, TEXTALIGN_ML);
+			Content.HSplitTop(MarginSmall, nullptr, &Content);
+			PushSettingsLinkParent("uc_weapon_traj");
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcWeaponTraj, Localize("Show shotgun/grenade/laser aim path with +showhookcoll"), &g_Config.m_UcWeaponTraj, &Content, LineSize);
+			PopSettingsLinkParent();
+			if(WeaponTrajBlocked)
+			{
+				Content.HSplitTop(MarginSmall, nullptr, &Content);
+				Content.HSplitTop(LineSize, &Label, &Content);
+				TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
+				Ui()->DoLabel(&Label, Localize("Looks like you're on a server where this feature is forbidden"), 12.0f, TEXTALIGN_ML);
+				TextRender()->TextColor(TextRender()->DefaultTextColor());
 			}
 			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 		}
