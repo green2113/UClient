@@ -34,6 +34,7 @@
 #include "components/uclient/timeout_reconnect.h"
 #include "components/uclient/uclient.h"
 #include "components/uclient/weapon_traj_policy.h"
+#include "components/uclient/spec_tele_preview.h"
 #include "components/binds.h"
 #include "components/broadcast.h"
 #include "components/camera.h"
@@ -1164,6 +1165,7 @@ public:
 	CUClientAccount m_UClientAccount;
 	CUClientChatRooms m_UClientChatRooms;
 	CUClientWeaponTrajPolicy m_WeaponTrajPolicy;
+	CUClientSpecTelePreview m_SpecTelePreview;
 	CTimeoutReconnect m_TimeoutReconnect;
 
 	bool IsWeaponTrajBlocked() const { return m_WeaponTrajPolicy.IsBlockedForCurrentServer(); }

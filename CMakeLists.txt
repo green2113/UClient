@@ -2769,6 +2769,8 @@ if(CLIENT)
     components/uclient/uclient.h
     components/uclient/weapon_traj_policy.cpp
     components/uclient/weapon_traj_policy.h
+    components/uclient/spec_tele_preview.cpp
+    components/uclient/spec_tele_preview.h
     components/binds.cpp
     components/binds.h
     components/broadcast.cpp

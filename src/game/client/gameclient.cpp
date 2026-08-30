@@ -462,6 +462,7 @@ void CGameClient::OnConsoleInit()
 					      &m_UClientAccount,
 					      &m_UClientChatRooms,
 					      &m_WeaponTrajPolicy,
+					      &m_SpecTelePreview,
 					      &m_TimeoutReconnect,
 					      &m_TClient, // TClient (Must be before chat and players)
 					      &m_Players,
@@ -523,6 +524,7 @@ void CGameClient::OnConsoleInit()
 						  &m_Chat, // chat has higher prio, due to that you can quit it by pressing esc
 						  &m_Scoreboard,
 						  &m_Motd, // for pressing esc to remove it
+						  &m_SpecTelePreview, // before spectator: consume wheel/click on tele preview
 						  &m_Spectator,
 						  &m_BindWheel, // TClient
 						  &m_FastActions, // BestClient

@@ -386,6 +386,22 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
 		}
 
+		// Spectator teleport destination preview
+		{
+			const float ContentHeight = LineSize + MarginSmall + LineSize;
+			CUIRect Content, Label;
+			BeginBlock(Column, ContentHeight, Content);
+			Content.HSplitTop(LineSize, &Label, &Content);
+			DrawUcMenuBadge(Graphics(), Ui(), TextRender(), &Label, Localize("NEW"), 12.0f,
+				ColorRGBA(0.25f, 0.85f, 0.40f, 1.0f), ColorRGBA(0.10f, 0.60f, 0.25f, 1.0f), MarginSmall);
+			Ui()->DoLabel(&Label, Localize("Teleport preview"), HeadlineFontSize, TEXTALIGN_ML);
+			Content.HSplitTop(MarginSmall, nullptr, &Content);
+			PushSettingsLinkParent("uc_spec_tele_preview");
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcSpecTelePreview, Localize("Show teleport destinations in freeview"), &g_Config.m_UcSpecTelePreview, &Content, LineSize);
+			PopSettingsLinkParent();
+			Column.HSplitTop(MarginBetweenSections, nullptr, &Column);
+		}
+
 		LeftColumnEndY = Column.y;
 		Column = RightView;
 		Column.HSplitTop(10.0f, nullptr, &Column);
