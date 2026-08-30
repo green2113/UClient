@@ -462,7 +462,6 @@ void CGameClient::OnConsoleInit()
 					      &m_UClientAccount,
 					      &m_UClientChatRooms,
 					      &m_WeaponTrajPolicy,
-					      &m_SpecTelePreview,
 					      &m_TimeoutReconnect,
 					      &m_TClient, // TClient (Must be before chat and players)
 					      &m_Players,
@@ -488,6 +487,7 @@ void CGameClient::OnConsoleInit()
 					      &m_CustomCommunities, // TClient
 					      &m_MusicPlayer, // BestClient
 					      &m_Hud,
+					      &m_SpecTelePreview, // after HUD so overlay text is not covered by the world
 					      &m_Spectator,
 					      &m_Emoticon,
 					      &m_BindChat, // TClient

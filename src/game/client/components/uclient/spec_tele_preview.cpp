@@ -17,6 +17,8 @@
 
 #include <generated/protocol.h>
 
+#include <algorithm>
+#include <cmath>
 
 bool CUClientSpecTelePreview::IsFeatureActive() const
 {
@@ -46,15 +48,12 @@ void CUClientSpecTelePreview::UpdateHover()
 	}
 
 	const vec2 Center = GameClient()->m_Camera.m_Center;
-	const int MapIndex = Collision()->GetPureMapIndex(Center);
 	const int Width = Collision()->GetWidth();
 	const int Height = Collision()->GetHeight();
-	if(MapIndex < 0 || MapIndex >= Width * Height)
-	{
-		m_TeleNumber = 0;
-		m_OutIndex = 0;
-		return;
-	}
+	// Use floor so the visible tile under the camera center matches graphics (GetPureMapIndex rounds).
+	const int Nx = std::clamp((int)std::floor(Center.x / 32.0f), 0, Width - 1);
+	const int Ny = std::clamp((int)std::floor(Center.y / 32.0f), 0, Height - 1);
+	const int MapIndex = Ny * Width + Nx;
 
 	const CTeleTile &Tele = Collision()->TeleLayer()[MapIndex];
 	if(Tele.m_Number == 0 || (Tele.m_Type != TILE_TELEIN && Tele.m_Type != TILE_TELEINEVIL))
