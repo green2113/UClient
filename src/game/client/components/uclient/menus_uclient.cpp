@@ -373,7 +373,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			Ui()->DoLabel(&Label, Localize("Weapon trajectory"), HeadlineFontSize, TEXTALIGN_ML);
 			Content.HSplitTop(MarginSmall, nullptr, &Content);
 			PushSettingsLinkParent("uc_weapon_traj");
-			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcWeaponTraj, Localize("Show shotgun/grenade/laser aim path with +showhookcoll"), &g_Config.m_UcWeaponTraj, &Content, LineSize);
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcWeaponTraj, Localize("Show weapon trajectory"), &g_Config.m_UcWeaponTraj, &Content, LineSize);
 			PopSettingsLinkParent();
 			if(WeaponTrajBlocked)
 			{

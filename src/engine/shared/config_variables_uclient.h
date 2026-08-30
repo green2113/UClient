@@ -33,7 +33,7 @@ MACRO_CONFIG_INT(UcMapShareMaxBytes, uc_map_share_max_bytes, 33554432, 0, 671088
 MACRO_CONFIG_INT(UcBindPresetActive, uc_bind_preset_active, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Currently active bind preset slot (0-2)")
 MACRO_CONFIG_INT(UcBindKeyboardNumpad, uc_bind_keyboard_numpad, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show the numpad on the visual keyboard in the controls settings")
 MACRO_CONFIG_INT(UcShowSharedCursors, uc_show_shared_cursors, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show shared cursors from other UClient players and the sharing indicator")
-MACRO_CONFIG_INT(UcWeaponTraj, uc_weapon_traj, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show shotgun/grenade/laser aim trajectory while +showhookcoll is held")
+MACRO_CONFIG_INT(UcWeaponTraj, uc_weapon_traj, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show shotgun/grenade/laser weapon trajectory")
 MACRO_CONFIG_INT(UcChat, uc_chat, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable UClient chat channel (relayed via UClient presence UDP)")
 MACRO_CONFIG_INT(UcChatSendSameServerOnly, uc_chat_send_same_server_only, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Only send UClient chat to users on the same game server")
 MACRO_CONFIG_INT(UcChatHideGlobal, uc_chat_hide_global, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Hide UClient chat messages sent to all UClient users")

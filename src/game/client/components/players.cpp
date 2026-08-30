@@ -558,7 +558,8 @@ void CPlayers::RenderWeaponTrajLine(
 		Aim = GameClient()->m_Controls.m_aShowHookColl[g_Config.m_ClDummy] != 0;
 	else
 		Aim = (pPlayerChar->m_PlayerFlags & PLAYERFLAG_AIM) != 0;
-	if(!Aim)
+	const bool AlwaysShow = g_Config.m_ClShowHookCollOwn == 2;
+	if(!Aim && !AlwaysShow)
 		return;
 
 	const int Weapon = pPlayerChar->m_Weapon;
