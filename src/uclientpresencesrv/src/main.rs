@@ -60,6 +60,7 @@ const PACKET_ROOM_SERVER_JOIN: u8 = 20;
 const PACKET_ROOM_SERVER_JOIN_BROADCAST: u8 = 21;
 const PACKET_UCLIENT_REACTION: u8 = 22;
 const PACKET_UCLIENT_REACTION_BROADCAST: u8 = 23;
+const PACKET_ROOM_LIST_CHANGED: u8 = 24;
 const SERVER_PRESENCE_JOIN: u8 = 0;
 const SERVER_PRESENCE_LEAVE: u8 = 1;
 const SERVER_PRESENCE_MOVE: u8 = 2;
@@ -549,7 +550,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Arc::clone(&config),
         client.clone(),
     ));
-    let web_task = tokio::spawn(web_loop(Arc::clone(&state), Arc::clone(&config)));
+    let web_task = tokio::spawn(web_loop(
+        Arc::clone(&state),
+        Arc::clone(&config),
+        Arc::clone(&udp_socket),
+    ));
     let rooms_task = tokio::spawn(room_cache_refresh_loop(
         Arc::clone(&state),
         Arc::clone(&config),
@@ -1770,6 +1775,14 @@ fn encode_uclient_reaction_broadcast(
     out
 }
 
+fn encode_room_list_changed(room_id: &str, room_name: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_header(&mut out, PACKET_ROOM_LIST_CHANGED);
+    write_string(&mut out, room_id);
+    write_string(&mut out, room_name);
+    out
+}
+
 fn encode_peer_list(server_address: &str, peers: &[(i16, String)]) -> Vec<u8> {
     let mut out = Vec::new();
     write_header(&mut out, PACKET_PEER_LIST);
@@ -2468,6 +2481,7 @@ fn write_file_atomically(path: &Path, contents: &str) -> io::Result<()> {
 async fn web_loop(
     state: Arc<Mutex<ServerState>>,
     config: Arc<Config>,
+    socket: Arc<UdpSocket>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let healthz = warp::path("healthz")
         .and(warp::get())
@@ -2507,6 +2521,7 @@ async fn web_loop(
     let invalidate_state = Arc::clone(&state);
     let invalidate_config = Arc::clone(&config);
     let invalidate_client = reqwest::Client::new();
+    let invalidate_socket = Arc::clone(&socket);
     let invalidate_room = warp::path!("internal" / "rooms" / "invalidate")
         .and(warp::post())
         .and(warp::header::optional::<String>("authorization"))
@@ -2517,6 +2532,7 @@ async fn web_loop(
                 let state = Arc::clone(&invalidate_state);
                 let config = Arc::clone(&invalidate_config);
                 let client = invalidate_client.clone();
+                let socket = Arc::clone(&invalidate_socket);
                 async move {
                     let provided = authorization
                         .as_deref()
@@ -2540,21 +2556,65 @@ async fn web_loop(
                             StatusCode::BAD_REQUEST,
                         ));
                     }
-                    match refresh_room_cache_once(&state, &config, &client).await {
-                        Ok(()) => Ok(warp::reply::with_status(
-                            warp::reply::json(
-                                &serde_json::json!({"ok": true, "room_id": request.room_id}),
-                            ),
-                            StatusCode::OK,
-                        )),
-                        Err(err) => {
-                            eprintln!("room membership invalidate refresh failed: {err}");
-                            Ok(warp::reply::with_status(
-                                warp::reply::json(&serde_json::json!({"error": "refresh_failed"})),
-                                StatusCode::BAD_GATEWAY,
-                            ))
-                        }
+
+                    let old_install_ids = {
+                        let guard = state.lock().unwrap();
+                        guard
+                            .room_cache
+                            .get(&request.room_id)
+                            .map(|room| room.install_ids.clone())
+                            .unwrap_or_default()
+                    };
+
+                    if let Err(err) = refresh_room_cache_once(&state, &config, &client).await {
+                        eprintln!("room membership invalidate refresh failed: {err}");
+                        return Ok(warp::reply::with_status(
+                            warp::reply::json(&serde_json::json!({"error": "refresh_failed"})),
+                            StatusCode::BAD_GATEWAY,
+                        ));
                     }
+
+                    let (room_name, notify_ids, peers) = {
+                        let guard = state.lock().unwrap();
+                        let mut notify_ids = old_install_ids;
+                        let room_name = if let Some(room) = guard.room_cache.get(&request.room_id) {
+                            notify_ids.extend(room.install_ids.iter().cloned());
+                            room.name.clone()
+                        } else {
+                            String::new()
+                        };
+                        let peers: Vec<SocketAddr> = guard
+                            .peers_for_players(&notify_ids, None)
+                            .into_iter()
+                            .map(|peer| peer.return_addr)
+                            .collect();
+                        (room_name, notify_ids, peers)
+                    };
+
+                    if !peers.is_empty() {
+                        let peer_count = peers.len();
+                        let packet = encode_room_list_changed(&request.room_id, &room_name);
+                        for addr in peers {
+                            if let Err(err) = socket.send_to(&packet, addr).await {
+                                eprintln!(
+                                    "room list changed notify failed for {addr}: {err}"
+                                );
+                            }
+                        }
+                        eprintln!(
+                            "room list changed notified room_id={} peers={} members={}",
+                            request.room_id,
+                            peer_count,
+                            notify_ids.len()
+                        );
+                    }
+
+                    Ok(warp::reply::with_status(
+                        warp::reply::json(
+                            &serde_json::json!({"ok": true, "room_id": request.room_id}),
+                        ),
+                        StatusCode::OK,
+                    ))
                 }
             },
         );

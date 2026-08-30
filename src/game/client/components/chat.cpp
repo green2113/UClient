@@ -3317,17 +3317,13 @@ const char *CChat::LineNameSeparator(const CLine &Line)
 }
 
 // UClient chat can be addressed to everyone, to one game server, or to the sender's friends, and
-// none of that is visible in the message itself. Hovering spells it out.
+// none of that is visible in the message itself. Hovering spells it out. Room messages already
+// show the room name inline, so they skip this note.
 bool CChat::UClientScopeNoteText(const CLine &Line, char *pBuf, size_t BufSize)
 {
 	if(!Line.m_UClient || Line.m_ServerAnnouncement)
 		return false;
-	if(Line.m_aUClientRoomName[0])
-	{
-		str_format(pBuf, BufSize, Localize("This message was sent to the room \"%s\"."), Line.m_aUClientRoomName);
-		return true;
-	}
-	if(Line.m_UClientScope < 0)
+	if(Line.m_aUClientRoomName[0] || Line.m_UClientScope < 0)
 		return false;
 
 	if(Line.m_UClientScope == UClientPresence::CHAT_SCOPE_FRIENDS)
@@ -6068,6 +6064,21 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 				[](const CRateablePlayer &Player1, const CRateablePlayer &Player2) -> bool {
 					return Player1.m_Score < Player2.m_Score;
 				});
+
+			if(m_Mode == MODE_UCLIENT && m_aCompletionBuffer[0] == '@')
+			{
+				static const char *s_apMentions[] = {"@everyone", "@here"};
+				for(int i = (int)std::size(s_apMentions) - 1; i >= 0; --i)
+				{
+					const char *pMention = s_apMentions[i];
+					if(!str_startswith_nocase(pMention, m_aCompletionBuffer))
+						continue;
+					const bool Already = std::any_of(m_vUClientCompletionNames.begin(), m_vUClientCompletionNames.end(),
+						[pMention](const std::string &Name) { return str_comp_nocase(Name.c_str(), pMention) == 0; });
+					if(!Already)
+						m_vUClientCompletionNames.insert(m_vUClientCompletionNames.begin(), pMention);
+				}
+			}
 		}
 
 		auto DoVoiceAutocomplete = [&]() -> bool {
@@ -6346,8 +6357,13 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 				// add separator
 				const char *pSeparator = "";
 				if(*(m_Input.GetString() + m_PlaceholderOffset + m_PlaceholderLength) != ' ')
-					pSeparator = m_PlaceholderOffset == 0 ? ": " : " ";
-				else if(m_PlaceholderOffset == 0)
+				{
+					if(pCompletionString[0] == '@')
+						pSeparator = " ";
+					else
+						pSeparator = m_PlaceholderOffset == 0 ? ": " : " ";
+				}
+				else if(m_PlaceholderOffset == 0 && pCompletionString[0] != '@')
 					pSeparator = ":";
 				if(*pSeparator)
 					str_append(aBuf, pSeparator);
@@ -6652,6 +6668,26 @@ bool CChat::LineShouldHighlight(const char *pLine, const char *pName)
 		pHit = str_utf8_find_nocase(pHit + 1, pName);
 	}
 
+	return false;
+}
+
+bool CChat::LineContainsUClientAudienceMention(const char *pLine, const char *pMention)
+{
+	if(!pLine || !pMention || pMention[0] == '\0')
+		return false;
+
+	const int Length = str_length(pMention);
+	const char *pHit = str_utf8_find_nocase(pLine, pMention);
+	while(pHit)
+	{
+		if((pLine == pHit || pHit[-1] == ' ') &&
+			(pHit[Length] == '\0' || pHit[Length] == ' ' || pHit[Length] == '.' || pHit[Length] == '!' ||
+				pHit[Length] == ',' || pHit[Length] == '?' || pHit[Length] == ':' || pHit[Length] == '\n'))
+		{
+			return true;
+		}
+		pHit = str_utf8_find_nocase(pHit + 1, pMention);
+	}
 	return false;
 }
 
@@ -7273,13 +7309,16 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	}
 
 	// check for highlighted name
+	bool NameHit = false;
+	bool EveryoneHit = false;
+	bool HereHit = false;
 	if(Client()->State() != IClient::STATE_DEMOPLAYBACK)
 	{
 		if(ClientId >= 0 && ClientId != GameClient()->m_aLocalIds[0] && ClientId != GameClient()->m_aLocalIds[1])
 		{
 			for(int LocalId : GameClient()->m_aLocalIds)
 			{
-				Highlighted |= LocalId >= 0 && LineShouldHighlight(pHighlightText, GameClient()->m_aClients[LocalId].m_aName);
+				NameHit |= LocalId >= 0 && LineShouldHighlight(pHighlightText, GameClient()->m_aClients[LocalId].m_aName);
 			}
 		}
 		else if(Team == TEAM_UCLIENT && ClientId == CLIENT_MSG)
@@ -7294,7 +7333,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 				const char *pLocalName = GameClient()->m_aClients[LocalId].m_aName;
 				if(m_aPendingUClientName[0] != '\0' && str_comp(m_aPendingUClientName, pLocalName) == 0)
 					continue;
-				Highlighted |= LineShouldHighlight(pHighlightText, pLocalName);
+				NameHit |= LineShouldHighlight(pHighlightText, pLocalName);
 			}
 		}
 	}
@@ -7302,19 +7341,34 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	{
 		// on demo playback use local id from snap directly,
 		// since m_aLocalIds isn't valid there
-		Highlighted |= GameClient()->m_Snap.m_LocalClientId >= 0 && LineShouldHighlight(pHighlightText, GameClient()->m_aClients[GameClient()->m_Snap.m_LocalClientId].m_aName);
+		NameHit |= GameClient()->m_Snap.m_LocalClientId >= 0 && LineShouldHighlight(pHighlightText, GameClient()->m_aClients[GameClient()->m_Snap.m_LocalClientId].m_aName);
 	}
+
+	// @everyone / @here: highlight for every UClient recipient, including the sender.
+	if(Team == TEAM_UCLIENT)
+	{
+		EveryoneHit = LineContainsUClientAudienceMention(pHighlightText, "@everyone");
+		HereHit = LineContainsUClientAudienceMention(pHighlightText, "@here");
+	}
+
+	Highlighted |= NameHit || EveryoneHit || HereHit;
 
 	if(PreReplyMeta.m_Valid)
 	{
 		for(int LocalId : GameClient()->m_aLocalIds)
 		{
 			if(LocalId >= 0 && str_comp(PreReplyMeta.m_aReplyToName, GameClient()->m_aClients[LocalId].m_aName) == 0)
+			{
 				Highlighted = true;
+				NameHit = true;
+			}
 		}
 		if(Client()->State() == IClient::STATE_DEMOPLAYBACK && GameClient()->m_Snap.m_LocalClientId >= 0 &&
 			str_comp(PreReplyMeta.m_aReplyToName, GameClient()->m_aClients[GameClient()->m_Snap.m_LocalClientId].m_aName) == 0)
+		{
 			Highlighted = true;
+			NameHit = true;
+		}
 	}
 	CurrentLine.m_Highlighted = Highlighted;
 
@@ -7466,21 +7520,47 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	}
 	else if(Highlighted && Client()->State() != IClient::STATE_DEMOPLAYBACK)
 	{
-		if(Now - m_aLastSoundPlayed[CHAT_HIGHLIGHT] >= time_freq() * 3 / 10)
+		// @here alone: mention sound when active, normal chat sound while AFK.
+		// @everyone and name tags always use the highlight sound.
+		bool UseHighlightSound = true;
+		if(Team == TEAM_UCLIENT && HereHit && !EveryoneHit && !NameHit)
 		{
-			char aBuf[1024];
-			const std::string VisibleText = BuildVisibleMessageText(CurrentLine, true);
-			str_format(aBuf, sizeof(aBuf), "%s: %s", CurrentLine.m_aName, VisibleText.c_str());
-			Client()->Notify("DDNet Chat", aBuf);
-			if(g_Config.m_SndHighlight)
-			{
-				GameClient()->m_Sounds.Play(CSounds::CHN_GUI, SOUND_CHAT_HIGHLIGHT, 1.0f);
-				m_aLastSoundPlayed[CHAT_HIGHLIGHT] = Now;
-			}
+			const int LocalId = GameClient()->m_aLocalIds[g_Config.m_ClDummy];
+			const bool Afk = LocalId >= 0 && LocalId < MAX_CLIENTS && GameClient()->m_aClients[LocalId].m_Afk;
+			UseHighlightSound = !Afk;
+		}
 
-			if(g_Config.m_ClEditor)
+		if(UseHighlightSound)
+		{
+			if(Now - m_aLastSoundPlayed[CHAT_HIGHLIGHT] >= time_freq() * 3 / 10)
 			{
-				GameClient()->Editor()->UpdateMentions();
+				char aBuf[1024];
+				const std::string VisibleText = BuildVisibleMessageText(CurrentLine, true);
+				str_format(aBuf, sizeof(aBuf), "%s: %s", CurrentLine.m_aName, VisibleText.c_str());
+				Client()->Notify("DDNet Chat", aBuf);
+				if(g_Config.m_SndHighlight)
+				{
+					GameClient()->m_Sounds.Play(CSounds::CHN_GUI, SOUND_CHAT_HIGHLIGHT, 1.0f);
+					m_aLastSoundPlayed[CHAT_HIGHLIGHT] = Now;
+				}
+
+				if(g_Config.m_ClEditor)
+				{
+					GameClient()->Editor()->UpdateMentions();
+				}
+			}
+		}
+		else if(Now - m_aLastSoundPlayed[CHAT_CLIENT] >= time_freq() * 3 / 10)
+		{
+			bool PlaySound = g_Config.m_SndChat;
+#if defined(CONF_VIDEORECORDER)
+			if(IVideo::Current())
+				PlaySound &= (bool)g_Config.m_ClVideoShowChat;
+#endif
+			if(PlaySound)
+			{
+				GameClient()->m_Sounds.Play(CSounds::CHN_GUI, SOUND_CHAT_CLIENT, 1.0f);
+				m_aLastSoundPlayed[CHAT_CLIENT] = Now;
 			}
 		}
 	}
@@ -8744,6 +8824,42 @@ void CChat::OnRender()
 				}
 			}
 		}
+		else if(m_Mode == MODE_UCLIENT)
+		{
+			const char *pIn = m_Input.GetString();
+			const int Cursor = m_Input.GetCursorOffset();
+			int TokenStart = Cursor;
+			while(TokenStart > 0 && pIn[TokenStart - 1] != ' ')
+				--TokenStart;
+			int TokenEnd = Cursor;
+			while(pIn[TokenEnd] && pIn[TokenEnd] != ' ')
+				++TokenEnd;
+			char aToken[64];
+			str_truncate(aToken, sizeof(aToken), pIn + TokenStart, TokenEnd - TokenStart);
+			if(aToken[0] == '@' && aToken[1] != '\0')
+			{
+				static const char *s_apMentions[] = {"@everyone", "@here"};
+				const char *pCandidate = nullptr;
+				for(const char *pMention : s_apMentions)
+				{
+					if(str_startswith_nocase(pMention, aToken) && str_length(pMention) > str_length(aToken))
+					{
+						pCandidate = pMention;
+						break;
+					}
+				}
+				if(pCandidate)
+				{
+					char aBefore[CHAT_LINE_LENGTH];
+					str_truncate(aBefore, sizeof(aBefore), pIn, TokenEnd);
+					InputCursor.m_X = InputCursor.m_X + TextRender()->TextWidth(InputCursor.m_FontSize, aBefore, -1, InputCursor.m_LineWidth);
+					InputCursor.m_Y = m_Input.GetCaretPosition().y;
+					TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.5f);
+					TextRender()->TextEx(&InputCursor, pCandidate + str_length(aToken));
+					TextRender()->TextColor(TextRender()->DefaultTextColor());
+				}
+			}
+		}
 
 		if(m_Mode == MODE_UCLIENT)
 		{
@@ -9155,7 +9271,7 @@ void CChat::OnRender()
 				const bool HoveredLine = MousePos.x >= Line.m_LineRect.m_X && MousePos.x <= Line.m_LineRect.m_X + Line.m_LineRect.m_W &&
 					MousePos.y >= Line.m_LineRect.m_Y && MousePos.y <= Line.m_LineRect.m_Y + Line.m_LineRect.m_H;
 				const float BtnSize = maximum(6.5f, FontSize() * 0.34f);
-				const float BtnGap = FontSize() * 0.6f;
+				const float BtnGap = FontSize() * 1.05f;
 				const float BtnSpacing = FontSize() * 0.18f;
 				// Keep the read label (drawn separately below) leftmost; buttons follow it.
 				float NextX = Line.m_ReplyButtonAnchorX + ChatOpenOffsetX + BcLineXOffset + BtnGap +
@@ -10361,6 +10477,9 @@ bool CChat::LineHighlighted(int ClientId, const char *pLine)
 		// since m_aLocalIds isn't valid there
 		Highlighted |= GameClient()->m_Snap.m_LocalClientId >= 0 && LineShouldHighlight(pLine, GameClient()->m_aClients[GameClient()->m_Snap.m_LocalClientId].m_aName);
 	}
+
+	Highlighted |= LineContainsUClientAudienceMention(pLine, "@everyone") ||
+		LineContainsUClientAudienceMention(pLine, "@here");
 
 	return Highlighted;
 }

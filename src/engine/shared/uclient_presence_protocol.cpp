@@ -541,6 +541,26 @@ bool ReadUClientReactionBroadcast(const uint8_t *pData, int DataSize, CUClientRe
 	return Offset == DataSize;
 }
 
+void WriteRoomListChanged(std::vector<uint8_t> &vOut, const char *pRoomId, const char *pRoomName)
+{
+	WriteHeader(vOut, PACKET_ROOM_LIST_CHANGED);
+	WriteString(vOut, pRoomId ? pRoomId : "");
+	WriteString(vOut, pRoomName ? pRoomName : "");
+}
+
+bool ReadRoomListChanged(const uint8_t *pData, int DataSize, CRoomListChanged &Out)
+{
+	int Offset = 0;
+	EPacketType Type;
+	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != PACKET_ROOM_LIST_CHANGED ||
+		!ReadString(pData, DataSize, Offset, Out.m_RoomId) ||
+		!ReadString(pData, DataSize, Offset, Out.m_RoomName))
+	{
+		return false;
+	}
+	return Offset == DataSize;
+}
+
 bool ReadClientPresencePacket(const uint8_t *pData, int DataSize, CClientPresencePacket &Out)
 {
 	int Offset = 0;

@@ -535,8 +535,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 	}
 	else
 	{
-		// D1 does not push membership changes, so poll only while this page is visible.
-		GameClient()->m_UClientChatRooms.RefreshIfStale(5);
+		// Room membership is pushed over the presence relay; no need to poll while this page is open.
 		const auto &vRooms = GameClient()->m_UClientChatRooms.Rooms();
 		CUIRect Page = MainView;
 		Page.VMargin(10.0f, &Page);

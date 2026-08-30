@@ -41,6 +41,7 @@ public:
 
 	void Refresh();
 	void RefreshIfStale(int MaxAgeSeconds);
+	void RequestRefreshSoon();
 	bool Create(const char *pName, const char *pDisplayName);
 	void Rename(const char *pRoomId, const char *pName);
 	void RegenerateCode(const char *pRoomId);
@@ -69,6 +70,7 @@ private:
 	char m_aError[256] = "";
 	bool m_InitialRefresh = false;
 	int64_t m_LastRefresh = 0;
+	int64_t m_PendingRefreshAt = 0;
 };
 
 #endif

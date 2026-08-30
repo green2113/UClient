@@ -243,6 +243,8 @@ namespace
 			return "uc_chat_reaction";
 		case UClientPresence::PACKET_UCLIENT_REACTION_BROADCAST:
 			return "uc_chat_reaction_broadcast";
+		case UClientPresence::PACKET_ROOM_LIST_CHANGED:
+			return "uc_room_list_changed";
 		default:
 			return "unknown";
 		}
@@ -2407,6 +2409,13 @@ void CClientIndicator::ProcessUcPresencePacket(const unsigned char *pData, int D
 		UClientPresence::CUClientReactionBroadcast Reaction;
 		if(UClientPresence::ReadUClientReactionBroadcast(pData, DataSize, Reaction))
 			ApplyUClientReactionBroadcast(Reaction);
+		break;
+	}
+	case UClientPresence::PACKET_ROOM_LIST_CHANGED:
+	{
+		UClientPresence::CRoomListChanged Changed;
+		if(UClientPresence::ReadRoomListChanged(pData, DataSize, Changed))
+			GameClient()->m_UClientChatRooms.RequestRefreshSoon();
 		break;
 	}
 	case UClientPresence::PACKET_CURSOR_BROADCAST:

@@ -54,6 +54,8 @@ enum EPacketType : uint8_t
 	PACKET_ROOM_SERVER_JOIN_BROADCAST = 21, // Server -> Client
 	PACKET_UCLIENT_REACTION = 22, // Client -> Server (proof protected)
 	PACKET_UCLIENT_REACTION_BROADCAST = 23, // Server -> Client
+	// Room membership/name changed; clients should refresh their room list from the rooms API.
+	PACKET_ROOM_LIST_CHANGED = 24, // Server -> Client
 };
 
 enum EServerPresenceKind : uint8_t
@@ -223,6 +225,12 @@ struct CUClientReactionBroadcast
 	uint8_t m_Action = REACTION_ADD;
 };
 
+struct CRoomListChanged
+{
+	std::string m_RoomId;
+	std::string m_RoomName;
+};
+
 using BestClientIndicator::AppendProof;
 using BestClientIndicator::ComputeProof;
 using BestClientIndicator::ParseAddress;
@@ -314,6 +322,9 @@ void WriteUClientReactionClientBody(std::vector<uint8_t> &vOut, const char *pPla
 	uint8_t Scope, const char *pRoomId, const char *pOriginalServerAddress, CUuid MessageId, const char *pReactorName,
 	CUuid ReactorKey, const char *pEmoji, uint8_t Action);
 bool ReadUClientReactionBroadcast(const uint8_t *pData, int DataSize, CUClientReactionBroadcast &Out);
+
+void WriteRoomListChanged(std::vector<uint8_t> &vOut, const char *pRoomId, const char *pRoomName);
+bool ReadRoomListChanged(const uint8_t *pData, int DataSize, CRoomListChanged &Out);
 }
 
 #endif

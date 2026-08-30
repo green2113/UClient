@@ -62,8 +62,24 @@ void CUClientChatRooms::OnUpdate()
 	if(!GameClient()->m_UClientAccount.IsReady())
 		return;
 	const int64_t Now = time_get();
-	if(!m_InitialRefresh || (!m_pRequest && Now - m_LastRefresh > 60 * time_freq()))
+	if(m_PendingRefreshAt > 0 && Now >= m_PendingRefreshAt && !m_pRequest)
+	{
+		m_PendingRefreshAt = 0;
 		Refresh();
+		return;
+	}
+	// Slow safety net if a UDP room-list push was lost.
+	if(!m_InitialRefresh || (!m_pRequest && Now - m_LastRefresh > 300 * time_freq()))
+		Refresh();
+}
+
+void CUClientChatRooms::RequestRefreshSoon()
+{
+	if(!GameClient()->m_UClientAccount.IsReady())
+		return;
+	const int64_t Due = time_get() + time_freq(); // debounce ~1s
+	if(m_PendingRefreshAt <= 0 || Due < m_PendingRefreshAt)
+		m_PendingRefreshAt = Due;
 }
 
 const char *CUClientChatRooms::SelectedSendRoomId() const

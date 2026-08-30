@@ -877,5 +877,6 @@ public:
 
 	// BestClient
 	bool LineHighlighted(int ClientId, const char *pLine);
+	static bool LineContainsUClientAudienceMention(const char *pLine, const char *pMention);
 };
 #endif
