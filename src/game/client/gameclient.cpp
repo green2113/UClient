@@ -828,6 +828,7 @@ void CGameClient::OnInit()
 
 	// Keep the startup loading screen until UClient account create/verify finishes,
 	// then hand off to the main menu (success) or the account error gate (failure).
+	m_UClientAccount.StartAuth();
 	while(m_UClientAccount.IsPending())
 	{
 		m_UClientAccount.OnUpdate();

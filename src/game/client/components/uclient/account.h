@@ -36,6 +36,10 @@ public:
 	const char *ErrorMessage() const { return m_aError; }
 	const char *ErrorCode() const { return m_aErrorCode; }
 
+	// Starts register/verify after assets are loaded so the HTTP timeout is not
+	// eaten by the long component/image init phase.
+	void StartAuth();
+
 private:
 	enum class ERequest
 	{
@@ -68,6 +72,7 @@ private:
 	bool m_HadAccountFile = false;
 	bool m_Registered = false;
 	bool m_RetriedWithNewIdentity = false;
+	bool m_AuthStarted = false;
 };
 
 #endif

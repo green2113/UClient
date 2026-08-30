@@ -442,6 +442,8 @@ class CChat : public CComponent
 	// Display name for a remote UClient chat line (ClientId == CLIENT_MSG). AddLine reads this
 	// so the console log prints the sender's name instead of the "— " client-message dash.
 	char m_aPendingUClientName[64] = "";
+	char m_aPendingUClientRoomName[64] = "";
+	char m_aPendingUClientRoomId[64] = "";
 
 	bool m_PendingReplyActive;
 	int m_PendingReplyClientId;

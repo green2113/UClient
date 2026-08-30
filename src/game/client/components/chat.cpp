@@ -6065,7 +6065,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 					return Player1.m_Score < Player2.m_Score;
 				});
 
-			if(m_Mode == MODE_UCLIENT && m_aCompletionBuffer[0] == '@')
+			if(m_aCompletionBuffer[0] == '@')
 			{
 				static const char *s_apMentions[] = {"@everyone", "@here"};
 				for(int i = (int)std::size(s_apMentions) - 1; i >= 0; --i)
@@ -7271,6 +7271,11 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 	CurrentLine.m_Whisper = Team >= 2 && Team != TEAM_UCLIENT;
 	CurrentLine.m_NameColor = -2;
 	CurrentLine.m_CustomColor = CustomColor;
+	if(CurrentLine.m_UClient)
+	{
+		str_copy(CurrentLine.m_aUClientRoomName, m_aPendingUClientRoomName, sizeof(CurrentLine.m_aUClientRoomName));
+		str_copy(CurrentLine.m_aUClientRoomId, m_aPendingUClientRoomId, sizeof(CurrentLine.m_aUClientRoomId));
+	}
 
 	const char *pHighlightText = pLine;
 	CUClientChatReply::SReplyMeta PreReplyMeta;
@@ -7344,12 +7349,9 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 		NameHit |= GameClient()->m_Snap.m_LocalClientId >= 0 && LineShouldHighlight(pHighlightText, GameClient()->m_aClients[GameClient()->m_Snap.m_LocalClientId].m_aName);
 	}
 
-	// @everyone / @here: highlight for every UClient recipient, including the sender.
-	if(Team == TEAM_UCLIENT)
-	{
-		EveryoneHit = LineContainsUClientAudienceMention(pHighlightText, "@everyone");
-		HereHit = LineContainsUClientAudienceMention(pHighlightText, "@here");
-	}
+	// @everyone / @here: highlight for all recipients, including the sender.
+	EveryoneHit = LineContainsUClientAudienceMention(pHighlightText, "@everyone");
+	HereHit = LineContainsUClientAudienceMention(pHighlightText, "@here");
 
 	Highlighted |= NameHit || EveryoneHit || HereHit;
 
@@ -7523,7 +7525,7 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 		// @here alone: mention sound when active, normal chat sound while AFK.
 		// @everyone and name tags always use the highlight sound.
 		bool UseHighlightSound = true;
-		if(Team == TEAM_UCLIENT && HereHit && !EveryoneHit && !NameHit)
+		if(HereHit && !EveryoneHit && !NameHit)
 		{
 			const int LocalId = GameClient()->m_aLocalIds[g_Config.m_ClDummy];
 			const bool Afk = LocalId >= 0 && LocalId < MAX_CLIENTS && GameClient()->m_aClients[LocalId].m_Afk;
@@ -7627,6 +7629,8 @@ void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const c
 		const char *pFilteredName = FilterText(pName);
 		GameClient()->m_BestClient.SanitizePlayerName(pFilteredName, m_aPendingUClientName, sizeof(m_aPendingUClientName), -1);
 	}
+	str_copy(m_aPendingUClientRoomName, pRoomName ? pRoomName : "", sizeof(m_aPendingUClientRoomName));
+	str_copy(m_aPendingUClientRoomId, pRoomId ? pRoomId : "", sizeof(m_aPendingUClientRoomId));
 
 	const int PrevShowClient = g_Config.m_TcShowChatClient;
 	if(ClientId == CLIENT_MSG)
@@ -7635,6 +7639,8 @@ void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const c
 	if(ClientId == CLIENT_MSG)
 		g_Config.m_TcShowChatClient = PrevShowClient;
 	m_aPendingUClientName[0] = '\0';
+	m_aPendingUClientRoomName[0] = '\0';
+	m_aPendingUClientRoomId[0] = '\0';
 
 	CLine &Line = m_aLines[m_CurrentLine];
 	if(!Line.m_Initialized || !Line.m_UClient)
@@ -8824,7 +8830,7 @@ void CChat::OnRender()
 				}
 			}
 		}
-		else if(m_Mode == MODE_UCLIENT)
+		else if(m_Mode != MODE_NONE)
 		{
 			const char *pIn = m_Input.GetString();
 			const int Cursor = m_Input.GetCursorOffset();

@@ -117,14 +117,20 @@ bool VerifyEd25519(const unsigned char *pMessage, size_t MessageSize, const unsi
 void CUClientAccount::OnInit()
 {
 	LoadAccount();
+	if(!m_HadAccountFile)
+		GenerateIdentity(g_Config.m_UcInstallUuid[0] != '\0');
+	// HTTP register/verify is deferred to StartAuth() after asset loading.
+}
+
+void CUClientAccount::StartAuth()
+{
+	if(m_AuthStarted || m_State != EState::PENDING || m_pRequest)
+		return;
+	m_AuthStarted = true;
 	if(m_HadAccountFile && m_Registered)
 		BeginVerify();
 	else
-	{
-		if(!m_HadAccountFile)
-			GenerateIdentity(g_Config.m_UcInstallUuid[0] != '\0');
 		BeginRegister();
-	}
 }
 
 void CUClientAccount::OnShutdown()
@@ -136,6 +142,8 @@ void CUClientAccount::OnShutdown()
 
 void CUClientAccount::OnUpdate()
 {
+	if(!m_AuthStarted && m_State == EState::PENDING)
+		StartAuth();
 	if(m_pRequest && m_pRequest->Done())
 		FinishRequest();
 	if(m_State != EState::OK &&
@@ -212,7 +220,7 @@ void CUClientAccount::BeginRegister()
 		m_aInstallId, m_aSecret, PlayerName.c_str(), UCLIENT_VERSION);
 	m_pRequest = HttpPostJson(aUrl, aJson);
 	m_pRequest->FailOnErrorStatus(false);
-	m_pRequest->Timeout(CTimeout{5000, 15000, 500, 5});
+	m_pRequest->Timeout(CTimeout{10000, 30000, 500, 5});
 	m_Request = ERequest::REGISTER;
 	m_State = EState::PENDING;
 	m_aError[0] = '\0';
@@ -231,7 +239,7 @@ void CUClientAccount::BeginVerify()
 		m_aInstallId, m_aSecret, PlayerName.c_str(), UCLIENT_VERSION);
 	m_pRequest = HttpPostJson(aUrl, aJson);
 	m_pRequest->FailOnErrorStatus(false);
-	m_pRequest->Timeout(CTimeout{5000, 15000, 500, 5});
+	m_pRequest->Timeout(CTimeout{10000, 30000, 500, 5});
 	m_Request = ERequest::VERIFY;
 	m_State = EState::PENDING;
 	m_aError[0] = '\0';
@@ -285,7 +293,18 @@ void CUClientAccount::FinishRequest()
 		else
 		{
 			FormatErrorCode(HttpState == EHttpState::ABORTED ? ACCOUNT_ERROR_ABORTED : ACCOUNT_ERROR_NETWORK);
-			SetBlocked(EState::BLOCKED_NOT_REGISTERED, Localize("UClient account verification is unavailable and the offline pass has expired."), aErrorCode);
+			if(Request == ERequest::REGISTER)
+			{
+				SetBlocked(EState::BLOCKED_NOT_REGISTERED,
+					Localize("Could not create a UClient account. Check your internet connection and try again."),
+					aErrorCode);
+			}
+			else
+			{
+				SetBlocked(EState::BLOCKED_NOT_REGISTERED,
+					Localize("UClient account verification is unavailable and the offline pass has expired."),
+					aErrorCode);
+			}
 		}
 		return;
 	}
