@@ -34,6 +34,8 @@
 
 static const wchar_t *kTokenArg = L"--uclient-from-launcher";
 static const wchar_t *kTokenFile = L"uclient_launch.token";
+static const wchar_t *kVersionFile = L"uclient_version.txt";
+static const wchar_t *kPendingVersionFile = L"uclient_pending_version.txt";
 static const wchar_t *kGameExe = L"DDNet.exe";
 static const wchar_t *kUpdaterExe = L"bestclient-updater.exe";
 static const wchar_t *kArchiveRel = L"update\\bestclient-release.zip";
@@ -282,6 +284,63 @@ static int CompareVersions(const std::string &Left, const std::string &Right)
 			return 1;
 	}
 	return 0;
+}
+
+static bool ReadTextFile(const std::wstring &Path, std::string &Out)
+{
+	FILE *pFile = nullptr;
+	if(_wfopen_s(&pFile, Path.c_str(), L"rb") != 0 || !pFile)
+		return false;
+	char aBuf[256];
+	size_t N = fread(aBuf, 1, sizeof(aBuf) - 1, pFile);
+	fclose(pFile);
+	if(N == 0)
+		return false;
+	aBuf[N] = '\0';
+	while(N > 0 && (aBuf[N - 1] == '\n' || aBuf[N - 1] == '\r' || aBuf[N - 1] == ' '))
+		aBuf[--N] = '\0';
+	Out.assign(aBuf, N);
+	return !Out.empty();
+}
+
+static bool WriteTextFile(const std::wstring &Path, const std::string &Text)
+{
+	FILE *pFile = nullptr;
+	if(_wfopen_s(&pFile, Path.c_str(), L"wb") != 0 || !pFile)
+		return false;
+	fwrite(Text.c_str(), 1, Text.size(), pFile);
+	fputc('\n', pFile);
+	fclose(pFile);
+	return true;
+}
+
+// Prefer on-disk stamp so updates stop looping even if UClient.exe in the zip
+// was missing/outdated. Commit any pending stamp left by a finished apply.
+static std::string ResolveLocalVersion(const std::wstring &InstallDir)
+{
+	const std::wstring VersionPath = JoinPath(InstallDir, kVersionFile);
+	const std::wstring PendingPath = JoinPath(InstallDir, kPendingVersionFile);
+	const std::wstring ArchivePath = JoinPath(InstallDir, kArchiveRel);
+
+	std::string Pending;
+	if(ReadTextFile(PendingPath, Pending))
+	{
+		// Updater deletes the zip after a successful apply. If the archive is gone,
+		// treat pending as committed even when an older updater didn't write the stamp.
+		if(GetFileAttributesW(ArchivePath.c_str()) == INVALID_FILE_ATTRIBUTES)
+		{
+			WriteTextFile(VersionPath, Pending);
+			DeleteFileW(PendingPath.c_str());
+		}
+	}
+
+	std::string OnDisk;
+	if(ReadTextFile(VersionPath, OnDisk))
+	{
+		if(CompareVersions(OnDisk, UCLIENT_LAUNCHER_VERSION) >= 0)
+			return OnDisk;
+	}
+	return UCLIENT_LAUNCHER_VERSION;
 }
 
 static bool ExtractJsonString(const std::string &Json, const char *Key, std::string &Out)
@@ -571,6 +630,9 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 	SetStatus(L"Checking for updates...");
 	SetPercent(5);
 
+	// Finish any previous apply that left a pending version stamp.
+	const std::string LocalVersion = ResolveLocalVersion(pA->InstallDir);
+
 	char aUrlUtf8[512];
 	_snprintf_s(aUrlUtf8, _TRUNCATE, "%s?t=%lld", UCLIENT_UPDATE_LATEST_URL, (long long)time(nullptr));
 	const std::wstring aUrl = Utf8ToWide(aUrlUtf8);
@@ -582,7 +644,7 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 
 	if(HttpGetToString(aUrl, Body) && ExtractWindowsUrl(Body, RemoteVersion, ArchiveUrl))
 	{
-		if(CompareVersions(RemoteVersion, UCLIENT_LAUNCHER_VERSION) > 0)
+		if(CompareVersions(RemoteVersion, LocalVersion) > 0)
 			NeedUpdate = true;
 	}
 	else
@@ -615,6 +677,10 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 
 		SetStatus(L"Applying update...");
 		SetPercent(95);
+
+		// Stamp intended version before apply so a successful apply (zip removed)
+		// cannot loop forever when UClient.exe inside the zip is missing/outdated.
+		WriteTextFile(JoinPath(pA->InstallDir, kPendingVersionFile), RemoteVersion);
 
 		const std::wstring Updater = JoinPath(pA->InstallDir, kUpdaterExe);
 		wchar_t aPid[32];
@@ -680,6 +746,7 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 
 	SetStatus(L"Up to date — starting...");
 	SetPercent(90);
+	WriteTextFile(JoinPath(pA->InstallDir, kVersionFile), LocalVersion);
 	LaunchGame(pA);
 	Sleep(400);
 	PostMessage(g_hWnd, WM_WORKER_DONE, 0, 0);

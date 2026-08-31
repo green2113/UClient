@@ -11,6 +11,7 @@
 #include <engine/shared/config.h>
 #include <engine/shared/http.h>
 #include <engine/shared/json.h>
+#include <engine/shared/uclient_launch_gate.h>
 #include <engine/storage.h>
 
 #include <game/client/components/bestclient/version.h>
@@ -405,7 +406,12 @@ void CUpdater::Init(CHttp *pHttp)
 	m_pHttp = pHttp;
 
 #if !defined(CONF_HEADLESS_CLIENT) && (defined(CONF_FAMILY_WINDOWS) || defined(CONF_PLATFORM_LINUX) || defined(CONF_PLATFORM_ANDROID))
-	m_bAutoCheckPending = true;
+#if defined(CONF_FAMILY_WINDOWS)
+	// Pre-game launcher owns update checks when present — avoid download loops.
+	char aLauncher[IO_MAX_PATH_LENGTH];
+	if(!UClientLaunchGate_FindLauncherPath(aLauncher, sizeof(aLauncher)))
+#endif
+		m_bAutoCheckPending = true;
 #endif
 }
 
@@ -850,7 +856,18 @@ void CUpdater::Update()
 	{
 		const EUpdaterState State = GetCurrentState();
 		if(State == IUpdater::VERSION_AVAILABLE)
+		{
+#if defined(CONF_FAMILY_WINDOWS)
+			char aLauncher[IO_MAX_PATH_LENGTH];
+			if(UClientLaunchGate_FindLauncherPath(aLauncher, sizeof(aLauncher)))
+			{
+				process_execute(aLauncher, EShellExecuteWindowState::FOREGROUND);
+				m_pClient->Quit();
+				return;
+			}
+#endif
 			InitiateUpdate();
+		}
 		else if(State == IUpdater::NEED_RESTART)
 			ApplyUpdateAndRestart();
 	}
