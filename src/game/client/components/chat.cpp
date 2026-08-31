@@ -321,6 +321,7 @@ class CChat::CMediaDecodeJob : public IJob
 	std::vector<unsigned char> m_vData;
 	char m_aContextName[512];
 	SMediaDecodedFrames m_DecodedFrames;
+	bool m_FirstFrameOnly = false;
 	bool m_Success = false;
 
 protected:
@@ -361,11 +362,11 @@ protected:
 				m_Success = DecodeSingleFrameFallback();
 			break;
 		case EMediaKind::ANIMATED:
-			// Animate previews for short animations within limits (frames/dimension/memory).
-			// Long animations fall back to a single-frame thumbnail via m_MaxAnimationDurationMs.
-			Limits.m_DecodeAllFrames = true;
+			// Progressive path: FirstFrameOnly shows a poster ASAP, then a second job decodes the full animation.
+			// Full path: animate within limits; long clips fall back via m_MaxAnimationDurationMs.
+			Limits.m_DecodeAllFrames = !m_FirstFrameOnly;
 			m_Success = MediaDecoder::DecodeImageWithFfmpegCpu(m_pGraphics, m_vData.data(), m_vData.size(), m_aContextName, m_DecodedFrames, Limits);
-			if(!m_Success)
+			if(!m_Success && !m_FirstFrameOnly)
 			{
 				// Fallback for problematic GIF/animated WEBP payloads: decode single preview frame.
 				Limits.m_DecodeAllFrames = false;
@@ -375,9 +376,9 @@ protected:
 				m_Success = DecodeSingleFrameFallback();
 			break;
 		case EMediaKind::VIDEO:
-			Limits.m_DecodeAllFrames = CHAT_MEDIA_ANIMATE_VIDEOS;
+			Limits.m_DecodeAllFrames = !m_FirstFrameOnly && CHAT_MEDIA_ANIMATE_VIDEOS;
 			m_Success = MediaDecoder::DecodeImageWithFfmpegCpu(m_pGraphics, m_vData.data(), m_vData.size(), m_aContextName, m_DecodedFrames, Limits);
-			if(!m_Success)
+			if(!m_Success && !m_FirstFrameOnly)
 			{
 				// Fallback for videos where full animation decode fails: keep a static poster frame.
 				Limits.m_DecodeAllFrames = false;
@@ -400,9 +401,10 @@ protected:
 	}
 
 public:
-	CMediaDecodeJob(IGraphics *pGraphics, EMediaKind MediaKind, const unsigned char *pData, size_t DataSize, const char *pContextName) :
+	CMediaDecodeJob(IGraphics *pGraphics, EMediaKind MediaKind, const unsigned char *pData, size_t DataSize, const char *pContextName, bool FirstFrameOnly = false) :
 		m_MediaKind(MediaKind),
-		m_pGraphics(pGraphics)
+		m_pGraphics(pGraphics),
+		m_FirstFrameOnly(FirstFrameOnly)
 	{
 		Abortable(true);
 		if(pData != nullptr && DataSize > 0)
@@ -416,6 +418,7 @@ public:
 	}
 
 	bool Success() const { return m_Success; }
+	bool FirstFrameOnly() const { return m_FirstFrameOnly; }
 	SMediaDecodedFrames &DecodedFrames() { return m_DecodedFrames; }
 };
 
@@ -429,6 +432,7 @@ CChat::CLine::CLine()
 	m_MediaCandidateIndex = -1;
 	m_MediaRetryCount = 0;
 	m_MediaUploadIndex = 0;
+	m_MediaFullDecodePending = false;
 	m_MediaTotalDurationMs = 0;
 	m_MediaAnimated = false;
 	m_MediaRevealed = false;
@@ -3464,6 +3468,7 @@ void CChat::ResetLineMedia(CLine &Line)
 	MediaDecoder::UnloadFrames(Graphics(), Line.m_vMediaFrames);
 	Line.m_vMediaOriginalData.clear();
 	Line.m_vMediaOriginalData.shrink_to_fit();
+	Line.m_MediaFullDecodePending = false;
 	if(m_MediaViewerFullTextureLine == (int)(&Line - m_aLines))
 		FreeMediaViewerFullTexture();
 	Line.m_MediaState = EMediaState::NONE;
@@ -3567,6 +3572,7 @@ bool CChat::QueueNextMediaCandidate(CLine &Line, const char *pReason)
 	Line.m_vMediaFrameEndMs.clear();
 	Line.m_MediaTotalDurationMs = 0;
 	MediaDecoder::UnloadFrames(Graphics(), Line.m_vMediaFrames);
+	Line.m_MediaFullDecodePending = false;
 	Line.m_MediaAnimated = false;
 	Line.m_MediaWidth = 0;
 	Line.m_MediaHeight = 0;
@@ -3641,6 +3647,7 @@ bool CChat::RetryMediaLine(CLine &Line)
 	str_copy(Line.m_aMediaUrl, Line.m_vMediaCandidates.front().c_str(), sizeof(Line.m_aMediaUrl));
 	Line.m_MediaState = EMediaState::QUEUED;
 	Line.m_MediaKind = MediaKindFromUrl(Line.m_aMediaUrl);
+	Line.m_MediaFullDecodePending = false;
 	Line.m_MediaAnimated = false;
 	Line.m_MediaRevealed = false;
 	Line.m_MediaWidth = 0;
@@ -3719,7 +3726,7 @@ void CChat::StartMediaDownload(CLine &Line)
 	Http()->Run(pGet);
 }
 
-bool CChat::StartMediaDecode(CLine &Line, EMediaKind MediaKind, const unsigned char *pData, size_t DataSize)
+bool CChat::StartMediaDecode(CLine &Line, EMediaKind MediaKind, const unsigned char *pData, size_t DataSize, bool FirstFrameOnly)
 {
 	if(!pData || DataSize == 0 || DataSize > (size_t)CHAT_MEDIA_MAX_RESPONSE_SIZE)
 		return false;
@@ -3738,10 +3745,30 @@ bool CChat::StartMediaDecode(CLine &Line, EMediaKind MediaKind, const unsigned c
 	Line.m_MediaWidth = 0;
 	Line.m_MediaHeight = 0;
 	Line.m_MediaAnimationStart = 0;
+	Line.m_MediaFullDecodePending = FirstFrameOnly && (MediaKind == EMediaKind::ANIMATED || (MediaKind == EMediaKind::VIDEO && CHAT_MEDIA_ANIMATE_VIDEOS));
 
-	Line.m_pMediaDecodeJob = std::make_shared<CMediaDecodeJob>(Graphics(), MediaKind, pData, DataSize, Line.m_aMediaUrl);
+	Line.m_pMediaDecodeJob = std::make_shared<CMediaDecodeJob>(Graphics(), MediaKind, pData, DataSize, Line.m_aMediaUrl, FirstFrameOnly);
 	Engine()->AddJob(Line.m_pMediaDecodeJob);
 	Line.m_MediaState = EMediaState::DECODING;
+	return true;
+}
+
+bool CChat::StartMediaFullDecode(CLine &Line)
+{
+	if(Line.m_vMediaOriginalData.empty() || Line.m_pMediaDecodeJob)
+		return false;
+	if(Line.m_MediaKind != EMediaKind::ANIMATED && !(Line.m_MediaKind == EMediaKind::VIDEO && CHAT_MEDIA_ANIMATE_VIDEOS))
+		return false;
+
+	Line.m_pMediaDecodeJob = std::make_shared<CMediaDecodeJob>(Graphics(), Line.m_MediaKind, Line.m_vMediaOriginalData.data(), Line.m_vMediaOriginalData.size(), Line.m_aMediaUrl, false);
+	Engine()->AddJob(Line.m_pMediaDecodeJob);
+	// Job owns its own copy of the encoded bytes; drop the retain for animated/video to free RAM.
+	if(Line.m_MediaKind != EMediaKind::PHOTO)
+	{
+		Line.m_vMediaOriginalData.clear();
+		Line.m_vMediaOriginalData.shrink_to_fit();
+	}
+	// Keep READY so the poster stays visible while the full animation decodes.
 	return true;
 }
 
@@ -3870,6 +3897,7 @@ void CChat::UpdateMediaDownloads()
 			Line.m_vMediaFrameEndMs.clear();
 			Line.m_MediaTotalDurationMs = 0;
 			MediaDecoder::UnloadFrames(Graphics(), Line.m_vMediaFrames);
+			Line.m_MediaFullDecodePending = false;
 			Line.m_MediaState = EMediaState::NONE;
 			Line.m_MediaAnimated = false;
 			Line.m_MediaWidth = 0;
@@ -3886,6 +3914,7 @@ void CChat::UpdateMediaDownloads()
 		Line.m_vMediaFrameEndMs.clear();
 		Line.m_MediaTotalDurationMs = 0;
 		MediaDecoder::UnloadFrames(Graphics(), Line.m_vMediaFrames);
+		Line.m_MediaFullDecodePending = false;
 		Line.m_MediaState = EMediaState::FAILED;
 		Line.m_MediaAnimated = false;
 		Line.m_MediaWidth = 0;
@@ -3981,12 +4010,13 @@ void CChat::UpdateMediaDownloads()
 						}
 						else
 						{
-							StartedDecode = StartMediaDecode(Line, MediaKind, pResult, ResultSize);
+							const bool ProgressiveFirstFrame = (MediaKind == EMediaKind::ANIMATED || (MediaKind == EMediaKind::VIDEO && CHAT_MEDIA_ANIMATE_VIDEOS)) && (int64_t)ResultSize <= CHAT_MEDIA_ORIGINAL_RETAIN_MAX_BYTES;
+							StartedDecode = StartMediaDecode(Line, MediaKind, pResult, ResultSize, ProgressiveFirstFrame);
 							if(!StartedDecode)
 								pFailureReason = "decode job failed";
-							// Retain the original encoded bytes for static images so the fullscreen
-							// viewer can decode them at full resolution on demand. Bounded by size.
-							if(StartedDecode && MediaKind == EMediaKind::PHOTO && (int64_t)ResultSize <= CHAT_MEDIA_ORIGINAL_RETAIN_MAX_BYTES)
+							// Retain original bytes for static photos (fullscreen viewer) and for progressive
+							// GIF/video full-decode follow-up. Bounded by size.
+							if(StartedDecode && (MediaKind == EMediaKind::PHOTO || ProgressiveFirstFrame) && (int64_t)ResultSize <= CHAT_MEDIA_ORIGINAL_RETAIN_MAX_BYTES)
 								Line.m_vMediaOriginalData.assign(pResult, pResult + ResultSize);
 							else
 							{
@@ -4027,8 +4057,40 @@ void CChat::UpdateMediaDownloads()
 	{
 		if(CompletedUploadsThisFrame >= CHAT_MEDIA_MAX_COMPLETED_DECODE_PER_FRAME)
 			break;
-		if(Line.m_MediaState != EMediaState::DECODING || !Line.m_pMediaDecodeJob || !Line.m_pMediaDecodeJob->Done())
+		if(!Line.m_pMediaDecodeJob || !Line.m_pMediaDecodeJob->Done())
 			continue;
+
+		const bool AwaitingFirstDecode = Line.m_MediaState == EMediaState::DECODING;
+		const bool AwaitingFullDecode = Line.m_MediaState == EMediaState::READY && Line.m_MediaFullDecodePending;
+		if(!AwaitingFirstDecode && !AwaitingFullDecode)
+			continue;
+
+		if(AwaitingFullDecode)
+		{
+			bool Replaced = false;
+			if(Line.m_pMediaDecodeJob->State() == IJob::STATE_DONE && Line.m_pMediaDecodeJob->Success() && !Line.m_pMediaDecodeJob->DecodedFrames().Empty() && Line.m_pMediaDecodeJob->DecodedFrames().m_vFrames.size() > 1)
+			{
+				const int Width = Line.m_pMediaDecodeJob->DecodedFrames().m_Width;
+				const int Height = Line.m_pMediaDecodeJob->DecodedFrames().m_Height;
+				Line.m_OptMediaDecodedFrames.emplace(std::move(Line.m_pMediaDecodeJob->DecodedFrames()));
+				Line.m_MediaUploadIndex = 0;
+				Line.m_MediaWidth = Width;
+				Line.m_MediaHeight = Height;
+				Replaced = true;
+			}
+			else if(g_Config.m_Debug)
+			{
+				log_debug("chat/media", "Media full decode skipped/failed (keeping poster): %s", Line.m_aMediaUrl);
+			}
+
+			Line.m_MediaFullDecodePending = false;
+			Line.m_pMediaDecodeJob = nullptr;
+			CompletedUploadsThisFrame++;
+			if(!Replaced)
+				continue;
+			// Fall through to texture upload path this frame via OptMediaDecodedFrames.
+			continue;
+		}
 
 		bool Success = false;
 		const char *pFailureReason = "decode failed";
@@ -4049,6 +4111,8 @@ void CChat::UpdateMediaDownloads()
 			log_debug("chat/media", "Media decode job failed: %s", Line.m_aMediaUrl);
 		}
 
+		if(!Success)
+			Line.m_MediaFullDecodePending = false;
 		Line.m_pMediaDecodeJob = nullptr;
 		CompletedUploadsThisFrame++;
 
@@ -4080,6 +4144,16 @@ void CChat::UpdateMediaDownloads()
 		{
 			FinishedOut = true;
 			return false;
+		}
+
+		// Replacing a first-frame poster with the full animation: drop the poster once upload starts.
+		if(Line.m_MediaUploadIndex == 0 && !Line.m_vMediaFrames.empty())
+		{
+			MediaDecoder::UnloadFrames(Graphics(), Line.m_vMediaFrames);
+			Line.m_vMediaFrameEndMs.clear();
+			Line.m_MediaTotalDurationMs = 0;
+			Line.m_MediaAnimated = false;
+			Line.m_MediaAnimationStart = 0;
 		}
 
 		const int64_t Start = time_get();
@@ -4175,6 +4249,9 @@ void CChat::UpdateMediaDownloads()
 			{
 				Line.m_MediaAnimated = false;
 				Line.m_MediaAnimationStart = 0;
+				// Poster is up — kick off background full decode for GIF/video.
+				if(Line.m_MediaFullDecodePending && !Line.m_vMediaOriginalData.empty() && !Line.m_pMediaDecodeJob)
+					StartMediaFullDecode(Line);
 			}
 		}
 	}
@@ -4948,7 +5025,7 @@ std::string CChat::BuildPlainTextLine(const CLine &Line) const
 	char aClientId[16] = "";
 	if(g_Config.m_ClShowIds && Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
 	{
-		GameClient()->FormatClientId(Line.m_ClientId, aClientId, EClientIdFormat::INDENT_AUTO);
+		GameClient()->FormatClientId(Line.m_ClientId, aClientId, EClientIdFormat::NO_INDENT);
 	}
 
 	char aCount[12] = "";
@@ -5049,7 +5126,7 @@ void CChat::RenderTextLine(CLine &Line, float y, float FontSize, float LineWidth
 	char aClientId[16] = "";
 	if(g_Config.m_ClShowIds && Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
 	{
-		GameClient()->FormatClientId(Line.m_ClientId, aClientId, EClientIdFormat::INDENT_AUTO);
+		GameClient()->FormatClientId(Line.m_ClientId, aClientId, EClientIdFormat::NO_INDENT);
 	}
 
 	char aCount[12] = "";
@@ -7908,7 +7985,7 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 		char aClientId[16] = "";
 		if(g_Config.m_ClShowIds && Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
 		{
-			GameClient()->FormatClientId(Line.m_ClientId, aClientId, EClientIdFormat::INDENT_AUTO);
+			GameClient()->FormatClientId(Line.m_ClientId, aClientId, EClientIdFormat::NO_INDENT);
 		}
 		char aRoomLabel[72] = "";
 		if(Line.m_aUClientRoomName[0])
@@ -9181,7 +9258,7 @@ void CChat::OnRender()
 			{
 				char aClientId[16] = "";
 				if(g_Config.m_ClShowIds && Line.m_ClientId >= 0)
-					GameClient()->FormatClientId(Line.m_ClientId, aClientId, EClientIdFormat::INDENT_AUTO);
+					GameClient()->FormatClientId(Line.m_ClientId, aClientId, EClientIdFormat::NO_INDENT);
 
 				float NameRectX = LineRenderX + RealMsgPaddingX / 2.0f;
 				if(LineNeedsTeePadding(Line))

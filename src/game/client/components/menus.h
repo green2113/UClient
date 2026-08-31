@@ -13,6 +13,9 @@
 #include <engine/friends.h>
 #include <engine/serverbrowser.h>
 #include <engine/shared/config.h>
+#if defined(CONF_VIDEORECORDER)
+#include <engine/shared/video.h>
+#endif
 #include <engine/textrender.h>
 
 #include <game/client/component.h>
@@ -536,6 +539,7 @@ protected:
 	CLineInputBuffered<IO_MAX_PATH_LENGTH> m_DemoSearchInput;
 #if defined(CONF_VIDEORECORDER)
 	CLineInputBuffered<IO_MAX_PATH_LENGTH> m_DemoRenderInput;
+	EVideoFormat m_DemoRenderFormat = EVideoFormat::Mp4;
 #endif
 	int m_DemolistSelectedIndex;
 	bool m_DemolistSelectedReveal = false;

@@ -3864,7 +3864,7 @@ void CClient::Con_StartVideo(IConsole::IResult *pResult, void *pUserData)
 	}
 }
 
-void CClient::StartVideo(const char *pFilename, bool WithTimestamp)
+void CClient::StartVideo(const char *pFilename, bool WithTimestamp, EVideoFormat Format)
 {
 	if(State() != IClient::STATE_DEMOPLAYBACK)
 	{
@@ -3878,23 +3878,24 @@ void CClient::StartVideo(const char *pFilename, bool WithTimestamp)
 		return;
 	}
 
+	const char *pExtension = Format == EVideoFormat::Gif ? "gif" : "mp4";
 	char aFilename[IO_MAX_PATH_LENGTH];
 	if(WithTimestamp)
 	{
 		char aTimestamp[20];
 		str_timestamp(aTimestamp, sizeof(aTimestamp));
-		str_format(aFilename, sizeof(aFilename), "videos/%s_%s.mp4", pFilename, aTimestamp);
+		str_format(aFilename, sizeof(aFilename), "videos/%s_%s.%s", pFilename, aTimestamp, pExtension);
 	}
 	else
 	{
-		str_format(aFilename, sizeof(aFilename), "videos/%s.mp4", pFilename);
+		str_format(aFilename, sizeof(aFilename), "videos/%s.%s", pFilename, pExtension);
 	}
 
 	// wait for idle, so there is no data race
 	Graphics()->WaitForIdle();
 	// pause the sound device while creating the video instance
 	Sound()->PauseAudioDevice();
-	new CVideo(Graphics(), Sound(), Storage(), Graphics()->ScreenWidth(), Graphics()->ScreenHeight(), aFilename);
+	new CVideo(Graphics(), Sound(), Storage(), Graphics()->ScreenWidth(), Graphics()->ScreenHeight(), aFilename, Format);
 	Sound()->UnpauseAudioDevice();
 	if(!IVideo::Current()->Start())
 	{
@@ -4212,13 +4213,13 @@ const char *CClient::DemoPlayer_Play(const char *pFilename, int StorageType)
 }
 
 #if defined(CONF_VIDEORECORDER)
-const char *CClient::DemoPlayer_Render(const char *pFilename, int StorageType, const char *pVideoName, int SpeedIndex, bool StartPaused)
+const char *CClient::DemoPlayer_Render(const char *pFilename, int StorageType, const char *pVideoName, int SpeedIndex, bool StartPaused, EVideoFormat Format)
 {
 	const char *pError = DemoPlayer_Play(pFilename, StorageType);
 	if(pError)
 		return pError;
 
-	StartVideo(pVideoName, false);
+	StartVideo(pVideoName, false, Format);
 	m_DemoPlayer.SetSpeedIndex(SpeedIndex);
 	if(StartPaused)
 	{

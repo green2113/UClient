@@ -41,7 +41,7 @@ public:
 class CVideo : public IVideo
 {
 public:
-	CVideo(IGraphics *pGraphics, ISound *pSound, IStorage *pStorage, int Width, int Height, const char *pName);
+	CVideo(IGraphics *pGraphics, ISound *pSound, IStorage *pStorage, int Width, int Height, const char *pName, EVideoFormat Format = EVideoFormat::Mp4);
 	~CVideo() override;
 
 	bool Start() override REQUIRES(!m_WriteLock);
@@ -89,6 +89,7 @@ private:
 	uint64_t m_AudioFrameIndex = 0;
 
 	int m_FPS;
+	EVideoFormat m_Format;
 
 	bool m_Started;
 	bool m_Stopped;

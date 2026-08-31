@@ -11,6 +11,9 @@
 #include <engine/client/enums.h>
 #include <engine/friends.h>
 #include <engine/shared/translation_context.h>
+#if defined(CONF_VIDEORECORDER)
+#include <engine/shared/video.h>
+#endif
 
 #include <generated/protocol.h>
 #include <generated/protocol7.h>
@@ -206,7 +209,7 @@ public:
 	virtual void Quit() = 0;
 	virtual const char *DemoPlayer_Play(const char *pFilename, int StorageType) = 0;
 #if defined(CONF_VIDEORECORDER)
-	virtual const char *DemoPlayer_Render(const char *pFilename, int StorageType, const char *pVideoName, int SpeedIndex, bool StartPaused = false) = 0;
+	virtual const char *DemoPlayer_Render(const char *pFilename, int StorageType, const char *pVideoName, int SpeedIndex, bool StartPaused = false, EVideoFormat Format = EVideoFormat::Mp4) = 0;
 #endif
 	virtual void DemoRecorder_Start(const char *pFilename, bool WithTimestamp, int Recorder) = 0;
 	virtual void DemoRecorder_HandleAutoStart() = 0;

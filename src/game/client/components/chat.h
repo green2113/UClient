@@ -148,6 +148,8 @@ class CChat : public CComponent
 		// Original encoded bytes of a static image, retained so the fullscreen viewer can decode
 		// it at full resolution (the inline preview is capped to CHAT_MEDIA_MAX_DIMENSION).
 		std::vector<unsigned char> m_vMediaOriginalData;
+		// True while waiting for (or running) a background full-animation decode after the first-frame poster is shown.
+		bool m_MediaFullDecodePending;
 		int m_MediaTotalDurationMs;
 		bool m_MediaAnimated;
 		bool m_MediaRevealed;
@@ -538,7 +540,8 @@ class CChat : public CComponent
 	void ResetHiddenMediaReveals();
 	void QueueMediaDownload(CLine &Line);
 	void StartMediaDownload(CLine &Line);
-	bool StartMediaDecode(CLine &Line, EMediaKind MediaKind, const unsigned char *pData, size_t DataSize);
+	bool StartMediaDecode(CLine &Line, EMediaKind MediaKind, const unsigned char *pData, size_t DataSize, bool FirstFrameOnly = false);
+	bool StartMediaFullDecode(CLine &Line);
 	void UpdateMediaDownloads();
 	bool DecodeStaticImage(const unsigned char *pData, size_t DataSize, const char *pContextName, CLine &Line);
 	bool DecodeAnimatedGif(const unsigned char *pData, size_t DataSize, const char *pContextName, CLine &Line);

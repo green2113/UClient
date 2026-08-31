@@ -3342,6 +3342,7 @@ if(CLIENT)
 
     add_executable(uclient-launcher WIN32
       src/tools/uclient_launcher.cpp
+      other/icons/UClient.rc
     )
     target_link_libraries(uclient-launcher shell32 winhttp advapi32 gdi32 user32 msimg32)
     set_property(TARGET uclient-launcher PROPERTY OUTPUT_NAME "UClient")

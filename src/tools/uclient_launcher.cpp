@@ -1,6 +1,6 @@
 // UClient pre-game launcher — Win32 GUI.
-// Checks for updates, applies via bestclient-updater.exe, then starts DDNet.exe
-// with a one-time --uclient-from-launcher token. Also registers ddnet:// etc.
+// Checks for updates, applies the zip in-process, then starts DDNet.exe with a
+// one-time --uclient-from-launcher token. Also registers ddnet:// etc.
 
 #include <windows.h>
 #include <wingdi.h>
@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -36,9 +37,17 @@ static const wchar_t *kTokenArg = L"--uclient-from-launcher";
 static const wchar_t *kTokenFile = L"uclient_launch.token";
 static const wchar_t *kVersionFile = L"uclient_version.txt";
 static const wchar_t *kPendingVersionFile = L"uclient_pending_version.txt";
+static const wchar_t *kApplyUpdateArg = L"--uclient-apply-update";
+static const wchar_t *kWaitPidArg = L"--uclient-wait-pid";
 static const wchar_t *kGameExe = L"DDNet.exe";
-static const wchar_t *kUpdaterExe = L"bestclient-updater.exe";
 static const wchar_t *kArchiveRel = L"update\\bestclient-release.zip";
+
+static const wchar_t *k_aUserDirs[] = {
+	L"data\\assets\\arrow",
+	L"data\\assets\\arrows",
+	L"data\\assets\\audio",
+	L"data\\audio",
+};
 
 static const int WND_W = 480;
 static const int WND_H = 215;
@@ -66,6 +75,8 @@ struct LauncherArgs
 	std::wstring InstallDir;
 	std::wstring SelfPath;
 	std::vector<std::wstring> ForwardArgs;
+	std::wstring ApplyArchive; // non-empty → apply zip then start game (no update check)
+	DWORD WaitPid = 0;
 };
 
 static void SetStatus(const wchar_t *pText)
@@ -341,6 +352,296 @@ static std::string ResolveLocalVersion(const std::wstring &InstallDir)
 			return OnDisk;
 	}
 	return UCLIENT_LAUNCHER_VERSION;
+}
+
+static void CommitPendingVersion(const std::wstring &InstallDir)
+{
+	const std::wstring PendingPath = JoinPath(InstallDir, kPendingVersionFile);
+	const std::wstring VersionPath = JoinPath(InstallDir, kVersionFile);
+	if(GetFileAttributesW(PendingPath.c_str()) == INVALID_FILE_ATTRIBUTES)
+		return;
+	DeleteFileW(VersionPath.c_str());
+	MoveFileExW(PendingPath.c_str(), VersionPath.c_str(), MOVEFILE_REPLACE_EXISTING);
+}
+
+// ─── In-process update apply (merged from bestclient-updater) ─────────────────
+
+static int RunProcess(const wchar_t *pCmd, std::function<void(const wchar_t *)> LineCb = nullptr)
+{
+	HANDLE hRead = NULL, hWrite = NULL;
+	if(LineCb)
+	{
+		SECURITY_ATTRIBUTES Sa = {sizeof(Sa), NULL, TRUE};
+		if(!CreatePipe(&hRead, &hWrite, &Sa, 0))
+			return -1;
+		SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
+	}
+
+	STARTUPINFOW Si = {};
+	Si.cb = sizeof(Si);
+	if(LineCb)
+	{
+		Si.dwFlags = STARTF_USESTDHANDLES;
+		Si.hStdOutput = hWrite;
+		Si.hStdError = hWrite;
+	}
+
+	PROCESS_INFORMATION Pi = {};
+	std::wstring Cmd(pCmd);
+	BOOL Ok = CreateProcessW(NULL, Cmd.data(), NULL, NULL,
+		LineCb ? TRUE : FALSE, CREATE_NO_WINDOW, NULL, NULL, &Si, &Pi);
+
+	if(hWrite)
+		CloseHandle(hWrite);
+	if(!Ok)
+	{
+		if(hRead)
+			CloseHandle(hRead);
+		return -1;
+	}
+
+	if(LineCb && hRead)
+	{
+		std::wstring Line;
+		char Buf[512];
+		DWORD Read;
+		while(ReadFile(hRead, Buf, sizeof(Buf) - 1, &Read, NULL) && Read > 0)
+		{
+			Buf[Read] = '\0';
+			for(DWORD i = 0; i < Read; ++i)
+			{
+				char Ch = Buf[i];
+				if(Ch == '\n')
+				{
+					LineCb(Line.c_str());
+					Line.clear();
+				}
+				else if(Ch != '\r')
+					Line.push_back((wchar_t)(unsigned char)Ch);
+			}
+		}
+		if(!Line.empty())
+			LineCb(Line.c_str());
+		CloseHandle(hRead);
+	}
+
+	WaitForSingleObject(Pi.hProcess, INFINITE);
+	DWORD ExitCode = (DWORD)-1;
+	GetExitCodeProcess(Pi.hProcess, &ExitCode);
+	CloseHandle(Pi.hProcess);
+	CloseHandle(Pi.hThread);
+	return (int)ExitCode;
+}
+
+static int CountArchiveEntries(const wchar_t *pArchive)
+{
+	wchar_t Cmd[1024];
+	_snwprintf_s(Cmd, _TRUNCATE, L"tar.exe -tf \"%ls\"", pArchive);
+	int N = 0;
+	RunProcess(Cmd, [&](const wchar_t *) { ++N; });
+	return N > 0 ? N : 1;
+}
+
+static int CountFiles(const wchar_t *pDir)
+{
+	std::wstring Search(pDir);
+	Search += L"\\*";
+	WIN32_FIND_DATAW Fd;
+	HANDLE h = FindFirstFileW(Search.c_str(), &Fd);
+	if(h == INVALID_HANDLE_VALUE)
+		return 0;
+	int N = 0;
+	do
+	{
+		if(!wcscmp(Fd.cFileName, L".") || !wcscmp(Fd.cFileName, L".."))
+			continue;
+		if(Fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+		{
+			std::wstring Sub(pDir);
+			Sub += L"\\";
+			Sub += Fd.cFileName;
+			N += CountFiles(Sub.c_str());
+		}
+		else
+			++N;
+	} while(FindNextFileW(h, &Fd));
+	FindClose(h);
+	return N > 0 ? N : 1;
+}
+
+static void DeleteTree(const wchar_t *pPath)
+{
+	std::wstring Search(pPath);
+	Search += L"\\*";
+	WIN32_FIND_DATAW Fd;
+	HANDLE h = FindFirstFileW(Search.c_str(), &Fd);
+	if(h != INVALID_HANDLE_VALUE)
+	{
+		do
+		{
+			if(!wcscmp(Fd.cFileName, L".") || !wcscmp(Fd.cFileName, L".."))
+				continue;
+			std::wstring Full(pPath);
+			Full += L"\\";
+			Full += Fd.cFileName;
+			if(Fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+				DeleteTree(Full.c_str());
+			else
+				DeleteFileW(Full.c_str());
+		} while(FindNextFileW(h, &Fd));
+		FindClose(h);
+	}
+	RemoveDirectoryW(pPath);
+}
+
+static bool PathsEqualNoCase(const std::wstring &A, const std::wstring &B)
+{
+	return _wcsicmp(A.c_str(), B.c_str()) == 0;
+}
+
+static void CopyTree(const wchar_t *pSrc, const wchar_t *pDst, const std::wstring &SelfPath, std::function<void()> PerFile = nullptr)
+{
+	CreateDirectoryW(pDst, NULL);
+	std::wstring Search(pSrc);
+	Search += L"\\*";
+	WIN32_FIND_DATAW Fd;
+	HANDLE h = FindFirstFileW(Search.c_str(), &Fd);
+	if(h == INVALID_HANDLE_VALUE)
+		return;
+	do
+	{
+		if(!wcscmp(Fd.cFileName, L".") || !wcscmp(Fd.cFileName, L".."))
+			continue;
+		std::wstring Src(pSrc);
+		Src += L"\\";
+		Src += Fd.cFileName;
+		std::wstring Dst(pDst);
+		Dst += L"\\";
+		Dst += Fd.cFileName;
+		if(Fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			CopyTree(Src.c_str(), Dst.c_str(), SelfPath, PerFile);
+		else
+		{
+			// Running launcher cannot overwrite itself — rename then replace.
+			if(PathsEqualNoCase(Dst, SelfPath))
+			{
+				const std::wstring Old = SelfPath + L".old";
+				DeleteFileW(Old.c_str());
+				MoveFileExW(SelfPath.c_str(), Old.c_str(), MOVEFILE_REPLACE_EXISTING);
+			}
+			CopyFileW(Src.c_str(), Dst.c_str(), FALSE);
+			if(PerFile)
+				PerFile();
+		}
+	} while(FindNextFileW(h, &Fd));
+	FindClose(h);
+}
+
+static bool ApplyUpdateArchive(const std::wstring &ArchivePath, const std::wstring &InstallDir, const std::wstring &SelfPath)
+{
+	SetStatus(L"Extracting update...");
+	SetPercent(10);
+
+	const std::wstring ExtractDir = JoinPath(InstallDir, L"update\\extract");
+	DeleteTree(ExtractDir.c_str());
+	CreateDirectoryW(JoinPath(InstallDir, L"update").c_str(), nullptr);
+	if(!CreateDirectoryW(ExtractDir.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
+	{
+		SetStatus(L"Failed to create extraction directory");
+		g_Failed = true;
+		return false;
+	}
+
+	{
+		const int Total = CountArchiveEntries(ArchivePath.c_str());
+		int Done = 0;
+		wchar_t Cmd[1024];
+		_snwprintf_s(Cmd, _TRUNCATE, L"tar.exe -xvf \"%ls\" -C \"%ls\"", ArchivePath.c_str(), ExtractDir.c_str());
+		const int ExitCode = RunProcess(Cmd, [&](const wchar_t *) {
+			++Done;
+			const int Pct = 10 + Done * 40 / Total;
+			SetPercent(Pct < 50 ? Pct : 50);
+		});
+		if(ExitCode != 0)
+		{
+			SetStatus(L"Extraction failed");
+			g_Failed = true;
+			return false;
+		}
+	}
+	SetPercent(50);
+
+	std::wstring CopyRoot = ExtractDir;
+	{
+		std::wstring Search = ExtractDir + L"\\*";
+		WIN32_FIND_DATAW Fd;
+		HANDLE h = FindFirstFileW(Search.c_str(), &Fd);
+		if(h != INVALID_HANDLE_VALUE)
+		{
+			int N = 0;
+			wchar_t aFirst[MAX_PATH] = L"";
+			do
+			{
+				if(!wcscmp(Fd.cFileName, L".") || !wcscmp(Fd.cFileName, L".."))
+					continue;
+				++N;
+				if(N == 1)
+					wcscpy_s(aFirst, Fd.cFileName);
+			} while(FindNextFileW(h, &Fd));
+			FindClose(h);
+			if(N == 1)
+			{
+				std::wstring Sub = ExtractDir + L"\\" + aFirst;
+				if(GetFileAttributesW(Sub.c_str()) & FILE_ATTRIBUTE_DIRECTORY)
+					CopyRoot = Sub;
+			}
+		}
+	}
+
+	SetStatus(L"Backing up settings...");
+	wchar_t aBackup[MAX_PATH];
+	_snwprintf_s(aBackup, _TRUNCATE, L"%ls\\update\\backup_%lu", InstallDir.c_str(), GetCurrentProcessId());
+	DeleteTree(aBackup);
+	for(const wchar_t *pRel : k_aUserDirs)
+	{
+		wchar_t aSrc[MAX_PATH], aDst[MAX_PATH];
+		_snwprintf_s(aSrc, _TRUNCATE, L"%ls\\%ls", InstallDir.c_str(), pRel);
+		_snwprintf_s(aDst, _TRUNCATE, L"%ls\\%ls", aBackup, pRel);
+		if(GetFileAttributesW(aSrc) != INVALID_FILE_ATTRIBUTES)
+			CopyTree(aSrc, aDst, SelfPath);
+	}
+	SetPercent(55);
+
+	SetStatus(L"Installing files...");
+	{
+		const int Total = CountFiles(CopyRoot.c_str());
+		int Done = 0;
+		CopyTree(CopyRoot.c_str(), InstallDir.c_str(), SelfPath, [&]() {
+			++Done;
+			const int Pct = 55 + Done * 35 / Total;
+			SetPercent(Pct < 90 ? Pct : 90);
+		});
+	}
+	SetPercent(90);
+
+	SetStatus(L"Restoring settings...");
+	for(const wchar_t *pRel : k_aUserDirs)
+	{
+		wchar_t aSrc[MAX_PATH], aDst[MAX_PATH];
+		_snwprintf_s(aSrc, _TRUNCATE, L"%ls\\%ls", aBackup, pRel);
+		_snwprintf_s(aDst, _TRUNCATE, L"%ls\\%ls", InstallDir.c_str(), pRel);
+		if(GetFileAttributesW(aSrc) != INVALID_FILE_ATTRIBUTES)
+			CopyTree(aSrc, aDst, SelfPath);
+	}
+	SetPercent(95);
+
+	SetStatus(L"Cleaning up...");
+	DeleteFileW(ArchivePath.c_str());
+	DeleteTree(ExtractDir.c_str());
+	DeleteTree(aBackup);
+	CommitPendingVersion(InstallDir);
+	SetPercent(100);
+	return true;
 }
 
 static bool ExtractJsonString(const std::string &Json, const char *Key, std::string &Out)
@@ -627,10 +928,43 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 
 	RegisterShellHandlers(pA->SelfPath);
 
+	// In-game download path: apply existing zip, then start game (no re-check).
+	if(!pA->ApplyArchive.empty())
+	{
+		if(pA->WaitPid != 0)
+		{
+			SetStatus(L"Waiting for client to close...");
+			SetPercent(2);
+			HANDLE hProc = OpenProcess(SYNCHRONIZE, FALSE, pA->WaitPid);
+			if(hProc)
+			{
+				WaitForSingleObject(hProc, INFINITE);
+				CloseHandle(hProc);
+			}
+			else
+				Sleep(500);
+		}
+
+		SetStatus(L"Applying update...");
+		if(!ApplyUpdateArchive(pA->ApplyArchive, pA->InstallDir, pA->SelfPath))
+		{
+			Sleep(2000);
+			PostMessage(g_hWnd, WM_WORKER_DONE, 0, 0);
+			delete pA;
+			return 0;
+		}
+
+		SetStatus(L"Starting UClient...");
+		LaunchGame(pA);
+		Sleep(400);
+		PostMessage(g_hWnd, WM_WORKER_DONE, 0, 0);
+		delete pA;
+		return 0;
+	}
+
 	SetStatus(L"Checking for updates...");
 	SetPercent(5);
 
-	// Finish any previous apply that left a pending version stamp.
 	const std::string LocalVersion = ResolveLocalVersion(pA->InstallDir);
 
 	char aUrlUtf8[512];
@@ -675,56 +1009,27 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 			return 0;
 		}
 
-		SetStatus(L"Applying update...");
-		SetPercent(95);
-
-		// Stamp intended version before apply so a successful apply (zip removed)
-		// cannot loop forever when UClient.exe inside the zip is missing/outdated.
 		WriteTextFile(JoinPath(pA->InstallDir, kPendingVersionFile), RemoteVersion);
-
-		const std::wstring Updater = JoinPath(pA->InstallDir, kUpdaterExe);
-		wchar_t aPid[32];
-		_snwprintf_s(aPid, _TRUNCATE, L"%lu", GetCurrentProcessId());
-
-		std::vector<std::wstring> UpArgs;
-		UpArgs.emplace_back(aPid);
-		UpArgs.push_back(ArchivePath);
-		UpArgs.push_back(pA->InstallDir);
-		UpArgs.push_back(pA->SelfPath); // relaunch launcher, not game
-
-		if(!LaunchProcess(Updater, UpArgs, pA->InstallDir, false))
+		SetStatus(L"Applying update...");
+		if(!ApplyUpdateArchive(ArchivePath, pA->InstallDir, pA->SelfPath))
 		{
-			SetStatus(L"Failed to start updater");
-			g_Failed = true;
 			Sleep(2000);
 			PostMessage(g_hWnd, WM_WORKER_DONE, 0, 0);
 			delete pA;
 			return 0;
 		}
 
-		// Updater waits for us; exit so it can replace files. Forward args are lost
-		// unless we persist them — write a small sidecar for the next launcher run.
-		if(!pA->ForwardArgs.empty())
-		{
-			const std::wstring Pending = JoinPath(pA->InstallDir, L"uclient_launch_pending.args");
-			FILE *pFile = nullptr;
-			if(_wfopen_s(&pFile, Pending.c_str(), L"wb") == 0 && pFile)
-			{
-				for(const auto &A : pA->ForwardArgs)
-				{
-					const std::string U = WideToUtf8(A);
-					fprintf(pFile, "%s\n", U.c_str());
-				}
-				fclose(pFile);
-			}
-		}
-
+		// Applied successfully — start game immediately (skip another update check).
+		WriteTextFile(JoinPath(pA->InstallDir, kVersionFile), RemoteVersion);
+		SetStatus(L"Update complete — starting...");
+		LaunchGame(pA);
+		Sleep(400);
 		PostMessage(g_hWnd, WM_WORKER_DONE, 0, 0);
 		delete pA;
 		return 0;
 	}
 
-	// Restore pending args from a previous update apply (if any).
+	// Restore pending args from a previous apply (legacy sidecar).
 	{
 		const std::wstring Pending = JoinPath(pA->InstallDir, L"uclient_launch_pending.args");
 		FILE *pFile = nullptr;
@@ -883,7 +1188,19 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 	pArgs->SelfPath = aSelf;
 	pArgs->InstallDir = ParentDir(aSelf);
 	for(int i = 1; i < Argc; ++i)
+	{
+		if(!wcscmp(ppArgv[i], kApplyUpdateArg) && i + 1 < Argc)
+		{
+			pArgs->ApplyArchive = ppArgv[++i];
+			continue;
+		}
+		if(!wcscmp(ppArgv[i], kWaitPidArg) && i + 1 < Argc)
+		{
+			pArgs->WaitPid = (DWORD)_wtol(ppArgv[++i]);
+			continue;
+		}
 		pArgs->ForwardArgs.emplace_back(ppArgv[i]);
+	}
 	LocalFree(ppArgv);
 
 	WNDCLASSEXW Wc = {};
@@ -893,7 +1210,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 	Wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
 	Wc.hbrBackground = nullptr;
 	Wc.lpszClassName = L"UClientLauncher";
-	Wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+	Wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(1)); // IDI_ICON1 from UClient.rc
+	if(!Wc.hIcon)
+		Wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+	Wc.hIconSm = Wc.hIcon;
 	RegisterClassExW(&Wc);
 
 	const int X = (GetSystemMetrics(SM_CXSCREEN) - WND_W) / 2;

@@ -41,12 +41,15 @@ static bool StrEndsWithNoCase(const char *pStr, const char *pSuffix)
 static constexpr const char *DEFAULT_UPDATE_LATEST_URL = "https://ddnet.under1111.com/api/uclient/update/latest";
 static constexpr const char *GITHUB_LATEST_RELEASE_URL = "https://github.com/BestProjectTeam/BestClient/releases/latest";
 static constexpr const char *UPDATE_SCRIPT_PATH = "update/apply_uclient_update.ps1";
-static constexpr const char *UPDATE_HELPER_EXEC = "bestclient-updater.exe";
 #if defined(CONF_PLATFORM_ANDROID)
 static constexpr const char *UPDATE_ARCHIVE_PATH = "update/bestclient-release.apk";
 #else
 static constexpr const char *UPDATE_ARCHIVE_PATH = "update/bestclient-release.zip";
 #endif
+static constexpr const char *UCLIENT_LAUNCHER_EXEC_WIN = "UClient.exe";
+static constexpr const char *UCLIENT_APPLY_UPDATE_ARG = "--uclient-apply-update";
+static constexpr const char *UCLIENT_WAIT_PID_ARG = "--uclient-wait-pid";
+static constexpr const char *UCLIENT_PENDING_VERSION_FILE = "uclient_pending_version.txt";
 
 static const char *CurrentPlatformKey()
 {
@@ -677,21 +680,36 @@ static bool ResolveUpdatePaths(IStorage *pStorage, const char *pArchiveStoragePa
 	return true;
 }
 
-static bool LaunchNativeUpdater(IStorage *pStorage, const char *pPid, const char *pArchivePath, const char *pInstallDir, const char *pExePath)
+static bool LaunchLauncherApply(IStorage *pStorage, const char *pPid, const char *pArchivePath)
 {
-	char aUpdaterPath[IO_MAX_PATH_LENGTH];
-	pStorage->GetBinaryPathAbsolute(UPDATE_HELPER_EXEC, aUpdaterPath, sizeof(aUpdaterPath));
-	if(!pStorage->FileExists(aUpdaterPath, IStorage::TYPE_ABSOLUTE))
+	char aLauncherPath[IO_MAX_PATH_LENGTH];
+	pStorage->GetBinaryPathAbsolute(UCLIENT_LAUNCHER_EXEC_WIN, aLauncherPath, sizeof(aLauncherPath));
+	if(!pStorage->FileExists(aLauncherPath, IStorage::TYPE_ABSOLUTE))
 		return false;
 
 	const char *apArguments[] = {
-		pPid,
+		UCLIENT_APPLY_UPDATE_ARG,
 		pArchivePath,
-		pInstallDir,
-		pExePath,
+		UCLIENT_WAIT_PID_ARG,
+		pPid,
 	};
 
-	return process_execute(aUpdaterPath, EShellExecuteWindowState::FOREGROUND, apArguments, std::size(apArguments)) != INVALID_PROCESS;
+	return process_execute(aLauncherPath, EShellExecuteWindowState::FOREGROUND, apArguments, std::size(apArguments)) != INVALID_PROCESS;
+}
+
+static bool WritePendingVersionFile(IStorage * /*pStorage*/, const char *pInstallDir, const char *pVersion)
+{
+	if(!pVersion || !pVersion[0] || !pInstallDir || !pInstallDir[0])
+		return false;
+	char aPath[IO_MAX_PATH_LENGTH];
+	str_format(aPath, sizeof(aPath), "%s/%s", pInstallDir, UCLIENT_PENDING_VERSION_FILE);
+	IOHANDLE File = io_open(aPath, IOFLAG_WRITE);
+	if(!File)
+		return false;
+	io_write(File, pVersion, str_length(pVersion));
+	io_write(File, "\n", 1);
+	io_close(File);
+	return true;
 }
 #endif
 
@@ -711,7 +729,8 @@ bool CUpdater::LaunchApplyScriptAndQuit()
 	}
 
 	str_format(aPid, sizeof(aPid), "%d", process_id());
-	if(LaunchNativeUpdater(m_pStorage, aPid, aArchivePath, aInstallDir, aExePath))
+	WritePendingVersionFile(m_pStorage, aInstallDir, m_aLatestVersion);
+	if(LaunchLauncherApply(m_pStorage, aPid, aArchivePath))
 	{
 		m_pClient->Quit();
 		return true;

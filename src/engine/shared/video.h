@@ -8,6 +8,12 @@
 
 typedef std::function<void(short *pFinalOut, unsigned Frames)> ISoundMixFunc;
 
+enum class EVideoFormat
+{
+	Mp4 = 0,
+	Gif = 1,
+};
+
 class IVideo
 {
 public:

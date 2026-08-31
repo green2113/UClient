@@ -449,10 +449,10 @@ public:
 	static void Con_Screenshot(IConsole::IResult *pResult, void *pUserData);
 
 #if defined(CONF_VIDEORECORDER)
-	void StartVideo(const char *pFilename, bool WithTimestamp);
+	void StartVideo(const char *pFilename, bool WithTimestamp, EVideoFormat Format = EVideoFormat::Mp4);
 	static void Con_StartVideo(IConsole::IResult *pResult, void *pUserData);
 	static void Con_StopVideo(IConsole::IResult *pResult, void *pUserData);
-	const char *DemoPlayer_Render(const char *pFilename, int StorageType, const char *pVideoName, int SpeedIndex, bool StartPaused = false) override;
+	const char *DemoPlayer_Render(const char *pFilename, int StorageType, const char *pVideoName, int SpeedIndex, bool StartPaused = false, EVideoFormat Format = EVideoFormat::Mp4) override;
 #endif
 
 	static void Con_Rcon(IConsole::IResult *pResult, void *pUserData);

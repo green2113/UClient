@@ -2261,11 +2261,17 @@ void CMenus::RenderPopupFullscreen(CUIRect Screen)
 		if(DoButton_Menu(&s_ButtonOk, Localize("Ok"), 0, &Ok) || Ui()->ConsumeHotkey(CUi::HOTKEY_ENTER))
 		{
 			m_Popup = POPUP_NONE;
-			// render video
+			// render video / gif
+			const char *pExtension = m_DemoRenderFormat == EVideoFormat::Gif ? ".gif" : ".mp4";
 			char aVideoPath[IO_MAX_PATH_LENGTH];
 			str_format(aVideoPath, sizeof(aVideoPath), "videos/%s", m_DemoRenderInput.GetString());
-			if(!str_endswith(aVideoPath, ".mp4"))
-				str_append(aVideoPath, ".mp4");
+			if(str_endswith_nocase(aVideoPath, ".mp4") || str_endswith_nocase(aVideoPath, ".gif"))
+			{
+				const size_t Len = str_length(aVideoPath);
+				if(Len >= 4)
+					aVideoPath[Len - 4] = '\0';
+			}
+			str_append(aVideoPath, pExtension);
 
 			if(!str_valid_filename(m_DemoRenderInput.GetString()))
 			{
@@ -2295,8 +2301,11 @@ void CMenus::RenderPopupFullscreen(CUIRect Screen)
 		if(DoButton_CheckBox(&g_Config.m_ClVideoShowChat, Localize("Show chat"), g_Config.m_ClVideoShowChat, &ShowChatCheckbox))
 			g_Config.m_ClVideoShowChat ^= 1;
 
-		if(DoButton_CheckBox(&g_Config.m_ClVideoSndEnable, Localize("Use sounds"), g_Config.m_ClVideoSndEnable, &UseSoundsCheckbox))
-			g_Config.m_ClVideoSndEnable ^= 1;
+		if(m_DemoRenderFormat != EVideoFormat::Gif)
+		{
+			if(DoButton_CheckBox(&g_Config.m_ClVideoSndEnable, Localize("Use sounds"), g_Config.m_ClVideoSndEnable, &UseSoundsCheckbox))
+				g_Config.m_ClVideoSndEnable ^= 1;
+		}
 
 		CUIRect ShowHudButton;
 		Box.HSplitBottom(20.0f, &Box, &Row);
@@ -2337,11 +2346,22 @@ void CMenus::RenderPopupFullscreen(CUIRect Screen)
 		Box.HSplitBottom(16.0f, &Box, nullptr);
 		Box.HSplitBottom(24.0f, &Box, &Row);
 
-		CUIRect Label, TextBox;
+		CUIRect Label, TextBox, FormatButtons;
 		Row.VSplitLeft(110.0f, &Label, &TextBox);
 		TextBox.VSplitLeft(10.0f, nullptr, &TextBox);
-		Ui()->DoLabel(&Label, Localize("Video name:"), 12.8f, TEXTALIGN_ML);
+		TextBox.VSplitRight(140.0f, &TextBox, &FormatButtons);
+		FormatButtons.VSplitLeft(8.0f, nullptr, &FormatButtons);
+		Ui()->DoLabel(&Label, m_DemoRenderFormat == EVideoFormat::Gif ? Localize("GIF name:") : Localize("Video name:"), 12.8f, TEXTALIGN_ML);
 		Ui()->DoEditBox(&m_DemoRenderInput, &TextBox, 12.8f);
+
+		CUIRect FormatVideo, FormatGif;
+		FormatButtons.VSplitMid(&FormatVideo, &FormatGif, 4.0f);
+		static CButtonContainer s_FormatVideo;
+		static CButtonContainer s_FormatGif;
+		if(DoButton_Menu(&s_FormatVideo, Localize("Video"), m_DemoRenderFormat == EVideoFormat::Mp4, &FormatVideo))
+			m_DemoRenderFormat = EVideoFormat::Mp4;
+		if(DoButton_Menu(&s_FormatGif, "GIF", m_DemoRenderFormat == EVideoFormat::Gif, &FormatGif))
+			m_DemoRenderFormat = EVideoFormat::Gif;
 
 		// Warn about disconnect if online
 		if(Client()->State() == IClient::STATE_ONLINE)
@@ -2360,7 +2380,8 @@ void CMenus::RenderPopupFullscreen(CUIRect Screen)
 		char aFilePath[IO_MAX_PATH_LENGTH];
 		char aSaveFolder[IO_MAX_PATH_LENGTH];
 		Storage()->GetCompletePath(IStorage::TYPE_SAVE, "videos", aSaveFolder, sizeof(aSaveFolder));
-		str_format(aFilePath, sizeof(aFilePath), "%s/%s.mp4", aSaveFolder, m_DemoRenderInput.GetString());
+		const char *pExtension = m_DemoRenderFormat == EVideoFormat::Gif ? "gif" : "mp4";
+		str_format(aFilePath, sizeof(aFilePath), "%s/%s.%s", aSaveFolder, m_DemoRenderInput.GetString(), pExtension);
 
 		Box.HSplitBottom(20.f, &Box, &Part);
 		Box.HSplitBottom(24.f, &Box, &Part);
@@ -2377,8 +2398,8 @@ void CMenus::RenderPopupFullscreen(CUIRect Screen)
 			Client()->ViewFile(aSaveFolder);
 		}
 
-		static CButtonContainer s_ButtonOk;
-		if(DoButton_Menu(&s_ButtonOk, Localize("Ok"), 0, &Ok) || Ui()->ConsumeHotkey(CUi::HOTKEY_ENTER))
+		static CButtonContainer s_ButtonOkDone;
+		if(DoButton_Menu(&s_ButtonOkDone, Localize("Ok"), 0, &Ok) || Ui()->ConsumeHotkey(CUi::HOTKEY_ENTER))
 		{
 			m_Popup = POPUP_NONE;
 			m_DemoRenderInput.Clear();
@@ -2989,7 +3010,13 @@ void CMenus::PopupConfirmDemoReplaceVideo()
 	str_format(aBuf, sizeof(aBuf), "%s/%s.demo", m_aCurrentDemoFolder, m_aCurrentDemoSelectionName);
 	char aVideoName[IO_MAX_PATH_LENGTH];
 	str_copy(aVideoName, m_DemoRenderInput.GetString());
-	const char *pError = Client()->DemoPlayer_Render(aBuf, m_DemolistStorageType, aVideoName, m_Speed, m_StartPaused);
+	if(str_endswith_nocase(aVideoName, ".mp4") || str_endswith_nocase(aVideoName, ".gif"))
+	{
+		const size_t Len = str_length(aVideoName);
+		if(Len >= 4)
+			aVideoName[Len - 4] = '\0';
+	}
+	const char *pError = Client()->DemoPlayer_Render(aBuf, m_DemolistStorageType, aVideoName, m_Speed, m_StartPaused, m_DemoRenderFormat);
 	m_Speed = DEMO_SPEED_INDEX_DEFAULT;
 	m_StartPaused = false;
 	m_LastPauseChange = -1.0f;

@@ -90,7 +90,7 @@ void CVideo::Init()
 	av_log_set_callback(AvLogCallback);
 }
 
-CVideo::CVideo(IGraphics *pGraphics, ISound *pSound, IStorage *pStorage, int Width, int Height, const char *pName) :
+CVideo::CVideo(IGraphics *pGraphics, ISound *pSound, IStorage *pStorage, int Width, int Height, const char *pName, EVideoFormat Format) :
 	m_pGraphics(pGraphics),
 	m_pStorage(pStorage),
 	m_pSound(pSound)
@@ -105,8 +105,9 @@ CVideo::CVideo(IGraphics *pGraphics, ISound *pSound, IStorage *pStorage, int Wid
 	m_Width = Width;
 	m_Height = Height;
 	str_copy(m_aName, pName);
+	m_Format = Format;
 
-	m_FPS = g_Config.m_ClVideoRecorderFPS;
+	m_FPS = m_Format == EVideoFormat::Gif ? g_Config.m_ClVideoGifFPS : g_Config.m_ClVideoRecorderFPS;
 
 	m_Recording = false;
 	m_Started = false;
@@ -114,7 +115,8 @@ CVideo::CVideo(IGraphics *pGraphics, ISound *pSound, IStorage *pStorage, int Wid
 	m_ProcessingVideoFrame = 0;
 	m_ProcessingAudioFrame = 0;
 
-	m_HasAudio = m_pSound->IsSoundEnabled() && g_Config.m_ClVideoSndEnable;
+	// GIF has no audio track.
+	m_HasAudio = m_Format != EVideoFormat::Gif && m_pSound->IsSoundEnabled() && g_Config.m_ClVideoSndEnable;
 
 	dbg_assert(ms_pCurrentVideo == nullptr, "ms_pCurrentVideo is NOT set to nullptr while creating a new Video.");
 
@@ -149,7 +151,8 @@ bool CVideo::Start()
 		return false;
 	}
 
-	const int FormatAllocResult = avformat_alloc_output_context2(&m_pFormatContext, nullptr, "mp4", aWholePath);
+	const char *pFormatName = m_Format == EVideoFormat::Gif ? "gif" : "mp4";
+	const int FormatAllocResult = avformat_alloc_output_context2(&m_pFormatContext, nullptr, pFormatName, aWholePath);
 	if(FormatAllocResult < 0 || !m_pFormatContext)
 	{
 		char aError[AV_ERROR_MAX_STRING_SIZE];
@@ -184,9 +187,10 @@ bool CVideo::Start()
 
 	/* Add the audio and video streams using the default format codecs
 	 * and initialize the codecs. */
-	if(m_pFormat->video_codec != AV_CODEC_ID_NONE)
+	const AVCodecID VideoCodecId = m_Format == EVideoFormat::Gif ? AV_CODEC_ID_GIF : m_pFormat->video_codec;
+	if(VideoCodecId != AV_CODEC_ID_NONE)
 	{
-		if(!AddStream(&m_VideoStream, m_pFormatContext, &m_pVideoCodec, m_pFormat->video_codec))
+		if(!AddStream(&m_VideoStream, m_pFormatContext, &m_pVideoCodec, VideoCodecId))
 			return false;
 	}
 	else
@@ -256,6 +260,7 @@ bool CVideo::Start()
 
 	m_VideoStream.m_vpSwsContexts.reserve(m_VideoThreads);
 
+	const AVPixelFormat DestPixFmt = m_VideoStream.m_pCodecContext->pix_fmt;
 	for(size_t i = 0; i < m_VideoThreads; ++i)
 	{
 		if(m_VideoStream.m_vpSwsContexts.size() <= i)
@@ -266,11 +271,20 @@ bool CVideo::Start()
 			m_VideoStream.m_vpSwsContexts[i] = sws_getCachedContext(
 				m_VideoStream.m_vpSwsContexts[i],
 				m_VideoStream.m_pCodecContext->width, m_VideoStream.m_pCodecContext->height, AV_PIX_FMT_RGBA,
-				m_VideoStream.m_pCodecContext->width, m_VideoStream.m_pCodecContext->height, AV_PIX_FMT_YUV420P,
+				m_VideoStream.m_pCodecContext->width, m_VideoStream.m_pCodecContext->height, DestPixFmt,
 				SWS_FULL_CHR_H_INT | SWS_FULL_CHR_H_INP | SWS_ACCURATE_RND | SWS_BITEXACT, nullptr, nullptr, nullptr);
 
-			const int *pMatrixCoefficients = sws_getCoefficients(COLOR_SPACE);
-			sws_setColorspaceDetails(m_VideoStream.m_vpSwsContexts[i], pMatrixCoefficients, 0, pMatrixCoefficients, 0, 0, 1 << 16, 1 << 16);
+			if(!m_VideoStream.m_vpSwsContexts[i])
+			{
+				log_error("videorecorder", "Could not initialize colorspace conversion context");
+				return false;
+			}
+
+			if(DestPixFmt == AV_PIX_FMT_YUV420P)
+			{
+				const int *pMatrixCoefficients = sws_getCoefficients(COLOR_SPACE);
+				sws_setColorspaceDetails(m_VideoStream.m_vpSwsContexts[i], pMatrixCoefficients, 0, pMatrixCoefficients, 0, 0, 1 << 16, 1 << 16);
+			}
 		}
 	}
 
@@ -741,11 +755,12 @@ bool CVideo::OpenVideo()
 
 	/* If the output format is not YUV420P, then a temporary YUV420P
 	 * picture is needed too. It is then converted to the required
-	 * output format. */
+	 * output format. FillVideoFrame currently scales RGBA directly into
+	 * the destination frame, so skip this for RGB targets such as GIF. */
 	m_VideoStream.m_vpTmpFrames.clear();
 	m_VideoStream.m_vpTmpFrames.reserve(m_VideoThreads);
 
-	if(pContext->pix_fmt != AV_PIX_FMT_YUV420P)
+	if(pContext->pix_fmt != AV_PIX_FMT_YUV420P && pContext->pix_fmt != AV_PIX_FMT_RGB8)
 	{
 		/* allocate and init a re-usable frame */
 		for(size_t i = 0; i < m_VideoThreads; ++i)
@@ -972,6 +987,13 @@ bool CVideo::AddStream(COutputStream *pStream, AVFormatContext *pFormatContext, 
 		pContext->gop_size = 12; /* emit one intra frame every twelve frames at most */
 		pContext->pix_fmt = AV_PIX_FMT_YUV420P;
 		pContext->colorspace = COLOR_SPACE;
+		if(CodecId == AV_CODEC_ID_GIF)
+		{
+			pContext->gop_size = 0;
+			pContext->pix_fmt = AV_PIX_FMT_RGB8;
+			pContext->bit_rate = 0;
+			break;
+		}
 		if(pContext->codec_id == AV_CODEC_ID_MPEG2VIDEO)
 		{
 			/* just for testing, we also add B-frames */
