@@ -361,7 +361,10 @@ int fs_executable_path(char *buffer, int buffer_size)
 	// https://stackoverflow.com/a/1024937
 #if defined(CONF_FAMILY_WINDOWS)
 	wchar_t wide_path[IO_MAX_PATH_LENGTH];
-	if(GetModuleFileNameW(nullptr, wide_path, std::size(wide_path)) == 0 || GetLastError() != ERROR_SUCCESS)
+	// GetModuleFileNameW does not set LastError to ERROR_SUCCESS on success; only check the return value.
+	SetLastError(ERROR_SUCCESS);
+	const DWORD Len = GetModuleFileNameW(nullptr, wide_path, std::size(wide_path));
+	if(Len == 0 || Len >= std::size(wide_path))
 	{
 		buffer[0] = '\0';
 		return -1;

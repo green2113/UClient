@@ -6,6 +6,7 @@
 #include <base/color.h>
 #include <base/log.h>
 #include <base/math.h>
+#include <base/process.h>
 #include <base/system.h>
 #include <base/vmath.h>
 
@@ -20,6 +21,7 @@
 #include <engine/keys.h>
 #include <engine/serverbrowser.h>
 #include <engine/shared/config.h>
+#include <engine/shared/uclient_launch_gate.h>
 #include <engine/storage.h>
 #include <engine/textrender.h>
 
@@ -1329,8 +1331,8 @@ bool CMenus::PopupUpdateRequired()
 	if(State == IUpdater::NEED_RESTART)
 	{
 		PopupConfirm(Localize("Update required"),
-			Localize("The update has been downloaded. Restart to finish updating, then you can join a server."),
-			Localize("Restart"), Localize("Not now"), &CMenus::PopupConfirmStartUpdate);
+			Localize("The update has been downloaded. Restart via the launcher to finish updating, then you can join a server."),
+			Localize("Restart launcher"), Localize("Not now"), &CMenus::PopupConfirmStartUpdate);
 	}
 	else if(State == IUpdater::DOWNLOADING || State == IUpdater::GETTING_MANIFEST)
 	{
@@ -1364,7 +1366,18 @@ void CMenus::PopupConfirmStartUpdate()
 	if(Updater()->GetCurrentState() == IUpdater::NEED_RESTART)
 		Updater()->ApplyUpdateAndRestart();
 	else
+	{
+#if defined(CONF_FAMILY_WINDOWS)
+		char aLauncher[IO_MAX_PATH_LENGTH];
+		if(UClientLaunchGate_FindLauncherPath(aLauncher, sizeof(aLauncher)))
+		{
+			process_execute(aLauncher, EShellExecuteWindowState::FOREGROUND);
+			Client()->Quit();
+			return;
+		}
+#endif
 		Updater()->InitiateUpdate();
+	}
 #endif
 }
 

@@ -2450,6 +2450,8 @@ set_src(ENGINE_SHARED GLOB_RECURSE src/engine/shared
   bestclient_indicator_protocol.h
   uclient_presence_protocol.cpp
   uclient_presence_protocol.h
+  uclient_launch_gate.cpp
+  uclient_launch_gate.h
   compression.cpp
   compression.h
   config.cpp
@@ -3337,6 +3339,18 @@ if(CLIENT)
     set_property(TARGET bestclient-updater PROPERTY OUTPUT_NAME "bestclient-updater")
     list(APPEND TARGETS_OWN bestclient-updater)
     list(APPEND TARGETS_LINK bestclient-updater)
+
+    add_executable(uclient-launcher WIN32
+      src/tools/uclient_launcher.cpp
+    )
+    target_link_libraries(uclient-launcher shell32 winhttp advapi32 gdi32 user32 msimg32)
+    set_property(TARGET uclient-launcher PROPERTY OUTPUT_NAME "UClient")
+    target_compile_definitions(uclient-launcher PRIVATE
+      UCLIENT_LAUNCHER_VERSION="${UCLIENT_PACKAGE_VERSION}"
+      UCLIENT_UPDATE_LATEST_URL="https://ddnet.under1111.com/api/uclient/update/latest"
+    )
+    list(APPEND TARGETS_OWN uclient-launcher)
+    list(APPEND TARGETS_LINK uclient-launcher)
   elseif(TARGET_OS STREQUAL "linux")
     add_executable(bestclient-updater
       src/tools/bestclient_updater_linux.cpp
@@ -3954,6 +3968,9 @@ endif()
 if(TARGET bestclient-updater)
   list(APPEND CPACK_TARGETS bestclient-updater)
 endif()
+if(TARGET uclient-launcher)
+  list(APPEND CPACK_TARGETS uclient-launcher)
+endif()
 if(TARGET game-server)
   list(APPEND CPACK_TARGETS game-server)
 endif()
@@ -4316,7 +4333,7 @@ foreach(target ${TARGETS_OWN})
     # See https://learn.microsoft.com/en-us/windows/win32/winprog/using-the-windows-headers
     target_compile_definitions(${target} PRIVATE NOMINMAX) # windows.h shouldn't define min/max macros
     target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN) # windows.h shouldn't define the name IStorage
-    if(NOT "${target}" STREQUAL "bestclient-updater")
+    if(NOT "${target}" STREQUAL "bestclient-updater" AND NOT "${target}" STREQUAL "uclient-launcher")
       target_compile_definitions(${target} PRIVATE NOGDI) # wingdi.h shouldn't define the name ERROR
     endif()
     # 0x0501 (Windows XP) is required for mingw to get getaddrinfo to work

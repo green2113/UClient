@@ -367,7 +367,7 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 	SetPercent(100);
 
 	// ── 9. Launch client ──────────────────────────────────────────────────────
-	SetStatus(L"Launching BestClient...");
+	SetStatus(L"Launching UClient...");
 	Sleep(500);
 
 	SHELLEXECUTEINFOW Sei = {};

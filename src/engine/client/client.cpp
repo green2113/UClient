@@ -39,6 +39,7 @@
 #include <engine/shared/assertion_logger.h>
 #include <engine/shared/compression.h>
 #include <engine/shared/config.h>
+#include <engine/shared/uclient_launch_gate.h>
 #include <engine/shared/demo.h>
 #include <engine/shared/fifo.h>
 #include <engine/shared/filecollection.h>
@@ -4854,6 +4855,11 @@ int main(int argc, const char **argv)
 #endif
 	CCmdlineFix CmdlineFix(&argc, &argv);
 
+#if defined(CONF_FAMILY_WINDOWS)
+	if(!UClientLaunchGate_EnsureFromLauncher(&argc, &argv))
+		return 0;
+#endif
+
 	std::vector<std::shared_ptr<ILogger>> vpLoggers;
 	std::shared_ptr<ILogger> pStdoutLogger = nullptr;
 #if defined(CONF_PLATFORM_ANDROID)
@@ -5223,7 +5229,10 @@ int main(int argc, const char **argv)
 	char aRestartBinaryPath[IO_MAX_PATH_LENGTH];
 	if(Restarting)
 	{
-		pStorage->GetBinaryPath(PLAT_CLIENT_EXEC, aRestartBinaryPath, sizeof(aRestartBinaryPath));
+#if defined(CONF_FAMILY_WINDOWS)
+		if(!UClientLaunchGate_FindLauncherPath(aRestartBinaryPath, sizeof(aRestartBinaryPath)))
+#endif
+			pStorage->GetBinaryPath(PLAT_CLIENT_EXEC, aRestartBinaryPath, sizeof(aRestartBinaryPath));
 	}
 #endif
 
@@ -5551,7 +5560,9 @@ bool CClient::ViewFile(const char *pFilename)
 void CClient::ShellRegister()
 {
 	char aFullPath[IO_MAX_PATH_LENGTH];
-	Storage()->GetBinaryPathAbsolute(PLAT_CLIENT_EXEC, aFullPath, sizeof(aFullPath));
+	// Prefer UClient.exe so ddnet:// / .map / .demo always enter via the launcher.
+	if(!UClientLaunchGate_FindLauncherPath(aFullPath, sizeof(aFullPath)))
+		Storage()->GetBinaryPathAbsolute(PLAT_CLIENT_EXEC, aFullPath, sizeof(aFullPath));
 	if(!aFullPath[0])
 	{
 		log_error("client", "Failed to register protocol and file extensions: could not determine absolute path");

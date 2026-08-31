@@ -662,7 +662,10 @@ static bool ResolveUpdatePaths(IStorage *pStorage, const char *pArchiveStoragePa
 	if(!pStorage->FileExists(pArchivePath, IStorage::TYPE_ABSOLUTE))
 		return false;
 
-	pStorage->GetBinaryPathAbsolute(PLAT_CLIENT_EXEC, pExePath, ExePathSize);
+	// Prefer launcher so post-update entry always goes through the pre-game gate.
+	pStorage->GetBinaryPathAbsolute("UClient.exe", pExePath, ExePathSize);
+	if(!pStorage->FileExists(pExePath, IStorage::TYPE_ABSOLUTE))
+		pStorage->GetBinaryPathAbsolute(PLAT_CLIENT_EXEC, pExePath, ExePathSize);
 	str_copy(pInstallDir, pExePath, InstallDirSize);
 	StripFilename(pInstallDir);
 	return true;
@@ -776,7 +779,9 @@ bool CUpdater::LaunchApplyScriptAndQuit()
 	}
 
 	m_pStorage->GetBinaryPathAbsolute("bestclient-updater", aUpdaterPath, sizeof(aUpdaterPath));
-	m_pStorage->GetBinaryPathAbsolute(PLAT_CLIENT_EXEC, aExePath, sizeof(aExePath));
+	m_pStorage->GetBinaryPathAbsolute("UClient", aExePath, sizeof(aExePath));
+	if(!m_pStorage->FileExists(aExePath, IStorage::TYPE_ABSOLUTE))
+		m_pStorage->GetBinaryPathAbsolute(PLAT_CLIENT_EXEC, aExePath, sizeof(aExePath));
 	str_copy(aInstallDir, aExePath, sizeof(aInstallDir));
 	StripFilename(aInstallDir);
 

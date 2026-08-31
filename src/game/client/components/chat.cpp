@@ -1400,7 +1400,11 @@ void CChat::RenderUClientChatTargetDropDown(const CUIRect &Rect, CUi::SDropDownS
 	};
 	vLabels.reserve(2 + vRooms.size());
 	for(const auto &Room : vRooms)
-		vLabels.emplace_back(Room.m_aName);
+	{
+		char aLabel[96];
+		str_format(aLabel, sizeof(aLabel), "%s (%d)", Room.m_aName, (int)Room.m_vMembers.size());
+		vLabels.emplace_back(aLabel);
+	}
 	std::vector<const char *> vpLabels;
 	vpLabels.reserve(vLabels.size());
 	for(const std::string &Label : vLabels)
@@ -5309,12 +5313,16 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	const bool ChatInputActive = m_Mode != MODE_NONE;
 	const bool ChatInteractionActive = ChatInputActive || m_Show;
 
-	// UClient: when a chat-owned modal popup (media context / save-as / reaction picker) is open,
-	// route input to the popup and consume mouse events so the chat behind it is not interacted
-	// with (reply buttons, player-name links, text selection, etc.). This must run before the
-	// reply/link handlers below, otherwise clicks "pass through" the popup to the chat behind.
+	// UClient: when a chat-owned modal popup (media context / save-as / reaction picker /
+	// translate settings / room select / giphy / map context) is open, route input to the
+	// popup and consume mouse events so the chat behind it is not interacted with (reply
+	// buttons, player-name links, text selection, etc.). This must run before the reply/link
+	// handlers below, otherwise clicks "pass through" the popup to the chat behind.
 	const bool ChatModalPopupOpen = Ui()->IsPopupOpen(&m_MediaContextPopupId) || Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) ||
-		Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId) || Ui()->IsPopupOpen(&m_ReactionPickerPopupId);
+		Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId) || Ui()->IsPopupOpen(&m_ReactionPickerPopupId) ||
+		Ui()->IsPopupOpen(&m_TranslateSettingsPopupId) || Ui()->IsPopupOpen(&m_RoomSelectPopupId) ||
+		Ui()->IsPopupOpen(&m_GiphyPopupId) || Ui()->IsPopupOpen(&m_MapContextPopupId) ||
+		Ui()->IsPopupOpen(&m_MapAddPopupId);
 	if(ChatInteractionActive && ChatModalPopupOpen)
 	{
 		// Let the popup handle text input / active items first.
@@ -6387,8 +6395,9 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		}
 
 		if(!Ui()->IsPopupOpen(&m_GiphyPopupId) && !Ui()->IsPopupOpen(&m_TranslateSettingsPopupId) &&
+			!Ui()->IsPopupOpen(&m_RoomSelectPopupId) &&
 			!Ui()->IsPopupOpen(&m_MediaContextPopupId) && !Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) && !Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId) &&
-			!Ui()->IsPopupOpen(&m_ReactionPickerPopupId))
+			!Ui()->IsPopupOpen(&m_ReactionPickerPopupId) && !Ui()->IsPopupOpen(&m_MapContextPopupId) && !Ui()->IsPopupOpen(&m_MapAddPopupId))
 			m_Input.ProcessInput(Event);
 	}
 
@@ -8464,7 +8473,10 @@ void CChat::OnRender()
 	// When a chat-owned modal popup is open, do not let the polled mouse state start a text
 	// selection / drag on the chat behind the popup.
 	const bool ChatModalPopupOpen = Ui()->IsPopupOpen(&m_MediaContextPopupId) || Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) ||
-		Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId) || Ui()->IsPopupOpen(&m_ReactionPickerPopupId);
+		Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId) || Ui()->IsPopupOpen(&m_ReactionPickerPopupId) ||
+		Ui()->IsPopupOpen(&m_TranslateSettingsPopupId) || Ui()->IsPopupOpen(&m_RoomSelectPopupId) ||
+		Ui()->IsPopupOpen(&m_GiphyPopupId) || Ui()->IsPopupOpen(&m_MapContextPopupId) ||
+		Ui()->IsPopupOpen(&m_MapAddPopupId);
 	const bool MouseDown = Input()->KeyIsPressed(KEY_MOUSE_1) && !ChatModalPopupOpen;
 	int HoveredTranslateLineIndex = -1;
 	m_HoveredPlayerName.clear();
@@ -8666,8 +8678,9 @@ void CChat::OnRender()
 		}
 
 			const bool PopupInputActive = Ui()->IsPopupOpen(&m_GiphyPopupId) || Ui()->IsPopupOpen(&m_TranslateSettingsPopupId) ||
+						      Ui()->IsPopupOpen(&m_RoomSelectPopupId) ||
 						      Ui()->IsPopupOpen(&m_MediaContextPopupId) || Ui()->IsPopupOpen(&m_MediaSaveAssetPopupId) || Ui()->IsPopupOpen(&m_MediaSaveSkinPopupId) ||
-						      Ui()->IsPopupOpen(&m_ReactionPickerPopupId);
+						      Ui()->IsPopupOpen(&m_ReactionPickerPopupId) || Ui()->IsPopupOpen(&m_MapContextPopupId) || Ui()->IsPopupOpen(&m_MapAddPopupId);
 			if(!PopupInputActive)
 				m_Input.Activate(EInputPriority::CHAT); // Ensure that the input is active
 			const CUIRect InputCursorRect = {InputCursor.m_X, InputCursor.m_Y - ScrollOffset, 0.0f, 0.0f};
@@ -9051,10 +9064,9 @@ void CChat::OnRender()
 	std::string SelectionString;
 	bool HasChatSelection = false;
 
-	// UClient read receipts: newest other-authored UClient message that is actually visible
-	// (and not faded out) this frame. Used after the loop to advance our own read marker.
-	int MaxVisibleReadSeq = -1;
-	CUuid MaxVisibleReadMsgId = UUID_ZEROED;
+	// UClient read receipts: newest other-authored UClient message per room that is actually
+	// visible (and not faded out) this frame. Used after the loop to advance our own read markers.
+	std::unordered_map<std::string, std::pair<int, CUuid>> MaxVisibleReadByRoom;
 
 	for(int i = m_BacklogCurLine; i < MAX_LINES; i++)
 	{
@@ -9077,13 +9089,16 @@ void CChat::OnRender()
 		if(KeepLinesAlive && LineIndex == m_MediaViewerLineIndex)
 			Blend = 1.0f;
 
-		// A visibly-rendered message from someone else counts as "read": remember the newest one
-		// so we can move our read marker forward once (see IsReadingChat for when that applies).
-		if(Line.m_UClient && !Line.m_UClientMine && Line.m_UClientMessageId != UUID_ZEROED &&
-			Blend > 0.5f && Line.m_UClientSeq > MaxVisibleReadSeq)
+		// A visibly-rendered message from someone else counts as "read": remember the newest
+		// one per room so each room's read marker can move independently.
+		if(Line.m_UClient && !Line.m_UClientMine && Line.m_UClientMessageId != UUID_ZEROED && Blend > 0.5f)
 		{
-			MaxVisibleReadSeq = Line.m_UClientSeq;
-			MaxVisibleReadMsgId = Line.m_UClientMessageId;
+			auto &Entry = MaxVisibleReadByRoom[Line.m_aUClientRoomId];
+			if(Line.m_UClientSeq > Entry.first)
+			{
+				Entry.first = Line.m_UClientSeq;
+				Entry.second = Line.m_UClientMessageId;
+			}
 		}
 
 		// BestClient: lift newly received messages from the bottom.
@@ -9849,14 +9864,25 @@ void CChat::OnRender()
 		}
 	}
 
-	// UClient read receipts: advance our own read marker to the newest other-authored UClient
-	// message that was visible this frame. Broadcast once whenever the marker actually moves
-	// forward so peers can update their "read" labels.
-	if(MaxVisibleReadSeq > m_UcLocalReadMarkerSeq && MaxVisibleReadMsgId != UUID_ZEROED && IsReadingChat())
+	// UClient read receipts: advance our own per-room read markers for rooms with newly
+	// visible other-authored messages. Broadcast once per room whenever that room's marker moves.
+	if(IsReadingChat())
 	{
-		m_UcLocalReadMarkerSeq = MaxVisibleReadSeq;
-		m_UcLocalReadMarkerMsgId = MaxVisibleReadMsgId;
-		GameClient()->m_ClientIndicator.SendChatReadMarker(MaxVisibleReadMsgId);
+		for(const auto &Visible : MaxVisibleReadByRoom)
+		{
+			const std::string &RoomId = Visible.first;
+			const int Seq = Visible.second.first;
+			const CUuid &MessageId = Visible.second.second;
+			if(Seq <= 0 || MessageId == UUID_ZEROED)
+				continue;
+			SLocalReadMarker &Local = m_UcLocalReadByRoom[RoomId];
+			if(Seq > Local.m_Seq)
+			{
+				Local.m_Seq = Seq;
+				Local.m_MessageId = MessageId;
+				GameClient()->m_ClientIndicator.SendChatReadMarker(MessageId, RoomId.c_str());
+			}
+		}
 	}
 
 	// UClient read receipts: tooltip listing everyone who has read up to the hovered message.
@@ -11589,15 +11615,23 @@ static std::string UcReaderKeyString(const CUuid &Key)
 	return aBuf;
 }
 
-void CChat::OnChatReadReceived(const CUuid &ReaderKey, const char *pReaderName, const CUuid &MessageId)
+static std::string UcReadMarkerMapKey(const CUuid &ReaderKey, const char *pRoomId)
+{
+	std::string Key = UcReaderKeyString(ReaderKey);
+	Key.push_back('\n');
+	Key.append(pRoomId ? pRoomId : "");
+	return Key;
+}
+
+void CChat::OnChatReadReceived(const CUuid &ReaderKey, const char *pReaderName, const CUuid &MessageId, const char *pRoomId)
 {
 	if(MessageId == UUID_ZEROED)
 		return;
-	// One marker per reader: the map key is the reader's stable client-instance uuid, so a
-	// newer read simply moves that reader's marker to the newer message (KakaoTalk-style).
-	SReadMarker &Marker = m_UcReadMarkers[UcReaderKeyString(ReaderKey)];
+	// One marker per (reader, room): reading room B must not clear room A's receipt.
+	SReadMarker &Marker = m_UcReadMarkers[UcReadMarkerMapKey(ReaderKey, pRoomId)];
 	Marker.m_MessageId = MessageId;
 	Marker.m_Name = (pReaderName && pReaderName[0] != '\0') ? pReaderName : "?";
+	Marker.m_RoomId = pRoomId ? pRoomId : "";
 	Marker.m_Order = ++m_UcReadOrderCounter;
 }
 

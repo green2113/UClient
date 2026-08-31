@@ -420,17 +420,23 @@ class CChat : public CComponent
 	SRenderRect m_HoveredReactionRect{};
 
 	// UClient chat read receipts (KakaoTalk-style "read up to here" markers).
+	// One marker per (reader, room) so each room keeps its own read position.
 	struct SReadMarker
 	{
 		CUuid m_MessageId = UUID_ZEROED; // message this reader has read up to
 		std::string m_Name; // reader's display name
+		std::string m_RoomId; // empty = global / non-room UClient chat
 		int m_Order = 0; // update order, so the newest reader can be shown as representative
 	};
-	std::unordered_map<std::string, SReadMarker> m_UcReadMarkers; // reader key (uuid string) -> marker
+	struct SLocalReadMarker
+	{
+		int m_Seq = 0;
+		CUuid m_MessageId = UUID_ZEROED;
+	};
+	std::unordered_map<std::string, SReadMarker> m_UcReadMarkers; // "readerKey\nroomId" -> marker
+	std::unordered_map<std::string, SLocalReadMarker> m_UcLocalReadByRoom; // roomId -> local high-water
 	int m_UcSeqCounter = 0; // monotonic order assigned to each added UClient line
 	int m_UcReadOrderCounter = 0; // monotonic order assigned to each read marker update
-	int m_UcLocalReadMarkerSeq = 0; // highest UClient seq we (locally) have read; 0 = none
-	CUuid m_UcLocalReadMarkerMsgId = UUID_ZEROED; // message id matching m_UcLocalReadMarkerSeq
 	// Read label the mouse is over this frame, for the reader-name tooltip.
 	int m_HoveredReadLineIndex = -1;
 	SRenderRect m_HoveredReadRect{};
@@ -820,7 +826,7 @@ public:
 	void OnUClientReactionReceived(const CUuid &MessageId, const CUuid &ReactorKey, const char *pEmoji, const char *pReactorName, bool Add);
 
 	// Called by the client indicator when a read-receipt broadcast arrives over UDP.
-	void OnChatReadReceived(const CUuid &ReaderKey, const char *pReaderName, const CUuid &MessageId);
+	void OnChatReadReceived(const CUuid &ReaderKey, const char *pReaderName, const CUuid &MessageId, const char *pRoomId);
 
 	// True when pName matches a name-based entry in the friend list. UClient only ever knows a
 	// player name, so clan-only friend entries never match.

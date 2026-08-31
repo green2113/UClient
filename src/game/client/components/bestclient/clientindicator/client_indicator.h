@@ -74,7 +74,7 @@ public:
 	void SendUClientChatReaction(const CUuid &MessageId, const char *pOriginalServerAddress, uint8_t Scope, const char *pRoomId, const char *pEmoji, bool Add);
 
 	// UClient chat read receipts: broadcast that we have read up to the given message id.
-	void SendChatReadMarker(const CUuid &MessageId);
+	void SendChatReadMarker(const CUuid &MessageId, const char *pRoomId);
 
 	// UClient server join/leave announcements: broadcast "we joined <server>" / "we left" to all
 	// UClient users. Returns true if a packet was actually sent (socket ready, feature enabled).

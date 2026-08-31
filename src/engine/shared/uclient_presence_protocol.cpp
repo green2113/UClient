@@ -352,7 +352,7 @@ bool ReadRoomChatBroadcast(const uint8_t *pData, int DataSize, CRoomChatBroadcas
 }
 
 void WriteReadClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
-	const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId)
+	const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId, const char *pRoomId)
 {
 	WriteHeader(vOut, PACKET_READ);
 	WriteString(vOut, pPlayerId);
@@ -363,9 +363,10 @@ void WriteReadClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUui
 	WriteString(vOut, pReaderName);
 	WriteUuid(vOut, ReaderKey);
 	WriteUuid(vOut, MessageId);
+	WriteString(vOut, pRoomId ? pRoomId : "");
 }
 
-void WriteReadBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId)
+void WriteReadBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId, const char *pRoomId)
 {
 	vOut.clear();
 	WriteHeader(vOut, PACKET_READ_BROADCAST);
@@ -373,6 +374,7 @@ void WriteReadBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, 
 	WriteString(vOut, pReaderName);
 	WriteUuid(vOut, ReaderKey);
 	WriteUuid(vOut, MessageId);
+	WriteString(vOut, pRoomId ? pRoomId : "");
 }
 
 bool ReadReadBroadcast(const uint8_t *pData, int DataSize, CReadBroadcast &Out)
@@ -382,12 +384,19 @@ bool ReadReadBroadcast(const uint8_t *pData, int DataSize, CReadBroadcast &Out)
 	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != PACKET_READ_BROADCAST)
 		return false;
 
+	Out.m_RoomId.clear();
 	if(!ReadString(pData, DataSize, Offset, Out.m_ServerAddress) ||
 		!ReadString(pData, DataSize, Offset, Out.m_ReaderName) ||
 		!ReadUuid(pData, DataSize, Offset, Out.m_ReaderKey) ||
 		!ReadUuid(pData, DataSize, Offset, Out.m_MessageId))
 	{
 		return false;
+	}
+	// Optional trailing room_id for older peers that omit it.
+	if(Offset < DataSize)
+	{
+		if(!ReadString(pData, DataSize, Offset, Out.m_RoomId))
+			return false;
 	}
 	return Offset == DataSize;
 }

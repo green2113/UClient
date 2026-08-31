@@ -586,6 +586,83 @@ void CPlayers::RenderWeaponTrajLine(
 	ColorRGBA TrajColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClHookCollColorNoColl));
 	std::vector<IGraphics::CLineItem> vLineSegments;
 
+	const CGameClient::CClientData &OwnData = GameClient()->m_aClients[ClientId];
+	const bool WeaponHitDisabled =
+		(Weapon == WEAPON_LASER && OwnData.m_LaserHitDisabled) ||
+		(Weapon == WEAPON_SHOTGUN && OwnData.m_ShotgunHitDisabled) ||
+		(Weapon == WEAPON_GRENADE && OwnData.m_GrenadeHitDisabled);
+
+	// Like hook coll, but uses weapon hit rules (not HookHitDisabled) and stops the line at the tee.
+	auto IntersectWeaponCharacter = [&](vec2 From, vec2 To, float Radius, vec2 *pHitOnLine, vec2 *pTeePos) -> int {
+		if(WeaponHitDisabled)
+			return -1;
+
+		float BestDist = 0.0f;
+		int ClosestId = -1;
+		vec2 BestOnLine{};
+		vec2 BestTeePos{};
+
+		for(int i = 0; i < MAX_CLIENTS; i++)
+		{
+			if(i == ClientId)
+				continue;
+
+			const CGameClient::CClientData &Data = GameClient()->m_aClients[i];
+			if(!Data.m_Active || !GameClient()->m_Snap.m_aCharacters[i].m_Active)
+				continue;
+
+			const bool IsOneSuper = Data.m_Super || OwnData.m_Super;
+			const bool IsOneSolo = Data.m_Solo || OwnData.m_Solo;
+			if(!IsOneSuper && (!GameClient()->m_Teams.SameTeam(i, ClientId) || IsOneSolo))
+				continue;
+
+			const CNetObj_Character &Prev = GameClient()->m_Snap.m_aCharacters[i].m_Prev;
+			const CNetObj_Character &Cur = GameClient()->m_Snap.m_aCharacters[i].m_Cur;
+			const vec2 TeePosition = mix(vec2(Prev.m_X, Prev.m_Y), vec2(Cur.m_X, Cur.m_Y), Client()->IntraGameTick(g_Config.m_ClDummy));
+
+			vec2 ClosestPoint;
+			if(!closest_point_on_line(From, To, TeePosition, ClosestPoint))
+				continue;
+			if(distance(TeePosition, ClosestPoint) > CCharacterCore::PhysicalSize() + Radius)
+				continue;
+
+			const float Dist = distance(From, TeePosition);
+			if(ClosestId == -1 || Dist < BestDist)
+			{
+				ClosestId = i;
+				BestDist = Dist;
+				BestOnLine = ClosestPoint;
+				BestTeePos = TeePosition;
+			}
+		}
+
+		if(ClosestId != -1)
+		{
+			if(pHitOnLine)
+				*pHitOnLine = BestOnLine;
+			if(pTeePos)
+				*pTeePos = BestTeePos;
+		}
+		return ClosestId;
+	};
+
+	auto AddTeeSegment = [&](const vec2 &From, const vec2 &LineEnd, const vec2 &TeePos, const vec2 &HitOnLine) {
+		TrajColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClHookCollColorTeeColl));
+		vec2 aIntersections[2];
+		const int NumIntersections = intersect_line_circle(From, LineEnd, TeePos, CCharacterCore::PhysicalSize() * 1.45f / 2.0f, aIntersections);
+		if(NumIntersections == 2)
+		{
+			if(distance(From, aIntersections[0]) < distance(From, aIntersections[1]))
+				vLineSegments.emplace_back(From, aIntersections[0]);
+			else
+				vLineSegments.emplace_back(From, aIntersections[1]);
+		}
+		else if(NumIntersections == 1)
+			vLineSegments.emplace_back(From, aIntersections[0]);
+		else
+			vLineSegments.emplace_back(From, HitOnLine); // never extend past the tee to a wall behind it
+	};
+
 	if(UseLaserPath)
 	{
 		float Energy = Tuning.m_LaserReach;
@@ -607,24 +684,11 @@ void CPlayers::RenderWeaponTrajLine(
 			vec2 To = Pos + Dir * Energy;
 			const int Res = Collision()->IntersectLineTeleWeapon(Pos, To, &Coltile, &To);
 
-			vec2 HitPos = To;
+			vec2 HitOnLine;
 			vec2 TeePos;
-			if(GameClient()->IntersectCharacter(Pos, HitPos, To, ClientId, &TeePos) != -1)
+			if(IntersectWeaponCharacter(Pos, To, 0.0f, &HitOnLine, &TeePos) != -1)
 			{
-				TrajColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClHookCollColorTeeColl));
-				vec2 aIntersections[2];
-				const int NumIntersections = intersect_line_circle(Pos, HitPos, TeePos, CCharacterCore::PhysicalSize() * 1.45f / 2.0f, aIntersections);
-				if(NumIntersections == 2)
-				{
-					if(distance(Pos, aIntersections[0]) < distance(Pos, aIntersections[1]))
-						vLineSegments.emplace_back(Pos, aIntersections[0]);
-					else
-						vLineSegments.emplace_back(Pos, aIntersections[1]);
-				}
-				else if(NumIntersections == 1)
-					vLineSegments.emplace_back(Pos, aIntersections[0]);
-				else
-					vLineSegments.emplace_back(Pos, HitPos);
+				AddTeeSegment(Pos, To, TeePos, HitOnLine);
 				break;
 			}
 
@@ -693,7 +757,6 @@ void CPlayers::RenderWeaponTrajLine(
 		const vec2 StartPos = Position + Direction * CCharacterCore::PhysicalSize() * 0.75f;
 		const int LifeTicks = maximum(1, (int)(Client()->GameTickSpeed() * Lifetime));
 		vec2 PrevPos = StartPos;
-		bool HitTee = false;
 
 		for(int Tick = 1; Tick <= LifeTicks; ++Tick)
 		{
@@ -703,26 +766,11 @@ void CPlayers::RenderWeaponTrajLine(
 			vec2 NewPos;
 			const int Collide = Collision()->IntersectLine(PrevPos, CurPos, &ColPos, &NewPos);
 
-			vec2 TeeHitPos = ColPos;
-			vec2 TeeOutPos = CurPos;
+			vec2 HitOnLine;
 			vec2 TeePos;
-			if(GameClient()->IntersectCharacter(PrevPos, TeeHitPos, TeeOutPos, ClientId, &TeePos) != -1)
+			if(IntersectWeaponCharacter(PrevPos, ColPos, 6.0f, &HitOnLine, &TeePos) != -1)
 			{
-				TrajColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClHookCollColorTeeColl));
-				vec2 aIntersections[2];
-				const int NumIntersections = intersect_line_circle(PrevPos, TeeHitPos, TeePos, CCharacterCore::PhysicalSize() * 1.45f / 2.0f, aIntersections);
-				if(NumIntersections == 2)
-				{
-					if(distance(PrevPos, aIntersections[0]) < distance(PrevPos, aIntersections[1]))
-						vLineSegments.emplace_back(PrevPos, aIntersections[0]);
-					else
-						vLineSegments.emplace_back(PrevPos, aIntersections[1]);
-				}
-				else if(NumIntersections == 1)
-					vLineSegments.emplace_back(PrevPos, aIntersections[0]);
-				else
-					vLineSegments.emplace_back(PrevPos, TeeHitPos);
-				HitTee = true;
+				AddTeeSegment(PrevPos, ColPos, TeePos, HitOnLine);
 				break;
 			}
 
@@ -735,8 +783,6 @@ void CPlayers::RenderWeaponTrajLine(
 			vLineSegments.emplace_back(PrevPos, CurPos);
 			PrevPos = CurPos;
 		}
-
-		(void)HitTee;
 	}
 
 	if(vLineSegments.empty())

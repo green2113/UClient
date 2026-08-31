@@ -2694,7 +2694,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 			if(m_NeedRestartUpdate)
 			{
 				TextRender()->TextColor(0.7f, 1.0f, 0.7f, 1.0f);
-				Ui()->DoLabel(&RestartWarning, Localize("BestClient update downloaded! Restart to apply."), 14.0f, TEXTALIGN_ML);
+				Ui()->DoLabel(&RestartWarning, Localize("BestClient update ready! Restart via launcher to apply."), 14.0f, TEXTALIGN_ML);
 				TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 			}
 			else
@@ -3064,7 +3064,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 		if(m_NeedRestartUpdate)
 		{
 			TextRender()->TextColor(0.7f, 1.0f, 0.7f, 1.0f);
-			Ui()->DoLabel(&RestartWarning, Localize("BestClient update downloaded! Restart to apply."), 14.0f, TEXTALIGN_ML);
+			Ui()->DoLabel(&RestartWarning, Localize("BestClient update ready! Restart via launcher to apply."), 14.0f, TEXTALIGN_ML);
 			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 		}
 		else

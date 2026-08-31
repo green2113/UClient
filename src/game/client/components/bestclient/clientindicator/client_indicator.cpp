@@ -1289,7 +1289,7 @@ void CClientIndicator::ApplyUClientReactionBroadcast(const UClientPresence::CUCl
 		Reaction.m_Action != UClientPresence::REACTION_REMOVE);
 }
 
-void CClientIndicator::SendChatReadMarker(const CUuid &MessageId)
+void CClientIndicator::SendChatReadMarker(const CUuid &MessageId, const char *pRoomId)
 {
 	if(!g_Config.m_UcChat || !IsUcPresenceUdpEnabled() || !m_Socket || !m_HasUcServerAddr)
 		return;
@@ -1304,10 +1304,10 @@ void CClientIndicator::SendChatReadMarker(const CUuid &MessageId)
 	const char *pReaderName = LocalId >= 0 ? PlayerNameForClient(LocalId) : g_Config.m_PlayerName;
 
 	std::vector<uint8_t> vPacket;
-	vPacket.reserve(128);
+	vPacket.reserve(160);
 	UClientPresence::WriteReadClientBody(vPacket,
 		g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
-		pServerAddress, pReaderName, m_ClientInstanceId, MessageId);
+		pServerAddress, pReaderName, m_ClientInstanceId, MessageId, pRoomId ? pRoomId : "");
 	UClientPresence::AppendProof(vPacket, g_Config.m_UcPresenceUdpSharedToken);
 	net_udp_send(m_Socket, &m_UcServerAddr, vPacket.data(), (int)vPacket.size());
 }
@@ -1318,7 +1318,7 @@ void CClientIndicator::ApplyUcReadBroadcast(const UClientPresence::CReadBroadcas
 	if(Read.m_ReaderKey == m_ClientInstanceId)
 		return;
 	// Read receipts are global (author may be on a different server), so no server gate.
-	GameClient()->m_Chat.OnChatReadReceived(Read.m_ReaderKey, Read.m_ReaderName.c_str(), Read.m_MessageId);
+	GameClient()->m_Chat.OnChatReadReceived(Read.m_ReaderKey, Read.m_ReaderName.c_str(), Read.m_MessageId, Read.m_RoomId.c_str());
 }
 
 void CClientIndicator::LocalSkinSnapshot(const char *&pSkinName, uint8_t &UseCustomColor, int32_t &ColorBody, int32_t &ColorFeet) const

@@ -527,7 +527,11 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 				std::vector<std::string> vAnnouncementLabels = {Localize("All UClient users")};
 				vAnnouncementLabels.reserve(1 + vRooms.size());
 				for(const auto &Room : vRooms)
-					vAnnouncementLabels.emplace_back(Room.m_aName);
+				{
+					char aLabel[96];
+					str_format(aLabel, sizeof(aLabel), "%s (%d)", Room.m_aName, (int)Room.m_vMembers.size());
+					vAnnouncementLabels.emplace_back(aLabel);
+				}
 				std::vector<const char *> vpAnnouncementLabels;
 				vpAnnouncementLabels.reserve(vAnnouncementLabels.size());
 				for(const auto &Entry : vAnnouncementLabels)

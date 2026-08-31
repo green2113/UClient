@@ -1294,6 +1294,7 @@ fn handle_udp_packet(
             &read.reader_name,
             read.reader_key,
             read.message_id,
+            &read.room_id,
         );
         for peer in state.peers_all(None) {
             outcome.outbound.push((peer.return_addr, packet.clone()));
@@ -1682,6 +1683,7 @@ fn encode_read_broadcast(
     reader_name: &str,
     reader_key: [u8; 16],
     message_id: [u8; 16],
+    room_id: &str,
 ) -> Vec<u8> {
     let mut out = Vec::new();
     write_header(&mut out, PACKET_READ_BROADCAST);
@@ -1689,6 +1691,7 @@ fn encode_read_broadcast(
     write_string(&mut out, reader_name);
     out.extend_from_slice(&reader_key);
     out.extend_from_slice(&message_id);
+    write_string(&mut out, room_id);
     out
 }
 
@@ -2142,6 +2145,7 @@ struct ReadPacket {
     reader_name: String,
     reader_key: [u8; 16],
     message_id: [u8; 16],
+    room_id: String,
 }
 
 fn read_read_packet(data: &[u8]) -> Option<ReadPacket> {
@@ -2162,6 +2166,11 @@ fn read_read_packet(data: &[u8]) -> Option<ReadPacket> {
     let reader_name = reader.string()?;
     let reader_key = reader.uuid()?;
     let message_id = reader.uuid()?;
+    let room_id = if reader.remaining() > 0 {
+        reader.string()?
+    } else {
+        String::new()
+    };
     if reader.remaining() != 0 {
         return None;
     }
@@ -2172,6 +2181,7 @@ fn read_read_packet(data: &[u8]) -> Option<ReadPacket> {
         reader_name,
         reader_key,
         message_id,
+        room_id,
     })
 }
 

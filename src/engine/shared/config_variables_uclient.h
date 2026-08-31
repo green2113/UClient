@@ -13,7 +13,7 @@ MACRO_CONFIG_INT(UcChatPasteUploadMaxBytes, uc_chat_paste_upload_max_bytes, 1048
 MACRO_CONFIG_INT(UcChatPasteImageWarningSkip, uc_chat_paste_image_warning_skip, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Skip the clipboard image privacy warning before attaching an image to chat")
 MACRO_CONFIG_COL(UcChatImagePenColor, uc_chat_image_pen_color, 255, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Pen color used in the chat image editor")
 MACRO_CONFIG_STR(UcInstallUuid, uc_install_uuid, 64, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient install UUID generated once on first start")
-MACRO_CONFIG_STR(UcApiBaseUrl, uc_api_base_url, 256, "https://uclient-rooms-server.kfyjbyrfb9.workers.dev", CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient account and chat room API base URL")
+MACRO_CONFIG_STR(UcApiBaseUrl, uc_api_base_url, 256, "https://uclient.under1111.com", CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient account and chat room API base URL")
 MACRO_CONFIG_STR(UcChatSendRoom, uc_chat_send_room, 64, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient chat room selected as the current send target")
 MACRO_CONFIG_STR(UcUpdateLatestUrl, uc_update_latest_url, 256, "https://ddnet.under1111.com/api/uclient/update/latest", CFGFLAG_CLIENT | CFGFLAG_SAVE, "HTTP endpoint used to fetch latest UClient update metadata")
 MACRO_CONFIG_STR(UcPresenceApiBaseUrl, uc_presence_api_base_url, 256, "https://ddnet.under1111.com/api/presence", CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient presence API base URL (GET list, POST /join /heartbeat /leave /switch)")

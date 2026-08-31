@@ -10,7 +10,10 @@
 #include <engine/keys.h>
 #include <engine/serverbrowser.h>
 #include <engine/shared/config.h>
+#include <engine/shared/uclient_launch_gate.h>
 #include <engine/textrender.h>
+
+#include <base/process.h>
 
 #include <generated/client_data.h>
 
@@ -294,7 +297,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 			}
 			else if(ShowRestartButton)
 			{
-				str_copy(aUpdateBuf, Localize("Update downloaded"));
+				str_copy(aUpdateBuf, Localize("Update ready — restart via launcher"));
 				TextRender()->TextColor(0.7f, 1.0f, 0.7f, 1.0f);
 			}
 
@@ -304,8 +307,19 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 			if(ShowDownloadButton || ShowRetryButton)
 			{
 				static CButtonContainer s_MenuUpdateDownload;
-				if(GameClient()->m_Menus.DoButton_Menu(&s_MenuUpdateDownload, Localize("Download"), 0, &UpdateButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
-					Updater()->InitiateUpdate();
+				if(GameClient()->m_Menus.DoButton_Menu(&s_MenuUpdateDownload, Localize("Open launcher"), 0, &UpdateButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+				{
+#if defined(CONF_FAMILY_WINDOWS)
+					char aLauncher[IO_MAX_PATH_LENGTH];
+					if(UClientLaunchGate_FindLauncherPath(aLauncher, sizeof(aLauncher)))
+					{
+						process_execute(aLauncher, EShellExecuteWindowState::FOREGROUND);
+						Client()->Quit();
+					}
+					else
+#endif
+						Updater()->InitiateUpdate();
+				}
 			}
 			else if(ShowRestartButton)
 			{
@@ -313,7 +327,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 #if defined(CONF_PLATFORM_ANDROID)
 				const char *pRestartButtonLabel = Localize("Install");
 #else
-				const char *pRestartButtonLabel = Localize("Restart");
+				const char *pRestartButtonLabel = Localize("Restart launcher");
 #endif
 				if(GameClient()->m_Menus.DoButton_Menu(&s_MenuUpdateRestart, pRestartButtonLabel, 0, &UpdateButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 					Updater()->ApplyUpdateAndRestart();

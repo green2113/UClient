@@ -177,6 +177,7 @@ struct CReadBroadcast
 	std::string m_ReaderName;
 	CUuid m_ReaderKey = UUID_ZEROED; // stable per-reader identity (client instance uuid)
 	CUuid m_MessageId = UUID_ZEROED; // last message the reader has read up to
+	std::string m_RoomId; // empty = global / non-room UClient chat
 };
 
 // Server join/leave announcement as received by peers (server -> client broadcast).
@@ -299,8 +300,8 @@ bool ReadRoomChatBroadcast(const uint8_t *pData, int DataSize, CRoomChatBroadcas
 // WriteReadClientBody; the caller appends the proof afterwards. The server->client
 // broadcast is written by WriteReadBroadcast and parsed with ReadReadBroadcast.
 void WriteReadClientBody(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
-	const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId);
-void WriteReadBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId);
+	const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId, const char *pRoomId);
+void WriteReadBroadcast(std::vector<uint8_t> &vOut, const char *pServerAddress, const char *pReaderName, CUuid ReaderKey, CUuid MessageId, const char *pRoomId);
 bool ReadReadBroadcast(const uint8_t *pData, int DataSize, CReadBroadcast &Out);
 
 // Server join/leave announcement packets. The client->server body (proof covered) is written by
