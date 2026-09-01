@@ -10,6 +10,7 @@
 #include <base/system.h>
 
 #include <engine/console.h>
+#include <engine/client.h>
 #include <engine/engine.h>
 #include <engine/graphics.h>
 #include <engine/keys.h>
@@ -54,6 +55,15 @@ void CConsoleLogger::Log(const CLogMessage *pMessage)
 	if(m_Filter.Filters(pMessage))
 	{
 		return;
+	}
+	{
+		const CLockScope LockScope(m_ConsoleMutex);
+		if(m_pConsole)
+		{
+			IClient *pClient = m_pConsole->Client();
+			if(pClient && pClient->ShouldSuppressDemoConsoleLog(pMessage->m_aSystem, pMessage->Message()))
+				return;
+		}
 	}
 	ColorRGBA Color = CONSOLE_DEFAULT_COLOR;
 	if(pMessage->m_HaveColor)

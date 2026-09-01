@@ -100,6 +100,80 @@ describe("rooms Worker integration", () => {
 		const memberId = ownerRooms.rooms[0]?.members.find(value => value.display_name === "Member")?.member_id;
 		expect(memberId).toBeTruthy();
 
+		const promoteResponse = await SELF.fetch(jsonRequest(
+			`/rooms/${created.id}/members/${memberId}/role`,
+			{role: "admin"},
+			owner,
+		));
+		expect(promoteResponse.status).toBe(200);
+
+		const colorAsAdminResponse = await SELF.fetch(jsonRequest(`/rooms/${created.id}`, {
+			name_color: 123456,
+		}, member));
+		expect(colorAsAdminResponse.status).toBe(403);
+
+		const colorAsOwnerResponse = await SELF.fetch(jsonRequest(`/rooms/${created.id}`, {
+			name_color: 123456,
+		}, owner));
+		expect(colorAsOwnerResponse.status).toBe(200);
+
+		const adminRoomsResponse = await SELF.fetch(authenticatedRequest("/rooms", "GET", member));
+		const adminRooms = await responseJson<{
+			rooms: Array<{is_owner: boolean; is_admin: boolean; invite_code: string}>;
+		}>(adminRoomsResponse);
+		expect(adminRooms.rooms[0]?.is_admin).toBe(true);
+		expect(adminRooms.rooms[0]?.is_owner).toBe(false);
+		expect(adminRooms.rooms[0]?.invite_code).toBe(created.invite_code);
+
+		const renameAsAdminResponse = await SELF.fetch(jsonRequest(`/rooms/${created.id}`, {
+			name: "Admin Renamed",
+		}, member));
+		expect(renameAsAdminResponse.status).toBe(200);
+
+		const regenerateAsAdminResponse = await SELF.fetch(jsonRequest(
+			`/rooms/${created.id}/invite-code`,
+			{},
+			member,
+		));
+		expect(regenerateAsAdminResponse.status).toBe(403);
+
+		const demoteResponse = await SELF.fetch(jsonRequest(
+			`/rooms/${created.id}/members/${memberId}/role`,
+			{role: "member"},
+			owner,
+		));
+		expect(demoteResponse.status).toBe(200);
+
+		const transferResponse = await SELF.fetch(jsonRequest(`/rooms/${created.id}/transfer`, {
+			member_id: memberId,
+		}, owner));
+		expect(transferResponse.status).toBe(200);
+
+		const transferredRoomsResponse = await SELF.fetch(authenticatedRequest("/rooms", "GET", member));
+		const transferredRooms = await responseJson<{
+			rooms: Array<{is_owner: boolean; is_admin: boolean}>;
+		}>(transferredRoomsResponse);
+		expect(transferredRooms.rooms[0]?.is_owner).toBe(true);
+
+		const kickOldOwnerResponse = await SELF.fetch(authenticatedRequest(
+			`/rooms/${created.id}/members/${ownerRooms.rooms[0]?.members.find(value => value.display_name === "Owner")?.member_id}`,
+			"DELETE",
+			member,
+		));
+		expect(kickOldOwnerResponse.status).toBe(200);
+
+		const recreateAsOwnerResponse = await SELF.fetch(jsonRequest("/rooms", {
+			name: "Integration Room 2",
+			display_name: "Owner",
+		}, owner));
+		expect(recreateAsOwnerResponse.status).toBe(201);
+		const recreated = await responseJson<{id: string; invite_code: string}>(recreateAsOwnerResponse);
+		const rejoinResponse = await SELF.fetch(jsonRequest("/rooms/join", {
+			code: recreated.invite_code,
+			display_name: "Member",
+		}, member));
+		expect(rejoinResponse.status).toBe(201);
+
 		const membershipsResponse = await SELF.fetch(new Request("https://worker.test/internal/memberships", {
 			headers: {authorization: `Bearer ${testEnv.RELAY_SECRET}`},
 		}));
@@ -110,25 +184,33 @@ describe("rooms Worker integration", () => {
 		}>(membershipsResponse);
 		expect(memberships.sequence).toBeGreaterThan(0);
 		expect(memberships.rooms).toContainEqual({
-			room_id: created.id,
-			room_name: "Integration Room",
+			room_id: recreated.id,
+			room_name: "Integration Room 2",
 			install_ids: expect.arrayContaining([owner.install_id, member.install_id]),
 		});
 
+		const recreatedRoomsResponse = await SELF.fetch(authenticatedRequest("/rooms", "GET", owner));
+		const recreatedRooms = await responseJson<{
+			rooms: Array<{id: string; members: Array<{member_id: string; display_name: string; role: string}>}>;
+		}>(recreatedRoomsResponse);
+		const recreatedRoom = recreatedRooms.rooms.find(room => room.id === recreated.id);
+		const kickMemberId = recreatedRoom?.members.find(value => value.display_name === "Member")?.member_id;
+		expect(kickMemberId).toBeTruthy();
+
 		const kickResponse = await SELF.fetch(authenticatedRequest(
-			`/rooms/${created.id}/members/${memberId}`,
+			`/rooms/${recreated.id}/members/${kickMemberId}`,
 			"DELETE",
 			owner,
 		));
 		expect(kickResponse.status).toBe(200);
 
-		const rejoinResponse = await SELF.fetch(jsonRequest("/rooms/join", {
-			code: created.invite_code,
+		const rejoinAfterKickResponse = await SELF.fetch(jsonRequest("/rooms/join", {
+			code: recreated.invite_code,
 			display_name: "Member",
 		}, member));
-		expect(rejoinResponse.status).toBe(201);
+		expect(rejoinAfterKickResponse.status).toBe(201);
 		const leaveResponse = await SELF.fetch(authenticatedRequest(
-			`/rooms/${created.id}/members/me`,
+			`/rooms/${recreated.id}/members/me`,
 			"DELETE",
 			member,
 		));
@@ -149,12 +231,20 @@ describe("rooms Worker integration", () => {
 		expect(bannedVerifyResponse.status).toBe(423);
 
 		const deleteResponse = await SELF.fetch(authenticatedRequest(
-			`/rooms/${created.id}/members/me`,
+			`/rooms/${recreated.id}/members/me`,
 			"DELETE",
 			owner,
 		));
 		expect(deleteResponse.status).toBe(200);
 		expect(await responseJson(deleteResponse)).toEqual({ok: true, room_deleted: true});
+
+		// Clean up the transferred room so owner room-limit checks stay deterministic.
+		const deleteTransferredResponse = await SELF.fetch(authenticatedRequest(
+			`/rooms/${created.id}/members/me`,
+			"DELETE",
+			member,
+		));
+		expect(deleteTransferredResponse.status).toBe(200);
 
 		for(let index = 0; index < 5; index++) {
 			const roomResponse = await SELF.fetch(jsonRequest("/rooms", {

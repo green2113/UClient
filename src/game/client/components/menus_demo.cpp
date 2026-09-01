@@ -709,9 +709,12 @@ void CMenus::RenderDemoPlayer(CUIRect MainView)
 	if(Ui()->DoButton_FontIcon(&s_ExitButton, FontIcon::XMARK, 0, &Button, BUTTONFLAG_LEFT) || (Input()->KeyPress(KEY_C) && !GameClient()->m_GameConsole.IsActive() && m_DemoPlayerState == DEMOPLAYER_NONE))
 	{
 		Ui()->ClosePopupMenu(&m_DemoCameraEffectsPopupId);
-		Client()->Disconnect();
-		SetMenuPage(PAGE_DEMOS);
-		DemolistOnUpdate(false);
+		Client()->DemoPlayer_Stop();
+		if(Client()->State() != IClient::STATE_ONLINE)
+		{
+			SetMenuPage(PAGE_DEMOS);
+			DemolistOnUpdate(false);
+		}
 	}
 	GameClient()->m_Tooltips.DoToolTip(&s_ExitButton, &Button, Localize("Close the demo player"));
 
@@ -1650,8 +1653,8 @@ void CMenus::RenderDemoBrowserButtons(CUIRect ButtonsView, bool WasListboxItemAc
 			}
 			else // file
 			{
-				if(GameClient()->CurrentRaceTime() / 60 >= g_Config.m_ClConfirmDisconnectTime && g_Config.m_ClConfirmDisconnectTime >= 0)
-					PopupConfirm(Localize("Disconnect"), Localize("Are you sure that you want to disconnect and play this demo?"), Localize("Yes"), Localize("No"), &CMenus::PopupConfirmPlayDemo);
+				if(Client()->State() == IClient::STATE_ONLINE && GameClient()->CurrentRaceTime() / 60 >= g_Config.m_ClConfirmDisconnectTime && g_Config.m_ClConfirmDisconnectTime >= 0)
+					PopupConfirm(Localize("Play demo"), Localize("Watch this demo while staying connected to the server? Your tee will stay idle until you close the demo player."), Localize("Yes"), Localize("No"), &CMenus::PopupConfirmPlayDemo);
 				else
 					CMenus::PopupConfirmPlayDemo();
 				return;

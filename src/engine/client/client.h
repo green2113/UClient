@@ -212,6 +212,23 @@ class CClient : public IClient, public CDemoPlayer::IListener
 	CSnapshotStorage::CHolder m_aDemorecSnapshotHolders[NUM_SNAPSHOT_TYPES];
 	char m_aaaDemorecSnapshotData[NUM_SNAPSHOT_TYPES][2][CSnapshot::MAX_SIZE];
 
+	// Online session parked while watching a demo (socket kept alive).
+	bool m_DemoParkedOnline = false;
+	bool m_SuppressDemoConsoleLogs = false;
+	bool m_SkipSendInfoOnConnected = false;
+	bool m_ParkedDummyConnected = false;
+	bool m_ParkedSixup = false;
+	bool m_DemoPlaybackSixup = false;
+	char m_aParkedMapName[256] = "";
+	SHA256_DIGEST m_ParkedMapSha256{};
+	int m_ParkedMapCrc = 0;
+	CServerInfo m_ParkedServerInfo;
+	int m_aParkedPredTick[NUM_DUMMIES] = {0, 0};
+	int m_aParkedAckGameTick[NUM_DUMMIES] = {-1, -1};
+	int m_aParkedInputData[NUM_DUMMIES][MAX_INPUT_SIZE] = {};
+	int m_aParkedInputSize[NUM_DUMMIES] = {0, 0};
+	int64_t m_LastParkedKeepaliveTime = 0;
+
 	CSnapshotDelta m_SnapshotDelta;
 
 	std::deque<std::shared_ptr<CDemoEdit>> m_EditJobs;
@@ -489,6 +506,14 @@ public:
 	void RegisterCommands();
 
 	const char *DemoPlayer_Play(const char *pFilename, int StorageType) override;
+	void DemoPlayer_Stop() override;
+	bool IsDemoParkedOnline() const override { return m_DemoParkedOnline; }
+	bool ShouldSuppressDemoConsoleLog(const char *pSystem, const char *pMessage) const override;
+	bool ShouldSendInfoOnConnected() const override { return !m_SkipSendInfoOnConnected; }
+	void BeginParkedOnlineSession();
+	void FinishParkedDemoPlayback(bool RestoreLiveMap);
+	void SendParkedKeepaliveInput();
+	void RewireSnapshotsFromStorage();
 	void DemoRecorder_Start(const char *pFilename, bool WithTimestamp, int Recorder) override;
 	void DemoRecorder_HandleAutoStart() override;
 	void DemoRecorder_UpdateReplayRecorder() override;

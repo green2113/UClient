@@ -1,0 +1,1 @@
+ALTER TABLE rooms ADD COLUMN invite_code_public INTEGER NOT NULL DEFAULT 0;

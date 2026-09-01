@@ -28,6 +28,8 @@ interface RoomRow {
 	owner_install_id: string;
 	invite_code: string;
 	created_at: number;
+	name_color?: number;
+	invite_code_public?: number;
 }
 
 interface MemberRow {
@@ -35,6 +37,7 @@ interface MemberRow {
 	display_name: string;
 	role: string;
 	joined_at: number;
+	install_id?: string;
 }
 
 const JSON_HEADERS = {
@@ -273,25 +276,45 @@ function opaqueId(): string {
 	return base64Url(crypto.getRandomValues(new Uint8Array(18)));
 }
 
+async function membershipRole(env: Env, roomId: string, installId: string): Promise<string | null> {
+	const row = await env.DB.prepare(
+		"SELECT role FROM room_members WHERE room_id = ?1 AND install_id = ?2",
+	).bind(roomId, installId).first<{role: string}>();
+	return row?.role ?? null;
+}
+
 async function roomList(env: Env, installId: string): Promise<Response> {
 	const rooms = await env.DB.prepare(
-		`SELECT r.id, r.name, r.owner_install_id, r.invite_code, r.created_at
+		`SELECT r.id, r.name, r.owner_install_id, r.invite_code, r.created_at, r.name_color, r.invite_code_public, m.role AS viewer_role
 		 FROM rooms r JOIN room_members m ON m.room_id = r.id
 		 WHERE m.install_id = ?1 ORDER BY r.created_at ASC`,
-	).bind(installId).all<RoomRow>();
+	).bind(installId).all<RoomRow & {viewer_role: string}>();
 
 	const result = await Promise.all(rooms.results.map(async room => {
 		const members = await env.DB.prepare(
-			`SELECT member_id, display_name, role, joined_at
+			`SELECT member_id, display_name, role, joined_at, install_id
 			 FROM room_members WHERE room_id = ?1
-			 ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END, joined_at ASC`,
+			 ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, joined_at ASC`,
 		).bind(room.id).all<MemberRow>();
+		const isOwner = room.viewer_role === "owner";
+		const isAdmin = room.viewer_role === "admin";
+		const inviteCodePublic = (room.invite_code_public ?? 0) !== 0;
+		const canSeeInvite = isOwner || isAdmin || inviteCodePublic;
 		return {
 			id: room.id,
 			name: room.name,
-			invite_code: room.owner_install_id === installId ? room.invite_code : "",
-			is_owner: room.owner_install_id === installId,
-			members: members.results,
+			invite_code: canSeeInvite ? room.invite_code : "",
+			invite_code_public: inviteCodePublic,
+			name_color: room.name_color ?? 0,
+			is_owner: isOwner,
+			is_admin: isAdmin,
+			members: members.results.map(member => ({
+				member_id: member.member_id,
+				display_name: member.display_name,
+				role: member.role,
+				joined_at: member.joined_at,
+				is_self: member.install_id === installId,
+			})),
 		};
 	}));
 	return json({rooms: result});
@@ -333,7 +356,7 @@ async function createRoom(request: Request, env: Env, installId: string, ctx: Ex
 		try {
 			await env.DB.batch([
 				env.DB.prepare(
-					"INSERT INTO rooms(id, name, owner_install_id, invite_code, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+					"INSERT INTO rooms(id, name, owner_install_id, invite_code, created_at, name_color, invite_code_public) VALUES (?1, ?2, ?3, ?4, ?5, 0, 0)",
 				).bind(roomId, input.name.trim(), installId, inviteCode, now),
 				env.DB.prepare(
 					`INSERT INTO room_members(room_id, install_id, member_id, display_name, role, joined_at)
@@ -360,13 +383,34 @@ async function roomForOwner(env: Env, roomId: string, installId: string): Promis
 async function renameRoom(request: Request, env: Env, roomId: string, installId: string, ctx: ExecutionContext): Promise<Response> {
 	if(!ROOM_ID_RE.test(roomId))
 		return error(404, "room_not_found", "Room not found.");
-	const input = await readJson<{name?: string}>(request);
-	if(!input || !validText(input.name, 1, 48))
+	const input = await readJson<{name?: string; name_color?: number; invite_code_public?: boolean}>(request);
+	if(!input)
+		return error(400, "invalid_request", "A valid room update is required.");
+	const hasName = Object.prototype.hasOwnProperty.call(input, "name");
+	const hasColor = Object.prototype.hasOwnProperty.call(input, "name_color");
+	const hasInvitePublic = Object.prototype.hasOwnProperty.call(input, "invite_code_public");
+	if(!hasName && !hasColor && !hasInvitePublic)
+		return error(400, "invalid_request", "A valid room update is required.");
+	if(hasName && !validText(input.name, 1, 48))
 		return error(400, "invalid_request", "A valid room name is required.");
-	if(!await roomForOwner(env, roomId, installId))
-		return error(403, "owner_required", "Only the room owner can rename this room.");
+	if(hasColor && (!Number.isInteger(input.name_color) || (input.name_color as number) < 0 || (input.name_color as number) > 0xffffffff))
+		return error(400, "invalid_request", "A valid room name color is required.");
+	if(hasInvitePublic && typeof input.invite_code_public !== "boolean")
+		return error(400, "invalid_request", "invite_code_public must be a boolean.");
+
+	const role = await membershipRole(env, roomId, installId);
+	if(role !== "owner" && role !== "admin")
+		return error(403, "permission_denied", "Only the room owner or an admin can update this room.");
+	if((hasColor || hasInvitePublic) && role !== "owner")
+		return error(403, "owner_required", "Only the room owner can change that setting.");
+
 	const now = Math.floor(Date.now() / 1000);
-	await env.DB.prepare("UPDATE rooms SET name = ?2 WHERE id = ?1").bind(roomId, input.name.trim()).run();
+	if(hasName)
+		await env.DB.prepare("UPDATE rooms SET name = ?2 WHERE id = ?1").bind(roomId, input.name!.trim()).run();
+	if(hasColor)
+		await env.DB.prepare("UPDATE rooms SET name_color = ?2 WHERE id = ?1").bind(roomId, input.name_color).run();
+	if(hasInvitePublic)
+		await env.DB.prepare("UPDATE rooms SET invite_code_public = ?2 WHERE id = ?1").bind(roomId, input.invite_code_public ? 1 : 0).run();
 	await markRoomChanged(env, roomId, now);
 	ctx.waitUntil(invalidateRelay(env, roomId));
 	return json({ok: true});
@@ -387,6 +431,64 @@ async function regenerateInvite(env: Env, roomId: string, installId: string): Pr
 		}
 	}
 	return error(500, "invite_create_failed", "The invite code could not be regenerated.");
+}
+
+async function transferOwnership(request: Request, env: Env, roomId: string, installId: string, ctx: ExecutionContext): Promise<Response> {
+	if(!ROOM_ID_RE.test(roomId))
+		return error(404, "room_not_found", "Room not found.");
+	const input = await readJson<{member_id?: string}>(request);
+	if(!input || !validText(input.member_id, 20, 64) || !MEMBER_ID_RE.test(input.member_id))
+		return error(400, "invalid_request", "A valid member id is required.");
+	if(!await roomForOwner(env, roomId, installId))
+		return error(403, "owner_required", "Only the room owner can transfer ownership.");
+
+	const target = await env.DB.prepare(
+		"SELECT install_id, role FROM room_members WHERE room_id = ?1 AND member_id = ?2",
+	).bind(roomId, input.member_id).first<{install_id: string; role: string}>();
+	if(!target)
+		return error(404, "member_not_found", "Room member not found.");
+	if(target.role === "owner")
+		return error(400, "already_owner", "That member is already the room owner.");
+
+	const ownedRooms = await env.DB.prepare("SELECT COUNT(*) AS count FROM rooms WHERE owner_install_id = ?1")
+		.bind(target.install_id).first<{count: number}>();
+	if((ownedRooms?.count ?? 0) >= MAX_OWNED_ROOMS)
+		return error(409, "room_limit_reached", "That member already owns the maximum number of chat rooms.");
+
+	const now = Math.floor(Date.now() / 1000);
+	await env.DB.batch([
+		env.DB.prepare("UPDATE rooms SET owner_install_id = ?2 WHERE id = ?1").bind(roomId, target.install_id),
+		env.DB.prepare("UPDATE room_members SET role = 'member' WHERE room_id = ?1 AND install_id = ?2").bind(roomId, installId),
+		env.DB.prepare("UPDATE room_members SET role = 'owner' WHERE room_id = ?1 AND member_id = ?2").bind(roomId, input.member_id),
+	]);
+	await markRoomChanged(env, roomId, now);
+	ctx.waitUntil(invalidateRelay(env, roomId));
+	return json({ok: true});
+}
+
+async function setMemberRole(request: Request, env: Env, roomId: string, memberId: string, installId: string, ctx: ExecutionContext): Promise<Response> {
+	if(!ROOM_ID_RE.test(roomId) || !MEMBER_ID_RE.test(memberId))
+		return error(404, "not_found", "Room or member not found.");
+	const input = await readJson<{role?: string}>(request);
+	if(!input || (input.role !== "admin" && input.role !== "member"))
+		return error(400, "invalid_request", "Role must be admin or member.");
+	if(!await roomForOwner(env, roomId, installId))
+		return error(403, "owner_required", "Only the room owner can change admin status.");
+
+	const target = await env.DB.prepare(
+		"SELECT role FROM room_members WHERE room_id = ?1 AND member_id = ?2",
+	).bind(roomId, memberId).first<{role: string}>();
+	if(!target)
+		return error(404, "member_not_found", "Room member not found.");
+	if(target.role === "owner")
+		return error(400, "cannot_change_owner_role", "The room owner role cannot be changed this way.");
+
+	const now = Math.floor(Date.now() / 1000);
+	await env.DB.prepare("UPDATE room_members SET role = ?3 WHERE room_id = ?1 AND member_id = ?2")
+		.bind(roomId, memberId, input.role).run();
+	await markRoomChanged(env, roomId, now);
+	ctx.waitUntil(invalidateRelay(env, roomId));
+	return json({ok: true, role: input.role});
 }
 
 async function joinRoom(request: Request, env: Env, installId: string, ctx: ExecutionContext): Promise<Response> {
@@ -412,14 +514,19 @@ async function joinRoom(request: Request, env: Env, installId: string, ctx: Exec
 }
 
 async function kickMember(env: Env, roomId: string, memberId: string, installId: string, ctx: ExecutionContext): Promise<Response> {
-	if(!MEMBER_ID_RE.test(memberId) || !await roomForOwner(env, roomId, installId))
-		return error(403, "owner_required", "Only the room owner can remove members.");
+	if(!MEMBER_ID_RE.test(memberId))
+		return error(403, "permission_denied", "You do not have permission to remove members.");
+	const actorRole = await membershipRole(env, roomId, installId);
+	if(actorRole !== "owner" && actorRole !== "admin")
+		return error(403, "permission_denied", "Only the room owner or an admin can remove members.");
 	const member = await env.DB.prepare("SELECT role FROM room_members WHERE room_id = ?1 AND member_id = ?2")
 		.bind(roomId, memberId).first<{role: string}>();
 	if(!member)
 		return error(404, "member_not_found", "Room member not found.");
 	if(member.role === "owner")
 		return error(400, "cannot_remove_owner", "The room owner cannot be removed.");
+	if(actorRole === "admin" && member.role === "admin")
+		return error(403, "permission_denied", "Admins cannot remove other admins.");
 	await env.DB.prepare("DELETE FROM room_members WHERE room_id = ?1 AND member_id = ?2").bind(roomId, memberId).run();
 	await markRoomChanged(env, roomId, Math.floor(Date.now() / 1000));
 	ctx.waitUntil(invalidateRelay(env, roomId));
@@ -509,6 +616,10 @@ async function handleRooms(request: Request, env: Env, ctx: ExecutionContext, se
 		return renameRoom(request, env, segments[1]!, authenticated.installId, ctx);
 	if(segments.length === 3 && segments[2] === "invite-code" && method === "POST")
 		return regenerateInvite(env, segments[1]!, authenticated.installId);
+	if(segments.length === 3 && segments[2] === "transfer" && method === "POST")
+		return transferOwnership(request, env, segments[1]!, authenticated.installId, ctx);
+	if(segments.length === 5 && segments[2] === "members" && segments[4] === "role" && method === "POST")
+		return setMemberRole(request, env, segments[1]!, segments[3]!, authenticated.installId, ctx);
 	if(segments.length === 4 && segments[2] === "members" && segments[3] === "me" && method === "DELETE")
 		return leaveRoom(env, segments[1]!, authenticated.installId, ctx);
 	if(segments.length === 4 && segments[2] === "members" && method === "DELETE")

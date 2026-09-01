@@ -760,8 +760,32 @@ protected:
 	void FriendlistOnUpdate();
 	void PopupConfirmRemoveFriend();
 	void PopupConfirmUClientRoomAction();
+	enum class EUClientRoomPendingAction
+	{
+		LEAVE_OR_DELETE,
+		KICK,
+		PASS_OWNER,
+		GIVE_ADMIN,
+		REMOVE_ADMIN,
+	};
 	char m_aPendingUClientRoomId[64] = "";
 	char m_aPendingUClientRoomMemberId[64] = "";
+	EUClientRoomPendingAction m_PendingUClientRoomAction = EUClientRoomPendingAction::LEAVE_OR_DELETE;
+	struct SUClientRoomMemberMenuContext
+	{
+		CMenus *m_pMenus = nullptr;
+		char m_aRoomId[64] = "";
+		char m_aMemberId[64] = "";
+		char m_aDisplayName[64] = "";
+		bool m_CanPassOwner = false;
+		bool m_CanToggleAdmin = false;
+		bool m_TargetIsAdmin = false;
+		bool m_CanKick = false;
+		CButtonContainer m_aButtons[4];
+	};
+	static CUi::EPopupMenuFunctionResult PopupUClientRoomMemberMenu(void *pContext, CUIRect View, bool Active);
+	SUClientRoomMemberMenuContext m_UClientRoomMemberMenu;
+	SPopupMenuId m_UClientRoomMemberMenuId;
 	void RenderServerbrowserTabBar(CUIRect TabBar);
 	void RenderServerbrowserToolBox(CUIRect ToolBox);
 	void RenderServerbrowser(CUIRect MainView);

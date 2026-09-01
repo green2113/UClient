@@ -95,6 +95,20 @@ const char *CUClientChatRooms::RoomNameById(const char *pRoomId) const
 	return nullptr;
 }
 
+ColorRGBA CUClientChatRooms::RoomNameColorById(const char *pRoomId) const
+{
+	for(const SRoom &Room : m_vRooms)
+	{
+		if(!str_comp(Room.m_aId, pRoomId))
+		{
+			if(Room.m_NameColor != 0)
+				return color_cast<ColorRGBA>(ColorHSLA(Room.m_NameColor, false));
+			break;
+		}
+	}
+	return DefaultNameColor();
+}
+
 void CUClientChatRooms::SelectSendRoom(const char *pRoomId)
 {
 	str_copy(g_Config.m_UcChatSendRoom, pRoomId ? pRoomId : "", sizeof(g_Config.m_UcChatSendRoom));
@@ -187,12 +201,40 @@ bool CUClientChatRooms::Create(const char *pName, const char *pDisplayName)
 
 void CUClientChatRooms::Rename(const char *pRoomId, const char *pName)
 {
-	const std::string Name = JsonEscape(pName);
+	UpdateSettings(pRoomId, pName, true, 0, false, false, false);
+}
+
+void CUClientChatRooms::UpdateSettings(const char *pRoomId, const char *pName, bool HasName, unsigned NameColor, bool HasColor, bool InviteCodePublic, bool HasInviteCodePublic)
+{
+	if(!HasName && !HasColor && !HasInviteCodePublic)
+		return;
 	char aPath[160];
 	str_format(aPath, sizeof(aPath), "/rooms/%s", pRoomId);
-	char aJson[192];
-	str_format(aJson, sizeof(aJson), "{\"name\":\"%s\"}", Name.c_str());
-	BeginJsonPost(aPath, aJson);
+
+	std::string Json = "{";
+	bool First = true;
+	auto AppendField = [&](const char *pField) {
+		if(!First)
+			Json += ",";
+		First = false;
+		Json += pField;
+	};
+	if(HasName)
+	{
+		char aBuf[192];
+		str_format(aBuf, sizeof(aBuf), "\"name\":\"%s\"", JsonEscape(pName).c_str());
+		AppendField(aBuf);
+	}
+	if(HasColor)
+	{
+		char aBuf[64];
+		str_format(aBuf, sizeof(aBuf), "\"name_color\":%u", NameColor);
+		AppendField(aBuf);
+	}
+	if(HasInviteCodePublic)
+		AppendField(InviteCodePublic ? "\"invite_code_public\":true" : "\"invite_code_public\":false");
+	Json += "}";
+	BeginJsonPost(aPath, Json.c_str());
 }
 
 void CUClientChatRooms::RegenerateCode(const char *pRoomId)
@@ -237,6 +279,25 @@ void CUClientChatRooms::Leave(const char *pRoomId)
 	char aPath[192];
 	str_format(aPath, sizeof(aPath), "/rooms/%s/members/me", pRoomId);
 	BeginDelete(aPath);
+}
+
+void CUClientChatRooms::TransferOwnership(const char *pRoomId, const char *pMemberId)
+{
+	char aPath[192];
+	str_format(aPath, sizeof(aPath), "/rooms/%s/transfer", pRoomId);
+	const std::string MemberId = JsonEscape(pMemberId);
+	char aJson[192];
+	str_format(aJson, sizeof(aJson), "{\"member_id\":\"%s\"}", MemberId.c_str());
+	BeginJsonPost(aPath, aJson);
+}
+
+void CUClientChatRooms::SetMemberAdmin(const char *pRoomId, const char *pMemberId, bool Admin)
+{
+	char aPath[256];
+	str_format(aPath, sizeof(aPath), "/rooms/%s/members/%s/role", pRoomId, pMemberId);
+	char aJson[64];
+	str_format(aJson, sizeof(aJson), "{\"role\":\"%s\"}", Admin ? "admin" : "member");
+	BeginJsonPost(aPath, aJson);
 }
 
 void CUClientChatRooms::Finish()
@@ -284,6 +345,15 @@ void CUClientChatRooms::ParseRooms(const json_value *pRoot)
 		str_copy(Room.m_aName, JsonString(pRoom, "name"), sizeof(Room.m_aName));
 		str_copy(Room.m_aInviteCode, JsonString(pRoom, "invite_code"), sizeof(Room.m_aInviteCode));
 		Room.m_Owner = JsonBool(pRoom, "is_owner");
+		Room.m_Admin = JsonBool(pRoom, "is_admin");
+		Room.m_InviteCodePublic = JsonBool(pRoom, "invite_code_public");
+		const json_value *pNameColor = json_object_get(pRoom, "name_color");
+		if(pNameColor && pNameColor->type == json_integer)
+			Room.m_NameColor = (unsigned)pNameColor->u.integer;
+		else if(pNameColor && pNameColor->type == json_double)
+			Room.m_NameColor = (unsigned)pNameColor->u.dbl;
+		else
+			Room.m_NameColor = 0;
 		const json_value *pMembers = json_object_get(pRoom, "members");
 		if(pMembers && pMembers->type == json_array)
 		{
@@ -295,7 +365,10 @@ void CUClientChatRooms::ParseRooms(const json_value *pRoot)
 				SMember Member;
 				str_copy(Member.m_aId, JsonString(pMember, "member_id"), sizeof(Member.m_aId));
 				str_copy(Member.m_aDisplayName, JsonString(pMember, "display_name"), sizeof(Member.m_aDisplayName));
-				Member.m_Owner = !str_comp(JsonString(pMember, "role"), "owner");
+				const char *pRole = JsonString(pMember, "role");
+				Member.m_Owner = !str_comp(pRole, "owner");
+				Member.m_Admin = !str_comp(pRole, "admin");
+				Member.m_Self = JsonBool(pMember, "is_self");
 				Room.m_vMembers.push_back(Member);
 			}
 		}
@@ -303,6 +376,7 @@ void CUClientChatRooms::ParseRooms(const json_value *pRoot)
 			vRooms.push_back(std::move(Room));
 	}
 	m_vRooms = std::move(vRooms);
+	GameClient()->m_Chat.RebuildChat();
 	if(g_Config.m_UcChatSendRoom[0] && !RoomNameById(g_Config.m_UcChatSendRoom))
 		SelectSendRoom("");
 	if(g_Config.m_UcServerJoinSendRoom[0] && !RoomNameById(g_Config.m_UcServerJoinSendRoom))

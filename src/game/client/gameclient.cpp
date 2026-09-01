@@ -1003,7 +1003,7 @@ void CGameClient::OnConnected()
 	ConfigManager()->ResetGameSettings();
 	LoadMapSettings();
 
-	if(Client()->State() != IClient::STATE_DEMOPLAYBACK)
+	if(Client()->State() != IClient::STATE_DEMOPLAYBACK && Client()->ShouldSendInfoOnConnected())
 	{
 		Client()->SetLoadingStateDetail(IClient::LOADING_STATE_DETAIL_GETTING_READY);
 		m_Menus.RenderLoading(pConnectCaption, Localize("Sending initial client info"), 0);
@@ -2194,6 +2194,9 @@ void CGameClient::ProcessDemoSnapshot(CSnapshot *pSnap)
 		else if(ItemType == NETOBJTYPE_DDNETSPECTATORINFO)
 		{
 			// always record local camera info as follow mode
+			// Skip while a parked demo is displayed — camera is the demo view, not the live session.
+			if(Client()->IsDemoParkedOnline())
+				continue;
 			CNetObj_DDNetSpectatorInfo *pDDNetSpectatorInfo = (CNetObj_DDNetSpectatorInfo *)((void *)pItem->Data());
 			pDDNetSpectatorInfo->m_HasCameraInfo = true;
 			pDDNetSpectatorInfo->m_Zoom = (m_Camera.m_Zooming ? m_Camera.m_ZoomSmoothingTarget : m_Camera.m_Zoom) * 1000.0f;

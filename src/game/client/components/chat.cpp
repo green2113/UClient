@@ -5214,7 +5214,10 @@ void CChat::RenderTextLine(CLine &Line, float y, float FontSize, float LineWidth
 	{
 		char aRoomLabel[72];
 		str_format(aRoomLabel, sizeof(aRoomLabel), "[%s] ", Line.m_aUClientRoomName);
-		TextRender()->TextColor(ColorRGBA(0.55f, 0.78f, 1.0f, Blend));
+		ColorRGBA RoomColor = CUClientChatRooms::DefaultNameColor().WithAlpha(Blend);
+		if(Line.m_aUClientRoomId[0])
+			RoomColor = GameClient()->m_UClientChatRooms.RoomNameColorById(Line.m_aUClientRoomId).WithAlpha(Blend);
+		TextRender()->TextColor(RoomColor);
 		TextRender()->TextEx(&LineCursor, aRoomLabel);
 	}
 
@@ -8304,7 +8307,10 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 
 		if(aRoomLabel[0])
 		{
-			TextRender()->TextColor(ColorRGBA(0.55f, 0.78f, 1.0f, 1.0f));
+			ColorRGBA RoomColor = CUClientChatRooms::DefaultNameColor();
+			if(Line.m_aUClientRoomId[0])
+				RoomColor = GameClient()->m_UClientChatRooms.RoomNameColorById(Line.m_aUClientRoomId);
+			TextRender()->TextColor(RoomColor);
 			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &LineCursor, aRoomLabel);
 		}
 

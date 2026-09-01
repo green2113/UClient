@@ -20,7 +20,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <string>
 #include <vector>
+
+#include <game/client/components/uclient/chat_rooms.h>
 
 void CMenus::PopupConfirmPasteImageFromChat()
 {
@@ -601,7 +605,6 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 		static CLineInputBuffered<64> s_CreateRoomInput;
 		static CLineInputBuffered<40> s_JoinRoomInput;
 		static CLineInputBuffered<64> s_RenameRoomInput;
-		static char s_aRenameRoomId[64] = "";
 		static CButtonContainer s_CreateButton, s_JoinButton, s_RefreshButton;
 		int OwnedRoomCount = 0;
 		for(const auto &Room : vRooms)
@@ -663,21 +666,33 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			Page.HSplitTop(MarginBetweenSections, nullptr, &Page);
 		}
 
-		static std::vector<CButtonContainer> s_vSelectButtons;
+		static std::vector<CButtonContainer> s_vExpandButtons;
+		static std::vector<CButtonContainer> s_vSettingsButtons;
 		static std::vector<CButtonContainer> s_vLeaveButtons;
 		static std::vector<CButtonContainer> s_vCopyButtons;
 		static std::vector<CButtonContainer> s_vRegenerateButtons;
-		static std::vector<CButtonContainer> s_vRenameButtons;
-		static std::vector<CButtonContainer> s_vKickButtons;
-		s_vSelectButtons.resize(vRooms.size());
+		static std::vector<CButtonContainer> s_vInvitePublicButtons;
+		static std::vector<CButtonContainer> s_vSaveSettingsButtons;
+		static std::vector<CButtonContainer> s_vCancelSettingsButtons;
+		static std::vector<CButtonContainer> s_vMemberMenuButtons;
+		static std::vector<CButtonContainer> s_vRoomColorResetButtons;
+		static std::map<std::string, bool> s_RoomExpanded;
+		static char s_aSettingsRoomId[64] = "";
+		static unsigned s_SettingsNameColor = 0;
+		static bool s_SettingsInvitePublic = false;
+		s_vExpandButtons.resize(vRooms.size());
+		s_vSettingsButtons.resize(vRooms.size());
 		s_vLeaveButtons.resize(vRooms.size());
 		s_vCopyButtons.resize(vRooms.size());
 		s_vRegenerateButtons.resize(vRooms.size());
-		s_vRenameButtons.resize(vRooms.size());
+		s_vInvitePublicButtons.resize(vRooms.size());
+		s_vSaveSettingsButtons.resize(vRooms.size());
+		s_vCancelSettingsButtons.resize(vRooms.size());
+		s_vRoomColorResetButtons.resize(vRooms.size());
 		size_t MemberCount = 0;
 		for(const auto &Room : vRooms)
 			MemberCount += Room.m_vMembers.size();
-		s_vKickButtons.resize(MemberCount);
+		s_vMemberMenuButtons.resize(MemberCount);
 		size_t MemberButtonIndex = 0;
 
 		if(vRooms.empty())
@@ -692,44 +707,121 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 		for(size_t RoomIndex = 0; RoomIndex < vRooms.size(); ++RoomIndex)
 		{
 			const auto &Room = vRooms[RoomIndex];
-			const int MemberRows = maximum(1, (int)Room.m_vMembers.size());
-			const float OwnerRowsHeight = Room.m_Owner ? 46.0f : 0.0f;
-			const float RoomHeight = 24.0f + 8.0f + OwnerRowsHeight + 20.0f + MemberRows * 24.0f;
-			CUIRect Content, Header, MembersTitle;
+			auto ExpandedIt = s_RoomExpanded.find(Room.m_aId);
+			if(ExpandedIt == s_RoomExpanded.end())
+				ExpandedIt = s_RoomExpanded.emplace(Room.m_aId, true).first;
+			bool &Expanded = ExpandedIt->second;
+
+			const bool SettingsMode = !str_comp(s_aSettingsRoomId, Room.m_aId);
+			const bool CanManageRoom = Room.m_Owner || Room.m_Admin;
+			const bool CanSeeInvite = Room.m_aInviteCode[0] != '\0';
+			const char *pRoleLabel = Room.m_Owner ? Localize("Owner") : (Room.m_Admin ? Localize("Admin") : Localize("Member"));
+
+			float RoomHeight = 24.0f;
+			if(Expanded)
+			{
+				RoomHeight += 8.0f;
+				if(CanSeeInvite)
+					RoomHeight += LineSize + (SettingsMode ? 0.0f : 6.0f);
+				if(SettingsMode)
+				{
+					RoomHeight += 6.0f + LineSize; // rename
+					if(Room.m_Owner)
+						RoomHeight += ColorPickerLineSpacing + ColorPickerLineSize + ColorPickerLineSpacing; // gap + color
+					RoomHeight += 8.0f + LineSize; // save/cancel
+				}
+				else
+				{
+					const int MemberRows = maximum(1, (int)Room.m_vMembers.size());
+					RoomHeight += LineSize + MemberRows * 24.0f;
+				}
+			}
+
+			CUIRect Content, Header;
 			BeginBlock(Page, RoomHeight, Content);
 
 			Content.HSplitTop(24.0f, &Header, &Content);
-			CUIRect HeaderText, SelectButton, LeaveButton;
+			CUIRect HeaderText, LeaveButton, SettingsButton, ExpandIcon;
 			Header.VSplitRight(76.0f, &HeaderText, &LeaveButton);
 			HeaderText.VSplitRight(8.0f, &HeaderText, nullptr);
-			HeaderText.VSplitRight(88.0f, &HeaderText, &SelectButton);
-			HeaderText.VSplitRight(8.0f, &HeaderText, nullptr);
+			if(CanManageRoom)
+			{
+				HeaderText.VSplitRight(28.0f, &HeaderText, &SettingsButton);
+				HeaderText.VSplitRight(8.0f, &HeaderText, nullptr);
+			}
+			HeaderText.VSplitRight(20.0f, &HeaderText, &ExpandIcon);
+			HeaderText.VSplitRight(6.0f, &HeaderText, nullptr);
+
+			CUIRect ExpandHit = HeaderText;
+			ExpandHit.w += ExpandIcon.w + 6.0f;
+			if(Ui()->DoButtonLogic(&s_vExpandButtons[RoomIndex], 0, &ExpandHit, BUTTONFLAG_LEFT))
+				Expanded = !Expanded;
+
+			{
+				SLabelProperties Props;
+				Props.SetColor(ColorRGBA(1.0f, 1.0f, 1.0f, 0.65f * Ui()->ButtonColorMul(&s_vExpandButtons[RoomIndex])));
+				Props.m_EnableWidthCheck = false;
+				TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+				TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
+				Ui()->DoLabel(&ExpandIcon, Expanded ? FontIcon::CHEVRON_UP : FontIcon::CHEVRON_DOWN, 14.0f, TEXTALIGN_MR, Props);
+				TextRender()->SetRenderFlags(0);
+				TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+			}
+
 			char aRoomTitle[160];
-			str_format(aRoomTitle, sizeof(aRoomTitle), "%s  ·  %s", Room.m_aName, Room.m_Owner ? Localize("Owner") : Localize("Member"));
+			str_format(aRoomTitle, sizeof(aRoomTitle), "%s  ·  %s", Room.m_aName, pRoleLabel);
 			Ui()->DoLabel(&HeaderText, aRoomTitle, 14.0f, TEXTALIGN_ML, {.m_MaxWidth = HeaderText.w});
-			const bool Selected = !str_comp(g_Config.m_UcChatSendRoom, Room.m_aId);
-			if(DoButton_Menu(&s_vSelectButtons[RoomIndex], Selected ? Localize("Selected") : Localize("Select"), Selected, &SelectButton))
-				GameClient()->m_UClientChatRooms.SelectSendRoom(Room.m_aId);
+
+			if(CanManageRoom)
+			{
+				if(Ui()->DoButton_FontIcon(&s_vSettingsButtons[RoomIndex], FontIcon::GEAR, SettingsMode ? 1 : 0, &SettingsButton, BUTTONFLAG_LEFT))
+				{
+					if(SettingsMode)
+						s_aSettingsRoomId[0] = '\0';
+					else
+					{
+						str_copy(s_aSettingsRoomId, Room.m_aId, sizeof(s_aSettingsRoomId));
+						s_RenameRoomInput.Set(Room.m_aName);
+						s_SettingsNameColor = Room.m_NameColor != 0 ? Room.m_NameColor : color_cast<ColorHSLA>(CUClientChatRooms::DefaultNameColor()).Pack(false);
+						s_SettingsInvitePublic = Room.m_InviteCodePublic;
+						Expanded = true;
+					}
+				}
+			}
+
 			if(DoButton_Menu(&s_vLeaveButtons[RoomIndex], Room.m_Owner ? Localize("Delete") : Localize("Leave"), 0, &LeaveButton))
 			{
 				str_copy(m_aPendingUClientRoomId, Room.m_aId, sizeof(m_aPendingUClientRoomId));
 				m_aPendingUClientRoomMemberId[0] = '\0';
+				m_PendingUClientRoomAction = EUClientRoomPendingAction::LEAVE_OR_DELETE;
 				PopupConfirm(Room.m_Owner ? Localize("Delete room") : Localize("Leave room"),
 					Room.m_Owner ? Localize("Are you sure you want to delete this room?") : Localize("Are you sure you want to leave this room?"),
 					Room.m_Owner ? Localize("Delete") : Localize("Leave"), Localize("Cancel"),
 					&CMenus::PopupConfirmUClientRoomAction);
 			}
+
+			if(!Expanded)
+			{
+				Page.HSplitTop(MarginBetweenSections, nullptr, &Page);
+				continue;
+			}
+
 			Content.HSplitTop(8.0f, nullptr, &Content);
 
-			if(Room.m_Owner)
+			if(CanSeeInvite)
 			{
-				CUIRect InviteRow, RenameRow;
+				CUIRect InviteRow;
 				Content.HSplitTop(LineSize, &InviteRow, &Content);
-				CUIRect InviteLabel, InviteCode, CopyButton, RegenerateButton;
+				CUIRect InviteLabel, InviteCode, CopyButton, RegenerateButton, EyeButton;
 				InviteRow.VSplitLeft(80.0f, &InviteLabel, &InviteRow);
 				Ui()->DoLabel(&InviteLabel, Localize("Invite code"), 11.0f, TEXTALIGN_ML);
-				InviteRow.VSplitRight(94.0f, &InviteRow, &RegenerateButton);
-				InviteRow.VSplitRight(8.0f, &InviteRow, nullptr);
+				if(SettingsMode && Room.m_Owner)
+				{
+					InviteRow.VSplitRight(28.0f, &InviteRow, &EyeButton);
+					InviteRow.VSplitRight(8.0f, &InviteRow, nullptr);
+					InviteRow.VSplitRight(94.0f, &InviteRow, &RegenerateButton);
+					InviteRow.VSplitRight(8.0f, &InviteRow, nullptr);
+				}
 				InviteRow.VSplitRight(64.0f, &InviteRow, &CopyButton);
 				InviteRow.VSplitRight(8.0f, &InviteCode, nullptr);
 				InviteCode.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.22f), IGraphics::CORNER_ALL, 5.0f);
@@ -737,78 +829,124 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 				Ui()->DoLabel(&InviteCode, Room.m_aInviteCode, 12.0f, TEXTALIGN_ML);
 				if(DoButton_Menu(&s_vCopyButtons[RoomIndex], Localize("Copy"), 0, &CopyButton))
 					Input()->SetClipboardText(Room.m_aInviteCode);
-				if(DoButton_Menu(&s_vRegenerateButtons[RoomIndex], Localize("New code"), 0, &RegenerateButton))
-					GameClient()->m_UClientChatRooms.RegenerateCode(Room.m_aId);
-
-				Content.HSplitTop(6.0f, nullptr, &Content);
-				Content.HSplitTop(LineSize, &RenameRow, &Content);
-				CUIRect RenameLabel, RenameValue, RenameButton;
-				RenameRow.VSplitLeft(80.0f, &RenameLabel, &RenameRow);
-				Ui()->DoLabel(&RenameLabel, Localize("Room name"), 11.0f, TEXTALIGN_ML);
-				RenameRow.VSplitRight(76.0f, &RenameValue, &RenameButton);
-				RenameValue.VSplitRight(8.0f, &RenameValue, nullptr);
-				if(!str_comp(s_aRenameRoomId, Room.m_aId))
+				if(SettingsMode && Room.m_Owner)
 				{
-					Ui()->DoClearableEditBox(&s_RenameRoomInput, &RenameValue, EditBoxFontSize);
-					if(DoButton_Menu(&s_vRenameButtons[RoomIndex], Localize("Save"), 0, &RenameButton) && s_RenameRoomInput.GetString()[0])
+					if(DoButton_Menu(&s_vRegenerateButtons[RoomIndex], Localize("New code"), 0, &RegenerateButton))
+						GameClient()->m_UClientChatRooms.RegenerateCode(Room.m_aId);
+					if(Ui()->DoButton_FontIcon(&s_vInvitePublicButtons[RoomIndex],
+						   s_SettingsInvitePublic ? FontIcon::EYE : FontIcon::EYE_SLASH,
+						   s_SettingsInvitePublic ? 1 : 0, &EyeButton, BUTTONFLAG_LEFT))
 					{
-						GameClient()->m_UClientChatRooms.Rename(Room.m_aId, s_RenameRoomInput.GetString());
-						s_aRenameRoomId[0] = '\0';
-						s_RenameRoomInput.Set("");
-					}
-				}
-				else
-				{
-					Ui()->DoLabel(&RenameValue, Room.m_aName, 12.0f, TEXTALIGN_ML, {.m_MaxWidth = RenameValue.w});
-					if(DoButton_Menu(&s_vRenameButtons[RoomIndex], Localize("Rename"), 0, &RenameButton))
-					{
-						str_copy(s_aRenameRoomId, Room.m_aId, sizeof(s_aRenameRoomId));
-						s_RenameRoomInput.Set(Room.m_aName);
+						s_SettingsInvitePublic = !s_SettingsInvitePublic;
 					}
 				}
 			}
 
-			Content.HSplitTop(LineSize, &MembersTitle, &Content);
-			char aMembersTitle[64];
-			str_format(aMembersTitle, sizeof(aMembersTitle), Localize("Members (%d)"), (int)Room.m_vMembers.size());
-			Ui()->DoLabel(&MembersTitle, aMembersTitle, 12.0f, TEXTALIGN_ML);
-
-			if(Room.m_vMembers.empty())
+			if(SettingsMode)
 			{
-				CUIRect EmptyMemberRow;
-				Content.HSplitTop(24.0f, &EmptyMemberRow, &Content);
-				Ui()->DoLabel(&EmptyMemberRow, Localize("No members"), 11.0f, TEXTALIGN_ML);
+				CUIRect RenameRow, ActionRow;
+				Content.HSplitTop(6.0f, nullptr, &Content);
+				Content.HSplitTop(LineSize, &RenameRow, &Content);
+				CUIRect RenameLabel, RenameValue;
+				RenameRow.VSplitLeft(80.0f, &RenameLabel, &RenameValue);
+				Ui()->DoLabel(&RenameLabel, Localize("Room name"), 11.0f, TEXTALIGN_ML);
+				Ui()->DoClearableEditBox(&s_RenameRoomInput, &RenameValue, EditBoxFontSize);
+
+				if(Room.m_Owner)
+				{
+					// Same spacing as consecutive scoreboard color pickers (Display > HUD).
+					Content.HSplitTop(ColorPickerLineSpacing, nullptr, &Content);
+					DoLine_ColorPicker(&s_vRoomColorResetButtons[RoomIndex], ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &Content,
+						Localize("Room color"), &s_SettingsNameColor, CUClientChatRooms::DefaultNameColor(), false);
+				}
+
+				Content.HSplitTop(8.0f, nullptr, &Content);
+				Content.HSplitTop(LineSize, &ActionRow, &Content);
+				CUIRect SaveButton, CancelButton;
+				ActionRow.VSplitRight(76.0f, &ActionRow, &SaveButton);
+				ActionRow.VSplitRight(8.0f, &ActionRow, nullptr);
+				ActionRow.VSplitRight(76.0f, &ActionRow, &CancelButton);
+				if(DoButton_Menu(&s_vCancelSettingsButtons[RoomIndex], Localize("Cancel"), 0, &CancelButton))
+					s_aSettingsRoomId[0] = '\0';
+				if(DoButton_Menu(&s_vSaveSettingsButtons[RoomIndex], Localize("Save"), 0, &SaveButton))
+				{
+					const char *pNewName = s_RenameRoomInput.GetString();
+					const bool NameChanged = pNewName[0] && str_comp(pNewName, Room.m_aName) != 0;
+					const unsigned DefaultPacked = color_cast<ColorHSLA>(CUClientChatRooms::DefaultNameColor()).Pack(false);
+					const unsigned DesiredColor = s_SettingsNameColor == DefaultPacked ? 0 : s_SettingsNameColor;
+					const bool ColorChanged = Room.m_Owner && DesiredColor != Room.m_NameColor;
+					const bool InvitePublicChanged = Room.m_Owner && s_SettingsInvitePublic != Room.m_InviteCodePublic;
+					if(NameChanged || ColorChanged || InvitePublicChanged)
+					{
+						GameClient()->m_UClientChatRooms.UpdateSettings(
+							Room.m_aId, pNewName, NameChanged, DesiredColor, ColorChanged,
+							s_SettingsInvitePublic, InvitePublicChanged);
+					}
+					s_aSettingsRoomId[0] = '\0';
+				}
 			}
 			else
 			{
-				for(size_t MemberIndex = 0; MemberIndex < Room.m_vMembers.size(); ++MemberIndex)
+				if(CanSeeInvite)
+					Content.HSplitTop(6.0f, nullptr, &Content);
+				CUIRect MembersTitle;
+				Content.HSplitTop(LineSize, &MembersTitle, &Content);
+				char aMembersTitle[64];
+				str_format(aMembersTitle, sizeof(aMembersTitle), Localize("Members (%d)"), (int)Room.m_vMembers.size());
+				Ui()->DoLabel(&MembersTitle, aMembersTitle, 12.0f, TEXTALIGN_ML);
+
+				if(Room.m_vMembers.empty())
 				{
-					const auto &Member = Room.m_vMembers[MemberIndex];
-					CUIRect MemberRow;
-					Content.HSplitTop(24.0f, &MemberRow, &Content);
-					MemberRow.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, MemberIndex % 2 == 0 ? 0.055f : 0.025f), IGraphics::CORNER_ALL, 5.0f);
-					MemberRow.Margin(3.0f, &MemberRow);
-					CUIRect MemberName = MemberRow;
-					if(Room.m_Owner && !Member.m_Owner)
+					CUIRect EmptyMemberRow;
+					Content.HSplitTop(24.0f, &EmptyMemberRow, &Content);
+					Ui()->DoLabel(&EmptyMemberRow, Localize("No members"), 11.0f, TEXTALIGN_ML);
+				}
+				else
+				{
+					for(size_t MemberIndex = 0; MemberIndex < Room.m_vMembers.size(); ++MemberIndex)
 					{
-						CUIRect KickButton;
-						MemberName.VSplitRight(62.0f, &MemberName, &KickButton);
-						MemberName.VSplitRight(8.0f, &MemberName, nullptr);
-						if(DoButton_Menu(&s_vKickButtons[MemberButtonIndex], Localize("Kick"), 0, &KickButton))
+						const auto &Member = Room.m_vMembers[MemberIndex];
+						CUIRect MemberRow;
+						Content.HSplitTop(24.0f, &MemberRow, &Content);
+						MemberRow.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, MemberIndex % 2 == 0 ? 0.055f : 0.025f), IGraphics::CORNER_ALL, 5.0f);
+						MemberRow.Margin(3.0f, &MemberRow);
+						CUIRect MemberName = MemberRow;
+
+						const bool CanPassOwner = Room.m_Owner && !Member.m_Owner && !Member.m_Self;
+						const bool CanToggleAdmin = Room.m_Owner && !Member.m_Owner && !Member.m_Self;
+						const bool CanKick = !Member.m_Self && !Member.m_Owner &&
+							(Room.m_Owner || (Room.m_Admin && !Member.m_Admin));
+						if(CanPassOwner || CanToggleAdmin || CanKick)
 						{
-							str_copy(m_aPendingUClientRoomId, Room.m_aId, sizeof(m_aPendingUClientRoomId));
-							str_copy(m_aPendingUClientRoomMemberId, Member.m_aId, sizeof(m_aPendingUClientRoomMemberId));
-							PopupConfirm(Localize("Remove member"), Localize("Are you sure you want to remove this member?"),
-								Localize("Kick"), Localize("Cancel"), &CMenus::PopupConfirmUClientRoomAction);
+							CUIRect MenuButton;
+							MemberName.VSplitRight(28.0f, &MemberName, &MenuButton);
+							MemberName.VSplitRight(8.0f, &MemberName, nullptr);
+							if(DoButton_Menu(&s_vMemberMenuButtons[MemberButtonIndex], "...", 0, &MenuButton))
+							{
+								m_UClientRoomMemberMenu = {};
+								m_UClientRoomMemberMenu.m_pMenus = this;
+								str_copy(m_UClientRoomMemberMenu.m_aRoomId, Room.m_aId, sizeof(m_UClientRoomMemberMenu.m_aRoomId));
+								str_copy(m_UClientRoomMemberMenu.m_aMemberId, Member.m_aId, sizeof(m_UClientRoomMemberMenu.m_aMemberId));
+								str_copy(m_UClientRoomMemberMenu.m_aDisplayName, Member.m_aDisplayName, sizeof(m_UClientRoomMemberMenu.m_aDisplayName));
+								m_UClientRoomMemberMenu.m_CanPassOwner = CanPassOwner;
+								m_UClientRoomMemberMenu.m_CanToggleAdmin = CanToggleAdmin;
+								m_UClientRoomMemberMenu.m_TargetIsAdmin = Member.m_Admin;
+								m_UClientRoomMemberMenu.m_CanKick = CanKick;
+								int OptionCount = (CanPassOwner ? 1 : 0) + (CanToggleAdmin ? 1 : 0) + (CanKick ? 1 : 0);
+								const float PopupHeight = 8.0f + OptionCount * 22.0f + maximum(0, OptionCount - 1) * 2.0f;
+								Ui()->DoPopupMenu(&m_UClientRoomMemberMenuId, MenuButton.x + MenuButton.w - 160.0f, MenuButton.y + MenuButton.h,
+									160.0f, PopupHeight, &m_UClientRoomMemberMenu, PopupUClientRoomMemberMenu);
+							}
 						}
+
+						CUIRect RoleLabel;
+						MemberName.VSplitRight(64.0f, &MemberName, &RoleLabel);
+						Ui()->DoLabel(&MemberName, Member.m_aDisplayName, 11.0f, TEXTALIGN_ML, {.m_MaxWidth = MemberName.w});
+						TextRender()->TextColor(ColorRGBA(0.7f, 0.7f, 0.75f, 1.0f));
+						Ui()->DoLabel(&RoleLabel, Member.m_Owner ? Localize("Owner") : (Member.m_Admin ? Localize("Admin") : Localize("Member")), 10.0f, TEXTALIGN_MR);
+						TextRender()->TextColor(TextRender()->DefaultTextColor());
+						++MemberButtonIndex;
 					}
-					CUIRect RoleLabel;
-					MemberName.VSplitRight(64.0f, &MemberName, &RoleLabel);
-					Ui()->DoLabel(&MemberName, Member.m_aDisplayName, 11.0f, TEXTALIGN_ML, {.m_MaxWidth = MemberName.w});
-					TextRender()->TextColor(ColorRGBA(0.7f, 0.7f, 0.75f, 1.0f));
-					Ui()->DoLabel(&RoleLabel, Member.m_Owner ? Localize("Owner") : Localize("Member"), 10.0f, TEXTALIGN_MR);
-					TextRender()->TextColor(TextRender()->DefaultTextColor());
-					++MemberButtonIndex;
 				}
 			}
 			Page.HSplitTop(MarginBetweenSections, nullptr, &Page);
@@ -828,14 +966,96 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 	SetSettingsLinkScrollRegion(nullptr);
 }
 
+CUi::EPopupMenuFunctionResult CMenus::PopupUClientRoomMemberMenu(void *pContext, CUIRect View, bool Active)
+{
+	auto *pMenu = static_cast<SUClientRoomMemberMenuContext *>(pContext);
+	CMenus *pMenus = pMenu->m_pMenus;
+	(void)Active;
+	const float RowHeight = 20.0f;
+	const float Spacing = 2.0f;
+	int ButtonIndex = 0;
+	CUIRect Row;
+
+	auto ConfirmAction = [&](EUClientRoomPendingAction Action, const char *pTitle, const char *pMessage, const char *pConfirm) {
+		str_copy(pMenus->m_aPendingUClientRoomId, pMenu->m_aRoomId, sizeof(pMenus->m_aPendingUClientRoomId));
+		str_copy(pMenus->m_aPendingUClientRoomMemberId, pMenu->m_aMemberId, sizeof(pMenus->m_aPendingUClientRoomMemberId));
+		pMenus->m_PendingUClientRoomAction = Action;
+		pMenus->PopupConfirm(pTitle, pMessage, pConfirm, Localize("Cancel"), &CMenus::PopupConfirmUClientRoomAction);
+	};
+
+	if(pMenu->m_CanPassOwner)
+	{
+		View.HSplitTop(RowHeight, &Row, &View);
+		if(pMenus->DoButton_Menu(&pMenu->m_aButtons[ButtonIndex++], Localize("Pass owner"), 0, &Row))
+		{
+			ConfirmAction(EUClientRoomPendingAction::PASS_OWNER, Localize("Pass ownership"),
+				Localize("Are you sure you want to transfer ownership of this room?"), Localize("Pass owner"));
+			return CUi::POPUP_CLOSE_CURRENT;
+		}
+		View.HSplitTop(Spacing, nullptr, &View);
+	}
+	if(pMenu->m_CanToggleAdmin)
+	{
+		View.HSplitTop(RowHeight, &Row, &View);
+		if(pMenu->m_TargetIsAdmin)
+		{
+			if(pMenus->DoButton_Menu(&pMenu->m_aButtons[ButtonIndex++], Localize("Remove admin"), 0, &Row))
+			{
+				ConfirmAction(EUClientRoomPendingAction::REMOVE_ADMIN, Localize("Remove admin"),
+					Localize("Remove admin privileges from this member?"), Localize("Remove"));
+				return CUi::POPUP_CLOSE_CURRENT;
+			}
+		}
+		else if(pMenus->DoButton_Menu(&pMenu->m_aButtons[ButtonIndex++], Localize("Give admin"), 0, &Row))
+		{
+			ConfirmAction(EUClientRoomPendingAction::GIVE_ADMIN, Localize("Give admin"),
+				Localize("Grant admin privileges to this member?"), Localize("Give admin"));
+			return CUi::POPUP_CLOSE_CURRENT;
+		}
+		View.HSplitTop(Spacing, nullptr, &View);
+	}
+	if(pMenu->m_CanKick)
+	{
+		View.HSplitTop(RowHeight, &Row, &View);
+		if(pMenus->DoButton_Menu(&pMenu->m_aButtons[ButtonIndex++], Localize("Kick"), 0, &Row))
+		{
+			ConfirmAction(EUClientRoomPendingAction::KICK, Localize("Remove member"),
+				Localize("Are you sure you want to remove this member?"), Localize("Kick"));
+			return CUi::POPUP_CLOSE_CURRENT;
+		}
+	}
+	return CUi::POPUP_KEEP_OPEN;
+}
+
 void CMenus::PopupConfirmUClientRoomAction()
 {
 	if(!m_aPendingUClientRoomId[0])
 		return;
-	if(m_aPendingUClientRoomMemberId[0])
-		GameClient()->m_UClientChatRooms.Kick(m_aPendingUClientRoomId, m_aPendingUClientRoomMemberId);
-	else
-		GameClient()->m_UClientChatRooms.Leave(m_aPendingUClientRoomId);
+	auto &Rooms = GameClient()->m_UClientChatRooms;
+	switch(m_PendingUClientRoomAction)
+	{
+	case EUClientRoomPendingAction::KICK:
+		if(m_aPendingUClientRoomMemberId[0])
+			Rooms.Kick(m_aPendingUClientRoomId, m_aPendingUClientRoomMemberId);
+		break;
+	case EUClientRoomPendingAction::PASS_OWNER:
+		if(m_aPendingUClientRoomMemberId[0])
+			Rooms.TransferOwnership(m_aPendingUClientRoomId, m_aPendingUClientRoomMemberId);
+		break;
+	case EUClientRoomPendingAction::GIVE_ADMIN:
+		if(m_aPendingUClientRoomMemberId[0])
+			Rooms.SetMemberAdmin(m_aPendingUClientRoomId, m_aPendingUClientRoomMemberId, true);
+		break;
+	case EUClientRoomPendingAction::REMOVE_ADMIN:
+		if(m_aPendingUClientRoomMemberId[0])
+			Rooms.SetMemberAdmin(m_aPendingUClientRoomId, m_aPendingUClientRoomMemberId, false);
+		break;
+	case EUClientRoomPendingAction::LEAVE_OR_DELETE:
+	default:
+		Rooms.Leave(m_aPendingUClientRoomId);
+		break;
+	}
 	m_aPendingUClientRoomId[0] = '\0';
 	m_aPendingUClientRoomMemberId[0] = '\0';
+	m_PendingUClientRoomAction = EUClientRoomPendingAction::LEAVE_OR_DELETE;
 }

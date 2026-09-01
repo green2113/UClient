@@ -827,6 +827,9 @@ void CClient::DisconnectWithReason(const char *pReason)
 	if(pReason != nullptr && pReason[0] == '\0')
 		pReason = nullptr;
 
+	m_DemoParkedOnline = false;
+	m_SuppressDemoConsoleLogs = false;
+
 	DummyDisconnect(pReason);
 
 	char aBuf[512];
@@ -1311,9 +1314,13 @@ const char *CClient::LoadMap(const char *pName, const char *pFilename, const std
 	}
 
 	// stop demo recording if we loaded a new map
-	for(int Recorder = 0; Recorder < RECORDER_MAX; Recorder++)
+	// Keep recorders running when only swapping display map for a parked online demo.
+	if(!m_DemoParkedOnline)
 	{
-		DemoRecorder(Recorder)->Stop(Recorder == RECORDER_REPLAYS ? IDemoRecorder::EStopMode::REMOVE_FILE : IDemoRecorder::EStopMode::KEEP_FILE);
+		for(int Recorder = 0; Recorder < RECORDER_MAX; Recorder++)
+		{
+			DemoRecorder(Recorder)->Stop(Recorder == RECORDER_REPLAYS ? IDemoRecorder::EStopMode::REMOVE_FILE : IDemoRecorder::EStopMode::KEEP_FILE);
+		}
 	}
 
 	char aBuf[256];
@@ -1748,6 +1755,12 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 		}
 		else if(Conn == CONN_MAIN && (pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && Msg == NETMSG_MAP_CHANGE)
 		{
+			if(m_DemoParkedOnline)
+			{
+				// Server changed map while a parked demo is open — leave the demo and follow map change.
+				FinishParkedDemoPlayback(false);
+				SetState(IClient::STATE_ONLINE);
+			}
 			if(m_CanReceiveServerCapabilities)
 			{
 				m_ServerCapabilities = GetServerCapabilities(0, 0, IsSixup());
@@ -1908,6 +1921,11 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 		}
 		else if(Conn == CONN_MAIN && (pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && Msg == NETMSG_MAP_RELOAD)
 		{
+			if(m_DemoParkedOnline)
+			{
+				FinishParkedDemoPlayback(false);
+				SetState(IClient::STATE_ONLINE);
+			}
 			if(m_DummyConnected)
 			{
 				m_DummyReconnectOnReload = true;
@@ -2230,7 +2248,10 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 
 							// ack snapshot
 							m_aAckGameTick[Conn] = -1;
-							SendInput();
+							if(m_DemoParkedOnline)
+								SendParkedKeepaliveInput();
+							else
+								SendInput();
 							return;
 						}
 					}
@@ -2273,7 +2294,10 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 						{
 							// to many errors, send reset
 							m_aAckGameTick[Conn] = -1;
-							SendInput();
+							if(m_DemoParkedOnline)
+								SendParkedKeepaliveInput();
+							else
+								SendInput();
 							m_SnapCrcErrors = 0;
 						}
 						return;
@@ -2285,12 +2309,21 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 					}
 
 					// purge old snapshots
-					int PurgeTick = DeltaTick;
-					if(m_aapSnapshots[Conn][SNAP_PREV] && m_aapSnapshots[Conn][SNAP_PREV]->m_Tick < PurgeTick)
-						PurgeTick = m_aapSnapshots[Conn][SNAP_PREV]->m_Tick;
-					if(m_aapSnapshots[Conn][SNAP_CURRENT] && m_aapSnapshots[Conn][SNAP_CURRENT]->m_Tick < PurgeTick)
-						PurgeTick = m_aapSnapshots[Conn][SNAP_CURRENT]->m_Tick;
-					m_aSnapshotStorage[Conn].PurgeUntil(PurgeTick);
+					if(m_DemoParkedOnline)
+					{
+						// Display snaps point at demorec holders; do not purge live storage by demo ticks.
+						const int KeepTicks = GameTickSpeed() * 30;
+						m_aSnapshotStorage[Conn].PurgeUntil(maximum(0, GameTick - KeepTicks));
+					}
+					else
+					{
+						int PurgeTick = DeltaTick;
+						if(m_aapSnapshots[Conn][SNAP_PREV] && m_aapSnapshots[Conn][SNAP_PREV]->m_Tick < PurgeTick)
+							PurgeTick = m_aapSnapshots[Conn][SNAP_PREV]->m_Tick;
+						if(m_aapSnapshots[Conn][SNAP_CURRENT] && m_aapSnapshots[Conn][SNAP_CURRENT]->m_Tick < PurgeTick)
+							PurgeTick = m_aapSnapshots[Conn][SNAP_CURRENT]->m_Tick;
+						m_aSnapshotStorage[Conn].PurgeUntil(PurgeTick);
+					}
 
 					// create a verified and unpacked snapshot
 					int AltSnapSize = -1;
@@ -2336,7 +2369,7 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 
 						if(DemoSnapSize >= 0)
 						{
-							// add snapshot to demo
+							// add snapshot to demo (including while a parked demo is on screen)
 							for(auto &DemoRecorder : m_aDemoRecorder)
 							{
 								if(DemoRecorder.IsRecording())
@@ -2352,7 +2385,7 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 					m_aReceivedSnapshots[Conn]++;
 
 					// TClient
-					if(!m_aExecuteOnJoinDone[Conn] && m_aReceivedSnapshots[Conn] > g_Config.m_TcExecuteOnJoinDelay)
+					if(!m_DemoParkedOnline && !m_aExecuteOnJoinDone[Conn] && m_aReceivedSnapshots[Conn] > g_Config.m_TcExecuteOnJoinDelay)
 					{
 						m_aExecuteOnJoinDone[Conn] = true;
 						if(g_Config.m_TcExecuteOnJoin[0] != '\0')
@@ -2360,7 +2393,7 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 					}
 
 					// we got two snapshots until we see us self as connected
-					if(m_aReceivedSnapshots[Conn] == 2)
+					if(!m_DemoParkedOnline && m_aReceivedSnapshots[Conn] == 2)
 					{
 						// start at 200ms and work from there
 						if(!Dummy)
@@ -2393,7 +2426,7 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 					}
 
 					// adjust game time
-					if(m_aReceivedSnapshots[Conn] > 2)
+					if(!m_DemoParkedOnline && m_aReceivedSnapshots[Conn] > 2)
 					{
 						int64_t Now = m_aGameTime[Conn].Get(time_get());
 						int64_t TickStart = GameTick * time_freq() / GameTickSpeed();
@@ -2401,7 +2434,7 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 						m_aGameTime[Conn].Update(&m_aGametimeMarginGraphs[Conn], (GameTick - 1) * time_freq() / GameTickSpeed(), TimeLeft, CSmoothTime::ADJUSTDIRECTION_DOWN);
 					}
 
-					if(m_aReceivedSnapshots[Conn] > GameTickSpeed() && !m_aDidPostConnect[Conn])
+					if(!m_DemoParkedOnline && m_aReceivedSnapshots[Conn] > GameTickSpeed() && !m_aDidPostConnect[Conn])
 					{
 						OnPostConnect(Conn);
 						m_aDidPostConnect[Conn] = true;
@@ -2467,13 +2500,17 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 	// the client handles only vital messages https://github.com/ddnet/ddnet/issues/11178
 	else if((pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 || Msg == NETMSGTYPE_SV_PREINPUT)
 	{
-		// game message
+		// Keep recording live traffic while a parked demo owns the view.
 		if(!Dummy)
 		{
 			for(auto &DemoRecorder : m_aDemoRecorder)
 				if(DemoRecorder.IsRecording())
 					DemoRecorder.RecordMessage(pPacket->m_pData, pPacket->m_DataSize);
 		}
+
+		// Skip applying live game messages to GameClient while a parked demo owns the view.
+		if(m_DemoParkedOnline)
+			return;
 
 		GameClient()->OnMessage(Msg, &Unpacker, Conn, Dummy);
 	}
@@ -2720,20 +2757,26 @@ void CClient::PumpNetwork()
 		NetClient.Update();
 	}
 
-	if(State() != IClient::STATE_DEMOPLAYBACK)
+	if(State() != IClient::STATE_DEMOPLAYBACK || m_DemoParkedOnline)
 	{
 		// check for errors of main and dummy
 		if(State() != IClient::STATE_OFFLINE && State() < IClient::STATE_QUITTING)
 		{
 			if(m_aNetClient[CONN_MAIN].State() == NETSTATE_OFFLINE)
 			{
+				if(m_DemoParkedOnline)
+				{
+					m_DemoParkedOnline = false;
+					m_SuppressDemoConsoleLogs = false;
+					m_DemoPlayer.Stop();
+				}
 				// This will also disconnect the dummy, so the branch below is an `else if`
 				Disconnect();
 				char aBuf[256];
 				str_format(aBuf, sizeof(aBuf), "offline error='%s'", m_aNetClient[CONN_MAIN].ErrorString());
 				m_pConsole->Print(IConsole::OUTPUT_LEVEL_STANDARD, "client", aBuf, CLIENT_NETWORK_PRINT_ERROR_COLOR);
 			}
-			else if((DummyConnecting() || DummyConnected()) && m_aNetClient[CONN_DUMMY].State() == NETSTATE_OFFLINE)
+			else if(State() != IClient::STATE_DEMOPLAYBACK && (DummyConnecting() || DummyConnected()) && m_aNetClient[CONN_DUMMY].State() == NETSTATE_OFFLINE)
 			{
 				const bool WasConnecting = DummyConnecting();
 				DummyDisconnect(nullptr);
@@ -2759,7 +2802,7 @@ void CClient::PumpNetwork()
 		}
 
 		// progress on dummy connect when the connection is online
-		if(m_DummySendConnInfo && m_aNetClient[CONN_DUMMY].State() == NETSTATE_ONLINE)
+		if(State() != IClient::STATE_DEMOPLAYBACK && m_DummySendConnInfo && m_aNetClient[CONN_DUMMY].State() == NETSTATE_ONLINE)
 		{
 			m_DummySendConnInfo = false;
 			SendInfo(CONN_DUMMY);
@@ -2805,7 +2848,7 @@ void CClient::OnDemoPlayerSnapshot(void *pData, int Size)
 	CSnapshot *pAltSnapBuffer = (CSnapshot *)aAltSnapBuffer;
 	int AltSnapSize;
 
-	if(IsSixup())
+	if(m_DemoParkedOnline ? m_DemoPlaybackSixup : IsSixup())
 	{
 		AltSnapSize = GameClient()->TranslateSnap(pAltSnapBuffer, (CSnapshot *)pData, CONN_MAIN, false);
 		if(AltSnapSize < 0)
@@ -2870,6 +2913,9 @@ void CClient::Update()
 
 	if(State() == IClient::STATE_DEMOPLAYBACK)
 	{
+		if(m_DemoParkedOnline)
+			SendParkedKeepaliveInput();
+
 		if(m_DemoPlayer.IsPlaying())
 		{
 #if defined(CONF_VIDEORECORDER)
@@ -2893,14 +2939,28 @@ void CClient::Update()
 		}
 		else
 		{
-			// Disconnect when demo playback stopped, either due to playback error
-			// or because the end of the demo was reached when rendering it.
-			DisconnectWithReason(m_DemoPlayer.ErrorMessage());
-			if(m_DemoPlayer.ErrorMessage()[0] != '\0')
+			// Demo playback stopped (EOF, render end, or error).
+			if(m_DemoParkedOnline)
 			{
-				SWarning Warning(Localize("Error playing demo"), m_DemoPlayer.ErrorMessage());
-				Warning.m_AutoHide = false;
-				AddWarning(Warning);
+				const bool HadError = m_DemoPlayer.ErrorMessage()[0] != '\0';
+				FinishParkedDemoPlayback(true);
+				if(HadError)
+				{
+					SWarning Warning(Localize("Error playing demo"), m_DemoPlayer.ErrorMessage());
+					Warning.m_AutoHide = false;
+					AddWarning(Warning);
+				}
+			}
+			else
+			{
+				m_SuppressDemoConsoleLogs = false;
+				DisconnectWithReason(m_DemoPlayer.ErrorMessage());
+				if(m_DemoPlayer.ErrorMessage()[0] != '\0')
+				{
+					SWarning Warning(Localize("Error playing demo"), m_DemoPlayer.ErrorMessage());
+					Warning.m_AutoHide = false;
+					AddWarning(Warning);
+				}
 			}
 		}
 	}
@@ -4145,23 +4205,43 @@ const char *CClient::DemoPlayer_Play(const char *pFilename, int StorageType)
 	if(!Storage()->FileExists(pFilename, StorageType))
 		return Localize("No demo with this filename exists");
 
-	Disconnect();
-	m_aNetClient[CONN_MAIN].ResetErrorString();
+	const bool ParkOnline = State() == IClient::STATE_ONLINE && m_aNetClient[CONN_MAIN].State() == NETSTATE_ONLINE;
+	m_SuppressDemoConsoleLogs = true;
+
+	if(ParkOnline)
+	{
+		BeginParkedOnlineSession();
+	}
+	else
+	{
+		Disconnect();
+		m_aNetClient[CONN_MAIN].ResetErrorString();
+	}
 
 	SetState(IClient::STATE_LOADING);
 	SetLoadingStateDetail(IClient::LOADING_STATE_DETAIL_LOADING_DEMO);
 	if((bool)m_LoadingCallback)
 		m_LoadingCallback(IClient::LOADING_CALLBACK_DETAIL_DEMO);
 
+	auto FailPlay = [&](const char *pError) -> const char * {
+		if(ParkOnline && m_DemoParkedOnline)
+			FinishParkedDemoPlayback(true);
+		else
+		{
+			m_SuppressDemoConsoleLogs = false;
+			DisconnectWithReason(pError);
+		}
+		return pError;
+	};
+
 	// try to start playback
 	m_DemoPlayer.SetListener(this);
 	if(m_DemoPlayer.Load(Storage(), m_pConsole, pFilename, StorageType))
-	{
-		DisconnectWithReason(m_DemoPlayer.ErrorMessage());
-		return m_DemoPlayer.ErrorMessage();
-	}
+		return FailPlay(m_DemoPlayer.ErrorMessage());
 
-	m_Sixup = m_DemoPlayer.IsSixup();
+	m_DemoPlaybackSixup = m_DemoPlayer.IsSixup();
+	if(!m_DemoParkedOnline)
+		m_Sixup = m_DemoPlaybackSixup;
 
 	// load map
 	const CMapInfo *pMapInfo = m_DemoPlayer.GetMapInfo();
@@ -4169,31 +4249,35 @@ const char *CClient::DemoPlayer_Play(const char *pFilename, int StorageType)
 	if(pError)
 	{
 		if(!m_DemoPlayer.ExtractMap(Storage()))
-		{
-			DisconnectWithReason(pError);
-			return pError;
-		}
+			return FailPlay(pError);
 
 		pError = LoadMapSearch(pMapInfo->m_aName, pMapInfo->m_Sha256, pMapInfo->m_Crc);
 		if(pError)
-		{
-			DisconnectWithReason(pError);
-			return pError;
-		}
+			return FailPlay(pError);
 	}
 
-	// setup current server info
-	mem_zero(&m_CurrentServerInfo, sizeof(m_CurrentServerInfo));
-	str_copy(m_CurrentServerInfo.m_aMap, pMapInfo->m_aName);
-	m_CurrentServerInfo.m_MapCrc = pMapInfo->m_Crc;
-	m_CurrentServerInfo.m_MapSize = pMapInfo->m_Size;
+	// setup current server info (demo view); live info is stashed when parked
+	if(!m_DemoParkedOnline)
+	{
+		mem_zero(&m_CurrentServerInfo, sizeof(m_CurrentServerInfo));
+		str_copy(m_CurrentServerInfo.m_aMap, pMapInfo->m_aName);
+		m_CurrentServerInfo.m_MapCrc = pMapInfo->m_Crc;
+		m_CurrentServerInfo.m_MapSize = pMapInfo->m_Size;
+	}
+	else
+	{
+		// Keep stashed live info in m_ParkedServerInfo; show demo map name in UI info lightly.
+		str_copy(m_CurrentServerInfo.m_aMap, pMapInfo->m_aName);
+		m_CurrentServerInfo.m_MapCrc = pMapInfo->m_Crc;
+		m_CurrentServerInfo.m_MapSize = pMapInfo->m_Size;
+	}
 
 	// enter demo playback state
 	SetState(IClient::STATE_DEMOPLAYBACK);
 
 	GameClient()->OnConnected();
 
-	// setup buffers
+	// setup buffers (display path only; live snapshot storage is kept when parked)
 	mem_zero(m_aaaDemorecSnapshotData, sizeof(m_aaaDemorecSnapshotData));
 
 	for(int SnapshotType = 0; SnapshotType < NUM_SNAPSHOT_TYPES; SnapshotType++)
@@ -4208,8 +4292,213 @@ const char *CClient::DemoPlayer_Play(const char *pFilename, int StorageType)
 
 	m_DemoPlayer.Play();
 	GameClient()->OnEnterGame();
+	m_LastParkedKeepaliveTime = time_get();
 
 	return nullptr;
+}
+
+void CClient::BeginParkedOnlineSession()
+{
+	m_DemoParkedOnline = true;
+	m_ParkedDummyConnected = DummyConnected();
+	m_ParkedSixup = m_Sixup;
+	str_copy(m_aParkedMapName, GameClient()->Map()->BaseName());
+	m_ParkedMapSha256 = GameClient()->Map()->Sha256();
+	m_ParkedMapCrc = GameClient()->Map()->Crc();
+	m_ParkedServerInfo = m_CurrentServerInfo;
+	for(int i = 0; i < NUM_DUMMIES; i++)
+	{
+		m_aParkedPredTick[i] = m_aPredTick[i];
+		m_aParkedAckGameTick[i] = m_aAckGameTick[i];
+		m_aParkedInputSize[i] = 0;
+		const int PrevIndex = (m_aCurrentInput[i] + 199) % 200;
+		if(m_aInputs[i][PrevIndex].m_Tick > 0)
+		{
+			mem_copy(m_aParkedInputData[i], m_aInputs[i][PrevIndex].m_aData, sizeof(m_aParkedInputData[i]));
+			m_aParkedInputSize[i] = (int)sizeof(CNetObj_PlayerInput);
+		}
+	}
+}
+
+void CClient::RewireSnapshotsFromStorage()
+{
+	for(int Conn = 0; Conn < NUM_DUMMIES; Conn++)
+	{
+		if(Conn == CONN_DUMMY && !DummyConnected())
+		{
+			m_aapSnapshots[Conn][SNAP_PREV] = nullptr;
+			m_aapSnapshots[Conn][SNAP_CURRENT] = nullptr;
+			continue;
+		}
+		m_aapSnapshots[Conn][SNAP_PREV] = m_aSnapshotStorage[Conn].m_pFirst;
+		m_aapSnapshots[Conn][SNAP_CURRENT] = m_aSnapshotStorage[Conn].m_pLast;
+		if(m_aapSnapshots[Conn][SNAP_PREV] && m_aapSnapshots[Conn][SNAP_CURRENT] &&
+			m_aapSnapshots[Conn][SNAP_PREV] == m_aapSnapshots[Conn][SNAP_CURRENT] &&
+			m_aapSnapshots[Conn][SNAP_CURRENT]->m_pPrev)
+		{
+			m_aapSnapshots[Conn][SNAP_PREV] = m_aapSnapshots[Conn][SNAP_CURRENT]->m_pPrev;
+		}
+		if(m_aapSnapshots[Conn][SNAP_PREV])
+			m_aPrevGameTick[Conn] = m_aapSnapshots[Conn][SNAP_PREV]->m_Tick;
+		if(m_aapSnapshots[Conn][SNAP_CURRENT])
+			m_aCurGameTick[Conn] = m_aapSnapshots[Conn][SNAP_CURRENT]->m_Tick;
+	}
+}
+
+void CClient::FinishParkedDemoPlayback(bool RestoreLiveMap)
+{
+	if(!m_DemoParkedOnline)
+	{
+		m_DemoPlayer.Stop();
+		m_SuppressDemoConsoleLogs = false;
+		return;
+	}
+
+	m_DemoPlayer.Stop();
+	m_Sixup = m_ParkedSixup;
+
+	if(!RestoreLiveMap)
+	{
+		// Abandoning park for a server-driven event (map change, etc.).
+		// Do not restore the old map/server-info/snaps — the caller continues that flow.
+		// Clear display snap pointers so ONLINE update does not apply old-map snaps onto the demo map.
+		for(int Conn = 0; Conn < NUM_DUMMIES; Conn++)
+		{
+			m_aapSnapshots[Conn][SNAP_PREV] = nullptr;
+			m_aapSnapshots[Conn][SNAP_CURRENT] = nullptr;
+		}
+		m_DemoParkedOnline = false;
+		m_SuppressDemoConsoleLogs = false;
+		GameClient()->InvalidateSnapshot();
+		return;
+	}
+
+	if(m_aNetClient[CONN_MAIN].State() != NETSTATE_ONLINE)
+	{
+		m_DemoParkedOnline = false;
+		m_SuppressDemoConsoleLogs = false;
+		DisconnectWithReason("connection lost during demo playback");
+		return;
+	}
+
+	m_CurrentServerInfo = m_ParkedServerInfo;
+	const char *pError = LoadMapSearch(m_aParkedMapName, m_ParkedMapSha256, m_ParkedMapCrc);
+	if(pError)
+	{
+		m_DemoParkedOnline = false;
+		m_SuppressDemoConsoleLogs = false;
+		DisconnectWithReason(pError);
+		return;
+	}
+
+	for(int i = 0; i < NUM_DUMMIES; i++)
+	{
+		m_aPredTick[i] = m_aParkedPredTick[i];
+		if(m_aAckGameTick[i] < m_aParkedAckGameTick[i])
+			m_aAckGameTick[i] = m_aParkedAckGameTick[i];
+	}
+
+	RewireSnapshotsFromStorage();
+	m_SkipSendInfoOnConnected = true;
+	SetState(IClient::STATE_ONLINE);
+	GameClient()->OnConnected();
+	m_SkipSendInfoOnConnected = false;
+	if(m_aapSnapshots[g_Config.m_ClDummy][SNAP_CURRENT])
+		GameClient()->OnNewSnapshot();
+
+	m_DemoParkedOnline = false;
+	m_SuppressDemoConsoleLogs = false;
+}
+
+void CClient::DemoPlayer_Stop()
+{
+	if(State() != IClient::STATE_DEMOPLAYBACK)
+		return;
+
+	if(m_DemoParkedOnline)
+		FinishParkedDemoPlayback(true);
+	else
+	{
+		m_SuppressDemoConsoleLogs = false;
+		Disconnect();
+	}
+}
+
+void CClient::SendParkedKeepaliveInput()
+{
+	if(!m_DemoParkedOnline)
+		return;
+
+	const int64_t Now = time_get();
+	// Send a few times per second to stay under conn_timeout.
+	if(m_LastParkedKeepaliveTime != 0 && Now - m_LastParkedKeepaliveTime < time_freq() / 4)
+		return;
+	m_LastParkedKeepaliveTime = Now;
+
+	for(int Conn = 0; Conn < NUM_DUMMIES; Conn++)
+	{
+		if(Conn == CONN_DUMMY && !DummyConnected())
+			break;
+
+		int Size = m_aParkedInputSize[Conn];
+		if(Size <= 0)
+			Size = (int)sizeof(CNetObj_PlayerInput);
+
+		int aSendData[MAX_INPUT_SIZE] = {};
+		if(m_aParkedInputSize[Conn] > 0)
+			mem_copy(aSendData, m_aParkedInputData[Conn], minimum(Size, (int)sizeof(aSendData)));
+
+		// Clear attack/hook bits so we stay idle on the server.
+		if(Size >= (int)sizeof(CNetObj_PlayerInput))
+		{
+			CNetObj_PlayerInput *pInput = (CNetObj_PlayerInput *)aSendData;
+			pInput->m_Fire = 0;
+			pInput->m_Hook = 0;
+			pInput->m_Jump = 0;
+			pInput->m_Direction = 0;
+		}
+
+		int PredTick = m_aPredTick[Conn];
+		if(PredTick <= 0)
+			PredTick = maximum(m_aAckGameTick[Conn], 0) + 1;
+		else
+			PredTick++;
+		m_aPredTick[Conn] = PredTick;
+
+		CMsgPacker Msg(NETMSG_INPUT, true);
+		Msg.AddInt(m_aAckGameTick[Conn]);
+		Msg.AddInt(PredTick);
+		Msg.AddInt(Size);
+		for(int k = 0; k < Size / 4; k++)
+		{
+			static const int FlagsOffset = offsetof(CNetObj_PlayerInput, m_PlayerFlags) / sizeof(int);
+			if(k == FlagsOffset && IsSixup())
+				Msg.AddInt(PlayerFlags_SixToSeven(aSendData[k]));
+			else
+				Msg.AddInt(aSendData[k]);
+		}
+		SendMsg(Conn, &Msg, MSGFLAG_FLUSH);
+	}
+}
+
+bool CClient::ShouldSuppressDemoConsoleLog(const char *pSystem, const char *pMessage) const
+{
+	if(!m_SuppressDemoConsoleLogs || !pSystem)
+		return false;
+	if(str_comp(pSystem, "demo_player") == 0 || str_comp(pSystem, "demo") == 0)
+		return true;
+	if(pMessage && (str_comp(pSystem, "client") == 0 || str_comp(pSystem, "client/network") == 0))
+	{
+		if(str_startswith(pMessage, "loading map") ||
+			str_startswith(pMessage, "loaded map") ||
+			str_startswith(pMessage, "Loading demo") ||
+			str_startswith(pMessage, "loading done") ||
+			str_startswith(pMessage, "disconnecting."))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 #if defined(CONF_VIDEORECORDER)

@@ -208,6 +208,11 @@ public:
 	virtual void Restart() = 0;
 	virtual void Quit() = 0;
 	virtual const char *DemoPlayer_Play(const char *pFilename, int StorageType) = 0;
+	// Stops demo playback. If the online session was parked, restores it; otherwise goes offline.
+	virtual void DemoPlayer_Stop() = 0;
+	virtual bool IsDemoParkedOnline() const = 0;
+	virtual bool ShouldSuppressDemoConsoleLog(const char *pSystem, const char *pMessage) const = 0;
+	virtual bool ShouldSendInfoOnConnected() const = 0;
 #if defined(CONF_VIDEORECORDER)
 	virtual const char *DemoPlayer_Render(const char *pFilename, int StorageType, const char *pVideoName, int SpeedIndex, bool StartPaused = false, EVideoFormat Format = EVideoFormat::Mp4) = 0;
 #endif
