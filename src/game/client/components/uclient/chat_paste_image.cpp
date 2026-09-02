@@ -13,6 +13,7 @@
 #include <engine/textrender.h>
 
 #include <game/client/components/chat.h>
+#include <game/client/components/media_decoder.h>
 #include <game/client/components/menus.h>
 #include <game/client/gameclient.h>
 #include <game/localization.h>
@@ -62,6 +63,44 @@ static void UnloadPendingUploadDisplayTexture(IGraphics *pGraphics, IGraphics::C
 	pGraphics->UnloadTexture(&Texture);
 	if(OriginalTexture.IsValid() && OriginalTexture.Id() == TextureId)
 		OriginalTexture.Invalidate();
+}
+
+static bool LoadPreviewTextureFromRgba(IGraphics *pGraphics, const SClipboardImage &Image, IGraphics::CTextureHandle &OutTexture, int &OutW, int &OutH)
+{
+	if(!Image.IsValid())
+		return false;
+
+	CImageInfo ClipboardImage;
+	ClipboardImage.m_Width = (size_t)Image.m_Width;
+	ClipboardImage.m_Height = (size_t)Image.m_Height;
+	ClipboardImage.m_Format = CImageInfo::FORMAT_RGBA;
+	ClipboardImage.m_pData = static_cast<uint8_t *>(malloc(Image.m_vRgba.size()));
+	if(ClipboardImage.m_pData == nullptr)
+		return false;
+	mem_copy(ClipboardImage.m_pData, Image.m_vRgba.data(), Image.m_vRgba.size());
+
+	OutTexture = pGraphics->LoadTextureRawMove(ClipboardImage, 0, "chat-paste-upload");
+	if(!OutTexture.IsValid())
+		return false;
+
+	OutW = Image.m_Width;
+	OutH = Image.m_Height;
+	return true;
+}
+
+static bool LoadPreviewTextureFromFileBytes(IGraphics *pGraphics, const uint8_t *pData, size_t DataSize, IGraphics::CTextureHandle &OutTexture, int &OutW, int &OutH)
+{
+	CImageInfo Image;
+	if(!MediaDecoder::DecodeImageToRgba(pGraphics, pData, DataSize, "chat-paste-upload-preview", Image))
+		return false;
+
+	OutTexture = pGraphics->LoadTextureRawMove(Image, 0, "chat-paste-upload");
+	if(!OutTexture.IsValid())
+		return false;
+
+	OutW = (int)Image.m_Width;
+	OutH = (int)Image.m_Height;
+	return true;
 }
 
 bool CUClientChatPasteImage::CropRectIsFull(const SImageCropRect &Crop) const
@@ -767,7 +806,7 @@ void CUClientChatPasteImage::RenderCropOverlay(CChat *pChat, const SRenderRect &
 
 void CUClientChatPasteImage::Reset(CChat *pChat)
 {
-	m_WarningPendingClipboardImage = {};
+	m_WarningPendingMedia = {};
 	if(pChat->GameClient()->m_Menus.IsActive())
 		pChat->GameClient()->m_Menus.SetActive(false);
 	ClearPendingUploadImage(pChat);
@@ -856,7 +895,7 @@ bool CUClientChatPasteImage::OnInput(CChat *pChat, const IInput::CEvent &Event)
 		}
 	}
 
-	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && m_ImageEditorEditButtonRectValid)
+	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && m_ImageEditorEditButtonRectValid && m_PendingUploadImage.AllowsEditing())
 	{
 		const vec2 MousePos = pChat->ChatMousePos();
 		const bool InsideEditButton = MousePos.x >= m_ImageEditorEditButtonRect.m_X && MousePos.x <= m_ImageEditorEditButtonRect.m_X + m_ImageEditorEditButtonRect.m_W &&
@@ -887,7 +926,7 @@ bool CUClientChatPasteImage::TryPasteFromClipboard(CChat *pChat)
 
 bool CUClientChatPasteImage::IsPasteWarningPending() const
 {
-	return m_WarningPendingClipboardImage.IsValid();
+	return m_WarningPendingMedia.IsValid();
 }
 
 void CUClientChatPasteImage::ClearPendingUploadImage(CChat *pChat)
@@ -914,7 +953,7 @@ void CUClientChatPasteImage::ClearPendingUploadImage(CChat *pChat)
 	m_EyedropperPreviewValid = false;
 }
 
-bool CUClientChatPasteImage::SetPendingUploadImage(CChat *pChat, const IInput::SClipboardImage &Image)
+bool CUClientChatPasteImage::SetPendingUploadImage(CChat *pChat, const SClipboardImage &Image)
 {
 	if(!Image.IsValid())
 		return false;
@@ -964,6 +1003,7 @@ bool CUClientChatPasteImage::SetPendingUploadImage(CChat *pChat, const IInput::S
 	m_PendingUploadImage.m_vOriginalPng = m_PendingUploadImage.m_vPng;
 	m_PendingUploadImage.m_Width = Image.m_Width;
 	m_PendingUploadImage.m_Height = Image.m_Height;
+	m_PendingUploadImage.m_IsGif = false;
 	m_PendingUploadImage.m_State = CUClientChatPasteImage::EPendingUploadState::READY;
 	m_ImageEditor.m_vStrokes.clear();
 	m_ImageEditor.m_vStrokeSnapshot.clear();
@@ -977,23 +1017,100 @@ bool CUClientChatPasteImage::SetPendingUploadImage(CChat *pChat, const IInput::S
 	return true;
 }
 
+bool CUClientChatPasteImage::SetPendingUploadImageFromMedia(CChat *pChat, const SClipboardPastedMedia &Media)
+{
+	if(!Media.IsValid())
+		return false;
+
+	const size_t MaxBytes = g_Config.m_UcChatPasteUploadMaxBytes > 0 ? (size_t)g_Config.m_UcChatPasteUploadMaxBytes : (size_t)-1;
+
+	if(Media.m_Kind == EClipboardPastedKind::GIF)
+	{
+		if(Media.m_vFileBytes.empty())
+			return false;
+		if(MaxBytes != (size_t)-1 && Media.m_vFileBytes.size() > MaxBytes)
+		{
+			pChat->Echo("Pasted GIF exceeds the configured upload size limit.");
+			return false;
+		}
+
+		ClearPendingUploadImage(pChat);
+		IGraphics::CTextureHandle Texture;
+		int Width = 0;
+		int Height = 0;
+		if(!LoadPreviewTextureFromRgba(pChat->Graphics(), Media.m_Preview, Texture, Width, Height))
+		{
+			if(!LoadPreviewTextureFromFileBytes(pChat->Graphics(), Media.m_vFileBytes.data(), Media.m_vFileBytes.size(), Texture, Width, Height))
+				return false;
+		}
+
+		m_PendingUploadImage.m_Texture = Texture;
+		m_PendingUploadImage.m_OriginalTexture = Texture;
+		m_PendingUploadImage.m_vPng = Media.m_vFileBytes;
+		m_PendingUploadImage.m_vOriginalPng.clear();
+		m_PendingUploadImage.m_Width = Width;
+		m_PendingUploadImage.m_Height = Height;
+		m_PendingUploadImage.m_IsGif = true;
+		m_PendingUploadImage.m_State = CUClientChatPasteImage::EPendingUploadState::READY;
+		ResetCropRectToFull();
+		return true;
+	}
+
+	if(Media.m_Kind == EClipboardPastedKind::PNG)
+	{
+		if(Media.m_vFileBytes.empty())
+			return false;
+		if(MaxBytes != (size_t)-1 && Media.m_vFileBytes.size() > MaxBytes)
+		{
+			pChat->Echo("Pasted image exceeds the configured upload size limit.");
+			return false;
+		}
+
+		ClearPendingUploadImage(pChat);
+		IGraphics::CTextureHandle Texture;
+		int Width = 0;
+		int Height = 0;
+		if(!LoadPreviewTextureFromRgba(pChat->Graphics(), Media.m_Preview, Texture, Width, Height))
+		{
+			if(!LoadPreviewTextureFromFileBytes(pChat->Graphics(), Media.m_vFileBytes.data(), Media.m_vFileBytes.size(), Texture, Width, Height))
+				return false;
+		}
+
+		m_PendingUploadImage.m_Texture = Texture;
+		m_PendingUploadImage.m_OriginalTexture = Texture;
+		m_PendingUploadImage.m_vPng = Media.m_vFileBytes;
+		m_PendingUploadImage.m_vOriginalPng = Media.m_vFileBytes;
+		m_PendingUploadImage.m_Width = Width;
+		m_PendingUploadImage.m_Height = Height;
+		m_PendingUploadImage.m_IsGif = false;
+		m_PendingUploadImage.m_State = CUClientChatPasteImage::EPendingUploadState::READY;
+		ResetCropRectToFull();
+		return true;
+	}
+
+	if(Media.m_Kind == EClipboardPastedKind::BITMAP && Media.m_Preview.IsValid())
+		return SetPendingUploadImage(pChat, Media.m_Preview);
+
+	return false;
+}
+
 bool CUClientChatPasteImage::TryPasteClipboardImage(CChat *pChat)
 {
 	if(!g_Config.m_UcChatPasteUpload || m_PendingUploadImage.m_State == CUClientChatPasteImage::EPendingUploadState::UPLOADING)
 		return false;
 
-	IInput::SClipboardImage ClipboardImage;
-	if(!pChat->Input()->GetClipboardImage(ClipboardImage))
+	SClipboardPastedMedia Media;
+	if(!ReadClipboardPastedMedia(Media))
 		return false;
 
 	if(!g_Config.m_UcChatPasteImageWarningSkip)
 	{
-		m_WarningPendingClipboardImage = std::move(ClipboardImage);
+		m_WarningPendingMedia = std::move(Media);
 		OpenPasteWarningPopup(pChat);
 		return true;
 	}
 
-	if(!SetPendingUploadImage(pChat, ClipboardImage))
+	if(!SetPendingUploadImageFromMedia(pChat, Media))
 		pChat->Echo("Unable to attach pasted image.");
 	return true;
 }
@@ -1013,7 +1130,7 @@ bool CUClientChatPasteImage::StartPendingUpload(CChat *pChat, const char *pMessa
 	}
 
 	std::shared_ptr<CHttpRequest> pPost = HttpPost(g_Config.m_UcChatPasteUploadUrl, m_PendingUploadImage.m_vPng.data(), m_PendingUploadImage.m_vPng.size());
-	pPost->Header("Content-Type: image/png");
+	pPost->HeaderString("Content-Type", m_PendingUploadImage.m_IsGif ? "image/gif" : "image/png");
 	pPost->Header("Accept: application/json");
 	pPost->FailOnErrorStatus(false);
 	pPost->MaxResponseSize(64 * 1024);
@@ -1220,31 +1337,36 @@ void CUClientChatPasteImage::RenderPreview(CChat *pChat, float X, float Y, float
 	else
 		m_PendingUploadCloseRectValid = false;
 
-	// Edit button
-	const float EditButtonSize = FontSize * 0.85f;
-	const float EditButtonPadding = FontSize * 0.2f;
-	m_ImageEditorEditButtonRect.m_X = X + EditButtonPadding;
-	m_ImageEditorEditButtonRect.m_Y = Y + EditButtonPadding;
-	m_ImageEditorEditButtonRect.m_W = EditButtonSize;
-	m_ImageEditorEditButtonRect.m_H = EditButtonSize;
-	m_ImageEditorEditButtonRectValid = true;
+	// Edit button (static images only — GIFs keep their animation bytes intact)
+	if(m_PendingUploadImage.AllowsEditing())
+	{
+		const float EditButtonSize = FontSize * 0.85f;
+		const float EditButtonPadding = FontSize * 0.2f;
+		m_ImageEditorEditButtonRect.m_X = X + EditButtonPadding;
+		m_ImageEditorEditButtonRect.m_Y = Y + EditButtonPadding;
+		m_ImageEditorEditButtonRect.m_W = EditButtonSize;
+		m_ImageEditorEditButtonRect.m_H = EditButtonSize;
+		m_ImageEditorEditButtonRectValid = true;
 
-	const bool EditHovered = MousePos.x >= m_ImageEditorEditButtonRect.m_X && MousePos.x <= m_ImageEditorEditButtonRect.m_X + m_ImageEditorEditButtonRect.m_W &&
-		MousePos.y >= m_ImageEditorEditButtonRect.m_Y && MousePos.y <= m_ImageEditorEditButtonRect.m_Y + m_ImageEditorEditButtonRect.m_H;
-	const ColorRGBA EditBgColor = EditHovered ? ColorRGBA(0.12f, 0.48f, 0.75f, 0.92f) : ColorRGBA(0.0f, 0.0f, 0.0f, 0.68f);
-	const float EditRounding = maximum(2.0f, m_ImageEditorEditButtonRect.m_W * 0.35f);
-	pChat->Graphics()->DrawRect(m_ImageEditorEditButtonRect.m_X, m_ImageEditorEditButtonRect.m_Y, m_ImageEditorEditButtonRect.m_W, m_ImageEditorEditButtonRect.m_H, EditBgColor, IGraphics::CORNER_ALL, EditRounding);
+		const bool EditHovered = MousePos.x >= m_ImageEditorEditButtonRect.m_X && MousePos.x <= m_ImageEditorEditButtonRect.m_X + m_ImageEditorEditButtonRect.m_W &&
+			MousePos.y >= m_ImageEditorEditButtonRect.m_Y && MousePos.y <= m_ImageEditorEditButtonRect.m_Y + m_ImageEditorEditButtonRect.m_H;
+		const ColorRGBA EditBgColor = EditHovered ? ColorRGBA(0.12f, 0.48f, 0.75f, 0.92f) : ColorRGBA(0.0f, 0.0f, 0.0f, 0.68f);
+		const float EditRounding = maximum(2.0f, m_ImageEditorEditButtonRect.m_W * 0.35f);
+		pChat->Graphics()->DrawRect(m_ImageEditorEditButtonRect.m_X, m_ImageEditorEditButtonRect.m_Y, m_ImageEditorEditButtonRect.m_W, m_ImageEditorEditButtonRect.m_H, EditBgColor, IGraphics::CORNER_ALL, EditRounding);
 
-	const float EditLabelFontSize = maximum(8.0f, m_ImageEditorEditButtonRect.m_H * 0.65f);
-	const float EditLabelWidth = pChat->TextRender()->TextWidth(EditLabelFontSize, "✎", -1, -1);
-	CTextCursor EditCursor;
-	EditCursor.SetPosition(vec2(
-		m_ImageEditorEditButtonRect.m_X + maximum(0.0f, (m_ImageEditorEditButtonRect.m_W - EditLabelWidth) / 2.0f),
-		m_ImageEditorEditButtonRect.m_Y + maximum(0.0f, (m_ImageEditorEditButtonRect.m_H - EditLabelFontSize) / 2.0f)));
-	EditCursor.m_FontSize = EditLabelFontSize;
-	pChat->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.95f);
-	pChat->TextRender()->TextEx(&EditCursor, "✎");
-	pChat->TextRender()->TextColor(pChat->TextRender()->DefaultTextColor());
+		const float EditLabelFontSize = maximum(8.0f, m_ImageEditorEditButtonRect.m_H * 0.65f);
+		const float EditLabelWidth = pChat->TextRender()->TextWidth(EditLabelFontSize, "✎", -1, -1);
+		CTextCursor EditCursor;
+		EditCursor.SetPosition(vec2(
+			m_ImageEditorEditButtonRect.m_X + maximum(0.0f, (m_ImageEditorEditButtonRect.m_W - EditLabelWidth) / 2.0f),
+			m_ImageEditorEditButtonRect.m_Y + maximum(0.0f, (m_ImageEditorEditButtonRect.m_H - EditLabelFontSize) / 2.0f)));
+		EditCursor.m_FontSize = EditLabelFontSize;
+		pChat->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.95f);
+		pChat->TextRender()->TextEx(&EditCursor, "✎");
+		pChat->TextRender()->TextColor(pChat->TextRender()->DefaultTextColor());
+	}
+	else
+		m_ImageEditorEditButtonRectValid = false;
 
 	const bool Uploading = m_PendingUploadImage.m_State == CUClientChatPasteImage::EPendingUploadState::UPLOADING;
 	const bool Failed = m_PendingUploadImage.m_State == CUClientChatPasteImage::EPendingUploadState::FAILED;
@@ -1253,7 +1375,7 @@ void CUClientChatPasteImage::RenderPreview(CChat *pChat, float X, float Y, float
 		const ColorRGBA OverlayColor = Uploading ? ColorRGBA(0.0f, 0.0f, 0.0f, 0.48f) : ColorRGBA(0.25f, 0.05f, 0.05f, 0.60f);
 		pChat->Graphics()->DrawRect(InnerX, InnerY, InnerW, InnerH, OverlayColor, IGraphics::CORNER_ALL, InnerRounding);
 
-		const char *pLabel = Uploading ? "Uploading photo..." : (m_PendingUploadImage.m_aError[0] != '\0' ? m_PendingUploadImage.m_aError : "Upload failed.");
+		const char *pLabel = Uploading ? (m_PendingUploadImage.m_IsGif ? "Uploading GIF..." : "Uploading photo...") : (m_PendingUploadImage.m_aError[0] != '\0' ? m_PendingUploadImage.m_aError : "Upload failed.");
 		const float LabelFontSize = FontSize * 0.68f;
 		const float LabelWidth = pChat->TextRender()->TextWidth(LabelFontSize, pLabel, -1, -1);
 		CTextCursor Cursor;
@@ -1269,6 +1391,8 @@ void CUClientChatPasteImage::RenderPreview(CChat *pChat, float X, float Y, float
 
 void CUClientChatPasteImage::OpenImageEditor(CChat *pChat)
 {
+	if(!m_PendingUploadImage.AllowsEditing())
+		return;
 	if(!m_PendingUploadImage.HasImage())
 		return;
 
@@ -2192,13 +2316,14 @@ void CUClientChatPasteImage::ConfirmPasteWarning(CChat *pChat, bool DontAskAgain
 	if(DontAskAgain)
 		g_Config.m_UcChatPasteImageWarningSkip = 1;
 
-	IInput::SClipboardImage Image = std::move(m_WarningPendingClipboardImage);
-	m_WarningPendingClipboardImage = {};
-	if(!SetPendingUploadImage(pChat, Image))
+	SClipboardPastedMedia Media = std::move(m_WarningPendingMedia);
+	m_WarningPendingMedia = {};
+	if(!SetPendingUploadImageFromMedia(pChat, Media))
 		pChat->Echo("Unable to attach pasted image.");
 }
 
 void CUClientChatPasteImage::CancelPasteWarning(CChat *pChat)
 {
-	m_WarningPendingClipboardImage = {};
+	(void)pChat;
+	m_WarningPendingMedia = {};
 }

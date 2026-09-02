@@ -4,6 +4,8 @@
 #include <engine/graphics.h>
 #include <engine/input.h>
 
+#include <engine/client/clipboard_image.h>
+
 #include <game/client/ui.h>
 
 #include <array>
@@ -45,10 +47,16 @@ class CUClientChatPasteImage
 		int m_Team = 0;
 		char m_aMessagePrefix[256] = "";
 		char m_aError[128] = "";
+		bool m_IsGif = false;
 
 		bool HasImage() const
 		{
 			return m_Texture.IsValid() && m_Width > 0 && m_Height > 0 && !m_vPng.empty();
+		}
+
+		bool AllowsEditing() const
+		{
+			return !m_IsGif;
 		}
 	};
 
@@ -137,7 +145,8 @@ private:
 	static constexpr int CROP_MIN_PIXELS = 32;
 
 	void ClearPendingUploadImage(CChat *pChat);
-	bool SetPendingUploadImage(CChat *pChat, const IInput::SClipboardImage &Image);
+	bool SetPendingUploadImage(CChat *pChat, const SClipboardImage &Image);
+	bool SetPendingUploadImageFromMedia(CChat *pChat, const SClipboardPastedMedia &Media);
 	bool TryPasteClipboardImage(CChat *pChat);
 	bool StartPendingUpload(CChat *pChat, const char *pMessagePrefix);
 	void UpdatePendingUpload(CChat *pChat);
@@ -193,7 +202,7 @@ private:
 	bool m_EyedropperPreviewValid = false;
 
 	SPendingUploadImage m_PendingUploadImage;
-	IInput::SClipboardImage m_WarningPendingClipboardImage;
+	SClipboardPastedMedia m_WarningPendingMedia;
 	bool m_PendingUploadClosePressed = false;
 	bool m_PendingUploadCloseRectValid = false;
 	SRenderRect m_PendingUploadCloseRect;

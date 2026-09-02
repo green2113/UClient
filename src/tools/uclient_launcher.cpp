@@ -170,6 +170,8 @@ static std::atomic<uint64_t> g_DownloadSpeed = 0; // bytes per second
 static std::atomic<int> g_EtaSeconds = -1;
 static bool g_ShowSettings = false;
 static bool g_AutoLaunch = false; // default off
+static bool g_AutoUpdate = false; // default off; startup check only
+static bool g_TryStartupAutoUpdate = false;
 static bool g_DiscordRpc = true; // mirrors tc_discord_rpc (default on)
 static bool g_LaunchedFromGame = false; // set when DDNet.exe redirected here
 static bool g_PlayHover = false;
@@ -222,6 +224,7 @@ static RECT g_GearRc = {};
 static RECT g_MinRc = {};
 static RECT g_CloseRc = {};
 static RECT g_CheckRc = {};
+static RECT g_AutoUpdateCheckRc = {};
 static RECT g_DiscordCheckRc = {};
 static RECT g_BackRc = {};
 static RECT g_TabOverviewRc = {};
@@ -262,6 +265,7 @@ static void SyncButtonHint();
 static void RefreshGameRunningState();
 static void RequestUpdateCheck();
 static void RequestUpdateDownload();
+static void TryStartupAutoUpdate();
 static bool RunUpdateDownload(LauncherArgs *pA, const std::string &RemoteVersion, const std::string &ArchiveUrl);
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
 static void RequestFakeDownload();
@@ -956,6 +960,10 @@ static void LoadLauncherSettings(const std::wstring &InstallDir)
 	{
 		if(Text.find("auto_launch=1") != std::string::npos)
 			g_AutoLaunch = true;
+		if(Text.find("auto_update=1") != std::string::npos)
+			g_AutoUpdate = true;
+		else if(Text.find("auto_update=0") != std::string::npos)
+			g_AutoUpdate = false;
 	}
 	else
 	{
@@ -966,7 +974,7 @@ static void LoadLauncherSettings(const std::wstring &InstallDir)
 
 	LoadDiscordRpcSetting();
 
-	if(!AppPath.empty() && (!HasLauncherCfg || Text.find("discord_rpc=") == std::string::npos))
+	if(!AppPath.empty() && (!HasLauncherCfg || Text.find("discord_rpc=") == std::string::npos || Text.find("auto_update=") == std::string::npos))
 		SaveLauncherSettings(InstallDir);
 }
 
@@ -978,6 +986,7 @@ static void SaveLauncherSettings(const std::wstring &InstallDir)
 		return;
 	std::string Text;
 	Text = g_AutoLaunch ? "auto_launch=1\n" : "auto_launch=0\n";
+	Text += g_AutoUpdate ? "auto_update=1\n" : "auto_update=0\n";
 	Text += g_DiscordRpc ? "discord_rpc=1\n" : "discord_rpc=0\n";
 	WriteTextFile(Path, Text);
 }
@@ -2793,6 +2802,18 @@ static void RequestUpdateDownload()
 		g_UpdateDownloadRunning = false;
 }
 
+static void TryStartupAutoUpdate()
+{
+	if(!g_TryStartupAutoUpdate)
+		return;
+	g_TryStartupAutoUpdate = false;
+	if(!g_AutoUpdate || !g_pArgs || g_Phase != EUiPhase::Ready || !EffectiveUpdateAvailable())
+		return;
+	if(EffectivePlayBlocked() || EffectiveGameRunning())
+		return;
+	RequestUpdateDownload();
+}
+
 static DWORD WINAPI UpdateCheckThread(LPVOID)
 {
 	if(!g_pArgs)
@@ -3007,6 +3028,7 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 	if(!g_Failed && !NeedUpdate)
 		SetStatus(L"");
 	RefreshLauncherNotices();
+	g_TryStartupAutoUpdate = NeedUpdate && g_AutoUpdate && !g_PlayBlocked && !EffectiveGameRunning();
 	PostMessage(g_hWnd, WM_UPDATE_READY, 0, 0);
 	return 0;
 }
@@ -3199,6 +3221,7 @@ static std::string BuildStateJson()
 	Json += aNum;
 	Json += g_Failed ? "\"failed\":true," : "\"failed\":false,";
 	Json += g_AutoLaunch ? "\"autoLaunch\":true," : "\"autoLaunch\":false,";
+	Json += g_AutoUpdate ? "\"autoUpdate\":true," : "\"autoUpdate\":false,";
 	Json += g_DiscordRpc ? "\"discordRpc\":true," : "\"discordRpc\":false,";
 	Json += FriendsLoading ? "\"friendsLoading\":true," : "\"friendsLoading\":false,";
 	Json += FriendsLoaded ? "\"friendsLoaded\":true," : "\"friendsLoaded\":false,";
@@ -3320,6 +3343,12 @@ static void OnWebMessage(const std::string &Json)
 	else if(Cmd == "autolaunch")
 	{
 		g_AutoLaunch = Json.find("\"value\":true") != std::string::npos;
+		SaveLauncherSettings(g_InstallDir);
+		PushWebState(true);
+	}
+	else if(Cmd == "autoupdate")
+	{
+		g_AutoUpdate = Json.find("\"value\":true") != std::string::npos;
 		SaveLauncherSettings(g_InstallDir);
 		PushWebState(true);
 	}
@@ -3579,7 +3608,8 @@ static void Paint(HWND hWnd)
 
 	g_BackRc = {ContentL, WND_H - 84, ContentL + 128, WND_H - 44};
 	g_CheckRc = {ContentL + 4, 176, ContentR, 262};
-	g_DiscordCheckRc = {ContentL + 4, 312, ContentR, 398};
+	g_AutoUpdateCheckRc = {ContentL + 4, 280, ContentR, 366};
+	g_DiscordCheckRc = {ContentL + 4, 428, ContentR, 514};
 	g_FriendAreaRc = {PanelL + 12, 182, WND_W - 36, WND_H - 44};
 
 	// Tabs: equal cells sized from the widest label, centered over the content area.
@@ -3800,8 +3830,28 @@ static void Paint(HWND hWnd)
 		SetTextColor(Mem, C_MUTED);
 		TextOutW(Mem, Box.right + 16, g_CheckRc.top + 34, L"After the update check, start without pressing Play.", 52);
 
+		const bool AutoUpdateChecked = g_AutoUpdate;
+		RECT AutoUpdateBox = {g_AutoUpdateCheckRc.left, g_AutoUpdateCheckRc.top + 4, g_AutoUpdateCheckRc.left + 26, g_AutoUpdateCheckRc.top + 30};
+		FillRoundRect(Mem, AutoUpdateBox, 7, AutoUpdateChecked ? C_ACCENT : C_BAR_TRACK);
+		if(AutoUpdateChecked)
+		{
+			HPEN Pen = CreatePen(PS_SOLID, 3, RGB(255, 255, 255));
+			HGDIOBJ OldPen = SelectObject(Mem, Pen);
+			MoveToEx(Mem, AutoUpdateBox.left + 6, AutoUpdateBox.top + 13, nullptr);
+			LineTo(Mem, AutoUpdateBox.left + 11, AutoUpdateBox.top + 18);
+			LineTo(Mem, AutoUpdateBox.left + 19, AutoUpdateBox.top + 7);
+			SelectObject(Mem, OldPen);
+			DeleteObject(Pen);
+		}
+		SelectObject(Mem, BodyFont);
+		SetTextColor(Mem, C_TITLE);
+		TextOutW(Mem, AutoUpdateBox.right + 16, g_AutoUpdateCheckRc.top + 4, L"Install updates automatically", 28);
+		SelectObject(Mem, SmallFont);
 		SetTextColor(Mem, C_MUTED);
-		TextOutW(Mem, ContentL, 276, L"Integrations", 12);
+		TextOutW(Mem, AutoUpdateBox.right + 16, g_AutoUpdateCheckRc.top + 34, L"On launcher startup only. Mid-session updates stay manual.", 56);
+
+		SetTextColor(Mem, C_MUTED);
+		TextOutW(Mem, ContentL, 392, L"Integrations", 12);
 
 		const bool DiscordChecked = g_DiscordRpc;
 		RECT DiscordBox = {g_DiscordCheckRc.left, g_DiscordCheckRc.top + 4, g_DiscordCheckRc.left + 26, g_DiscordCheckRc.top + 30};
@@ -4033,7 +4083,7 @@ static bool IsInteractiveHit(int X, int Y)
 	if(PtInRectI(g_CloseRc, X, Y) || PtInRectI(g_MinRc, X, Y) || PtInRectI(g_GearRc, X, Y))
 		return true;
 	if(g_ShowSettings)
-		return PtInRectI(g_CheckRc, X, Y) || PtInRectI(g_DiscordCheckRc, X, Y) || PtInRectI(g_BackRc, X, Y);
+		return PtInRectI(g_CheckRc, X, Y) || PtInRectI(g_AutoUpdateCheckRc, X, Y) || PtInRectI(g_DiscordCheckRc, X, Y) || PtInRectI(g_BackRc, X, Y);
 	if(PtInRectI(g_TabOverviewRc, X, Y) || PtInRectI(g_TabUpdatesRc, X, Y))
 		return true;
 	if(PtInRectI(g_PlayBtnRc, X, Y))
@@ -4141,7 +4191,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		if(PtInRectI(g_CloseRc, Pt.x, Pt.y) || PtInRectI(g_MinRc, Pt.x, Pt.y) || PtInRectI(g_GearRc, Pt.x, Pt.y))
 			Hand = true;
 		else if(g_ShowSettings)
-			Hand = PtInRectI(g_CheckRc, Pt.x, Pt.y) || PtInRectI(g_DiscordCheckRc, Pt.x, Pt.y) || PtInRectI(g_BackRc, Pt.x, Pt.y);
+			Hand = PtInRectI(g_CheckRc, Pt.x, Pt.y) || PtInRectI(g_AutoUpdateCheckRc, Pt.x, Pt.y) || PtInRectI(g_DiscordCheckRc, Pt.x, Pt.y) || PtInRectI(g_BackRc, Pt.x, Pt.y);
 		else if(PtInRectI(g_TabOverviewRc, Pt.x, Pt.y) || PtInRectI(g_TabUpdatesRc, Pt.x, Pt.y))
 			Hand = true;
 		else if(PtInRectI(g_PlayBtnRc, Pt.x, Pt.y) && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked() &&
@@ -4187,6 +4237,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		PushWebState();
 		RequestFriendsRefresh();
 		RequestNoticesRefresh();
+		TryStartupAutoUpdate();
 		if(g_AutoLaunch && g_LaunchedFromGame && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked() && !EffectiveUpdateAvailable() && g_pArgs && g_pArgs->ApplyArchive.empty())
 			RequestLaunchGame();
 		return 0;
@@ -4279,6 +4330,12 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 			if(PtInRectI(g_CheckRc, X, Y))
 			{
 				g_AutoLaunch = !g_AutoLaunch;
+				SaveLauncherSettings(g_InstallDir);
+				InvalidateRect(hWnd, nullptr, FALSE);
+			}
+			else if(PtInRectI(g_AutoUpdateCheckRc, X, Y))
+			{
+				g_AutoUpdate = !g_AutoUpdate;
 				SaveLauncherSettings(g_InstallDir);
 				InvalidateRect(hWnd, nullptr, FALSE);
 			}

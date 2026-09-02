@@ -6,7 +6,7 @@
 //   JS  -> C++  window.chrome.webview.postMessage(JSON.stringify({cmd: ...}))
 //
 // State fields: phase, buttonLabel, version, status, percent, failed,
-//               autoLaunch, discordRpc, logoUrl, mascotUrl, friendsLoading, friendsLoaded,
+//               autoLaunch, autoUpdate, discordRpc, logoUrl, mascotUrl, friendsLoading, friendsLoaded,
 //               playBlocked, updateAvailable, gameRunning, buttonHint,
 //               devBuild, devForceUpdate, devForcePlayBlocked, devForceGameRunning, devInjectNotice,
 //               notices[] {id, title, body, severity, blocksPlay, expiresAt?},
@@ -644,6 +644,11 @@ body.dev-build #dev-panel{display:block}
         <span><b>Launch game automatically</b>
         <small>Start UClient as soon as the update check finishes.</small></span>
       </div>
+      <div class="opt" id="opt-auto-update">
+        <span class="sw"></span>
+        <span><b>Install updates automatically</b>
+        <small>On launcher startup only. Mid-session updates stay manual.</small></span>
+      </div>
       <div class="sec" style="margin-top:22px">Integrations</div>
       <div class="opt" id="opt-discord">
         <span class="sw"></span>
@@ -890,6 +895,11 @@ $("opt-auto").addEventListener("click", function () {
   $("opt-auto").classList.toggle("on", on);
   send({cmd: "autolaunch", value: on});
 });
+$("opt-auto-update").addEventListener("click", function () {
+  var on = !$("opt-auto-update").classList.contains("on");
+  $("opt-auto-update").classList.toggle("on", on);
+  send({cmd: "autoupdate", value: on});
+});
 $("opt-discord").addEventListener("click", function () {
   var on = !$("opt-discord").classList.contains("on");
   $("opt-discord").classList.toggle("on", on);
@@ -1106,6 +1116,7 @@ window.__setState = function (st) {
   if (st.phase === "updating") bar.firstElementChild.style.width = (st.percent || 0) + "%";
 
   $("opt-auto").classList.toggle("on", !!st.autoLaunch);
+  $("opt-auto-update").classList.toggle("on", !!st.autoUpdate);
   $("opt-discord").classList.toggle("on", !!st.discordRpc);
 
   var online = 0, all = st.friends || [];
