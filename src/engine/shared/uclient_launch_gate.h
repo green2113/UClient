@@ -17,6 +17,7 @@
 #endif
 
 #define UCLIENT_LAUNCH_TOKEN_ARG "--uclient-from-launcher"
+#define UCLIENT_LAUNCH_FROM_GAME_ARG "--uclient-from-game"
 #define UCLIENT_LAUNCH_TOKEN_FILE "uclient_launch.token"
 #define UCLIENT_LAUNCH_TOKEN_TTL_SECONDS 60
 #define UCLIENT_LAUNCH_ALLOW_ENV "UCLIENT_ALLOW_DIRECT_LAUNCH"

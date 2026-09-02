@@ -2399,7 +2399,7 @@ void CMenus::RenderPopupFullscreen(CUIRect Screen)
 		}
 
 		static CButtonContainer s_ButtonOkDone;
-		if(DoButton_Menu(&s_ButtonOkDone, Localize("Ok"), 0, &Ok) || Ui()->ConsumeHotkey(CUi::HOTKEY_ENTER))
+		if(DoButton_Menu(&s_ButtonOkDone, Localize("Ok"), 0, &Ok) || Ui()->ConsumeHotkey(CUi::HOTKEY_ENTER) || Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
 		{
 			m_Popup = POPUP_NONE;
 			m_DemoRenderInput.Clear();
@@ -3203,6 +3203,16 @@ void CMenus::OnStateChange(int NewState, int OldState)
 	}
 	else if(NewState == IClient::STATE_ONLINE || NewState == IClient::STATE_DEMOPLAYBACK)
 	{
+#if defined(CONF_VIDEORECORDER)
+		const bool PendingRenderDone = OldState == IClient::STATE_DEMOPLAYBACK && NewState == IClient::STATE_ONLINE &&
+					       !m_DemoRenderInput.IsEmpty() && DemoPlayer()->ErrorMessage()[0] == '\0';
+		if(PendingRenderDone)
+		{
+			m_Popup = POPUP_RENDER_DONE;
+			SetActive(true);
+		}
+		else
+#endif
 		if(m_Popup != POPUP_WARNING)
 		{
 			m_Popup = POPUP_NONE;

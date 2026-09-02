@@ -228,6 +228,8 @@ static bool SpawnLauncherWithArgs(const char *pLauncherPath, int Argc, const cha
 	}
 
 	const char **ppArgs = vArgs.empty() ? nullptr : vArgs.data();
+	vArgs.insert(vArgs.begin(), UCLIENT_LAUNCH_FROM_GAME_ARG);
+	ppArgs = vArgs.data();
 	return process_execute(pLauncherPath, EShellExecuteWindowState::FOREGROUND, ppArgs, vArgs.size()) != INVALID_PROCESS;
 }
 #endif

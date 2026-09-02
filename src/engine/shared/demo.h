@@ -176,7 +176,7 @@ public:
 	void Play();
 	void Pause() override;
 	void Unpause() override;
-	void Stop(const char *pErrorMessage = "");
+	void Stop(const char *pErrorMessage = "", bool FinalizeVideo = true);
 	void SetSpeed(float Speed) override;
 	void SetSpeedIndex(int SpeedIndex) override;
 	void AdjustSpeedIndex(int Offset) override;

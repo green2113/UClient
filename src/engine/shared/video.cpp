@@ -3,6 +3,7 @@
 #include "video.h"
 
 IVideo *IVideo::ms_pCurrentVideo = nullptr;
+FVideoStopPumpCallback IVideo::ms_StopPumpCallback;
 
 int64_t IVideo::ms_Time = 0;
 float IVideo::ms_LocalTime = 0;

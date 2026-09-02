@@ -26,5 +26,9 @@
 	"vars": {
 		"ENVIRONMENT": "development",
 		"RELAY_INVALIDATE_URL": ""
+	},
+	"assets": {
+		"directory": "./public",
+		"binding": "ASSETS"
 	}
 }

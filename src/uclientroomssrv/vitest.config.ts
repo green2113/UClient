@@ -20,6 +20,7 @@ export default defineConfig({
 					ACCOUNT_PEPPER: "test-account-pepper-not-for-production",
 					GRACE_PRIVATE_KEY_SEED_HEX: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
 					RELAY_SECRET: "test-relay-secret-not-for-production",
+					ADMIN_TOKEN: "test-admin-token",
 					TEST_MIGRATIONS: await readD1Migrations(fileUrlPath(new URL("./migrations", import.meta.url))),
 				},
 			},

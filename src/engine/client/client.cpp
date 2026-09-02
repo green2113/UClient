@@ -2944,6 +2944,10 @@ void CClient::Update()
 			{
 				const bool HadError = m_DemoPlayer.ErrorMessage()[0] != '\0';
 				FinishParkedDemoPlayback(true);
+#if defined(CONF_VIDEORECORDER)
+				if(IVideo::Current())
+					IVideo::Current()->Stop();
+#endif
 				if(HadError)
 				{
 					SWarning Warning(Localize("Error playing demo"), m_DemoPlayer.ErrorMessage());
@@ -2954,6 +2958,10 @@ void CClient::Update()
 			else
 			{
 				m_SuppressDemoConsoleLogs = false;
+#if defined(CONF_VIDEORECORDER)
+				if(IVideo::Current())
+					IVideo::Current()->Stop();
+#endif
 				DisconnectWithReason(m_DemoPlayer.ErrorMessage());
 				if(m_DemoPlayer.ErrorMessage()[0] != '\0')
 				{
@@ -3291,6 +3299,14 @@ void CClient::InitInterfaces()
 	m_pStorage = Kernel()->RequestInterface<IStorage>();
 
 	m_DemoEditor.Init(&m_SnapshotDelta, m_pConsole, m_pStorage);
+
+#if defined(CONF_VIDEORECORDER)
+	IVideo::SetStopPumpCallback([this]() {
+		PumpNetwork();
+		if(m_DemoParkedOnline)
+			SendParkedKeepaliveInput();
+	});
+#endif
 
 	m_ServerBrowser.SetBaseInfo(&m_aNetClient[CONN_CONTACT], m_pGameClient->NetVersion());
 

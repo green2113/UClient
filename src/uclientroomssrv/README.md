@@ -47,3 +47,22 @@ DELETE FROM user_bans WHERE install_id = '00000000-0000-0000-0000-000000000000';
 ```
 
 Run SQL remotely with `npx wrangler d1 execute uclient-rooms --remote --command "..."`.
+
+## Launcher notices
+
+Public endpoint:
+
+- `GET /launcher/notices` — active notices for the UClient launcher
+
+Admin UI:
+
+- `GET /admin` — password-protected notice management page
+- `GET/POST/PATCH/DELETE /admin/notices` — CRUD API (`Authorization: Bearer <ADMIN_TOKEN>`)
+
+Set the admin token as a Worker secret:
+
+```bash
+npx wrangler secret put ADMIN_TOKEN
+```
+
+Then open `https://uclient.under1111.com/admin`, sign in with the token, and create notices. Use **Blocks Play** for maintenance windows that should disable the launcher Play button.

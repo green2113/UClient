@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UClient Launcher Notices</title>
+<style>
+:root{color-scheme:dark;--bg:#0d0f14;--panel:#171a22;--line:#2a2f3a;--text:#eef0f4;--dim:#9aa0ad;--accent:#7c6cf0;--danger:#ff6b6b}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:24px}
+.wrap{max-width:980px;margin:0 auto}
+h1{font-size:24px;margin-bottom:6px}
+.sub{color:var(--dim);margin-bottom:24px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:18px}
+label{display:block;font-size:12px;color:var(--dim);margin:12px 0 6px}
+input,textarea,select{width:100%;background:#0f1218;border:1px solid var(--line);border-radius:10px;color:var(--text);padding:10px 12px;font:inherit}
+textarea{min-height:120px;resize:vertical}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.row3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.btn{border:0;border-radius:10px;padding:10px 14px;font:inherit;font-weight:600;cursor:pointer}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.secondary{background:#252933;color:var(--text)}
+.btn.danger{background:rgba(255,107,107,.15);color:var(--danger)}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.notice{border-top:1px solid var(--line);padding:14px 0;display:grid;grid-template-columns:1fr auto;gap:10px}
+.notice:first-child{border-top:0;padding-top:0}
+.notice h3{font-size:16px}
+.meta{color:var(--dim);font-size:12px;margin-top:4px}
+.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.badge{font-size:11px;padding:2px 8px;border-radius:999px;background:#252933;color:var(--dim)}
+.badge.on{background:rgba(124,108,240,.18);color:#c8bdff}
+.hidden{display:none}
+.error{color:var(--danger);margin-top:10px}
+.ok{color:#7ddba0;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Launcher Notices</h1>
+  <p class="sub">Manage global warnings shown in the UClient launcher.</p>
+
+  <section class="card" id="login-card">
+    <label for="token">Admin token</label>
+    <input id="token" type="password" placeholder="Bearer token configured on the worker">
+    <div class="actions">
+      <button class="btn primary" id="login-btn" type="button">Sign in</button>
+    </div>
+    <div class="error hidden" id="login-error"></div>
+  </section>
+
+  <section class="hidden" id="app">
+    <section class="card">
+      <h2 style="font-size:18px;margin-bottom:8px">Create notice</h2>
+      <form id="create-form">
+        <label for="title">Title</label>
+        <input id="title" maxlength="120" required>
+        <label for="body">Body</label>
+        <textarea id="body" maxlength="4000" required></textarea>
+        <div class="row3">
+          <div>
+            <label for="severity">Severity</label>
+            <select id="severity">
+              <option value="info">Info</option>
+              <option value="warning" selected>Warning</option>
+              <option value="critical">Critical</option>
+            </select>
+          </div>
+          <div>
+            <label for="sort_order">Sort order</label>
+            <input id="sort_order" type="number" value="0">
+          </div>
+          <div style="display:flex;align-items:flex-end;padding-bottom:10px">
+            <label style="display:flex;align-items:center;gap:8px;margin:0">
+              <input id="blocks_play" type="checkbox"> Blocks Play
+            </label>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="starts_at">Starts at (unix, optional)</label>
+            <input id="starts_at" placeholder="1735689600">
+          </div>
+          <div>
+            <label for="ends_at">Ends at (unix, optional)</label>
+            <input id="ends_at" placeholder="1735776000">
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn primary" type="submit">Create notice</button>
+          <button class="btn secondary" id="refresh-btn" type="button">Refresh</button>
+          <button class="btn secondary" id="logout-btn" type="button">Sign out</button>
+        </div>
+        <div class="error hidden" id="form-error"></div>
+        <div class="ok hidden" id="form-ok"></div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2 style="font-size:18px;margin-bottom:8px">Existing notices</h2>
+      <div id="notice-list"></div>
+    </section>
+  </section>
+</div>
+<script>
+const TOKEN_KEY = "uclient_admin_token";
+const $ = id => document.getElementById(id);
+const show = (el, on) => el.classList.toggle("hidden", !on);
+const authHeaders = () => ({authorization: "Bearer " + localStorage.getItem(TOKEN_KEY), "content-type": "application/json"});
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {...authHeaders(), ...(options.headers || {})},
+  });
+  const body = await response.json().catch(() => ({}));
+  if(!response.ok)
+    throw new Error(body.message || body.error || ("HTTP " + response.status));
+  return body;
+}
+
+function parseOptionalNumber(value) {
+  const trimmed = String(value || "").trim();
+  if(!trimmed) return null;
+  const num = Number(trimmed);
+  return Number.isFinite(num) ? Math.floor(num) : null;
+}
+
+function renderNotices(notices) {
+  const root = $("notice-list");
+  if(!notices.length) {
+    root.innerHTML = '<p class="meta">No notices yet.</p>';
+    return;
+  }
+  root.innerHTML = notices.map(notice => `
+    <article class="notice" data-id="${notice.id}">
+      <div>
+        <h3>${escapeHtml(notice.title)}</h3>
+        <div class="meta">${escapeHtml(notice.body.slice(0, 180))}${notice.body.length > 180 ? "..." : ""}</div>
+        <div class="badges">
+          <span class="badge">${escapeHtml(notice.severity)}</span>
+          <span class="badge ${notice.enabled ? "on" : ""}">${notice.enabled ? "enabled" : "disabled"}</span>
+          ${notice.blocks_play ? '<span class="badge on">blocks play</span>' : ""}
+        </div>
+      </div>
+      <div class="actions" style="margin-top:0;align-items:flex-start">
+        <button class="btn secondary edit-btn" type="button">Edit</button>
+        <button class="btn danger delete-btn" type="button">Delete</button>
+      </div>
+    </article>
+  `).join("");
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, ch => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[ch]));
+}
+
+async function loadNotices() {
+  const data = await api("/admin/notices");
+  renderNotices(data.notices || []);
+}
+
+async function signIn() {
+  const token = $("token").value.trim();
+  if(!token) return;
+  localStorage.setItem(TOKEN_KEY, token);
+  try {
+    await loadNotices();
+    show($("login-card"), false);
+    show($("app"), true);
+    show($("login-error"), false);
+  } catch (error) {
+    localStorage.removeItem(TOKEN_KEY);
+    $("login-error").textContent = error.message;
+    show($("login-error"), true);
+  }
+}
+
+$("login-btn").addEventListener("click", signIn);
+$("logout-btn").addEventListener("click", () => {
+  localStorage.removeItem(TOKEN_KEY);
+  show($("app"), false);
+  show($("login-card"), true);
+});
+$("refresh-btn").addEventListener("click", () => loadNotices().catch(showFormError));
+
+$("create-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  showFormError("");
+  showFormOk("");
+  try {
+    await api("/admin/notices", {
+      method: "POST",
+      body: JSON.stringify({
+        title: $("title").value.trim(),
+        body: $("body").value.trim(),
+        severity: $("severity").value,
+        blocks_play: $("blocks_play").checked,
+        sort_order: Number($("sort_order").value || 0),
+        starts_at: parseOptionalNumber($("starts_at").value),
+        ends_at: parseOptionalNumber($("ends_at").value),
+        enabled: true,
+      }),
+    });
+    $("create-form").reset();
+    $("severity").value = "warning";
+    showFormOk("Notice created.");
+    await loadNotices();
+  } catch (error) {
+    showFormError(error.message);
+  }
+});
+
+$("notice-list").addEventListener("click", async event => {
+  const row = event.target.closest(".notice");
+  if(!row) return;
+  const id = row.dataset.id;
+  if(event.target.classList.contains("delete-btn")) {
+    if(!confirm("Delete this notice?")) return;
+    try {
+      await api("/admin/notices/" + id, {method: "DELETE"});
+      await loadNotices();
+    } catch (error) {
+      showFormError(error.message);
+    }
+    return;
+  }
+  if(event.target.classList.contains("edit-btn")) {
+    const data = await api("/admin/notices");
+    const notice = (data.notices || []).find(item => item.id === id);
+    if(!notice) return;
+    const title = prompt("Title", notice.title);
+    if(title === null) return;
+    const body = prompt("Body", notice.body);
+    if(body === null) return;
+    const severity = prompt("Severity (info/warning/critical)", notice.severity) || notice.severity;
+    const blocksPlay = confirm("Blocks Play?");
+    const enabled = confirm("Enabled?");
+    try {
+      await api("/admin/notices/" + id, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: title.trim(),
+          body: body.trim(),
+          severity,
+          blocks_play: blocksPlay,
+          enabled,
+        }),
+      });
+      await loadNotices();
+    } catch (error) {
+      showFormError(error.message);
+    }
+  }
+});
+
+function showFormError(message) {
+  $("form-error").textContent = message || "";
+  show($("form-error"), !!message);
+  if(message) show($("form-ok"), false);
+}
+
+function showFormOk(message) {
+  $("form-ok").textContent = message || "";
+  show($("form-ok"), !!message);
+  if(message) show($("form-error"), false);
+}
+
+const saved = localStorage.getItem(TOKEN_KEY);
+if(saved) {
+  $("token").value = saved;
+  signIn();
+}
+</script>
+</body>
+</html>

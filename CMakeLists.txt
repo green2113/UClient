@@ -3342,14 +3342,66 @@ if(CLIENT)
 
     add_executable(uclient-launcher WIN32
       src/tools/uclient_launcher.cpp
+      src/tools/uclient_launcher_ui.h
+      src/tools/uclient_launcher_webview.h
       other/icons/UClient.rc
     )
-    target_link_libraries(uclient-launcher shell32 winhttp advapi32 gdi32 user32 msimg32)
+    target_link_libraries(uclient-launcher shell32 winhttp advapi32 gdi32 user32 msimg32 windowscodecs ole32)
     set_property(TARGET uclient-launcher PROPERTY OUTPUT_NAME "UClient")
     target_compile_definitions(uclient-launcher PRIVATE
       UCLIENT_LAUNCHER_VERSION="${UCLIENT_PACKAGE_VERSION}"
       UCLIENT_UPDATE_LATEST_URL="https://ddnet.under1111.com/api/uclient/update/latest"
+      UCLIENT_API_BASE_URL="https://uclient.under1111.com"
     )
+
+    # The launcher UI is HTML/CSS hosted in WebView2. The SDK is a NuGet
+    # package fetched at configure time; if anything here is unavailable the
+    # launcher still builds and falls back to its GDI renderer.
+    option(UCLIENT_LAUNCHER_WEBVIEW "Render the UClient launcher UI with WebView2" ON)
+    if(UCLIENT_LAUNCHER_WEBVIEW AND MSVC AND NOT CMAKE_VERSION VERSION_LESS 3.18)
+      set(UCLIENT_WEBVIEW2_VERSION "1.0.2903.40" CACHE STRING "Microsoft.Web.WebView2 NuGet version")
+      set(UCLIENT_WEBVIEW2_DIR "${CMAKE_BINARY_DIR}/webview2-sdk")
+
+      if(NOT EXISTS "${UCLIENT_WEBVIEW2_DIR}/build/native/include/WebView2.h")
+        set(UCLIENT_WEBVIEW2_PKG "${CMAKE_BINARY_DIR}/webview2-sdk.zip")
+        message(STATUS "Downloading WebView2 SDK ${UCLIENT_WEBVIEW2_VERSION}")
+        file(DOWNLOAD
+          "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/${UCLIENT_WEBVIEW2_VERSION}"
+          "${UCLIENT_WEBVIEW2_PKG}"
+          STATUS UCLIENT_WEBVIEW2_STATUS
+          TLS_VERIFY ON
+        )
+        list(GET UCLIENT_WEBVIEW2_STATUS 0 UCLIENT_WEBVIEW2_CODE)
+        if(UCLIENT_WEBVIEW2_CODE EQUAL 0)
+          file(MAKE_DIRECTORY "${UCLIENT_WEBVIEW2_DIR}")
+          file(ARCHIVE_EXTRACT INPUT "${UCLIENT_WEBVIEW2_PKG}" DESTINATION "${UCLIENT_WEBVIEW2_DIR}")
+        else()
+          list(GET UCLIENT_WEBVIEW2_STATUS 1 UCLIENT_WEBVIEW2_ERROR)
+          message(WARNING "WebView2 SDK download failed: ${UCLIENT_WEBVIEW2_ERROR}")
+        endif()
+      endif()
+
+      if(CMAKE_GENERATOR_PLATFORM MATCHES "[Aa][Rr][Mm]64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "[Aa][Rr][Mm]64")
+        set(UCLIENT_WEBVIEW2_ARCH "arm64")
+      elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(UCLIENT_WEBVIEW2_ARCH "x64")
+      else()
+        set(UCLIENT_WEBVIEW2_ARCH "x86")
+      endif()
+      set(UCLIENT_WEBVIEW2_INCLUDE "${UCLIENT_WEBVIEW2_DIR}/build/native/include")
+      set(UCLIENT_WEBVIEW2_LOADER "${UCLIENT_WEBVIEW2_DIR}/build/native/${UCLIENT_WEBVIEW2_ARCH}/WebView2LoaderStatic.lib")
+
+      if(EXISTS "${UCLIENT_WEBVIEW2_INCLUDE}/WebView2.h" AND EXISTS "${UCLIENT_WEBVIEW2_LOADER}")
+        target_include_directories(uclient-launcher PRIVATE "${UCLIENT_WEBVIEW2_INCLUDE}")
+        target_link_libraries(uclient-launcher "${UCLIENT_WEBVIEW2_LOADER}" version shlwapi)
+        target_compile_definitions(uclient-launcher PRIVATE UCLIENT_LAUNCHER_WEBVIEW)
+        message(STATUS "UClient launcher: WebView2 UI enabled (${UCLIENT_WEBVIEW2_ARCH})")
+      else()
+        message(STATUS "UClient launcher: WebView2 SDK missing, falling back to the GDI UI")
+      endif()
+    else()
+      message(STATUS "UClient launcher: WebView2 UI disabled, using the GDI UI")
+    endif()
     list(APPEND TARGETS_OWN uclient-launcher)
     list(APPEND TARGETS_LINK uclient-launcher)
   elseif(TARGET_OS STREQUAL "linux")

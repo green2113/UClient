@@ -680,10 +680,12 @@ void CDemoPlayer::DoTick()
 			else
 			{
 				Pause();
-				// Stop rendering when reaching end of file
+				// Stop rendering when reaching end of file.
+				// Defer video finalization so the client can restore a parked server
+				// connection before the (potentially long) encoder shutdown runs.
 #if defined(CONF_VIDEORECORDER)
 				if(m_UseVideo && IVideo::Current())
-					Stop();
+					Stop("", false);
 #endif
 			}
 			break;
@@ -1253,12 +1255,13 @@ void CDemoPlayer::UpdateTimes()
 	}
 }
 
-void CDemoPlayer::Stop(const char *pErrorMessage)
+void CDemoPlayer::Stop(const char *pErrorMessage, bool FinalizeVideo)
 {
 #if defined(CONF_VIDEORECORDER)
-	if(m_UseVideo && IVideo::Current())
+	if(FinalizeVideo && m_UseVideo && IVideo::Current())
 		IVideo::Current()->Stop();
-	m_WasRecording = false;
+	if(FinalizeVideo)
+		m_WasRecording = false;
 #endif
 
 	if(!m_File)

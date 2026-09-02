@@ -11,6 +11,7 @@
 #include <wingdi.h>
 #include <winuser.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <stdlib.h>
 
 #include <atomic>
@@ -224,6 +225,19 @@ static const wchar_t *k_aUserDirs[] = {
 	L"data\\audio",
 };
 
+static const wchar_t *kSettingsFile = L"uclient_launcher.cfg";
+
+static std::wstring GetLauncherSettingsPath()
+{
+	wchar_t aAppData[MAX_PATH] = {};
+	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
+		return {};
+	std::wstring Dir = aAppData;
+	Dir += L"\\UClient";
+	CreateDirectoryW(Dir.c_str(), nullptr);
+	return Dir + L"\\" + kSettingsFile;
+}
+
 struct WorkerArgs
 {
 	DWORD    Pid;
@@ -323,6 +337,11 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 	wchar_t aBackup[MAX_PATH];
 	_snwprintf_s(aBackup, _TRUNCATE, L"%ls\\update\\backup_%lu", pA->aInstallDir, pA->Pid);
 	DeleteTree(aBackup);
+	wchar_t aLegacyCfg[MAX_PATH], aBackupCfg[MAX_PATH];
+	_snwprintf_s(aLegacyCfg, _TRUNCATE, L"%ls\\%ls", pA->aInstallDir, kSettingsFile);
+	_snwprintf_s(aBackupCfg, _TRUNCATE, L"%ls\\%ls", aBackup, kSettingsFile);
+	if(GetFileAttributesW(aLegacyCfg) != INVALID_FILE_ATTRIBUTES)
+		CopyFileW(aLegacyCfg, aBackupCfg, FALSE);
 	for(const wchar_t *pRel : k_aUserDirs)
 	{
 		wchar_t aSrc[MAX_PATH], aDst[MAX_PATH];
@@ -357,6 +376,10 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 		if(GetFileAttributesW(aSrc) != INVALID_FILE_ATTRIBUTES)
 			CopyTree(aSrc, aDst);
 	}
+	const std::wstring AppCfg = GetLauncherSettingsPath();
+	if(!AppCfg.empty() && GetFileAttributesW(AppCfg.c_str()) == INVALID_FILE_ATTRIBUTES &&
+		GetFileAttributesW(aBackupCfg) != INVALID_FILE_ATTRIBUTES)
+		CopyFileW(aBackupCfg, AppCfg.c_str(), FALSE);
 	SetPercent(95);
 
 	// ── 8. Clean up temp files ────────────────────────────────────────────────

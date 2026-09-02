@@ -5,6 +5,7 @@ interface TestEnv extends Cloudflare.Env {
 	ACCOUNT_PEPPER: string;
 	GRACE_PRIVATE_KEY_SEED_HEX: string;
 	RELAY_SECRET: string;
+	ADMIN_TOKEN: string;
 	TEST_MIGRATIONS: D1Migration[];
 }
 
@@ -43,6 +44,19 @@ function authenticatedRequest(path: string, method: string, account: typeof owne
 			authorization: `Bearer ${account.secret}`,
 			"x-uclient-install-id": account.install_id,
 		},
+	});
+}
+
+function adminRequest(path: string, method: string, body?: unknown): Request {
+	const headers: Record<string, string> = {
+		authorization: `Bearer ${testEnv.ADMIN_TOKEN}`,
+	};
+	if(body !== undefined)
+		headers["content-type"] = "application/json";
+	return new Request(`https://worker.test${path}`, {
+		method,
+		headers,
+		body: body === undefined ? undefined : JSON.stringify(body),
 	});
 }
 
@@ -217,6 +231,14 @@ describe("rooms Worker integration", () => {
 		expect(leaveResponse.status).toBe(200);
 		expect(await responseJson(leaveResponse)).toEqual({ok: true, room_deleted: false});
 
+		// Clean up the transferred room before banning the member.
+		const deleteTransferredResponse = await SELF.fetch(authenticatedRequest(
+			`/rooms/${created.id}/members/me`,
+			"DELETE",
+			member,
+		));
+		expect(deleteTransferredResponse.status).toBe(200);
+
 		await testEnv.DB.prepare(
 			"INSERT INTO user_bans(install_id, reason, banned_at, expires_at, banned_by) VALUES (?1, ?2, ?3, NULL, ?4)",
 		).bind(member.install_id, "integration test", Math.floor(Date.now() / 1000), "test").run();
@@ -238,14 +260,6 @@ describe("rooms Worker integration", () => {
 		expect(deleteResponse.status).toBe(200);
 		expect(await responseJson(deleteResponse)).toEqual({ok: true, room_deleted: true});
 
-		// Clean up the transferred room so owner room-limit checks stay deterministic.
-		const deleteTransferredResponse = await SELF.fetch(authenticatedRequest(
-			`/rooms/${created.id}/members/me`,
-			"DELETE",
-			member,
-		));
-		expect(deleteTransferredResponse.status).toBe(200);
-
 		for(let index = 0; index < 5; index++) {
 			const roomResponse = await SELF.fetch(jsonRequest("/rooms", {
 				name: `Limited Room ${index + 1}`,
@@ -259,5 +273,51 @@ describe("rooms Worker integration", () => {
 		}, owner));
 		expect(roomLimitResponse.status).toBe(409);
 		expect(await responseJson<{error: string}>(roomLimitResponse)).toMatchObject({error: "room_limit_reached"});
+	});
+});
+
+describe("launcher notices", () => {
+	beforeAll(async () => {
+		await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
+	});
+
+	it("supports public listing and admin CRUD with auth", async () => {
+		const unauthorized = await SELF.fetch(new Request("https://worker.test/admin/notices", {method: "GET"}));
+		expect(unauthorized.status).toBe(401);
+
+		const emptyPublic = await SELF.fetch(new Request("https://worker.test/launcher/notices"));
+		expect(emptyPublic.status).toBe(200);
+		expect(await responseJson<{notices: unknown[]}>(emptyPublic)).toEqual({notices: []});
+
+		const createResponse = await SELF.fetch(adminRequest("/admin/notices", "POST", {
+			title: "Scheduled Maintenance",
+			body: "Servers will be unavailable for one hour.",
+			severity: "warning",
+			blocks_play: true,
+			sort_order: 0,
+			enabled: true,
+		}));
+		expect(createResponse.status).toBe(201);
+		const created = await responseJson<{notice: {id: string; title: string}}>(createResponse);
+		expect(created.notice.title).toBe("Scheduled Maintenance");
+
+		const publicResponse = await SELF.fetch(new Request("https://worker.test/launcher/notices"));
+		expect(publicResponse.status).toBe(200);
+		const publicBody = await responseJson<{notices: Array<{id: string; blocks_play: boolean}>}>(publicResponse);
+		expect(publicBody.notices).toHaveLength(1);
+		expect(publicBody.notices[0]?.id).toBe(created.notice.id);
+		expect(publicBody.notices[0]?.blocks_play).toBe(true);
+
+		const patchResponse = await SELF.fetch(adminRequest(`/admin/notices/${created.notice.id}`, "PATCH", {
+			title: "Maintenance Complete",
+			enabled: false,
+		}));
+		expect(patchResponse.status).toBe(200);
+
+		const hiddenPublic = await SELF.fetch(new Request("https://worker.test/launcher/notices"));
+		expect(await responseJson<{notices: unknown[]}>(hiddenPublic)).toEqual({notices: []});
+
+		const deleteResponse = await SELF.fetch(adminRequest(`/admin/notices/${created.notice.id}`, "DELETE"));
+		expect(deleteResponse.status).toBe(200);
 	});
 });

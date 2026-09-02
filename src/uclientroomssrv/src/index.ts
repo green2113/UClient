@@ -1,8 +1,19 @@
+import {
+	adminCreateNotice,
+	adminDeleteNotice,
+	adminListNotices,
+	adminUpdateNotice,
+	publicNotices,
+} from "./notices";
+
 interface Env extends Cloudflare.Env {
 	ACCOUNT_PEPPER: string;
 	GRACE_PRIVATE_KEY_SEED_HEX: string;
 	RELAY_SECRET: string;
 	RELAY_INVALIDATE_SECRET?: string;
+	ADMIN_TOKEN?: string;
+	ADMIN_PASSWORD?: string;
+	ASSETS?: Fetcher;
 }
 
 interface AccountInput {
@@ -643,6 +654,25 @@ export default {
 				return internalMemberships(request, env);
 			if(url.pathname === "/internal/bans" && request.method === "GET")
 				return internalBans(request, env);
+			if(request.method === "GET" && url.pathname === "/launcher/notices")
+				return publicNotices(env);
+			if(request.method === "GET" && url.pathname === "/admin")
+			{
+				if(env.ASSETS)
+					return env.ASSETS.fetch(new URL("/admin.html", request.url));
+				return error(404, "not_found", "Admin page is not available.");
+			}
+			if(segments[0] === "admin" && segments[1] === "notices")
+			{
+				if(segments.length === 2 && request.method === "GET")
+					return adminListNotices(request, env);
+				if(segments.length === 2 && request.method === "POST")
+					return adminCreateNotice(request, env);
+				if(segments.length === 3 && request.method === "PATCH")
+					return adminUpdateNotice(request, env, segments[2]!);
+				if(segments.length === 3 && request.method === "DELETE")
+					return adminDeleteNotice(request, env, segments[2]!);
+			}
 			if(segments[0] === "rooms")
 				return handleRooms(request, env, ctx, segments);
 			return error(404, "not_found", "Endpoint not found.");

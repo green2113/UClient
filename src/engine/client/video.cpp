@@ -27,6 +27,11 @@ extern "C" {
 
 using namespace std::chrono_literals;
 
+static void PumpNetworkDuringVideoStop()
+{
+	IVideo::InvokeStopPumpCallback();
+}
+
 // This code is mostly stolen from https://github.com/FFmpeg/FFmpeg/blob/master/doc/examples/muxing.c
 
 static const enum AVColorSpace COLOR_SPACE = AVCOL_SPC_BT709;
@@ -316,7 +321,9 @@ void CVideo::Stop()
 	dbg_assert(!m_Stopped, "Already stopped");
 	m_Stopped = true;
 
+	PumpNetworkDuringVideoStop();
 	m_pGraphics->WaitForIdle();
+	PumpNetworkDuringVideoStop();
 
 	for(auto &pVideoThread : m_vpVideoThreads)
 	{
@@ -327,6 +334,7 @@ void CVideo::Stop()
 		}
 
 		pVideoThread->m_Thread.join();
+		PumpNetworkDuringVideoStop();
 	}
 	m_vpVideoThreads.clear();
 
@@ -339,19 +347,25 @@ void CVideo::Stop()
 		}
 
 		pAudioThread->m_Thread.join();
+		PumpNetworkDuringVideoStop();
 	}
 	m_vpAudioThreads.clear();
 
 	while(m_ProcessingVideoFrame > 0 || m_ProcessingAudioFrame > 0)
+	{
+		PumpNetworkDuringVideoStop();
 		std::this_thread::sleep_for(10us);
+	}
 
 	m_Recording = false;
 
+	PumpNetworkDuringVideoStop();
 	FinishFrames(&m_VideoStream);
 
 	if(m_HasAudio)
 		FinishFrames(&m_AudioStream);
 
+	PumpNetworkDuringVideoStop();
 	if(m_pFormatContext && m_Started)
 		av_write_trailer(m_pFormatContext);
 
