@@ -30,14 +30,18 @@ void CMenus::PopupConfirmPasteImageFromChat()
 {
 	GameClient()->m_Chat.m_UcChatPaste.ConfirmPasteWarning(&GameClient()->m_Chat, m_PopupConfirmCheckboxValue);
 	m_PopupConfirmHasCheckbox = false;
-	SetActive(false);
+	if(m_PopupDeactivateAfterButton)
+		SetActive(false);
+	m_PopupDeactivateAfterButton = false;
 }
 
 void CMenus::PopupCancelPasteImageFromChat()
 {
 	GameClient()->m_Chat.m_UcChatPaste.CancelPasteWarning(&GameClient()->m_Chat);
 	m_PopupConfirmHasCheckbox = false;
-	SetActive(false);
+	if(m_PopupDeactivateAfterButton)
+		SetActive(false);
+	m_PopupDeactivateAfterButton = false;
 }
 
 void CMenus::OfferAutoLoginFromChat(int Kind, const char *pCode)

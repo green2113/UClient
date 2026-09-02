@@ -21,6 +21,8 @@ enum class EClipboardPastedKind
 	NONE = 0,
 	PNG,
 	GIF,
+	JPEG,
+	WEBP,
 	BITMAP,
 };
 
@@ -33,6 +35,19 @@ struct SClipboardPastedMedia
 	bool IsValid() const
 	{
 		return m_Kind != EClipboardPastedKind::NONE;
+	}
+
+	const char *UploadContentType() const
+	{
+		switch(m_Kind)
+		{
+		case EClipboardPastedKind::GIF: return "image/gif";
+		case EClipboardPastedKind::JPEG: return "image/jpeg";
+		case EClipboardPastedKind::WEBP: return "image/webp";
+		case EClipboardPastedKind::PNG:
+		case EClipboardPastedKind::BITMAP:
+		default: return "image/png";
+		}
 	}
 };
 

@@ -269,6 +269,7 @@ static void RequestUpdateCheck();
 static void RequestUpdateDownload();
 static void TryStartupAutoUpdate();
 static void ShowLauncherWindow(HWND hWnd);
+static void ActivateExistingLauncherWindow(HWND hWnd);
 static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallDir);
 static bool RunUpdateDownload(LauncherArgs *pA, const std::string &RemoteVersion, const std::string &ArchiveUrl);
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
@@ -4469,11 +4470,47 @@ static void ShowLauncherWindow(HWND hWnd)
 		g_ShowSettings = false;
 		InvalidateRect(hWnd, nullptr, FALSE);
 	}
-	if(IsIconic(hWnd))
-		ShowWindow(hWnd, SW_RESTORE);
-	ShowWindow(hWnd, SW_SHOW);
-	SetForegroundWindow(hWnd);
-	BringWindowToTop(hWnd);
+
+	ShowWindow(hWnd, IsIconic(hWnd) ? SW_RESTORE : SW_SHOW);
+
+	HWND hForeground = GetForegroundWindow();
+	if(hForeground != hWnd)
+	{
+		const DWORD ForegroundThread = GetWindowThreadProcessId(hForeground, nullptr);
+		const DWORD CurrentThread = GetCurrentThreadId();
+		if(ForegroundThread != CurrentThread)
+			AttachThreadInput(CurrentThread, ForegroundThread, TRUE);
+
+		SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+		SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+		SetForegroundWindow(hWnd);
+		SetFocus(hWnd);
+		BringWindowToTop(hWnd);
+
+		if(ForegroundThread != CurrentThread)
+			AttachThreadInput(CurrentThread, ForegroundThread, FALSE);
+	}
+
+	FLASHWINFO Flash = {};
+	Flash.cbSize = sizeof(Flash);
+	Flash.hwnd = hWnd;
+	Flash.dwFlags = FLASHW_ALL | FLASHW_TIMERNOFG;
+	Flash.uCount = 3;
+	FlashWindowEx(&Flash);
+}
+
+static void ActivateExistingLauncherWindow(HWND hWnd)
+{
+	if(!hWnd || !IsWindow(hWnd))
+		return;
+
+	DWORD ExistingPid = 0;
+	GetWindowThreadProcessId(hWnd, &ExistingPid);
+	if(ExistingPid != 0)
+		AllowSetForegroundWindow(ExistingPid);
+
+	DWORD_PTR Result = 0;
+	SendMessageTimeoutW(hWnd, WM_SHOW_LAUNCHER, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 3000, &Result);
 }
 
 // Returns true when this process should continue starting a new launcher window.
@@ -4494,7 +4531,7 @@ static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallD
 			HWND hExisting = FindLauncherWindow();
 			if(hExisting)
 			{
-				PostMessageW(hExisting, WM_SHOW_LAUNCHER, 0, 0);
+				ActivateExistingLauncherWindow(hExisting);
 				break;
 			}
 			Sleep(50);

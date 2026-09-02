@@ -47,6 +47,7 @@ class CUClientChatPasteImage
 		int m_Team = 0;
 		char m_aMessagePrefix[256] = "";
 		char m_aError[128] = "";
+		char m_aUploadContentType[32] = "image/png";
 		bool m_IsGif = false;
 
 		bool HasImage() const
