@@ -156,6 +156,7 @@ struct LauncherArgs
 };
 
 static HWND g_hWnd = nullptr;
+static HANDLE g_hSingleInstanceMutex = nullptr;
 static std::atomic<int> g_Percent = 0;
 static bool g_Failed = false;
 static CRITICAL_SECTION g_Lock;
@@ -244,6 +245,7 @@ static int g_MascotH = 0;
 #define WM_FRIENDS_READY (WM_APP + 3)
 #define WM_NOTICES_READY (WM_APP + 4)
 #define WM_UPDATE_CHECK_READY (WM_APP + 5)
+#define WM_SHOW_LAUNCHER (WM_APP + 6)
 
 #define ANIM_TIMER_ID 1
 #define LAUNCH_TIMER_ID 2
@@ -266,6 +268,8 @@ static void RefreshGameRunningState();
 static void RequestUpdateCheck();
 static void RequestUpdateDownload();
 static void TryStartupAutoUpdate();
+static void ShowLauncherWindow(HWND hWnd);
+static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallDir);
 static bool RunUpdateDownload(LauncherArgs *pA, const std::string &RemoteVersion, const std::string &ArchiveUrl);
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
 static void RequestFakeDownload();
@@ -4215,6 +4219,9 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		SetCursor(LoadCursor(nullptr, IDC_ARROW));
 		return TRUE;
 	}
+	case WM_SHOW_LAUNCHER:
+		ShowLauncherWindow(hWnd);
+		return 0;
 	case WM_WORKER_TICK:
 		InvalidateRect(hWnd, nullptr, FALSE);
 		PushWebState();
@@ -4435,6 +4442,68 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 	return DefWindowProcW(hWnd, Msg, wParam, lParam);
 }
 
+static std::wstring SingleInstanceMutexName(const std::wstring &InstallDir)
+{
+	std::wstring Name = L"Local\\UClientLauncher.";
+	for(wchar_t Ch : InstallDir)
+	{
+		if(Ch == L'\\' || Ch == L'/')
+			Name.push_back(L'_');
+		else
+			Name.push_back((wchar_t)towupper(Ch));
+	}
+	return Name;
+}
+
+static HWND FindLauncherWindow()
+{
+	return FindWindowW(L"UClientLauncher", L"UClient Launcher");
+}
+
+static void ShowLauncherWindow(HWND hWnd)
+{
+	if(!hWnd || !IsWindow(hWnd))
+		return;
+	if(g_ShowSettings)
+	{
+		g_ShowSettings = false;
+		InvalidateRect(hWnd, nullptr, FALSE);
+	}
+	if(IsIconic(hWnd))
+		ShowWindow(hWnd, SW_RESTORE);
+	ShowWindow(hWnd, SW_SHOW);
+	SetForegroundWindow(hWnd);
+	BringWindowToTop(hWnd);
+}
+
+// Returns true when this process should continue starting a new launcher window.
+static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallDir)
+{
+	const std::wstring MutexName = SingleInstanceMutexName(InstallDir);
+	g_hSingleInstanceMutex = CreateMutexW(nullptr, TRUE, MutexName.c_str());
+	if(!g_hSingleInstanceMutex)
+		return true;
+
+	if(GetLastError() == ERROR_ALREADY_EXISTS)
+	{
+		CloseHandle(g_hSingleInstanceMutex);
+		g_hSingleInstanceMutex = nullptr;
+
+		for(int Attempt = 0; Attempt < 40; ++Attempt)
+		{
+			HWND hExisting = FindLauncherWindow();
+			if(hExisting)
+			{
+				PostMessageW(hExisting, WM_SHOW_LAUNCHER, 0, 0);
+				break;
+			}
+			Sleep(50);
+		}
+		return false;
+	}
+	return true;
+}
+
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 {
 	CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -4477,6 +4546,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 	SyncDiscordRpcToClientSettings();
 	LoadLauncherArt(g_InstallDir);
 	SetVersionLabel(ResolveLocalVersion(g_InstallDir));
+
+	if(g_pArgs->ApplyArchive.empty() && !AcquireSingleInstanceOrActivateExisting(g_InstallDir))
+	{
+		delete g_pArgs;
+		g_pArgs = nullptr;
+		DeleteCriticalSection(&g_Lock);
+		CoUninitialize();
+		return 0;
+	}
 
 	WNDCLASSEXW Wc = {};
 	Wc.cbSize = sizeof(Wc);
@@ -4528,6 +4606,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 	}
 
 	DeleteCriticalSection(&g_Lock);
+	if(g_hSingleInstanceMutex)
+	{
+		CloseHandle(g_hSingleInstanceMutex);
+		g_hSingleInstanceMutex = nullptr;
+	}
 	CoUninitialize();
 	return 0;
 }
