@@ -3352,6 +3352,7 @@ if(CLIENT)
       UCLIENT_LAUNCHER_VERSION="${UCLIENT_PACKAGE_VERSION}"
       UCLIENT_UPDATE_LATEST_URL="https://ddnet.under1111.com/api/uclient/update/latest"
       UCLIENT_API_BASE_URL="https://uclient.under1111.com"
+      $<$<CONFIG:DevRelease>:CONF_UCLIENT_LAUNCHER_DEV>
     )
 
     # The launcher UI is HTML/CSS hosted in WebView2. The SDK is a NuGet

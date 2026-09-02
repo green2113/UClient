@@ -141,6 +141,9 @@ struct NoticeView
 	std::string Body;
 	std::string Severity;
 	bool BlocksPlay = false;
+	bool HasExpiresAt = false;
+	bool BanPermanent = false;
+	int64_t ExpiresAt = 0;
 };
 
 struct LauncherArgs
@@ -167,6 +170,7 @@ static std::atomic<uint64_t> g_DownloadSpeed = 0; // bytes per second
 static std::atomic<int> g_EtaSeconds = -1;
 static bool g_ShowSettings = false;
 static bool g_AutoLaunch = false; // default off
+static bool g_DiscordRpc = true; // mirrors tc_discord_rpc (default on)
 static bool g_LaunchedFromGame = false; // set when DDNet.exe redirected here
 static bool g_PlayHover = false;
 static bool g_GearHover = false;
@@ -195,7 +199,7 @@ static bool g_GameRunning = false;
 static std::string g_PendingRemoteVersion;
 static std::string g_PendingArchiveUrl;
 static std::wstring g_ButtonHint;
-#ifdef CONF_UCLIENT_DEV_BUILD
+#ifdef CONF_UCLIENT_LAUNCHER_DEV
 static struct
 {
 	bool ForceUpdateAvailable = false;
@@ -218,6 +222,7 @@ static RECT g_GearRc = {};
 static RECT g_MinRc = {};
 static RECT g_CloseRc = {};
 static RECT g_CheckRc = {};
+static RECT g_DiscordCheckRc = {};
 static RECT g_BackRc = {};
 static RECT g_TabOverviewRc = {};
 static RECT g_TabUpdatesRc = {};
@@ -258,7 +263,7 @@ static void RefreshGameRunningState();
 static void RequestUpdateCheck();
 static void RequestUpdateDownload();
 static bool RunUpdateDownload(LauncherArgs *pA, const std::string &RemoteVersion, const std::string &ArchiveUrl);
-#ifdef CONF_UCLIENT_DEV_BUILD
+#ifdef CONF_UCLIENT_LAUNCHER_DEV
 static void RequestFakeDownload();
 static void HandleDevCommand(const std::string &Json);
 static bool EffectiveUpdateAvailable();
@@ -936,24 +941,33 @@ static std::wstring GetLauncherSettingsPath()
 	return Dir + L"\\" + kSettingsFile;
 }
 
+static void LoadDiscordRpcSetting();
+static void SaveDiscordRpcSetting(bool Enabled);
+static void SyncDiscordRpcToClientSettings();
+static void SaveLauncherSettings(const std::wstring &InstallDir);
+
 static void LoadLauncherSettings(const std::wstring &InstallDir)
 {
 	g_AutoLaunch = false;
 	std::string Text;
 	const std::wstring AppPath = GetLauncherSettingsPath();
-	if(!AppPath.empty() && ReadTextFile(AppPath, Text))
+	const bool HasLauncherCfg = !AppPath.empty() && ReadTextFile(AppPath, Text);
+	if(HasLauncherCfg)
 	{
 		if(Text.find("auto_launch=1") != std::string::npos)
 			g_AutoLaunch = true;
-		return;
 	}
-	const std::wstring LegacyPath = JoinPath(InstallDir, kSettingsFile);
-	if(!ReadTextFile(LegacyPath, Text))
-		return;
-	if(Text.find("auto_launch=1") != std::string::npos)
-		g_AutoLaunch = true;
-	if(!AppPath.empty())
-		WriteTextFile(AppPath, g_AutoLaunch ? "auto_launch=1" : "auto_launch=0");
+	else
+	{
+		const std::wstring LegacyPath = JoinPath(InstallDir, kSettingsFile);
+		if(ReadTextFile(LegacyPath, Text) && Text.find("auto_launch=1") != std::string::npos)
+			g_AutoLaunch = true;
+	}
+
+	LoadDiscordRpcSetting();
+
+	if(!AppPath.empty() && (!HasLauncherCfg || Text.find("discord_rpc=") == std::string::npos))
+		SaveLauncherSettings(InstallDir);
 }
 
 static void SaveLauncherSettings(const std::wstring &InstallDir)
@@ -962,7 +976,10 @@ static void SaveLauncherSettings(const std::wstring &InstallDir)
 	const std::wstring Path = GetLauncherSettingsPath();
 	if(Path.empty())
 		return;
-	WriteTextFile(Path, g_AutoLaunch ? "auto_launch=1" : "auto_launch=0");
+	std::string Text;
+	Text = g_AutoLaunch ? "auto_launch=1\n" : "auto_launch=0\n";
+	Text += g_DiscordRpc ? "discord_rpc=1\n" : "discord_rpc=0\n";
+	WriteTextFile(Path, Text);
 }
 
 // Prefer on-disk stamp so updates stop looping even if UClient.exe in the zip
@@ -1385,6 +1402,37 @@ static bool ExtractJsonBool(const std::string &Json, const char *Key, bool &Out)
 	return false;
 }
 
+static bool ExtractJsonExpiresAt(const std::string &Json, const char *Key, bool &OutKnown, bool &OutPermanent, int64_t &OutUnix)
+{
+	std::string Needle = "\"";
+	Needle += Key;
+	Needle += "\"";
+	const size_t Pos = Json.find(Needle);
+	if(Pos == std::string::npos)
+		return false;
+	const size_t Colon = Json.find(':', Pos + Needle.size());
+	if(Colon == std::string::npos)
+		return false;
+	size_t i = Colon + 1;
+	while(i < Json.size() && isspace((unsigned char)Json[i]))
+		++i;
+	if(i + 4 <= Json.size() && Json.compare(i, 4, "null") == 0)
+	{
+		OutKnown = true;
+		OutPermanent = true;
+		OutUnix = 0;
+		return true;
+	}
+	char *pEnd = nullptr;
+	const long long Val = strtoll(Json.c_str() + i, &pEnd, 10);
+	if(pEnd == Json.c_str() + i)
+		return false;
+	OutKnown = true;
+	OutPermanent = false;
+	OutUnix = (int64_t)Val;
+	return true;
+}
+
 static bool ParseNoticeObject(const std::string &Json, NoticeView &Out)
 {
 	NoticeView Notice;
@@ -1474,12 +1522,19 @@ static bool LoadAccountCredentials(std::string &InstallId, std::string &Secret)
 	return !InstallId.empty() && !Secret.empty();
 }
 
-static void UpsertBanNotice(std::vector<NoticeView> &Notices, const std::string &Reason)
+static void UpsertBanNotice(std::vector<NoticeView> &Notices, const std::string &Reason, bool HasExpiry, bool Permanent, int64_t ExpiresAt)
 {
-	for(const NoticeView &N : Notices)
+	for(NoticeView &N : Notices)
 	{
 		if(N.Id == "account_ban")
+		{
+			if(!Reason.empty())
+				N.Body = Reason;
+			N.HasExpiresAt = HasExpiry;
+			N.BanPermanent = Permanent;
+			N.ExpiresAt = ExpiresAt;
 			return;
+		}
 	}
 	NoticeView Ban;
 	Ban.Id = "account_ban";
@@ -1487,6 +1542,9 @@ static void UpsertBanNotice(std::vector<NoticeView> &Notices, const std::string 
 	Ban.Body = Reason.empty() ? "Your UClient account has been blocked by an administrator." : Reason;
 	Ban.Severity = "critical";
 	Ban.BlocksPlay = true;
+	Ban.HasExpiresAt = HasExpiry;
+	Ban.BanPermanent = Permanent;
+	Ban.ExpiresAt = ExpiresAt;
 	Notices.insert(Notices.begin(), std::move(Ban));
 }
 
@@ -1528,8 +1586,14 @@ static void RefreshLauncherNotices()
 		if(HttpJsonRequest(L"POST", VerifyUrl, aPayload, VerifyBody, Status) && Status == 423)
 		{
 			std::string Reason;
+			bool HasExpiry = false;
+			bool Permanent = false;
+			int64_t ExpiresAt = 0;
 			ExtractJsonString(VerifyBody, "reason", Reason);
-			UpsertBanNotice(Notices, Reason);
+			if(ExtractJsonExpiresAt(VerifyBody, "expires_at", HasExpiry, Permanent, ExpiresAt))
+				UpsertBanNotice(Notices, Reason, HasExpiry, Permanent, ExpiresAt);
+			else
+				UpsertBanNotice(Notices, Reason, false, false, 0);
 		}
 	}
 
@@ -1579,6 +1643,159 @@ static std::wstring GetDdnetSettingsPath()
 	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
 		return {};
 	return std::wstring(aAppData) + L"\\DDNet\\settings_ddnet.cfg";
+}
+
+static bool ConfigLineHasKey(const std::string &Line, const char *pKey)
+{
+	size_t i = 0;
+	while(i < Line.size() && isspace((unsigned char)Line[i]))
+		++i;
+	if(i >= Line.size() || Line[i] == '#')
+		return false;
+	const size_t KeyLen = strlen(pKey);
+	if(Line.compare(i, KeyLen, pKey) != 0)
+		return false;
+	i += KeyLen;
+	return i >= Line.size() || isspace((unsigned char)Line[i]);
+}
+
+static bool ParseConfigIntLine(const std::string &Line, const char *pKey, int &Out)
+{
+	size_t i = 0;
+	while(i < Line.size() && isspace((unsigned char)Line[i]))
+		++i;
+	if(i >= Line.size() || Line[i] == '#')
+		return false;
+	const size_t KeyLen = strlen(pKey);
+	if(Line.compare(i, KeyLen, pKey) != 0)
+		return false;
+	i += KeyLen;
+	if(i < Line.size() && !isspace((unsigned char)Line[i]))
+		return false;
+	while(i < Line.size() && isspace((unsigned char)Line[i]))
+		++i;
+	if(i >= Line.size())
+		return false;
+	char *pEnd = nullptr;
+	const long Val = strtol(Line.c_str() + i, &pEnd, 10);
+	if(pEnd == Line.c_str() + i)
+		return false;
+	Out = (int)Val;
+	return true;
+}
+
+static int ReadIntConfigValue(const std::wstring &Path, const char *pKey, int Default)
+{
+	std::string Text;
+	if(Path.empty() || !ReadEntireFile(Path, Text))
+		return Default;
+
+	size_t LineStart = 0;
+	while(LineStart <= Text.size())
+	{
+		size_t LineEnd = Text.find('\n', LineStart);
+		if(LineEnd == std::string::npos)
+			LineEnd = Text.size();
+		std::string Line = Text.substr(LineStart, LineEnd - LineStart);
+		if(!Line.empty() && Line.back() == '\r')
+			Line.pop_back();
+		LineStart = LineEnd + 1;
+
+		int Value = Default;
+		if(ParseConfigIntLine(Line, pKey, Value))
+			return Value;
+	}
+	return Default;
+}
+
+static bool EnsureDdnetSettingsDir()
+{
+	wchar_t aAppData[MAX_PATH] = {};
+	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
+		return false;
+	std::wstring Dir = aAppData;
+	Dir += L"\\DDNet";
+	CreateDirectoryW(Dir.c_str(), nullptr);
+	return true;
+}
+
+static bool SetIntConfigValue(const std::wstring &Path, const char *pKey, int Value)
+{
+	std::string Text;
+	std::string NewText;
+	bool Found = false;
+	if(ReadEntireFile(Path, Text))
+	{
+		size_t LineStart = 0;
+		while(LineStart <= Text.size())
+		{
+			size_t LineEnd = Text.find('\n', LineStart);
+			if(LineEnd == std::string::npos)
+				LineEnd = Text.size();
+			std::string Line = Text.substr(LineStart, LineEnd - LineStart);
+			if(!Line.empty() && Line.back() == '\r')
+				Line.pop_back();
+			LineStart = LineEnd + 1;
+
+			if(ConfigLineHasKey(Line, pKey))
+			{
+				char aBuf[128];
+				_snprintf_s(aBuf, _TRUNCATE, "%s %d", pKey, Value);
+				NewText += aBuf;
+				NewText += '\n';
+				Found = true;
+			}
+			else
+			{
+				NewText += Line;
+				if(LineEnd < Text.size())
+					NewText += '\n';
+			}
+		}
+	}
+
+	if(!Found)
+	{
+		if(!NewText.empty() && NewText.back() != '\n')
+			NewText += '\n';
+		char aBuf[128];
+		_snprintf_s(aBuf, _TRUNCATE, "%s %d\n", pKey, Value);
+		NewText += aBuf;
+	}
+	return WriteTextFile(Path, NewText);
+}
+
+static void LoadDiscordRpcSetting()
+{
+	g_DiscordRpc = true;
+	const std::wstring LauncherPath = GetLauncherSettingsPath();
+	std::string Text;
+	if(!LauncherPath.empty() && ReadTextFile(LauncherPath, Text))
+	{
+		if(Text.find("discord_rpc=0") != std::string::npos)
+			g_DiscordRpc = false;
+		else if(Text.find("discord_rpc=1") != std::string::npos)
+			g_DiscordRpc = true;
+		else
+			g_DiscordRpc = ReadIntConfigValue(GetDdnetSettingsPath(), "tc_discord_rpc", 1) != 0;
+		return;
+	}
+	g_DiscordRpc = ReadIntConfigValue(GetDdnetSettingsPath(), "tc_discord_rpc", 1) != 0;
+}
+
+static void SyncDiscordRpcToClientSettings()
+{
+	const std::wstring Path = GetDdnetSettingsPath();
+	if(Path.empty() || !EnsureDdnetSettingsDir())
+		return;
+	SetIntConfigValue(Path, "tc_discord_rpc", g_DiscordRpc ? 1 : 0);
+}
+
+static void SaveDiscordRpcSetting(bool Enabled)
+{
+	g_DiscordRpc = Enabled;
+	SaveLauncherSettings(g_InstallDir);
+	SyncDiscordRpcToClientSettings();
 }
 
 static bool ParseQuotedToken(const std::string &Line, size_t &Pos, std::string &Out)
@@ -2279,7 +2496,7 @@ static void SyncReadyButtonLabel()
 		SetButtonLabel(kPlayLabel);
 }
 
-#ifdef CONF_UCLIENT_DEV_BUILD
+#ifdef CONF_UCLIENT_LAUNCHER_DEV
 static bool EffectiveUpdateAvailable()
 {
 	if(g_Dev.ForceUpdateAvailable)
@@ -2431,7 +2648,7 @@ static void SyncButtonHint()
 	std::wstring Hint;
 	if(g_Phase == EUiPhase::Ready)
 	{
-#ifdef CONF_UCLIENT_DEV_BUILD
+#ifdef CONF_UCLIENT_LAUNCHER_DEV
 		if(g_Dev.ForcePlayBlocked)
 			Hint = L"[Dev] Play blocked for testing.";
 		else
@@ -2460,7 +2677,7 @@ static void SyncButtonHint()
 		{
 			Hint = L"You cannot update because the game is currently running. Please close the game and then proceed with the update.";
 		}
-#ifdef CONF_UCLIENT_DEV_BUILD
+#ifdef CONF_UCLIENT_LAUNCHER_DEV
 		else if(g_Dev.ForceGameRunning && EffectiveUpdateAvailable())
 		{
 			Hint = L"[Dev] Game running override is active.";
@@ -2560,7 +2777,7 @@ static void RequestUpdateDownload()
 	if(g_PendingRemoteVersion.empty() || g_PendingArchiveUrl.empty())
 	{
 		LeaveCriticalSection(&g_Lock);
-#ifdef CONF_UCLIENT_DEV_BUILD
+#ifdef CONF_UCLIENT_LAUNCHER_DEV
 		if(g_Dev.ForceUpdateAvailable)
 			RequestFakeDownload();
 #endif
@@ -2804,6 +3021,7 @@ static void RequestLaunchGame(const wchar_t *pConnectAddress = nullptr)
 		g_ConnectAddress = pConnectAddress;
 	else
 		g_ConnectAddress.clear();
+	SyncDiscordRpcToClientSettings();
 	SetPhase(EUiPhase::Launching);
 	g_UpdateStage = EUpdateStage::None;
 	SetButtonLabel(kRunningLabel);
@@ -2981,13 +3199,14 @@ static std::string BuildStateJson()
 	Json += aNum;
 	Json += g_Failed ? "\"failed\":true," : "\"failed\":false,";
 	Json += g_AutoLaunch ? "\"autoLaunch\":true," : "\"autoLaunch\":false,";
+	Json += g_DiscordRpc ? "\"discordRpc\":true," : "\"discordRpc\":false,";
 	Json += FriendsLoading ? "\"friendsLoading\":true," : "\"friendsLoading\":false,";
 	Json += FriendsLoaded ? "\"friendsLoaded\":true," : "\"friendsLoaded\":false,";
 	Json += PlayBlocked ? "\"playBlocked\":true," : "\"playBlocked\":false,";
 	Json += UpdateAvailable ? "\"updateAvailable\":true," : "\"updateAvailable\":false,";
 	Json += GameRunning ? "\"gameRunning\":true," : "\"gameRunning\":false,";
 	JsonAddString(Json, "buttonHint", WideToUtf8(ButtonHint));
-#ifdef CONF_UCLIENT_DEV_BUILD
+#ifdef CONF_UCLIENT_LAUNCHER_DEV
 	Json += "\"devBuild\":true,";
 	Json += g_Dev.ForceUpdateAvailable ? "\"devForceUpdate\":true," : "\"devForceUpdate\":false,";
 	Json += g_Dev.ForcePlayBlocked ? "\"devForcePlayBlocked\":true," : "\"devForcePlayBlocked\":false,";
@@ -3008,6 +3227,17 @@ static std::string BuildStateJson()
 		JsonAddString(Json, "body", Notices[i].Body);
 		JsonAddString(Json, "severity", Notices[i].Severity);
 		Json += Notices[i].BlocksPlay ? "\"blocksPlay\":true" : "\"blocksPlay\":false";
+		if(Notices[i].HasExpiresAt)
+		{
+			if(Notices[i].BanPermanent)
+				Json += ",\"expiresAt\":null";
+			else
+			{
+				char aExpiry[64];
+				_snprintf_s(aExpiry, _TRUNCATE, ",\"expiresAt\":%lld", (long long)Notices[i].ExpiresAt);
+				Json += aExpiry;
+			}
+		}
 		Json += "}";
 	}
 	Json += "],";
@@ -3075,7 +3305,7 @@ static void OnWebMessage(const std::string &Json)
 	{
 		RequestUpdateDownload();
 	}
-#ifdef CONF_UCLIENT_DEV_BUILD
+#ifdef CONF_UCLIENT_LAUNCHER_DEV
 	else if(Cmd == "dev")
 	{
 		HandleDevCommand(Json);
@@ -3091,6 +3321,11 @@ static void OnWebMessage(const std::string &Json)
 	{
 		g_AutoLaunch = Json.find("\"value\":true") != std::string::npos;
 		SaveLauncherSettings(g_InstallDir);
+		PushWebState(true);
+	}
+	else if(Cmd == "discordRpc")
+	{
+		SaveDiscordRpcSetting(Json.find("\"value\":true") != std::string::npos);
 		PushWebState(true);
 	}
 	else if(Cmd == "refreshFriends")
@@ -3344,6 +3579,7 @@ static void Paint(HWND hWnd)
 
 	g_BackRc = {ContentL, WND_H - 84, ContentL + 128, WND_H - 44};
 	g_CheckRc = {ContentL + 4, 176, ContentR, 262};
+	g_DiscordCheckRc = {ContentL + 4, 312, ContentR, 398};
 	g_FriendAreaRc = {PanelL + 12, 182, WND_W - 36, WND_H - 44};
 
 	// Tabs: equal cells sized from the widest label, centered over the content area.
@@ -3564,6 +3800,29 @@ static void Paint(HWND hWnd)
 		SetTextColor(Mem, C_MUTED);
 		TextOutW(Mem, Box.right + 16, g_CheckRc.top + 34, L"After the update check, start without pressing Play.", 52);
 
+		SetTextColor(Mem, C_MUTED);
+		TextOutW(Mem, ContentL, 276, L"Integrations", 12);
+
+		const bool DiscordChecked = g_DiscordRpc;
+		RECT DiscordBox = {g_DiscordCheckRc.left, g_DiscordCheckRc.top + 4, g_DiscordCheckRc.left + 26, g_DiscordCheckRc.top + 30};
+		FillRoundRect(Mem, DiscordBox, 7, DiscordChecked ? C_ACCENT : C_BAR_TRACK);
+		if(DiscordChecked)
+		{
+			HPEN Pen = CreatePen(PS_SOLID, 3, RGB(255, 255, 255));
+			HGDIOBJ OldPen = SelectObject(Mem, Pen);
+			MoveToEx(Mem, DiscordBox.left + 6, DiscordBox.top + 13, nullptr);
+			LineTo(Mem, DiscordBox.left + 11, DiscordBox.top + 18);
+			LineTo(Mem, DiscordBox.left + 19, DiscordBox.top + 7);
+			SelectObject(Mem, OldPen);
+			DeleteObject(Pen);
+		}
+		SelectObject(Mem, BodyFont);
+		SetTextColor(Mem, C_TITLE);
+		TextOutW(Mem, DiscordBox.right + 16, g_DiscordCheckRc.top + 4, L"Show Discord activity", 21);
+		SelectObject(Mem, SmallFont);
+		SetTextColor(Mem, C_MUTED);
+		TextOutW(Mem, DiscordBox.right + 16, g_DiscordCheckRc.top + 34, L"Display in-game status in Discord. Restart the client to apply.", 63);
+
 		FillRoundRect(Mem, g_BackRc, 20, g_BackHover ? C_PANEL2 : C_BTN_DISABLED);
 		StrokeRoundRect(Mem, g_BackRc, 20, C_BORDER);
 		SelectObject(Mem, BodyFont);
@@ -3611,7 +3870,7 @@ static void Paint(HWND hWnd)
 			}
 
 			SelectObject(Mem, BodyFont);
-			if(aStatus[0])
+			if(aStatus[0] && g_Phase != EUiPhase::Checking && g_Phase != EUiPhase::Launching && g_Phase != EUiPhase::Updating)
 			{
 				SelectObject(Mem, SmallFont);
 				SetTextColor(Mem, g_Failed ? C_ERROR : C_MUTED);
@@ -3636,7 +3895,7 @@ static void Paint(HWND hWnd)
 			else if(g_Phase == EUiPhase::Launching)
 				pState = L"Launching game...";
 			TextOutW(Mem, ContentL + 2, 262, pState, (int)wcslen(pState));
-			if(aStatus[0])
+			if(aStatus[0] && g_Phase != EUiPhase::Checking && g_Phase != EUiPhase::Launching)
 			{
 				SelectObject(Mem, SmallFont);
 				SetTextColor(Mem, g_Failed ? C_ERROR : C_MUTED);
@@ -3774,7 +4033,7 @@ static bool IsInteractiveHit(int X, int Y)
 	if(PtInRectI(g_CloseRc, X, Y) || PtInRectI(g_MinRc, X, Y) || PtInRectI(g_GearRc, X, Y))
 		return true;
 	if(g_ShowSettings)
-		return PtInRectI(g_CheckRc, X, Y) || PtInRectI(g_BackRc, X, Y);
+		return PtInRectI(g_CheckRc, X, Y) || PtInRectI(g_DiscordCheckRc, X, Y) || PtInRectI(g_BackRc, X, Y);
 	if(PtInRectI(g_TabOverviewRc, X, Y) || PtInRectI(g_TabUpdatesRc, X, Y))
 		return true;
 	if(PtInRectI(g_PlayBtnRc, X, Y))
@@ -3862,6 +4121,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		{
 			const bool WasRunning = g_GameRunning;
 			RefreshGameRunningState();
+			if(WasRunning && !g_GameRunning)
+				SyncDiscordRpcToClientSettings();
 			if(WasRunning != g_GameRunning)
 			{
 				SyncButtonHint();
@@ -3880,7 +4141,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		if(PtInRectI(g_CloseRc, Pt.x, Pt.y) || PtInRectI(g_MinRc, Pt.x, Pt.y) || PtInRectI(g_GearRc, Pt.x, Pt.y))
 			Hand = true;
 		else if(g_ShowSettings)
-			Hand = PtInRectI(g_CheckRc, Pt.x, Pt.y) || PtInRectI(g_BackRc, Pt.x, Pt.y);
+			Hand = PtInRectI(g_CheckRc, Pt.x, Pt.y) || PtInRectI(g_DiscordCheckRc, Pt.x, Pt.y) || PtInRectI(g_BackRc, Pt.x, Pt.y);
 		else if(PtInRectI(g_TabOverviewRc, Pt.x, Pt.y) || PtInRectI(g_TabUpdatesRc, Pt.x, Pt.y))
 			Hand = true;
 		else if(PtInRectI(g_PlayBtnRc, Pt.x, Pt.y) && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked() &&
@@ -4021,6 +4282,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 				SaveLauncherSettings(g_InstallDir);
 				InvalidateRect(hWnd, nullptr, FALSE);
 			}
+			else if(PtInRectI(g_DiscordCheckRc, X, Y))
+			{
+				SaveDiscordRpcSetting(!g_DiscordRpc);
+				InvalidateRect(hWnd, nullptr, FALSE);
+			}
 			else if(PtInRectI(g_BackRc, X, Y))
 			{
 				g_ShowSettings = false;
@@ -4151,6 +4417,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 	LocalFree(ppArgv);
 
 	LoadLauncherSettings(g_InstallDir);
+	SyncDiscordRpcToClientSettings();
 	LoadLauncherArt(g_InstallDir);
 	SetVersionLabel(ResolveLocalVersion(g_InstallDir));
 

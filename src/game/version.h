@@ -22,7 +22,7 @@ extern const char *GIT_SHORTREV_HASH;
 
 // UClient
 #ifndef UCLIENT_VERSION
-#define UCLIENT_VERSION "2.8.3"
+#define UCLIENT_VERSION "2.9.0"
 #endif
 
 // TClient

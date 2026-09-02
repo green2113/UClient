@@ -6,10 +6,10 @@
 //   JS  -> C++  window.chrome.webview.postMessage(JSON.stringify({cmd: ...}))
 //
 // State fields: phase, buttonLabel, version, status, percent, failed,
-//               autoLaunch, logoUrl, mascotUrl, friendsLoading, friendsLoaded,
+//               autoLaunch, discordRpc, logoUrl, mascotUrl, friendsLoading, friendsLoaded,
 //               playBlocked, updateAvailable, gameRunning, buttonHint,
 //               devBuild, devForceUpdate, devForcePlayBlocked, devForceGameRunning, devInjectNotice,
-//               notices[] {id, title, body, severity, blocksPlay},
+//               notices[] {id, title, body, severity, blocksPlay, expiresAt?},
 //               updateStage, downloadDone, downloadTotal, downloadSpeed, etaSeconds,
 //               friends[] {name, clan, online, server, map, address}
 //
@@ -217,17 +217,20 @@ body{
 }
 #play{
   position:relative;z-index:1;
-  display:inline-flex;align-items:center;justify-content:center;
-  border:0;cursor:pointer;
+  display:inline-flex;align-items:stretch;justify-content:center;
+  border:0;cursor:pointer;overflow:hidden;box-sizing:border-box;
   font-family:'Pretendard',"Segoe UI",system-ui,sans-serif;
   font-weight:700;font-size:22px;letter-spacing:-.02em;line-height:1;
-  transition:width .28s var(--ease),height .28s var(--ease),background .22s var(--ease),box-shadow .22s var(--ease),transform .18s var(--ease),filter .22s var(--ease);
+  transition:
+    width .38s var(--ease),height .38s var(--ease),min-width .38s var(--ease),
+    border-radius .34s var(--ease),background .3s var(--ease),box-shadow .3s var(--ease),
+    transform .18s var(--ease),filter .22s var(--ease);
   animation:pop .6s .12s var(--ease) both;
 }
 #play.mode-play{
-  border-radius:var(--play-radius);padding:0 38px;height:58px;min-width:160px;
-  color:var(--play-fg);
-  font-size:28px;
+  height:58px;padding:0;
+  border-radius:var(--play-radius);
+  color:var(--play-fg);font-size:28px;
   background:linear-gradient(180deg,var(--accent-hi) 0%,var(--accent) 52%,var(--accent-deep) 100%);
   box-shadow:0 4px 18px -3px var(--accent-glow);
 }
@@ -247,21 +250,61 @@ body{
 }
 #play.mode-play:disabled .play-ico,#play.mode-update:disabled .play-ico{color:var(--muted);opacity:.65}
 
-/* Normal play layout */
-.play-normal{display:none;align-items:center;justify-content:center;gap:10px;width:100%}
-#play.mode-play .play-normal{display:flex}
-#play .play-ico{flex:0 0 auto;width:32px;height:32px;display:grid;place-items:center;color:var(--play-fg)}
+/* Stacked faces — inactive absolute; active face sizes the button */
+.play-normal,.play-update,.play-checking,.play-progress,.play-running{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  opacity:0;visibility:hidden;pointer-events:none;
+  transform:translateY(8px) scale(.96);
+  transition:opacity .24s var(--ease),visibility .24s var(--ease),transform .32s var(--ease);
+}
+#play.mode-play .play-normal,
+#play.mode-update .play-update,
+#play.mode-running .play-running{
+  position:relative;inset:auto;flex:0 0 auto;
+}
+.play-checking,.play-progress{
+  flex-direction:column;align-items:stretch;justify-content:center;
+  padding:12px 18px 14px;gap:8px;
+}
+#play.mode-play .play-normal,
+#play.mode-update .play-update,
+#play.mode-checking .play-checking,
+#play.mode-progress .play-progress,
+#play.mode-running .play-running{
+  opacity:1;visibility:visible;pointer-events:auto;transform:none;
+}
+#play.mode-progress .play-progress{transition-delay:.14s}
+#play.mode-checking .play-checking{transition-delay:.1s}
+#play.mode-progress .play-update,
+#play.mode-progress .play-normal,
+#play.mode-checking .play-update,
+#play.mode-checking .play-normal,
+#play.mode-checking .play-progress{
+  transition-delay:0s;opacity:0;visibility:hidden;
+  transform:translateY(-6px) scale(.97);
+}
+#play.mode-update .play-update,
+#play.mode-play .play-normal{transition-delay:.08s}
+
+/* Normal play / update layout */
+.play-normal,.play-update{
+  flex-direction:row;align-items:center;justify-content:center;
+  gap:10px;padding:0 38px;box-sizing:border-box;white-space:nowrap;
+}
+#play .play-ico{
+  flex:0 0 auto;width:32px;height:32px;display:grid;place-items:center;color:var(--play-fg);
+}
 #play .play-ico svg{display:block;width:32px;height:32px}
+#play-label,#update-label{display:block;line-height:1}
 
 /* Manual update layout */
-.play-update{display:none;align-items:center;justify-content:center;gap:10px;width:100%}
 #play.mode-update{
-  border-radius:var(--play-radius);padding:0 34px;height:58px;min-width:180px;
+  height:58px;padding:0;
+  border-radius:var(--play-radius);
   color:var(--play-fg);font-size:28px;
   background:linear-gradient(180deg,var(--accent-hi) 0%,var(--accent) 52%,var(--accent-deep) 100%);
   box-shadow:0 4px 18px -3px var(--accent-glow);
 }
-#play.mode-update .play-update{display:flex}
 #play.mode-update:hover:not(:disabled){
   transform:translateY(-1px);filter:brightness(1.08);
   box-shadow:0 6px 22px -2px var(--accent-glow),0 0 24px var(--accent-glow);
@@ -271,21 +314,21 @@ body{
 }
 
 /* Running — text only */
-.play-running{display:none;align-items:center;justify-content:center;width:100%}
 #play.mode-running{
-  display:flex;border-radius:var(--play-radius);padding:0 38px;height:58px;min-width:160px;
+  height:58px;padding:0;
+  border-radius:var(--play-radius);
   color:var(--play-fg);font-size:28px;font-weight:700;letter-spacing:.04em;
   background:rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.06);animation:none;
 }
-#play.mode-running .play-running{display:flex}
+.play-running{padding:0 38px;box-sizing:border-box;white-space:nowrap}
 
 /* Checking — indeterminate bar + label */
-.play-checking{display:none;flex-direction:column;align-items:stretch;width:100%;padding:14px 18px 16px;gap:10px}
-#play.mode-checking{display:flex;width:min(360px,92vw);height:64px;padding:0;
+#play.mode-checking{
+  width:min(360px,92vw);min-width:280px;height:64px;padding:0;
   border-radius:var(--play-radius-compact);
   background:linear-gradient(180deg,#2a2640 0%,#181622 100%);
-  color:#ece8ff;box-shadow:inset 0 1px 0 rgba(255,255,255,.06);animation:none}
-#play.mode-checking .play-checking{display:flex}
+  color:#ece8ff;box-shadow:inset 0 1px 0 rgba(255,255,255,.06);animation:none;
+}
 .pbar-top{height:3px;background:rgba(255,255,255,.14);border-radius:99px;overflow:hidden;flex:0 0 auto}
 .pbar-top>span{display:block;height:100%;background:var(--accent);border-radius:99px;transition:width .25s var(--ease);
   box-shadow:0 0 10px var(--accent-glow)}
@@ -293,12 +336,12 @@ body{
 .play-check-label{font-size:14px;font-weight:700;text-align:left;letter-spacing:-.01em}
 
 /* Download / apply — stats row like Valorant */
-.play-progress{display:none;flex-direction:column;align-items:stretch;width:100%;padding:12px 18px 14px;gap:8px}
-#play.mode-progress{display:flex;width:min(400px,94vw);height:68px;padding:0;
+#play.mode-progress{
+  width:min(400px,94vw);min-width:300px;height:68px;padding:0;
   border-radius:var(--play-radius-compact);
   background:linear-gradient(180deg,#2a2640 0%,#181622 100%);
-  color:#ece8ff;box-shadow:inset 0 1px 0 rgba(255,255,255,.06);animation:none}
-#play.mode-progress .play-progress{display:flex}
+  color:#ece8ff;box-shadow:inset 0 1px 0 rgba(255,255,255,.06);animation:none;
+}
 .prog-row{display:flex;align-items:center;justify-content:space-between;gap:8px;
   font-size:12px;font-weight:700;letter-spacing:.01em;color:rgba(236,230,216,.92)}
 .prog-row span{white-space:nowrap}
@@ -359,6 +402,8 @@ body{
 }
 #alert-flyout-inner::-webkit-scrollbar{width:8px}
 #alert-flyout-inner::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:8px}
+.notice-expiry{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:1.45}
+.notice-expiry b{color:var(--dim);font-weight:600}
 .notice-block+.notice-block{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
 .notice-block h4{font:700 16px/1.25 inherit;letter-spacing:-.01em;color:#fff;margin-bottom:8px}
 .notice-block p{color:var(--dim);font-size:14px;line-height:1.55;white-space:pre-wrap}
@@ -599,6 +644,12 @@ body.dev-build #dev-panel{display:block}
         <span><b>Launch game automatically</b>
         <small>Start UClient as soon as the update check finishes.</small></span>
       </div>
+      <div class="sec" style="margin-top:22px">Integrations</div>
+      <div class="opt" id="opt-discord">
+        <span class="sw"></span>
+        <span><b>Show Discord activity</b>
+        <small>Display your in-game status in Discord. Restart the client to apply.</small></span>
+      </div>
     </div>
   </div>
 </div>
@@ -660,6 +711,16 @@ function sortedNotices(list) {
   });
 }
 
+function fmtNoticeExpiry(n) {
+  if (n.expiresAt === undefined) return "";
+  if (n.expiresAt === null) return '<p class="notice-expiry"><b>Duration:</b> Permanent</p>';
+  var ts = Number(n.expiresAt);
+  if (!ts) return "";
+  var d = new Date(ts * 1000);
+  if (isNaN(d.getTime())) return "";
+  return '<p class="notice-expiry"><b>Until:</b> ' + esc(d.toLocaleString()) + '</p>';
+}
+
 function renderAlerts(st) {
   noticeState = sortedNotices(st.notices || []);
   var wrap = $("alert-wrap");
@@ -672,8 +733,9 @@ function renderAlerts(st) {
   $("alert-strip").classList.remove("sev-critical", "sev-warning", "sev-info");
   $("alert-strip").classList.add("sev-" + (top.severity || "warning"));
   $("alert-flyout-inner").innerHTML = noticeState.map(function (n) {
+    var expiry = n.id === "account_ban" ? fmtNoticeExpiry(n) : "";
     return '<article class="notice-block"><h4>' + esc(n.title || "Notice") +
-      '</h4><p>' + esc(n.body || "") + '</p></article>';
+      '</h4><p>' + esc(n.body || "") + '</p>' + expiry + '</article>';
   }).join("");
   wrap.classList.add("on");
 }
@@ -828,6 +890,11 @@ $("opt-auto").addEventListener("click", function () {
   $("opt-auto").classList.toggle("on", on);
   send({cmd: "autolaunch", value: on});
 });
+$("opt-discord").addEventListener("click", function () {
+  var on = !$("opt-discord").classList.contains("on");
+  $("opt-discord").classList.toggle("on", on);
+  send({cmd: "discordRpc", value: on});
+});
 
 /* -- friends ----------------------------------------------------------- */
 var MIDDOT = " \u00b7 ";
@@ -922,6 +989,45 @@ function fmtEta(sec) {
   return h + "h " + m + "m";
 }
 
+var playFaceModes = ["mode-play", "mode-update", "mode-checking", "mode-progress", "mode-running"];
+function setPlayFaceMode(play, mode) {
+  if (play.classList.contains("mode-update") && mode === "mode-progress") {
+    play.classList.add("mode-progress");
+    for (var i = 0; i < playFaceModes.length; i++) {
+      if (playFaceModes[i] !== "mode-progress") play.classList.remove(playFaceModes[i]);
+    }
+    return;
+  }
+  if (play.classList.contains("mode-play") && mode === "mode-progress") {
+    play.classList.add("mode-progress");
+    for (var j = 0; j < playFaceModes.length; j++) {
+      if (playFaceModes[j] !== "mode-progress") play.classList.remove(playFaceModes[j]);
+    }
+    return;
+  }
+  if (play.classList.contains("mode-progress") && (mode === "mode-update" || mode === "mode-play")) {
+    play.classList.add(mode);
+    for (var k = 0; k < playFaceModes.length; k++) {
+      if (playFaceModes[k] !== mode) play.classList.remove(playFaceModes[k]);
+    }
+    return;
+  }
+  for (var n = 0; n < playFaceModes.length; n++) play.classList.remove(playFaceModes[n]);
+  play.classList.add(mode);
+}
+
+function playHintRedundantWithAlert(st) {
+  if (!st.playBlocked || !(st.notices && st.notices.length)) return false;
+  for (var i = 0; i < st.notices.length; i++) {
+    if (st.notices[i].blocksPlay) return true;
+  }
+  return false;
+}
+
+function playButtonShowsStatus(phase) {
+  return phase === "checking" || phase === "launching" || phase === "updating";
+}
+
 window.__setState = function (st) {
   if (!st) return;
   lastState = st;
@@ -929,26 +1035,25 @@ window.__setState = function (st) {
   renderDev(st);
 
   var play = $("play");
-  play.classList.remove("mode-play", "mode-update", "mode-checking", "mode-progress", "mode-running");
   var actionBlocked = !!st.playBlocked || (!!st.updateAvailable && !!st.gameRunning);
   play.disabled = st.phase !== "ready" || actionBlocked;
 
   if (st.phase === "ready") {
     if (st.updateAvailable) {
-      play.classList.add("mode-update");
+      setPlayFaceMode(play, "mode-update");
       $("update-label").textContent = st.buttonLabel || "Update";
     } else {
-      play.classList.add("mode-play");
+      setPlayFaceMode(play, "mode-play");
       $("play-label").textContent = st.buttonLabel || "Play";
     }
   } else if (st.phase === "checking") {
-    play.classList.add("mode-checking");
+    setPlayFaceMode(play, "mode-checking");
     $("play-check-label").textContent = st.buttonLabel || "Checking for updates";
   } else if (st.phase === "launching") {
-    play.classList.add("mode-running");
+    setPlayFaceMode(play, "mode-running");
     $("play-running-label").textContent = st.buttonLabel || "RUNNING";
   } else if (st.phase === "updating") {
-    play.classList.add("mode-progress");
+    setPlayFaceMode(play, "mode-progress");
     var pct = st.percent || 0;
     $("prog-fill").style.width = pct + "%";
     if (st.updateStage === "download") {
@@ -971,22 +1076,22 @@ window.__setState = function (st) {
       $("prog-label").textContent = st.status || "Installing files";
     }
   } else {
-    play.classList.add("mode-checking");
+    setPlayFaceMode(play, "mode-checking");
     $("play-check-label").textContent = st.buttonLabel || "Please wait";
   }
 
   $("play-version").textContent = st.version || "";
   var playWrap = $("play-wrap");
-  var showHint = st.phase === "ready" && play.disabled && !!st.buttonHint;
+  var showHint = st.phase === "ready" && play.disabled && !!st.buttonHint && !playHintRedundantWithAlert(st);
   playWrap.classList.toggle("hint-on", showHint);
   playWrap.tabIndex = showHint ? 0 : -1;
   $("play-hint-flyout-inner").textContent = showHint ? st.buttonHint : "";
   renderAlerts(st);
-  $("ov-status").textContent = st.phase === "ready" ? "" : (st.status || "");
+  $("ov-status").textContent = playButtonShowsStatus(st.phase) || st.phase === "ready" ? "" : (st.status || "");
   $("ov-status").classList.toggle("bad", !!st.failed && st.phase !== "ready");
 
   $("up-version").textContent = st.version || "";
-  $("up-status").textContent = st.status || "";
+  $("up-status").textContent = st.phase === "checking" || st.phase === "launching" ? "" : (st.status || "");
   $("up-status").classList.toggle("bad", !!st.failed);
   $("up-state").textContent =
     st.phase === "ready" ? (st.updateAvailable ? "An update is available." :
@@ -1001,6 +1106,7 @@ window.__setState = function (st) {
   if (st.phase === "updating") bar.firstElementChild.style.width = (st.percent || 0) + "%";
 
   $("opt-auto").classList.toggle("on", !!st.autoLaunch);
+  $("opt-discord").classList.toggle("on", !!st.discordRpc);
 
   var online = 0, all = st.friends || [];
   for (var i = 0; i < all.length; i++) if (all[i].online) online++;
