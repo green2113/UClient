@@ -2285,22 +2285,7 @@ void CUClientChatPasteImage::RenderImageEditor(CChat *pChat)
 
 void CUClientChatPasteImage::OpenPasteWarningPopup(CChat *pChat)
 {
-	CMenus &Menus = pChat->GameClient()->m_Menus;
-	const bool WasActive = Menus.IsActive();
-	Menus.PopupConfirmWithCheckbox(
-		Localize("Warning"),
-		Localize("You are about to paste an image from your clipboard into chat. Make sure it does not contain personal information."),
-		Localize("Paste"),
-		Localize("Cancel"),
-		Localize("Don't ask again"),
-		false,
-		&CMenus::PopupConfirmPasteImageFromChat,
-		CMenus::POPUP_NONE,
-		&CMenus::PopupCancelPasteImageFromChat,
-		CMenus::POPUP_NONE);
-	Menus.m_PopupDeactivateAfterButton = !WasActive;
-	if(!WasActive)
-		Menus.SetActive(true);
+	pChat->GameClient()->m_Menus.PopupConfirmPasteImageWarning();
 }
 
 void CUClientChatPasteImage::ConfirmPasteWarning(CChat *pChat, bool DontAskAgain)

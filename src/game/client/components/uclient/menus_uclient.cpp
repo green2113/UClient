@@ -26,6 +26,25 @@
 
 #include <game/client/components/uclient/chat_rooms.h>
 
+void CMenus::PopupConfirmPasteImageWarning()
+{
+	const bool WasActive = IsActive();
+	PopupConfirmWithCheckbox(
+		Localize("Warning"),
+		Localize("You are about to paste an image from your clipboard into chat. Make sure it does not contain personal information."),
+		Localize("Paste"),
+		Localize("Cancel"),
+		Localize("Don't ask again"),
+		false,
+		&CMenus::PopupConfirmPasteImageFromChat,
+		CMenus::POPUP_NONE,
+		&CMenus::PopupCancelPasteImageFromChat,
+		CMenus::POPUP_NONE);
+	m_PopupDeactivateAfterButton = !WasActive;
+	if(!WasActive)
+		SetActive(true);
+}
+
 void CMenus::PopupConfirmPasteImageFromChat()
 {
 	GameClient()->m_Chat.m_UcChatPaste.ConfirmPasteWarning(&GameClient()->m_Chat, m_PopupConfirmCheckboxValue);

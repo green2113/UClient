@@ -1159,6 +1159,7 @@ public:
 		FPopupButtonCallback pfnCancelButtonCallback = &CMenus::DefaultButtonCallback, int CancelNextPopup = POPUP_NONE);
 	void PopupConfirmPasteImageFromChat();
 	void PopupCancelPasteImageFromChat();
+	void PopupConfirmPasteImageWarning();
 	void OfferAutoLoginFromChat(int Kind, const char *pCode);
 	void PopupConfirmAutoLoginOffer();
 	void PopupCancelAutoLoginOffer();
