@@ -1,6 +1,7 @@
 #ifndef ENGINE_CLIENT_CLIPBOARD_IMAGE_H
 #define ENGINE_CLIENT_CLIPBOARD_IMAGE_H
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -31,6 +32,7 @@ struct SClipboardPastedMedia
 	EClipboardPastedKind m_Kind = EClipboardPastedKind::NONE;
 	std::vector<uint8_t> m_vFileBytes;
 	SClipboardImage m_Preview;
+	char m_aFileName[256] = "";
 
 	bool IsValid() const
 	{
@@ -53,6 +55,7 @@ struct SClipboardPastedMedia
 
 bool ReadClipboardImage(SClipboardImage &Image);
 bool ReadClipboardPngBytes(std::vector<uint8_t> &vOutPng);
+bool ReadClipboardGifBytes(std::vector<uint8_t> &vOutGif, char *pFileName = nullptr, size_t FileNameSize = 0);
 bool ReadClipboardPastedMedia(SClipboardPastedMedia &Out);
 bool ClipboardHasImageFormats();
 void SetClipboardOwnerWindow(void *pSdlWindow);

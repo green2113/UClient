@@ -10,6 +10,7 @@ MACRO_CONFIG_STR(UcChatGiphyApiKey, uc_chat_giphy_api_key, 128, "", CFGFLAG_CLIE
 MACRO_CONFIG_INT(UcChatPasteUpload, uc_chat_paste_upload, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Allow uploading clipboard images from chat input")
 MACRO_CONFIG_STR(UcChatPasteUploadUrl, uc_chat_paste_upload_url, 256, "https://ddnet.under1111.com/api/media/upload", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Upload endpoint used for pasted chat images")
 MACRO_CONFIG_INT(UcChatPasteUploadMaxBytes, uc_chat_paste_upload_max_bytes, 10485760, 0, 67108864, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum PNG size in bytes for pasted chat image uploads")
+MACRO_CONFIG_INT(UcChatPasteGifUploadMaxBytes, uc_chat_paste_gif_upload_max_bytes, 67108864, 0, 67108864, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum GIF size in bytes for pasted chat GIF uploads")
 MACRO_CONFIG_INT(UcChatPasteImageWarningSkip, uc_chat_paste_image_warning_skip, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Skip the clipboard image privacy warning before attaching an image to chat")
 MACRO_CONFIG_COL(UcChatImagePenColor, uc_chat_image_pen_color, 255, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Pen color used in the chat image editor")
 MACRO_CONFIG_STR(UcInstallUuid, uc_install_uuid, 64, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient install UUID generated once on first start")

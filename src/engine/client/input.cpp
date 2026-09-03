@@ -934,7 +934,8 @@ int CInput::Update()
 	bool IgnoreKeys = false;
 
 	const auto &&AddKeyEventChecked = [&](int Key, int Flags) {
-		if(Key != KEY_UNKNOWN && !IgnoreKeys && (!(Flags & IInput::FLAG_PRESS) || !HasComposition()))
+		const bool PasteShortcut = Key == KEY_V && (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI)) != 0;
+		if(Key != KEY_UNKNOWN && !IgnoreKeys && (!(Flags & IInput::FLAG_PRESS) || !HasComposition() || PasteShortcut))
 		{
 			AddKeyEvent(Key, Flags);
 		}

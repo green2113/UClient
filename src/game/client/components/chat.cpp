@@ -1092,6 +1092,26 @@ void CChat::ConEcho(IConsole::IResult *pResult, void *pUserData)
 	((CChat *)pUserData)->Echo(pResult->GetString(0));
 }
 
+void CChat::ConClipboardGifTest(IConsole::IResult *pResult, void *pUserData)
+{
+	(void)pResult;
+	CChat *pChat = static_cast<CChat *>(pUserData);
+
+	std::vector<uint8_t> vGif;
+	char aMessage[160];
+	if(!ReadClipboardGifBytes(vGif))
+	{
+		str_format(aMessage, sizeof(aMessage), "GIF read failed (image formats: %s)", ClipboardHasImageFormats() ? "yes" : "no");
+		pChat->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "clipboard-test", aMessage);
+		return;
+	}
+
+	str_format(aMessage, sizeof(aMessage), "GIF read succeeded: %zu bytes", vGif.size());
+	pChat->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "clipboard-test", aMessage);
+	const bool Attached = pChat->m_UcChatPaste.TryPasteFromClipboard(pChat);
+	pChat->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "clipboard-test", Attached ? "GIF attach succeeded" : "GIF attach failed");
+}
+
 void CChat::ConClearChat(IConsole::IResult *pResult, void *pUserData)
 {
 	((CChat *)pUserData)->ClearLines();
@@ -1132,6 +1152,7 @@ void CChat::OnConsoleInit()
 	Console()->Register("chat", "s['team'|'all'|'uclient'] ?r[message]", CFGFLAG_CLIENT, ConChat, this, "Enable chat with all/team/uclient mode");
 	Console()->Register("+show_chat", "", CFGFLAG_CLIENT, ConShowChat, this, "Show chat");
 	Console()->Register("echo", "r[message]", CFGFLAG_CLIENT | CFGFLAG_STORE, ConEcho, this, "Echo the text in chat window");
+	Console()->Register("clipboard_gif_test", "", CFGFLAG_CLIENT, ConClipboardGifTest, this, "Read and attach a GIF file from the Windows clipboard");
 	Console()->Register("clear_chat", "", CFGFLAG_CLIENT | CFGFLAG_STORE, ConClearChat, this, "Clear chat messages");
 	Console()->Register("toggle_chat_media_hidden", "", CFGFLAG_CLIENT, ConToggleHideChatMedia, this, "Toggle hidden media mode in chat");
 	Console()->Register("add_censor_list", "r[word]", CFGFLAG_CLIENT, ConAddCensorList, this, "Add a word to the chat filter regex");
@@ -5390,8 +5411,21 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	if(m_UcChatPaste.OnInput(this, Event))
 		return true;
 
+	// Paste privacy warning uses the ESC-menu popup layer. While it is open, chat
+	// must not swallow input or the confirm/cancel buttons never receive clicks.
+	if(m_Mode != MODE_NONE && m_UcChatPaste.IsPasteWarningPending() && GameClient()->m_Menus.IsActive())
+		return false;
+
 	const bool ChatInputActive = m_Mode != MODE_NONE;
 	const bool ChatInteractionActive = ChatInputActive || m_Show;
+
+	if(ChatInputActive && Input()->ModifierIsPressed())
+	{
+		const bool PasteKey = (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_V;
+		const bool PasteText = (Event.m_Flags & IInput::FLAG_TEXT) != 0;
+		if((PasteKey || PasteText) && m_UcChatPaste.TryPasteFromClipboard(this))
+			return true;
+	}
 
 	// UClient: when a chat-owned modal popup (media context / save-as / reaction picker /
 	// translate settings / room select / giphy / map context) is open, route input to the
@@ -5415,17 +5449,6 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		if(Event.m_Key == KEY_MOUSE_1 || Event.m_Key == KEY_MOUSE_2 || Event.m_Key == KEY_MOUSE_3 ||
 			Event.m_Key == KEY_MOUSE_WHEEL_UP || Event.m_Key == KEY_MOUSE_WHEEL_DOWN)
 			return true;
-	}
-
-	if(ChatInputActive && Input()->ModifierIsPressed())
-	{
-		const bool PasteKey = (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_V;
-		const bool PasteText = (Event.m_Flags & IInput::FLAG_TEXT) != 0;
-		if(PasteKey || PasteText)
-		{
-			if(m_UcChatPaste.TryPasteFromClipboard(this))
-				return true;
-		}
 	}
 
 	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 &&

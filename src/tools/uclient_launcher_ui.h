@@ -454,7 +454,16 @@ body.dev-build #dev-panel{display:block}
   border-radius:20px;backdrop-filter:blur(26px);display:flex;flex-direction:column;overflow:hidden;
   box-shadow:0 24px 60px -24px rgba(0,0,0,.8);animation:pop .6s .04s var(--ease) both}
 #fr-head{padding:24px 24px 16px;border-bottom:1px solid var(--line)}
+#fr-title{display:flex;align-items:center;justify-content:space-between}
 #fr-head h2{font:600 22px/1 inherit}
+#fr-refresh{width:34px;height:34px;border:0;border-radius:10px;background:transparent;color:var(--dim);
+  display:grid;place-items:center;cursor:pointer;transition:background .16s var(--ease),color .16s var(--ease),transform .12s var(--ease)}
+#fr-refresh svg{width:18px;height:18px}
+#fr-refresh:hover{background:rgba(255,255,255,.09);color:#fff}
+#fr-refresh:active{transform:scale(.9)}
+#fr-refresh.loading{pointer-events:none;color:var(--accent-hi)}
+#fr-refresh.loading svg{animation:refresh-spin .8s linear infinite}
+@keyframes refresh-spin{to{transform:rotate(360deg)}}
 #fr-online{display:flex;align-items:center;gap:9px;margin-top:12px;color:#7ddba0;font-size:15px}
 #fr-online .dot{width:9px;height:9px;border-radius:50%;background:#5cd28a;animation:ping 2s var(--ease) infinite}
 @keyframes ping{0%{box-shadow:0 0 0 0 rgba(92,210,138,.55)}70%{box-shadow:0 0 0 9px rgba(92,210,138,0)}100%{box-shadow:0 0 0 0 rgba(92,210,138,0)}}
@@ -614,7 +623,15 @@ body.dev-build #dev-panel{display:block}
 
   <aside id="friends">
     <div id="fr-head">
-      <h2>Friends</h2>
+      <div id="fr-title">
+        <h2>Friends</h2>
+        <button id="fr-refresh" type="button" title="Refresh friends" aria-label="Refresh friends">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M20 11a8 8 0 1 0-2.34 5.66" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M20 5v6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
       <div id="fr-online"><span class="dot"></span><span id="fr-count">0 online</span></div>
       <div id="fr-hint">Double-click a friend to join their server</div>
     </div>
@@ -905,6 +922,10 @@ $("opt-discord").addEventListener("click", function () {
   $("opt-discord").classList.toggle("on", on);
   send({cmd: "discordRpc", value: on});
 });
+$("fr-refresh").addEventListener("click", function () {
+  if ($("fr-refresh").classList.contains("loading")) return;
+  send({cmd: "refreshFriends"});
+});
 
 /* -- friends ----------------------------------------------------------- */
 var MIDDOT = " \u00b7 ";
@@ -1118,6 +1139,7 @@ window.__setState = function (st) {
   $("opt-auto").classList.toggle("on", !!st.autoLaunch);
   $("opt-auto-update").classList.toggle("on", !!st.autoUpdate);
   $("opt-discord").classList.toggle("on", !!st.discordRpc);
+  $("fr-refresh").classList.toggle("loading", !!st.friendsLoading);
 
   var online = 0, all = st.friends || [];
   for (var i = 0; i < all.length; i++) if (all[i].online) online++;

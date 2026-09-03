@@ -1,5 +1,7 @@
 #include "clipboard_image.h"
 
+#include <base/detect.h>
+
 #if defined(CONF_FAMILY_WINDOWS)
 #ifdef NOGDI
 #undef NOGDI
@@ -13,6 +15,8 @@
 #include <engine/gfx/image_loader.h>
 #include <engine/image.h>
 
+#include <base/log.h>
+#include <base/str.h>
 #include <base/system.h>
 
 namespace
@@ -224,23 +228,24 @@ bool DecodeClipboardDib(const void *pData, size_t DataSize, SClipboardImage &Out
 
 bool OpenClipboardForRead()
 {
-	for(int Attempt = 0; Attempt < 12; ++Attempt)
+	for(int Attempt = 0; Attempt < 20; ++Attempt)
 	{
-		if(s_ClipboardOwnerWindow != nullptr && OpenClipboard(s_ClipboardOwnerWindow))
-			return true;
-
-		HWND hWnd = GetForegroundWindow();
-		if(hWnd != nullptr && OpenClipboard(hWnd))
-			return true;
-
-		hWnd = GetActiveWindow();
-		if(hWnd != nullptr && OpenClipboard(hWnd))
-			return true;
-
+		// Reading with a null owner is the most reliable approach on Windows.
 		if(OpenClipboard(nullptr))
 			return true;
 
-		Sleep(10);
+		if(s_ClipboardOwnerWindow != nullptr && OpenClipboard(s_ClipboardOwnerWindow))
+			return true;
+
+		HWND hForeground = GetForegroundWindow();
+		if(hForeground != nullptr && OpenClipboard(hForeground))
+			return true;
+
+		HWND hWnd = GetActiveWindow();
+		if(hWnd != nullptr && hWnd != hForeground && OpenClipboard(hWnd))
+			return true;
+
+		Sleep(15);
 	}
 
 	return false;
@@ -251,7 +256,13 @@ bool KnownImageClipboardFormatAvailable()
 	if(IsClipboardFormatAvailable(CF_DIB) || IsClipboardFormatAvailable(CF_DIBV5) || IsClipboardFormatAvailable(CF_BITMAP) || IsClipboardFormatAvailable(CF_HDROP))
 		return true;
 
-	static UINT s_aKnownFormats[6] = {0, 0, 0, 0, 0, 0};
+	static UINT s_HtmlFormat = 0;
+	if(s_HtmlFormat == 0)
+		s_HtmlFormat = RegisterClipboardFormatW(L"HTML Format");
+	if(s_HtmlFormat != 0 && IsClipboardFormatAvailable(s_HtmlFormat))
+		return true;
+
+	static UINT s_aKnownFormats[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 	if(s_aKnownFormats[0] == 0)
 	{
 		s_aKnownFormats[0] = RegisterClipboardFormatW(L"PNG");
@@ -260,9 +271,11 @@ bool KnownImageClipboardFormatAvailable()
 		s_aKnownFormats[3] = RegisterClipboardFormatW(L"JFIF");
 		s_aKnownFormats[4] = RegisterClipboardFormatW(L"image/jpeg");
 		s_aKnownFormats[5] = RegisterClipboardFormatW(L"GIF");
+		s_aKnownFormats[6] = RegisterClipboardFormatW(L"image/webp");
+		s_aKnownFormats[7] = RegisterClipboardFormatW(L"WEBP");
 	}
 
-	for(int i = 0; i < 6; ++i)
+	for(int i = 0; i < 8; ++i)
 	{
 		const UINT ClipboardFormat = s_aKnownFormats[i];
 		if(ClipboardFormat != 0 && IsClipboardFormatAvailable(ClipboardFormat))
@@ -351,16 +364,15 @@ bool DecodePngBytes(const uint8_t *pData, size_t Size, SClipboardImage &OutImage
 
 bool ReadClipboardPngOpen(SClipboardImage &OutImage)
 {
-	static UINT s_aKnownFormats[4] = {0, 0, 0, 0};
+	static UINT s_aKnownFormats[3] = {0, 0, 0};
 	if(s_aKnownFormats[0] == 0)
 	{
 		s_aKnownFormats[0] = RegisterClipboardFormatW(L"PNG");
 		s_aKnownFormats[1] = RegisterClipboardFormatW(L"image/png");
 		s_aKnownFormats[2] = RegisterClipboardFormatW(L"PNG\r\n");
-		s_aKnownFormats[3] = RegisterClipboardFormatW(L"JFIF");
 	}
 
-	for(int i = 0; i < 4; ++i)
+	for(int i = 0; i < 3; ++i)
 	{
 		const UINT ClipboardFormat = s_aKnownFormats[i];
 		if(ClipboardFormat == 0 || !IsClipboardFormatAvailable(ClipboardFormat))
@@ -435,6 +447,14 @@ bool ReadClipboardDibOpen(SClipboardImage &OutImage)
 	if(hClipboard == nullptr)
 		hClipboard = GetClipboardData(CF_DIB);
 	if(hClipboard == nullptr)
+	{
+		// Delay-rendered clipboard data can appear one message pump later.
+		Sleep(0);
+		hClipboard = GetClipboardData(CF_DIBV5);
+		if(hClipboard == nullptr)
+			hClipboard = GetClipboardData(CF_DIB);
+	}
+	if(hClipboard == nullptr)
 		return false;
 
 	void *pClipboardData = GlobalLock(hClipboard);
@@ -478,6 +498,24 @@ bool ClipboardHasImageFormatsOpen()
 bool IsGifSignature(const uint8_t *pData, size_t Size)
 {
 	return pData != nullptr && Size >= 6 && (mem_comp(pData, "GIF87a", 6) == 0 || mem_comp(pData, "GIF89a", 6) == 0);
+}
+
+bool IsValidGifFile(const uint8_t *pData, size_t Size)
+{
+	if(!IsGifSignature(pData, Size) || Size < 13)
+		return false;
+
+	const uint16_t Width = (uint16_t)(pData[6] | (pData[7] << 8));
+	const uint16_t Height = (uint16_t)(pData[8] | (pData[9] << 8));
+	return Width > 0 && Height > 0 && Width <= 8192 && Height <= 8192;
+}
+
+bool AssignValidatedGifBytes(const uint8_t *pData, size_t Size, std::vector<uint8_t> &OutBytes, size_t MaxBytes)
+{
+	if(pData == nullptr || Size > MaxBytes || !IsValidGifFile(pData, Size))
+		return false;
+	OutBytes.assign(pData, pData + Size);
+	return true;
 }
 
 bool IsJpegSignature(const uint8_t *pData, size_t Size)
@@ -539,23 +577,6 @@ bool ImagePathExtensionKind(const wchar_t *pPath, EClipboardPastedKind &OutKind)
 	return true;
 }
 
-bool FindGifOffset(const uint8_t *pData, size_t Size, size_t &OutOffset)
-{
-	if(pData == nullptr || Size < 6)
-		return false;
-
-	for(size_t i = 0; i + 6 <= Size; ++i)
-	{
-		if(IsGifSignature(pData + i, Size - i))
-		{
-			OutOffset = i;
-			return true;
-		}
-	}
-
-	return false;
-}
-
 bool ReadImageFileBytes(const wchar_t *pPath, EClipboardPastedKind ExpectedKind, std::vector<uint8_t> &OutBytes, size_t MaxBytes)
 {
 	OutBytes.clear();
@@ -597,30 +618,190 @@ bool ReadFileBytes(const wchar_t *pPath, std::vector<uint8_t> &OutBytes, size_t 
 	return ReadImageFileBytes(pPath, EClipboardPastedKind::GIF, OutBytes, MaxBytes);
 }
 
-bool ReadClipboardGifFromHDropOpen(std::vector<uint8_t> &OutBytes, size_t MaxBytes)
+const char *FindSubstrInBuffer(const char *pHaystack, size_t HaystackLen, const char *pNeedle)
 {
-	if(!IsClipboardFormatAvailable(CF_HDROP))
+	if(pHaystack == nullptr || pNeedle == nullptr)
+		return nullptr;
+
+	const size_t NeedleLen = str_length(pNeedle);
+	if(NeedleLen == 0 || HaystackLen < NeedleLen)
+		return nullptr;
+
+	for(size_t i = 0; i + NeedleLen <= HaystackLen; ++i)
+	{
+		if(mem_comp(pHaystack + i, pNeedle, NeedleLen) == 0)
+			return pHaystack + i;
+	}
+
+	return nullptr;
+}
+
+bool ReadClipboardHtmlImageOpen(std::vector<uint8_t> &OutBytes, EClipboardPastedKind &OutKind, size_t MaxBytes)
+{
+	OutBytes.clear();
+	OutKind = EClipboardPastedKind::NONE;
+
+	static UINT s_HtmlFormat = 0;
+	if(s_HtmlFormat == 0)
+		s_HtmlFormat = RegisterClipboardFormatW(L"HTML Format");
+	if(s_HtmlFormat == 0 || !IsClipboardFormatAvailable(s_HtmlFormat))
 		return false;
+
+	HANDLE hClipboard = GetClipboardData(s_HtmlFormat);
+	if(hClipboard == nullptr)
+		return false;
+
+	const char *pData = static_cast<const char *>(GlobalLock(hClipboard));
+	const SIZE_T DataSize = GlobalSize(hClipboard);
+	if(pData == nullptr || DataSize < 16)
+	{
+		if(pData != nullptr)
+			GlobalUnlock(hClipboard);
+		return false;
+	}
+
+	bool Success = false;
+	const char *pSearch = pData;
+	const char *pEnd = pData + DataSize;
+	while(pSearch < pEnd)
+	{
+		const char *pMarker = FindSubstrInBuffer(pSearch, (size_t)(pEnd - pSearch), "data:image/");
+		if(pMarker == nullptr)
+			break;
+
+		const char *pBase64 = FindSubstrInBuffer(pMarker, (size_t)(pEnd - pMarker), "base64,");
+		if(pBase64 == nullptr)
+		{
+			pSearch = pMarker + 11;
+			continue;
+		}
+		pBase64 += 7;
+
+		const char *pPayloadEnd = pBase64;
+		while(pPayloadEnd < pEnd && *pPayloadEnd != '"' && *pPayloadEnd != '\'' && *pPayloadEnd != ' ' && *pPayloadEnd != '>' && *pPayloadEnd != '\r' && *pPayloadEnd != '\n')
+			pPayloadEnd++;
+
+		const size_t EncodedLen = (size_t)(pPayloadEnd - pBase64);
+		if(EncodedLen == 0)
+		{
+			pSearch = pBase64;
+			continue;
+		}
+
+		std::vector<char> aEncoded(EncodedLen + 1);
+		mem_copy(aEncoded.data(), pBase64, EncodedLen);
+		aEncoded[EncodedLen] = '\0';
+
+		std::vector<uint8_t> Decoded(EncodedLen);
+		const int DecodedSize = str_base64_decode(Decoded.data(), (int)Decoded.size(), aEncoded.data());
+		if(DecodedSize <= 0)
+		{
+			pSearch = pBase64;
+			continue;
+		}
+
+		Decoded.resize(DecodedSize);
+		const EClipboardPastedKind Kind = DetectImageKindFromBytes(Decoded.data(), Decoded.size());
+		if(Kind == EClipboardPastedKind::NONE || (size_t)DecodedSize > MaxBytes)
+		{
+			pSearch = pBase64;
+			continue;
+		}
+
+		OutBytes = std::move(Decoded);
+		OutKind = Kind;
+		Success = true;
+		break;
+	}
+
+	GlobalUnlock(hClipboard);
+	return Success;
+}
+
+bool ReadClipboardUnicodePathOpen(std::vector<uint8_t> &OutBytes, EClipboardPastedKind &OutKind, size_t MaxBytes)
+{
+	OutBytes.clear();
+	OutKind = EClipboardPastedKind::NONE;
+	if(!IsClipboardFormatAvailable(CF_UNICODETEXT))
+		return false;
+
+	HANDLE hClipboard = GetClipboardData(CF_UNICODETEXT);
+	if(hClipboard == nullptr)
+		return false;
+
+	const wchar_t *pText = static_cast<const wchar_t *>(GlobalLock(hClipboard));
+	if(pText == nullptr)
+		return false;
+
+	wchar_t aPath[MAX_PATH * 4] = {};
+	wcsncpy_s(aPath, pText, _TRUNCATE);
+	GlobalUnlock(hClipboard);
+
+	wchar_t *pPath = aPath;
+	while(*pPath != L'\0' && (*pPath == L' ' || *pPath == L'\t' || *pPath == L'\r' || *pPath == L'\n'))
+		pPath++;
+	if(*pPath == L'"')
+		pPath++;
+
+	size_t PathLen = wcslen(pPath);
+	while(PathLen > 0 && (pPath[PathLen - 1] == L' ' || pPath[PathLen - 1] == L'\t' || pPath[PathLen - 1] == L'\r' || pPath[PathLen - 1] == L'\n' || pPath[PathLen - 1] == L'"'))
+		pPath[--PathLen] = L'\0';
+
+	if(wcsncmp(pPath, L"file:///", 8) == 0)
+		pPath += 8;
+	else if(wcsncmp(pPath, L"file://", 7) == 0)
+		pPath += 7;
+
+	EClipboardPastedKind PathKind = EClipboardPastedKind::NONE;
+	if(!ImagePathExtensionKind(pPath, PathKind))
+		return false;
+	if(!ReadImageFileBytes(pPath, PathKind, OutBytes, MaxBytes))
+		return false;
+
+	OutKind = DetectImageKindFromBytes(OutBytes.data(), OutBytes.size());
+	if(OutKind == EClipboardPastedKind::NONE)
+		OutKind = PathKind;
+	return true;
+}
+
+bool ReadClipboardGifFromHDropOpen(std::vector<uint8_t> &OutBytes, size_t MaxBytes, char *pFileName = nullptr, size_t FileNameSize = 0)
+{
+	if(pFileName != nullptr && FileNameSize > 0)
+		pFileName[0] = '\0';
+	if(!IsClipboardFormatAvailable(CF_HDROP))
+	{
+		log_info("clipboard", "GIF file paste: CF_HDROP is not available");
+		return false;
+	}
 
 	HANDLE hDrop = GetClipboardData(CF_HDROP);
 	if(hDrop == nullptr)
+	{
+		log_info("clipboard", "GIF file paste: GetClipboardData(CF_HDROP) failed (%lu)", GetLastError());
 		return false;
+	}
 
-	const HDROP hDropList = static_cast<HDROP>(GlobalLock(hDrop));
-	if(hDropList == nullptr)
-		return false;
+	const HDROP hDropList = static_cast<HDROP>(hDrop);
 
 	bool Success = false;
 	const UINT FileCount = DragQueryFileW(hDropList, 0xFFFFFFFF, nullptr, 0);
+	log_info("clipboard", "GIF file paste: CF_HDROP contains %u file(s)", FileCount);
 	for(UINT i = 0; i < FileCount && !Success; ++i)
 	{
 		wchar_t aPath[MAX_PATH] = {};
 		if(DragQueryFileW(hDropList, i, aPath, std::size(aPath)) == 0)
 			continue;
 		Success = ReadFileBytes(aPath, OutBytes, MaxBytes);
+		if(Success && pFileName != nullptr && FileNameSize > 0)
+		{
+			const wchar_t *pBaseName = wcsrchr(aPath, L'\\');
+			pBaseName = pBaseName != nullptr ? pBaseName + 1 : aPath;
+			WideCharToMultiByte(CP_UTF8, 0, pBaseName, -1, pFileName, (int)FileNameSize, nullptr, nullptr);
+			pFileName[FileNameSize - 1] = '\0';
+		}
+		log_info("clipboard", "GIF file paste: file %u read %s (%zu bytes)", i, Success ? "successfully" : "failed", OutBytes.size());
 	}
 
-	GlobalUnlock(hDrop);
 	return Success;
 }
 
@@ -635,9 +816,7 @@ bool ReadClipboardImageFromHDropOpen(std::vector<uint8_t> &OutBytes, EClipboardP
 	if(hDrop == nullptr)
 		return false;
 
-	const HDROP hDropList = static_cast<HDROP>(GlobalLock(hDrop));
-	if(hDropList == nullptr)
-		return false;
+	const HDROP hDropList = static_cast<HDROP>(hDrop);
 
 	bool Success = false;
 	const UINT FileCount = DragQueryFileW(hDropList, 0xFFFFFFFF, nullptr, 0);
@@ -662,54 +841,14 @@ bool ReadClipboardImageFromHDropOpen(std::vector<uint8_t> &OutBytes, EClipboardP
 		Success = true;
 	}
 
-	GlobalUnlock(hDrop);
 	return Success;
 }
 
-bool ReadClipboardGifFromFileContentsOpen(std::vector<uint8_t> &OutBytes, size_t MaxBytes)
-{
-	static UINT s_FileContentsFormat = 0;
-	if(s_FileContentsFormat == 0)
-		s_FileContentsFormat = RegisterClipboardFormatW(L"FileContents");
-	if(s_FileContentsFormat == 0 || !IsClipboardFormatAvailable(s_FileContentsFormat))
-		return false;
-
-	HANDLE hClipboard = GetClipboardData(s_FileContentsFormat);
-	if(hClipboard == nullptr)
-		return false;
-
-	void *pClipboardData = GlobalLock(hClipboard);
-	const SIZE_T ClipboardSize = GlobalSize(hClipboard);
-	if(pClipboardData == nullptr || ClipboardSize < 6 || ClipboardSize > MaxBytes)
-	{
-		if(pClipboardData != nullptr)
-			GlobalUnlock(hClipboard);
-		return false;
-	}
-
-	const auto *pBytes = static_cast<const uint8_t *>(pClipboardData);
-	size_t GifOffset = 0;
-	const uint8_t *pGifData = pBytes;
-	size_t GifSize = (size_t)ClipboardSize;
-	if(!IsGifSignature(pBytes, (size_t)ClipboardSize))
-	{
-		if(!FindGifOffset(pBytes, (size_t)ClipboardSize, GifOffset))
-		{
-			GlobalUnlock(hClipboard);
-			return false;
-		}
-		pGifData = pBytes + GifOffset;
-		GifSize = (size_t)ClipboardSize - GifOffset;
-	}
-
-	OutBytes.assign(pGifData, pGifData + GifSize);
-	GlobalUnlock(hClipboard);
-	return IsGifSignature(OutBytes.data(), OutBytes.size());
-}
-
-bool ReadClipboardGifOpen(std::vector<uint8_t> &OutBytes, size_t MaxBytes)
+bool ReadClipboardGifOpen(std::vector<uint8_t> &OutBytes, size_t MaxBytes, char *pFileName = nullptr, size_t FileNameSize = 0)
 {
 	OutBytes.clear();
+	if(pFileName != nullptr && FileNameSize > 0)
+		pFileName[0] = '\0';
 
 	static UINT s_GifFormat = 0;
 	if(s_GifFormat == 0)
@@ -724,8 +863,9 @@ bool ReadClipboardGifOpen(std::vector<uint8_t> &OutBytes, size_t MaxBytes)
 			if(pClipboardData != nullptr && ClipboardSize >= 6 && ClipboardSize <= MaxBytes)
 			{
 				const auto *pBytes = static_cast<const uint8_t *>(pClipboardData);
-				if(IsGifSignature(pBytes, (size_t)ClipboardSize))
-					OutBytes.assign(pBytes, pBytes + ClipboardSize);
+				std::vector<uint8_t> Candidate;
+				if(AssignValidatedGifBytes(pBytes, (size_t)ClipboardSize, Candidate, MaxBytes))
+					OutBytes = std::move(Candidate);
 			}
 			if(pClipboardData != nullptr)
 				GlobalUnlock(hClipboard);
@@ -734,42 +874,12 @@ bool ReadClipboardGifOpen(std::vector<uint8_t> &OutBytes, size_t MaxBytes)
 		}
 	}
 
-	if(ReadClipboardGifFromFileContentsOpen(OutBytes, MaxBytes) || ReadClipboardGifFromHDropOpen(OutBytes, MaxBytes))
+	// Existing files copied by Explorer are exposed as CF_HDROP. Do not access
+	// CFSTR_FILECONTENTS through GetClipboardData/GlobalLock: Shell data objects
+	// commonly expose it as an IStream, and requesting it this way can invalidate
+	// delayed-rendered clipboard formats before CF_HDROP is read.
+	if(ReadClipboardGifFromHDropOpen(OutBytes, MaxBytes, pFileName, FileNameSize))
 		return true;
-
-	for(UINT ClipboardFormat = EnumClipboardFormats(0); ClipboardFormat != 0; ClipboardFormat = EnumClipboardFormats(ClipboardFormat))
-	{
-		HANDLE hClipboard = GetClipboardData(ClipboardFormat);
-		if(hClipboard == nullptr)
-			continue;
-
-		void *pClipboardData = GlobalLock(hClipboard);
-		const SIZE_T ClipboardSize = GlobalSize(hClipboard);
-		if(pClipboardData == nullptr || ClipboardSize < 6 || ClipboardSize > MaxBytes)
-		{
-			if(pClipboardData != nullptr)
-				GlobalUnlock(hClipboard);
-			continue;
-		}
-
-		const auto *pBytes = static_cast<const uint8_t *>(pClipboardData);
-		size_t GifOffset = 0;
-		if(IsGifSignature(pBytes, (size_t)ClipboardSize))
-		{
-			OutBytes.assign(pBytes, pBytes + ClipboardSize);
-			GlobalUnlock(hClipboard);
-			return true;
-		}
-
-		if(FindGifOffset(pBytes, (size_t)ClipboardSize, GifOffset))
-		{
-			OutBytes.assign(pBytes + GifOffset, pBytes + ClipboardSize);
-			GlobalUnlock(hClipboard);
-			return true;
-		}
-
-		GlobalUnlock(hClipboard);
-	}
 
 	return false;
 }
@@ -834,12 +944,6 @@ bool ReadClipboardJpegBytesOpen(std::vector<uint8_t> &OutBytes)
 			return true;
 	}
 
-	for(UINT ClipboardFormat = EnumClipboardFormats(0); ClipboardFormat != 0; ClipboardFormat = EnumClipboardFormats(ClipboardFormat))
-	{
-		if(TryHandle(GetClipboardData(ClipboardFormat)))
-			return true;
-	}
-
 	return false;
 }
 
@@ -847,11 +951,16 @@ bool ReadClipboardWebpBytesOpen(std::vector<uint8_t> &OutBytes)
 {
 	OutBytes.clear();
 
-	for(UINT ClipboardFormat = EnumClipboardFormats(0); ClipboardFormat != 0; ClipboardFormat = EnumClipboardFormats(ClipboardFormat))
+	static UINT s_aKnownFormats[2] = {0, 0};
+	if(s_aKnownFormats[0] == 0)
 	{
-		HANDLE hClipboard = GetClipboardData(ClipboardFormat);
+		s_aKnownFormats[0] = RegisterClipboardFormatW(L"image/webp");
+		s_aKnownFormats[1] = RegisterClipboardFormatW(L"WEBP");
+	}
+
+	auto TryHandle = [&](HANDLE hClipboard) -> bool {
 		if(hClipboard == nullptr)
-			continue;
+			return false;
 
 		void *pClipboardData = GlobalLock(hClipboard);
 		const SIZE_T ClipboardSize = GlobalSize(hClipboard);
@@ -859,7 +968,7 @@ bool ReadClipboardWebpBytesOpen(std::vector<uint8_t> &OutBytes)
 		{
 			if(pClipboardData != nullptr)
 				GlobalUnlock(hClipboard);
-			continue;
+			return false;
 		}
 
 		const auto *pBytes = static_cast<const uint8_t *>(pClipboardData);
@@ -879,13 +988,22 @@ bool ReadClipboardWebpBytesOpen(std::vector<uint8_t> &OutBytes)
 			if(!Found)
 			{
 				GlobalUnlock(hClipboard);
-				continue;
+				return false;
 			}
 		}
 
 		OutBytes.assign(pBytes + Offset, pBytes + ClipboardSize);
 		GlobalUnlock(hClipboard);
 		return true;
+	};
+
+	for(int i = 0; i < 2; ++i)
+	{
+		const UINT ClipboardFormat = s_aKnownFormats[i];
+		if(ClipboardFormat == 0 || !IsClipboardFormatAvailable(ClipboardFormat))
+			continue;
+		if(TryHandle(GetClipboardData(ClipboardFormat)))
+			return true;
 	}
 
 	return false;
@@ -938,12 +1056,6 @@ bool ReadClipboardPngBytesOpen(std::vector<uint8_t> &OutBytes)
 			return true;
 	}
 
-	for(UINT ClipboardFormat = EnumClipboardFormats(0); ClipboardFormat != 0; ClipboardFormat = EnumClipboardFormats(ClipboardFormat))
-	{
-		if(TryHandle(GetClipboardData(ClipboardFormat)))
-			return true;
-	}
-
 	return false;
 }
 
@@ -962,6 +1074,10 @@ void SetClipboardOwnerWindowImpl(void *pSdlWindow)
 
 bool ClipboardHasImageFormats()
 {
+	// IsClipboardFormatAvailable works without opening the clipboard on Windows.
+	if(KnownImageClipboardFormatAvailable())
+		return true;
+
 	if(!OpenClipboardForRead())
 		return false;
 
@@ -1002,6 +1118,19 @@ bool ReadClipboardPngBytes(std::vector<uint8_t> &vOutPng)
 	return Success;
 }
 
+bool ReadClipboardGifBytes(std::vector<uint8_t> &vOutGif, char *pFileName, size_t FileNameSize)
+{
+	vOutGif.clear();
+	if(pFileName != nullptr && FileNameSize > 0)
+		pFileName[0] = '\0';
+	if(!OpenClipboardForRead())
+		return false;
+
+	const bool Success = ReadClipboardGifOpen(vOutGif, 64 * 1024 * 1024, pFileName, FileNameSize);
+	CloseClipboard();
+	return Success;
+}
+
 bool ReadClipboardPastedMedia(SClipboardPastedMedia &Out)
 {
 	Out = {};
@@ -1015,23 +1144,23 @@ bool ReadClipboardPastedMedia(SClipboardPastedMedia &Out)
 	};
 
 	const size_t MaxBytes = 64 * 1024 * 1024;
-	std::vector<uint8_t> GifBytes;
-	if(ReadClipboardGifOpen(GifBytes, MaxBytes) && !GifBytes.empty())
-	{
-		Out.m_Kind = EClipboardPastedKind::GIF;
-		Out.m_vFileBytes = std::move(GifBytes);
-		FillPreview();
-		CloseClipboard();
-		return true;
-	}
-
 	std::vector<uint8_t> PngBytes;
 	if(ReadClipboardPngBytesOpen(PngBytes) && !PngBytes.empty())
 	{
-		Out.m_Kind = EClipboardPastedKind::PNG;
-		Out.m_vFileBytes = std::move(PngBytes);
-		DecodePngBytes(Out.m_vFileBytes.data(), Out.m_vFileBytes.size(), Out.m_Preview);
-		FillPreview();
+		SClipboardImage PngPreview;
+		if(DecodePngBytes(PngBytes.data(), PngBytes.size(), PngPreview))
+		{
+			Out.m_Kind = EClipboardPastedKind::PNG;
+			Out.m_vFileBytes = std::move(PngBytes);
+			Out.m_Preview = std::move(PngPreview);
+			CloseClipboard();
+			return true;
+		}
+	}
+
+	if(ReadClipboardPngOpen(Out.m_Preview) || ReadClipboardDibOpen(Out.m_Preview) || ReadClipboardBitmapOpen(Out.m_Preview))
+	{
+		Out.m_Kind = EClipboardPastedKind::BITMAP;
 		CloseClipboard();
 		return true;
 	}
@@ -1069,9 +1198,38 @@ bool ReadClipboardPastedMedia(SClipboardPastedMedia &Out)
 		return true;
 	}
 
-	if(ReadClipboardPngOpen(Out.m_Preview) || ReadClipboardDibOpen(Out.m_Preview) || ReadClipboardBitmapOpen(Out.m_Preview))
+	std::vector<uint8_t> HtmlBytes;
+	EClipboardPastedKind HtmlKind = EClipboardPastedKind::NONE;
+	if(ReadClipboardHtmlImageOpen(HtmlBytes, HtmlKind, MaxBytes) && !HtmlBytes.empty())
 	{
-		Out.m_Kind = EClipboardPastedKind::BITMAP;
+		Out.m_Kind = HtmlKind;
+		Out.m_vFileBytes = std::move(HtmlBytes);
+		if(Out.m_Kind == EClipboardPastedKind::PNG)
+			DecodePngBytes(Out.m_vFileBytes.data(), Out.m_vFileBytes.size(), Out.m_Preview);
+		FillPreview();
+		CloseClipboard();
+		return true;
+	}
+
+	std::vector<uint8_t> PathBytes;
+	EClipboardPastedKind PathKind = EClipboardPastedKind::NONE;
+	if(ReadClipboardUnicodePathOpen(PathBytes, PathKind, MaxBytes) && !PathBytes.empty())
+	{
+		Out.m_Kind = PathKind;
+		Out.m_vFileBytes = std::move(PathBytes);
+		if(Out.m_Kind == EClipboardPastedKind::PNG)
+			DecodePngBytes(Out.m_vFileBytes.data(), Out.m_vFileBytes.size(), Out.m_Preview);
+		FillPreview();
+		CloseClipboard();
+		return true;
+	}
+
+	std::vector<uint8_t> GifBytes;
+	if(ReadClipboardGifOpen(GifBytes, MaxBytes) && !GifBytes.empty())
+	{
+		Out.m_Kind = EClipboardPastedKind::GIF;
+		Out.m_vFileBytes = std::move(GifBytes);
+		FillPreview();
 		CloseClipboard();
 		return true;
 	}
@@ -1102,6 +1260,14 @@ bool ReadClipboardImage(SClipboardImage &OutImage)
 bool ReadClipboardPngBytes(std::vector<uint8_t> &vOutPng)
 {
 	(void)vOutPng;
+	return false;
+}
+
+bool ReadClipboardGifBytes(std::vector<uint8_t> &vOutGif, char *pFileName, size_t FileNameSize)
+{
+	(void)vOutGif;
+	(void)pFileName;
+	(void)FileNameSize;
 	return false;
 }
 

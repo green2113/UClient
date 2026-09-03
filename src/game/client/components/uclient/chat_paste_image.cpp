@@ -1,5 +1,6 @@
 #include "chat_paste_image.h"
 
+#include <base/log.h>
 #include <base/math.h>
 #include <base/system.h>
 
@@ -907,19 +908,7 @@ bool CUClientChatPasteImage::OnInput(CChat *pChat, const IInput::CEvent &Event)
 		}
 	}
 
-	if(ChatInputActive && TryHandlePasteKey(pChat, Event))
-		return true;
-
 	return false;
-}
-
-bool CUClientChatPasteImage::TryHandlePasteKey(CChat *pChat, const IInput::CEvent &Event)
-{
-	if(pChat->m_Mode == CChat::MODE_NONE)
-		return false;
-	if(!(Event.m_Flags & IInput::FLAG_PRESS) || Event.m_Key != KEY_V || !pChat->Input()->ModifierIsPressed())
-		return false;
-	return TryPasteClipboardImage(pChat);
 }
 
 bool CUClientChatPasteImage::TryPasteFromClipboard(CChat *pChat)
@@ -1039,11 +1028,27 @@ bool CUClientChatPasteImage::SetPendingUploadImageFromMedia(CChat *pChat, const 
 	if(Media.m_vFileBytes.empty())
 		return false;
 
-	const size_t MaxBytes = g_Config.m_UcChatPasteUploadMaxBytes > 0 ? (size_t)g_Config.m_UcChatPasteUploadMaxBytes : (size_t)-1;
+	const int ConfiguredMaxBytes = Media.m_Kind == EClipboardPastedKind::GIF ?
+		g_Config.m_UcChatPasteGifUploadMaxBytes :
+		g_Config.m_UcChatPasteUploadMaxBytes;
+	const size_t MaxBytes = ConfiguredMaxBytes > 0 ? (size_t)ConfiguredMaxBytes : (size_t)-1;
 	if(MaxBytes != (size_t)-1 && Media.m_vFileBytes.size() > MaxBytes)
 	{
+		log_info("chat-paste", "Rejected %zu-byte clipboard media (limit: %zu bytes)", Media.m_vFileBytes.size(), MaxBytes);
 		pChat->Echo(Media.m_Kind == EClipboardPastedKind::GIF ? "Pasted GIF exceeds the configured upload size limit." : "Pasted image exceeds the configured upload size limit.");
 		return false;
+	}
+
+	if(Media.m_Kind == EClipboardPastedKind::GIF)
+	{
+		ClearPendingUploadImage(pChat);
+		m_PendingUploadImage.m_vPng = Media.m_vFileBytes;
+		str_copy(m_PendingUploadImage.m_aUploadContentType, "image/gif", sizeof(m_PendingUploadImage.m_aUploadContentType));
+		str_copy(m_PendingUploadImage.m_aFileName, Media.m_aFileName[0] != '\0' ? Media.m_aFileName : "clipboard.gif", sizeof(m_PendingUploadImage.m_aFileName));
+		m_PendingUploadImage.m_IsGif = true;
+		m_PendingUploadImage.m_State = CUClientChatPasteImage::EPendingUploadState::READY;
+		log_info("chat-paste", "Attached GIF from clipboard (%zu bytes)", Media.m_vFileBytes.size());
+		return true;
 	}
 
 	ClearPendingUploadImage(pChat);
@@ -1054,10 +1059,26 @@ bool CUClientChatPasteImage::SetPendingUploadImageFromMedia(CChat *pChat, const 
 	{
 		if(!LoadPreviewTextureFromFileBytes(pChat->Graphics(), Media.m_vFileBytes.data(), Media.m_vFileBytes.size(), Texture, Width, Height))
 		{
-			if(!Media.m_Preview.IsValid())
-				return false;
-			if(!LoadPreviewTextureFromRgba(pChat->Graphics(), Media.m_Preview, Texture, Width, Height))
-				return false;
+			if(Media.m_Kind == EClipboardPastedKind::PNG)
+			{
+				CImageInfo Image;
+				if(pChat->Graphics()->LoadPng(Image, Media.m_vFileBytes.data(), Media.m_vFileBytes.size(), "chat-paste-upload-preview"))
+				{
+					Texture = pChat->Graphics()->LoadTextureRawMove(Image, 0, "chat-paste-upload");
+					if(Texture.IsValid())
+					{
+						Width = (int)Image.m_Width;
+						Height = (int)Image.m_Height;
+					}
+				}
+			}
+			if(!Texture.IsValid())
+			{
+				if(!Media.m_Preview.IsValid())
+					return false;
+				if(!LoadPreviewTextureFromRgba(pChat->Graphics(), Media.m_Preview, Texture, Width, Height))
+					return false;
+			}
 		}
 	}
 
@@ -1077,19 +1098,46 @@ bool CUClientChatPasteImage::SetPendingUploadImageFromMedia(CChat *pChat, const 
 bool CUClientChatPasteImage::TryPasteClipboardImage(CChat *pChat)
 {
 	if(!g_Config.m_UcChatPasteUpload)
-	{
-		pChat->Echo("Clipboard image upload is disabled in settings.");
 		return false;
-	}
 	if(m_PendingUploadImage.m_State == CUClientChatPasteImage::EPendingUploadState::UPLOADING)
 		return false;
 
 	SClipboardPastedMedia Media;
-	if(!ReadClipboardPastedMedia(Media))
+	// Prefer original GIF bytes over the rendered DIB preview so animations are
+	// preserved when the clipboard exposes both formats.
+	std::vector<uint8_t> GifBytes;
+	char aGifFileName[256] = "";
+	IInput::SClipboardImage InputImage;
+	if(ReadClipboardGifBytes(GifBytes, aGifFileName, sizeof(aGifFileName)) && !GifBytes.empty())
 	{
-		if(ClipboardHasImageFormats())
-			pChat->Echo("Unable to read pasted image from the clipboard.");
-		return false;
+		Media.m_Kind = EClipboardPastedKind::GIF;
+		Media.m_vFileBytes = std::move(GifBytes);
+		str_copy(Media.m_aFileName, aGifFileName, sizeof(Media.m_aFileName));
+		if(pChat->Input()->GetClipboardImage(InputImage) && InputImage.IsValid())
+		{
+			Media.m_Preview.m_Width = InputImage.m_Width;
+			Media.m_Preview.m_Height = InputImage.m_Height;
+			Media.m_Preview.m_vRgba = std::move(InputImage.m_vRgba);
+		}
+	}
+	else if(pChat->Input()->GetClipboardImage(InputImage) && InputImage.IsValid())
+	{
+		Media.m_Kind = EClipboardPastedKind::BITMAP;
+		Media.m_Preview.m_Width = InputImage.m_Width;
+		Media.m_Preview.m_Height = InputImage.m_Height;
+		Media.m_Preview.m_vRgba = std::move(InputImage.m_vRgba);
+	}
+	else if(!ReadClipboardPastedMedia(Media))
+	{
+		SClipboardImage FallbackImage;
+		if(ReadClipboardImage(FallbackImage) && FallbackImage.IsValid())
+		{
+			Media.m_Kind = EClipboardPastedKind::BITMAP;
+			Media.m_Preview = std::move(FallbackImage);
+		}
+
+		if(!Media.IsValid())
+			return false;
 	}
 
 	if(!g_Config.m_UcChatPasteImageWarningSkip)
@@ -1100,7 +1148,11 @@ bool CUClientChatPasteImage::TryPasteClipboardImage(CChat *pChat)
 	}
 
 	if(!SetPendingUploadImageFromMedia(pChat, Media))
-		pChat->Echo("Unable to attach pasted image.");
+	{
+		pChat->Echo("Unable to attach pasted image to chat.");
+		return false;
+	}
+
 	return true;
 }
 
@@ -1215,6 +1267,13 @@ void CUClientChatPasteImage::PendingUploadPreviewSize(CChat *pChat, float Width,
 		return;
 	}
 
+	if(m_PendingUploadImage.m_IsGif)
+	{
+		PreviewW = minimum(Width, 100.0f);
+		PreviewH = maximum(18.0f, FontSize * 1.05f);
+		return;
+	}
+
 	const float MaxPreviewW = minimum(Width, 120.0f);
 	const float MaxPreviewH = maximum(56.0f, FontSize * 5.0f);
 	const float Aspect = m_PendingUploadImage.m_Height > 0 ? (float)m_PendingUploadImage.m_Width / (float)m_PendingUploadImage.m_Height : 1.0f;
@@ -1298,7 +1357,21 @@ void CUClientChatPasteImage::RenderPreview(CChat *pChat, float X, float Y, float
 
 	pChat->Graphics()->DrawRect(X, Y, PreviewW, PreviewH, ColorRGBA(1.0f, 1.0f, 1.0f, 0.35f), IGraphics::CORNER_ALL, PreviewRounding);
 	pChat->Graphics()->DrawRect(InnerX, InnerY, InnerW, InnerH, ColorRGBA(0.07f, 0.07f, 0.07f, 0.85f), IGraphics::CORNER_ALL, InnerRounding);
-	DrawRoundedMediaPreview(pChat->Graphics(), m_PendingUploadImage.m_Texture, InnerX, InnerY, InnerW, InnerH, InnerRounding, 1.0f);
+	if(m_PendingUploadImage.m_IsGif)
+	{
+		const char *pFileName = m_PendingUploadImage.m_aFileName[0] != '\0' ? m_PendingUploadImage.m_aFileName : "clipboard.gif";
+		CTextCursor FileCursor;
+		FileCursor.SetPosition(vec2(InnerX + maximum(8.0f, FontSize * 0.45f), InnerY + maximum(2.0f, (InnerH - FontSize) * 0.5f)));
+		FileCursor.m_FontSize = FontSize;
+		FileCursor.m_LineWidth = maximum(20.0f, InnerW - maximum(34.0f, FontSize * 2.0f));
+		pChat->TextRender()->TextColor(0.92f, 0.94f, 0.98f, 0.96f);
+		pChat->TextRender()->TextEx(&FileCursor, pFileName);
+		pChat->TextRender()->TextColor(pChat->TextRender()->DefaultTextColor());
+	}
+	else
+	{
+		DrawRoundedMediaPreview(pChat->Graphics(), m_PendingUploadImage.m_Texture, InnerX, InnerY, InnerW, InnerH, InnerRounding, 1.0f);
+	}
 
 	const vec2 MousePos = pChat->ChatMousePos();
 

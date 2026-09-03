@@ -410,9 +410,9 @@ bool CLineInput::ProcessInput(const IInput::CEvent &Event)
 			}
 			else
 			{
-			std::string ClipboardText = Input()->GetClipboardText();
-			if(!ClipboardText.empty())
-			{
+				std::string ClipboardText = Input()->GetClipboardText();
+				if(!ClipboardText.empty())
+				{
 				if(m_pfnClipboardLineCallback)
 				{
 					// Split clipboard text into multiple lines. Send all complete lines to callback.
@@ -453,8 +453,8 @@ bool CLineInput::ProcessInput(const IInput::CEvent &Event)
 					str_sanitize_cc(ClipboardText.data());
 					SetRange(ClipboardText.c_str(), m_SelectionStart, m_SelectionEnd);
 				}
-			}
-			KeyHandled = true;
+				KeyHandled = true;
+				}
 			}
 		}
 		else if(ModPressed && !AltPressed && (Event.m_Key == KEY_C || Event.m_Key == KEY_X) && SelectionLength)

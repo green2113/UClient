@@ -48,11 +48,12 @@ class CUClientChatPasteImage
 		char m_aMessagePrefix[256] = "";
 		char m_aError[128] = "";
 		char m_aUploadContentType[32] = "image/png";
+		char m_aFileName[256] = "";
 		bool m_IsGif = false;
 
 		bool HasImage() const
 		{
-			return m_Texture.IsValid() && m_Width > 0 && m_Height > 0 && !m_vPng.empty();
+			return !m_vPng.empty() && (m_IsGif || (m_Texture.IsValid() && m_Width > 0 && m_Height > 0));
 		}
 
 		bool AllowsEditing() const
@@ -131,7 +132,6 @@ class CUClientChatPasteImage
 public:
 	void Reset(CChat *pChat);
 	bool OnInput(CChat *pChat, const IInput::CEvent &Event);
-	bool TryHandlePasteKey(CChat *pChat, const IInput::CEvent &Event);
 	bool TryPasteFromClipboard(CChat *pChat);
 	bool IsPasteWarningPending() const;
 	void OnUpdate(CChat *pChat);

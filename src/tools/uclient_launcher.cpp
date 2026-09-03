@@ -180,6 +180,7 @@ static bool g_GearHover = false;
 static bool g_MinHover = false;
 static bool g_CloseHover = false;
 static bool g_BackHover = false;
+static bool g_FriendRefreshHover = false;
 static EMainTab g_MainTab = EMainTab::Overview;
 
 // Animation state, driven by a ~60fps timer while anything is still moving.
@@ -231,6 +232,7 @@ static RECT g_BackRc = {};
 static RECT g_TabOverviewRc = {};
 static RECT g_TabUpdatesRc = {};
 static RECT g_FriendAreaRc = {};
+static RECT g_FriendRefreshRc = {};
 
 static HBITMAP g_hLogoBmp = nullptr;
 static int g_LogoW = 0;
@@ -3616,6 +3618,7 @@ static void Paint(HWND hWnd)
 	g_AutoUpdateCheckRc = {ContentL + 4, 280, ContentR, 366};
 	g_DiscordCheckRc = {ContentL + 4, 428, ContentR, 514};
 	g_FriendAreaRc = {PanelL + 12, 182, WND_W - 36, WND_H - 44};
+	g_FriendRefreshRc = {WND_W - 78, 68, WND_W - 44, 102};
 
 	// Tabs: equal cells sized from the widest label, centered over the content area.
 	{
@@ -3684,6 +3687,11 @@ static void Paint(HWND hWnd)
 	SelectObject(Mem, TitleFont);
 	SetTextColor(Mem, C_TITLE);
 	TextOutW(Mem, PanelL + 24, 74, L"Friends", 7);
+	if(g_FriendRefreshHover && !FriendsLoading)
+		FillRoundRect(Mem, g_FriendRefreshRc, 10, RGB(44, 46, 55));
+	SelectObject(Mem, BodyFont);
+	SetTextColor(Mem, FriendsLoading ? C_ACCENT_HOVER : C_DIM);
+	DrawTextW(Mem, L"\x21BB", 1, &g_FriendRefreshRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
 	{
 		RECT Dot = {PanelL + 24, 116, PanelL + 34, 126};
@@ -4294,22 +4302,24 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		const bool BackHover = g_ShowSettings && PtInRectI(g_BackRc, X, Y);
 		const bool MinHover = PtInRectI(g_MinRc, X, Y);
 		const bool CloseHover = PtInRectI(g_CloseRc, X, Y);
+		const bool FriendRefreshHover = !g_ShowSettings && PtInRectI(g_FriendRefreshRc, X, Y) && !g_FriendsLoading;
 		const int FriendHover = FriendHitIndex(X, Y);
 		if(PlayHover != g_PlayHover || GearHover != g_GearHover || BackHover != g_BackHover ||
-			MinHover != g_MinHover || CloseHover != g_CloseHover || FriendHover != g_FriendHover)
+			MinHover != g_MinHover || CloseHover != g_CloseHover || FriendRefreshHover != g_FriendRefreshHover || FriendHover != g_FriendHover)
 		{
 			g_PlayHover = PlayHover;
 			g_GearHover = GearHover;
 			g_BackHover = BackHover;
 			g_MinHover = MinHover;
 			g_CloseHover = CloseHover;
+			g_FriendRefreshHover = FriendRefreshHover;
 			g_FriendHover = FriendHover;
 			InvalidateRect(hWnd, nullptr, FALSE);
 		}
 		return 0;
 	}
 	case WM_MOUSELEAVE:
-		g_PlayHover = g_GearHover = g_BackHover = g_MinHover = g_CloseHover = false;
+		g_PlayHover = g_GearHover = g_BackHover = g_MinHover = g_CloseHover = g_FriendRefreshHover = false;
 		g_FriendHover = -1;
 		InvalidateRect(hWnd, nullptr, FALSE);
 		return 0;
@@ -4358,6 +4368,12 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 				g_BackHover = false;
 				InvalidateRect(hWnd, nullptr, FALSE);
 			}
+			return 0;
+		}
+		if(PtInRectI(g_FriendRefreshRc, X, Y))
+		{
+			RequestFriendsRefresh();
+			InvalidateRect(hWnd, nullptr, FALSE);
 			return 0;
 		}
 		if(PtInRectI(g_TabOverviewRc, X, Y))
