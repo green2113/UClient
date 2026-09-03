@@ -750,7 +750,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 				if(SettingsMode)
 				{
 					RoomHeight += 6.0f + LineSize; // rename
-					if(Room.m_Owner)
+					if(CanManageRoom)
 						RoomHeight += ColorPickerLineSpacing + ColorPickerLineSize + ColorPickerLineSpacing; // gap + color
 					RoomHeight += 8.0f + LineSize; // save/cancel
 				}
@@ -876,7 +876,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 				Ui()->DoLabel(&RenameLabel, Localize("Room name"), 11.0f, TEXTALIGN_ML);
 				Ui()->DoClearableEditBox(&s_RenameRoomInput, &RenameValue, EditBoxFontSize);
 
-				if(Room.m_Owner)
+				if(CanManageRoom)
 				{
 					// Same spacing as consecutive scoreboard color pickers (Display > HUD).
 					Content.HSplitTop(ColorPickerLineSpacing, nullptr, &Content);
@@ -898,7 +898,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 					const bool NameChanged = pNewName[0] && str_comp(pNewName, Room.m_aName) != 0;
 					const unsigned DefaultPacked = color_cast<ColorHSLA>(CUClientChatRooms::DefaultNameColor()).Pack(false);
 					const unsigned DesiredColor = s_SettingsNameColor == DefaultPacked ? 0 : s_SettingsNameColor;
-					const bool ColorChanged = Room.m_Owner && DesiredColor != Room.m_NameColor;
+					const bool ColorChanged = CanManageRoom && DesiredColor != Room.m_NameColor;
 					const bool InvitePublicChanged = Room.m_Owner && s_SettingsInvitePublic != Room.m_InviteCodePublic;
 					if(NameChanged || ColorChanged || InvitePublicChanged)
 					{

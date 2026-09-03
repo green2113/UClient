@@ -190,7 +190,10 @@ async function register(request: Request, env: Env): Promise<Response> {
 			return json({error: "account_banned", reason: ban.reason, expires_at: ban.expires_at}, 423);
 		await env.DB.prepare(
 			`UPDATE accounts
-			 SET last_seen_at = ?2, last_player_name = ?3, last_client_version = ?4, last_ip = ?5
+			 SET last_seen_at = ?2,
+			     last_player_name = CASE WHEN ?3 = '' THEN last_player_name ELSE ?3 END,
+			     last_client_version = ?4,
+			     last_ip = ?5
 			 WHERE install_id = ?1`,
 		).bind(input.install_id, now, input.player_name?.trim() ?? "", input.version?.trim() ?? "", ip).run();
 		const grace = await signGraceToken(env, input.install_id, now);
@@ -248,7 +251,10 @@ async function verify(request: Request, env: Env): Promise<Response> {
 
 	await env.DB.prepare(
 		`UPDATE accounts
-		 SET last_seen_at = ?2, last_player_name = ?3, last_client_version = ?4, last_ip = ?5
+		 SET last_seen_at = ?2,
+		     last_player_name = CASE WHEN ?3 = '' THEN last_player_name ELSE ?3 END,
+		     last_client_version = ?4,
+		     last_ip = ?5
 		 WHERE install_id = ?1`,
 	).bind(input.install_id, now, input.player_name?.trim() ?? "", input.version?.trim() ?? "", clientIp(request)).run();
 
@@ -412,8 +418,8 @@ async function renameRoom(request: Request, env: Env, roomId: string, installId:
 	const role = await membershipRole(env, roomId, installId);
 	if(role !== "owner" && role !== "admin")
 		return error(403, "permission_denied", "Only the room owner or an admin can update this room.");
-	if((hasColor || hasInvitePublic) && role !== "owner")
-		return error(403, "owner_required", "Only the room owner can change that setting.");
+	if(hasInvitePublic && role !== "owner")
+		return error(403, "owner_required", "Only the room owner can change invite visibility.");
 
 	const now = Math.floor(Date.now() / 1000);
 	if(hasName)

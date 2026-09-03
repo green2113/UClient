@@ -816,6 +816,9 @@ static bool LaunchGame(const LauncherArgs *pA, HANDLE *pOutProcess = nullptr)
 		Link += g_ConnectAddress;
 		Args.push_back(Link);
 	}
+	// Pass the launcher preference as a runtime console override. The game will
+	// persist it through its own atomic config writer.
+	Args.emplace_back(g_DiscordRpc ? L"tc_discord_rpc 1" : L"tc_discord_rpc 0");
 
 	const std::wstring Game = JoinPath(pA->InstallDir, kGameExe);
 	SetStatus(L"Starting UClient...");
@@ -954,7 +957,6 @@ static std::wstring GetLauncherSettingsPath()
 
 static void LoadDiscordRpcSetting();
 static void SaveDiscordRpcSetting(bool Enabled);
-static void SyncDiscordRpcToClientSettings();
 static void SaveLauncherSettings(const std::wstring &InstallDir);
 
 static void LoadLauncherSettings(const std::wstring &InstallDir)
@@ -1661,18 +1663,12 @@ static std::wstring GetDdnetSettingsPath()
 	return std::wstring(aAppData) + L"\\DDNet\\settings_ddnet.cfg";
 }
 
-static bool ConfigLineHasKey(const std::string &Line, const char *pKey)
+static std::wstring GetTclientSettingsPath()
 {
-	size_t i = 0;
-	while(i < Line.size() && isspace((unsigned char)Line[i]))
-		++i;
-	if(i >= Line.size() || Line[i] == '#')
-		return false;
-	const size_t KeyLen = strlen(pKey);
-	if(Line.compare(i, KeyLen, pKey) != 0)
-		return false;
-	i += KeyLen;
-	return i >= Line.size() || isspace((unsigned char)Line[i]);
+	wchar_t aAppData[MAX_PATH] = {};
+	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
+		return {};
+	return std::wstring(aAppData) + L"\\DDNet\\settings_tclient.cfg";
 }
 
 static bool ParseConfigIntLine(const std::string &Line, const char *pKey, int &Out)
@@ -1724,63 +1720,6 @@ static int ReadIntConfigValue(const std::wstring &Path, const char *pKey, int De
 	return Default;
 }
 
-static bool EnsureDdnetSettingsDir()
-{
-	wchar_t aAppData[MAX_PATH] = {};
-	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
-		return false;
-	std::wstring Dir = aAppData;
-	Dir += L"\\DDNet";
-	CreateDirectoryW(Dir.c_str(), nullptr);
-	return true;
-}
-
-static bool SetIntConfigValue(const std::wstring &Path, const char *pKey, int Value)
-{
-	std::string Text;
-	std::string NewText;
-	bool Found = false;
-	if(ReadEntireFile(Path, Text))
-	{
-		size_t LineStart = 0;
-		while(LineStart <= Text.size())
-		{
-			size_t LineEnd = Text.find('\n', LineStart);
-			if(LineEnd == std::string::npos)
-				LineEnd = Text.size();
-			std::string Line = Text.substr(LineStart, LineEnd - LineStart);
-			if(!Line.empty() && Line.back() == '\r')
-				Line.pop_back();
-			LineStart = LineEnd + 1;
-
-			if(ConfigLineHasKey(Line, pKey))
-			{
-				char aBuf[128];
-				_snprintf_s(aBuf, _TRUNCATE, "%s %d", pKey, Value);
-				NewText += aBuf;
-				NewText += '\n';
-				Found = true;
-			}
-			else
-			{
-				NewText += Line;
-				if(LineEnd < Text.size())
-					NewText += '\n';
-			}
-		}
-	}
-
-	if(!Found)
-	{
-		if(!NewText.empty() && NewText.back() != '\n')
-			NewText += '\n';
-		char aBuf[128];
-		_snprintf_s(aBuf, _TRUNCATE, "%s %d\n", pKey, Value);
-		NewText += aBuf;
-	}
-	return WriteTextFile(Path, NewText);
-}
-
 static void LoadDiscordRpcSetting()
 {
 	g_DiscordRpc = true;
@@ -1793,25 +1732,16 @@ static void LoadDiscordRpcSetting()
 		else if(Text.find("discord_rpc=1") != std::string::npos)
 			g_DiscordRpc = true;
 		else
-			g_DiscordRpc = ReadIntConfigValue(GetDdnetSettingsPath(), "tc_discord_rpc", 1) != 0;
+			g_DiscordRpc = ReadIntConfigValue(GetTclientSettingsPath(), "tc_discord_rpc", 1) != 0;
 		return;
 	}
-	g_DiscordRpc = ReadIntConfigValue(GetDdnetSettingsPath(), "tc_discord_rpc", 1) != 0;
-}
-
-static void SyncDiscordRpcToClientSettings()
-{
-	const std::wstring Path = GetDdnetSettingsPath();
-	if(Path.empty() || !EnsureDdnetSettingsDir())
-		return;
-	SetIntConfigValue(Path, "tc_discord_rpc", g_DiscordRpc ? 1 : 0);
+	g_DiscordRpc = ReadIntConfigValue(GetTclientSettingsPath(), "tc_discord_rpc", 1) != 0;
 }
 
 static void SaveDiscordRpcSetting(bool Enabled)
 {
 	g_DiscordRpc = Enabled;
 	SaveLauncherSettings(g_InstallDir);
-	SyncDiscordRpcToClientSettings();
 }
 
 static bool ParseQuotedToken(const std::string &Line, size_t &Pos, std::string &Out)
@@ -3050,7 +2980,6 @@ static void RequestLaunchGame(const wchar_t *pConnectAddress = nullptr)
 		g_ConnectAddress = pConnectAddress;
 	else
 		g_ConnectAddress.clear();
-	SyncDiscordRpcToClientSettings();
 	SetPhase(EUiPhase::Launching);
 	g_UpdateStage = EUpdateStage::None;
 	SetButtonLabel(kRunningLabel);
@@ -4184,8 +4113,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		{
 			const bool WasRunning = g_GameRunning;
 			RefreshGameRunningState();
-			if(WasRunning && !g_GameRunning)
-				SyncDiscordRpcToClientSettings();
 			if(WasRunning != g_GameRunning)
 			{
 				SyncButtonHint();
@@ -4596,7 +4523,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 	LocalFree(ppArgv);
 
 	LoadLauncherSettings(g_InstallDir);
-	SyncDiscordRpcToClientSettings();
 	LoadLauncherArt(g_InstallDir);
 	SetVersionLabel(ResolveLocalVersion(g_InstallDir));
 
