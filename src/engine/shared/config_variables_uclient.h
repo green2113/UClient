@@ -39,6 +39,7 @@ MACRO_CONFIG_INT(UcSpecTelePreview, uc_spec_tele_preview, 1, 0, 1, CFGFLAG_CLIEN
 MACRO_CONFIG_INT(UcChat, uc_chat, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable UClient chat channel (relayed via UClient presence UDP)")
 MACRO_CONFIG_INT(UcChatSendSameServerOnly, uc_chat_send_same_server_only, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Only send UClient chat to users on the same game server")
 MACRO_CONFIG_INT(UcChatHideGlobal, uc_chat_hide_global, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Hide UClient chat messages sent to all UClient users")
+MACRO_CONFIG_INT(UcChatDisableAudienceMentions, uc_chat_disable_audience_mentions, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Disable @everyone and @here mention highlights and sounds")
 MACRO_CONFIG_INT(UcServerJoinSend, uc_server_join_send, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Announce to other UClient users when you join or leave a server")
 MACRO_CONFIG_STR(UcServerJoinSendRoom, uc_server_join_send_room, 64, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Room receiving UClient server join and leave announcements (empty sends globally)")
 MACRO_CONFIG_INT(UcServerJoinHideGlobal, uc_server_join_hide_global, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Hide global UClient server join and leave announcements")

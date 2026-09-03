@@ -513,7 +513,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			static float s_UcChatPhase = 0.0f;
 			const bool ChatExpanded = g_Config.m_UcChat != 0;
 			UpdateRevealPhase(s_UcChatPhase, ChatExpanded);
-			const float ExpandedTargetHeight = MarginSmall + LineSize * 5.0f + ColorPickerLineSize + ColorPickerLineSpacing;
+			const float ExpandedTargetHeight = MarginSmall + LineSize * 6.0f + ColorPickerLineSize + ColorPickerLineSpacing;
 			const float ExpandedHeight = ExpandedTargetHeight * s_UcChatPhase;
 			const float ContentHeight = LineSize + MarginSmall + LineSize + ExpandedHeight;
 			CUIRect Content, Label, Visible, Row, DropDown;
@@ -545,6 +545,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 				GameClient()->m_Chat.RenderUClientChatTargetDropDown(DropDown, s_ChatTargetDropDownState, s_ChatTargetDropDownScrollRegion);
 
 				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcChatHideGlobal, Localize("Hide messages sent to all UClient users"), &g_Config.m_UcChatHideGlobal, &Expand, LineSize);
+				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcChatDisableAudienceMentions, Localize("Disable @everyone and @here mentions"), &g_Config.m_UcChatDisableAudienceMentions, &Expand, LineSize);
 				DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcServerJoinSend, Localize("Announce when I join or leave a server"), &g_Config.m_UcServerJoinSend, &Expand, LineSize);
 
 				Expand.HSplitTop(LineSize, &Row, &Expand);

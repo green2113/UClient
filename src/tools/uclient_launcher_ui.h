@@ -941,11 +941,12 @@ function esc(s) {
 function renderFriends(st) {
   var list = $("fr-list");
   var fr = st.friends || [];
-  var sig = JSON.stringify([st.friendsLoading, st.friendsLoaded, fr]);
+  var initialLoading = st.friendsLoading && !st.friendsLoaded;
+  var sig = initialLoading ? "initial-loading" : JSON.stringify([st.friendsLoaded, fr]);
   if (sig === friendSig) return;
   friendSig = sig;
 
-  if (st.friendsLoading && !st.friendsLoaded) {
+  if (initialLoading) {
     var sk = "";
     for (var i = 0; i < 6; i++) sk += '<div class="sk"><i></i><div class="c"><u></u><u></u></div></div>';
     list.innerHTML = sk;

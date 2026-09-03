@@ -7461,9 +7461,12 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 		NameHit |= GameClient()->m_Snap.m_LocalClientId >= 0 && LineShouldHighlight(pHighlightText, GameClient()->m_aClients[GameClient()->m_Snap.m_LocalClientId].m_aName);
 	}
 
-	// @everyone / @here: highlight for all recipients, including the sender.
-	EveryoneHit = LineContainsUClientAudienceMention(pHighlightText, "@everyone");
-	HereHit = LineContainsUClientAudienceMention(pHighlightText, "@here");
+	// @everyone / @here: highlight for all recipients unless audience mentions are disabled.
+	if(!g_Config.m_UcChatDisableAudienceMentions)
+	{
+		EveryoneHit = LineContainsUClientAudienceMention(pHighlightText, "@everyone");
+		HereHit = LineContainsUClientAudienceMention(pHighlightText, "@here");
+	}
 
 	Highlighted |= NameHit || EveryoneHit || HereHit;
 
@@ -10616,8 +10619,11 @@ bool CChat::LineHighlighted(int ClientId, const char *pLine)
 		Highlighted |= GameClient()->m_Snap.m_LocalClientId >= 0 && LineShouldHighlight(pLine, GameClient()->m_aClients[GameClient()->m_Snap.m_LocalClientId].m_aName);
 	}
 
-	Highlighted |= LineContainsUClientAudienceMention(pLine, "@everyone") ||
-		LineContainsUClientAudienceMention(pLine, "@here");
+	if(!g_Config.m_UcChatDisableAudienceMentions)
+	{
+		Highlighted |= LineContainsUClientAudienceMention(pLine, "@everyone") ||
+			LineContainsUClientAudienceMention(pLine, "@here");
+	}
 
 	return Highlighted;
 }
