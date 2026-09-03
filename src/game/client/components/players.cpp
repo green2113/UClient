@@ -263,6 +263,20 @@ void CPlayers::RenderHookCollLine(
 		return;
 #endif
 
+	// The local weapon trajectory replaces the hook helper line while aiming
+	// with a weapon that has a trajectory preview.
+	if(Local && g_Config.m_UcWeaponTraj && !GameClient()->IsWeaponTrajBlocked())
+	{
+		const int Weapon = Player.m_Weapon;
+		const bool HasWeaponTrajectory = Weapon == WEAPON_SHOTGUN || Weapon == WEAPON_GRENADE || Weapon == WEAPON_LASER;
+		const bool TrajectoryAim = Client()->State() != IClient::STATE_DEMOPLAYBACK ?
+			GameClient()->m_Controls.m_aShowHookColl[g_Config.m_ClDummy] != 0 :
+			(Player.m_PlayerFlags & PLAYERFLAG_AIM) != 0;
+		const bool AlwaysShowTrajectory = g_Config.m_ClShowHookCollOwn == 2;
+		if(HasWeaponTrajectory && (TrajectoryAim || AlwaysShowTrajectory))
+			return;
+	}
+
 	bool Aim = (Player.m_PlayerFlags & PLAYERFLAG_AIM);
 	if(!Client()->ServerCapAnyPlayerFlag())
 	{
@@ -593,7 +607,7 @@ void CPlayers::RenderWeaponTrajLine(
 		(Weapon == WEAPON_GRENADE && OwnData.m_GrenadeHitDisabled);
 
 	// Like hook coll, but uses weapon hit rules (not HookHitDisabled) and stops the line at the tee.
-	auto IntersectWeaponCharacter = [&](vec2 From, vec2 To, float Radius, vec2 *pHitOnLine, vec2 *pTeePos) -> int {
+	auto IntersectWeaponCharacter = [&](vec2 From, vec2 To, float Radius, bool AllowSelf, vec2 *pHitOnLine, vec2 *pTeePos) -> int {
 		if(WeaponHitDisabled)
 			return -1;
 
@@ -604,17 +618,21 @@ void CPlayers::RenderWeaponTrajLine(
 
 		for(int i = 0; i < MAX_CLIENTS; i++)
 		{
-			if(i == ClientId)
+			const bool Self = i == ClientId;
+			if(Self && !AllowSelf)
 				continue;
 
 			const CGameClient::CClientData &Data = GameClient()->m_aClients[i];
 			if(!Data.m_Active || !GameClient()->m_Snap.m_aCharacters[i].m_Active)
 				continue;
 
-			const bool IsOneSuper = Data.m_Super || OwnData.m_Super;
-			const bool IsOneSolo = Data.m_Solo || OwnData.m_Solo;
-			if(!IsOneSuper && (!GameClient()->m_Teams.SameTeam(i, ClientId) || IsOneSolo))
-				continue;
+			if(!Self)
+			{
+				const bool IsOneSuper = Data.m_Super || OwnData.m_Super;
+				const bool IsOneSolo = Data.m_Solo || OwnData.m_Solo;
+				if(!IsOneSuper && (!GameClient()->m_Teams.SameTeam(i, ClientId) || IsOneSolo))
+					continue;
+			}
 
 			const CNetObj_Character &Prev = GameClient()->m_Snap.m_aCharacters[i].m_Prev;
 			const CNetObj_Character &Cur = GameClient()->m_Snap.m_aCharacters[i].m_Cur;
@@ -686,7 +704,7 @@ void CPlayers::RenderWeaponTrajLine(
 
 			vec2 HitOnLine;
 			vec2 TeePos;
-			if(IntersectWeaponCharacter(Pos, To, 0.0f, &HitOnLine, &TeePos) != -1)
+			if(IntersectWeaponCharacter(Pos, To, 0.0f, Bounces > 0, &HitOnLine, &TeePos) != -1)
 			{
 				AddTeeSegment(Pos, To, TeePos, HitOnLine);
 				break;
@@ -768,7 +786,7 @@ void CPlayers::RenderWeaponTrajLine(
 
 			vec2 HitOnLine;
 			vec2 TeePos;
-			if(IntersectWeaponCharacter(PrevPos, ColPos, 6.0f, &HitOnLine, &TeePos) != -1)
+			if(IntersectWeaponCharacter(PrevPos, ColPos, 6.0f, false, &HitOnLine, &TeePos) != -1)
 			{
 				AddTeeSegment(PrevPos, ColPos, TeePos, HitOnLine);
 				break;
