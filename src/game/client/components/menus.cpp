@@ -2363,14 +2363,12 @@ void CMenus::RenderPopupFullscreen(CUIRect Screen)
 		if(DoButton_Menu(&s_FormatGif, "GIF", m_DemoRenderFormat == EVideoFormat::Gif, &FormatGif))
 			m_DemoRenderFormat = EVideoFormat::Gif;
 
-		// Warn about disconnect if online
+		// Rendering parks the live connection, like regular demo playback.
 		if(Client()->State() == IClient::STATE_ONLINE)
 		{
 			Box.HSplitBottom(10.0f, &Box, nullptr);
 			Box.HSplitBottom(20.0f, &Box, &Row);
-			SLabelProperties LabelProperties;
-			LabelProperties.SetColor(ColorRGBA(1.0f, 0.0f, 0.0f));
-			Ui()->DoLabel(&Row, Localize("You will be disconnected from the server."), 12.8f, TEXTALIGN_MC, LabelProperties);
+			Ui()->DoLabel(&Row, Localize("You will stay connected and idle while rendering."), 12.8f, TEXTALIGN_MC);
 		}
 	}
 	else if(m_Popup == POPUP_RENDER_DONE)
@@ -2403,6 +2401,8 @@ void CMenus::RenderPopupFullscreen(CUIRect Screen)
 		{
 			m_Popup = POPUP_NONE;
 			m_DemoRenderInput.Clear();
+			if(Client()->State() == IClient::STATE_ONLINE)
+				SetActive(false);
 		}
 
 		Box.HSplitBottom(160.f, &Box, &Part);

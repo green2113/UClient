@@ -4221,14 +4221,23 @@ const char *CClient::DemoPlayer_Play(const char *pFilename, int StorageType)
 	if(!Storage()->FileExists(pFilename, StorageType))
 		return Localize("No demo with this filename exists");
 
-	const bool ParkOnline = State() == IClient::STATE_ONLINE && m_aNetClient[CONN_MAIN].State() == NETSTATE_ONLINE;
+	const bool StartParkedOnline = State() == IClient::STATE_ONLINE && m_aNetClient[CONN_MAIN].State() == NETSTATE_ONLINE;
+	const bool ContinueParkedOnline = State() == IClient::STATE_DEMOPLAYBACK && m_DemoParkedOnline &&
+		m_aNetClient[CONN_MAIN].State() == NETSTATE_ONLINE;
+	const bool ParkOnline = StartParkedOnline || ContinueParkedOnline;
 	m_SuppressDemoConsoleLogs = true;
 
-	if(ParkOnline)
+	if(StartParkedOnline)
 	{
 		BeginParkedOnlineSession();
 	}
-	else
+	else if(ContinueParkedOnline)
+	{
+		// Replace the viewed demo with the render playback without restoring or
+		// dropping the live server session parked behind it.
+		m_DemoPlayer.Stop();
+	}
+	else if(!ContinueParkedOnline)
 	{
 		Disconnect();
 		m_aNetClient[CONN_MAIN].ResetErrorString();
