@@ -2962,6 +2962,8 @@ if(CLIENT)
     components/bestclient/fast_actions.h
     components/bestclient/fast_practice.cpp
     components/bestclient/fast_practice.h
+    components/bestclient/automation/automation.cpp
+    components/bestclient/automation/automation.h
     components/bestclient/gif_bubbles.cpp
     components/bestclient/gif_bubbles.h
     components/bestclient/gif_wheel.cpp

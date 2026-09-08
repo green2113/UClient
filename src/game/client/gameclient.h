@@ -95,6 +95,7 @@
 #include "components/bestclient/chat_bubbles.h"
 #include "components/bestclient/fast_actions.h"
 #include "components/bestclient/fast_practice.h"
+#include "components/bestclient/automation/automation.h"
 #include "components/bestclient/gif_bubbles.h"
 #include "components/bestclient/gif_wheel.h"
 #include "components/bestclient/gradient.h"
@@ -251,6 +252,7 @@ public:
 	CGifBubbles m_GifBubbles; // BestClient
 	CChatBubbles m_ChatBubbles; // BestClient
 	CFastPractice m_FastPractice; // BestClient
+	CAutomation m_Automation; // BestClient
 	CBgDraw m_BgDraw;
 	CTClient m_TClient;
 	CTrails m_Trails;

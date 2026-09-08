@@ -1786,6 +1786,277 @@ static std::wstring GetUclientAccountPath()
 	return std::wstring(aAppData) + L"\\DDNet\\uclient_account.json";
 }
 
+static std::wstring GetShortcutsJsonPath()
+{
+	wchar_t aAppData[MAX_PATH] = {};
+	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
+		return {};
+	return std::wstring(aAppData) + L"\\DDNet\\uclient_shortcuts.json";
+}
+
+static std::string g_ShortcutsFileJson = "{\"version\":1,\"shortcuts\":[]}";
+static bool g_ShortcutsLoaded = false;
+
+static bool ReadUtf8File(const std::wstring &Path, std::string &Out)
+{
+	Out.clear();
+	HANDLE hFile = CreateFileW(Path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if(hFile == INVALID_HANDLE_VALUE)
+		return false;
+	DWORD Size = GetFileSize(hFile, nullptr);
+	if(Size == INVALID_FILE_SIZE || Size == 0 || Size > 4 * 1024 * 1024)
+	{
+		CloseHandle(hFile);
+		return false;
+	}
+	Out.resize(Size);
+	DWORD ReadBytes = 0;
+	const BOOL Ok = ReadFile(hFile, Out.data(), Size, &ReadBytes, nullptr);
+	CloseHandle(hFile);
+	if(!Ok || ReadBytes != Size)
+	{
+		Out.clear();
+		return false;
+	}
+	return true;
+}
+
+static bool WriteUtf8FileAtomic(const std::wstring &Path, const std::string &Content)
+{
+	const std::wstring Temp = Path + L".tmp";
+	HANDLE hFile = CreateFileW(Temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if(hFile == INVALID_HANDLE_VALUE)
+		return false;
+	DWORD Written = 0;
+	const BOOL Ok = WriteFile(hFile, Content.data(), (DWORD)Content.size(), &Written, nullptr);
+	CloseHandle(hFile);
+	if(!Ok || Written != Content.size())
+	{
+		DeleteFileW(Temp.c_str());
+		return false;
+	}
+	if(!MoveFileExW(Temp.c_str(), Path.c_str(), MOVEFILE_REPLACE_EXISTING))
+	{
+		DeleteFileW(Temp.c_str());
+		return false;
+	}
+	return true;
+}
+
+static void EnsureShortcutsLoaded()
+{
+	if(g_ShortcutsLoaded)
+		return;
+	g_ShortcutsLoaded = true;
+	const std::wstring Path = GetShortcutsJsonPath();
+	std::string Content;
+	if(ReadUtf8File(Path, Content) && Content.find("\"shortcuts\"") != std::string::npos)
+		g_ShortcutsFileJson = std::move(Content);
+}
+
+static bool ExtractJsonRawValue(const std::string &Json, const char *pKey, std::string &Out)
+{
+	std::string Needle = "\"";
+	Needle += pKey;
+	Needle += "\"";
+	const size_t Pos = Json.find(Needle);
+	if(Pos == std::string::npos)
+		return false;
+	const size_t Colon = Json.find(':', Pos + Needle.size());
+	if(Colon == std::string::npos)
+		return false;
+	size_t i = Colon + 1;
+	while(i < Json.size() && isspace((unsigned char)Json[i]))
+		++i;
+	if(i >= Json.size())
+		return false;
+	const char Open = Json[i];
+	if(Open != '[' && Open != '{')
+		return false;
+	const char Close = Open == '[' ? ']' : '}';
+	int Depth = 0;
+	const size_t Start = i;
+	for(; i < Json.size(); ++i)
+	{
+		if(Json[i] == Open)
+			++Depth;
+		else if(Json[i] == Close)
+		{
+			--Depth;
+			if(Depth == 0)
+			{
+				Out = Json.substr(Start, i - Start + 1);
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+static void SaveShortcutsDocument(const std::string &ShortcutsArrayJson)
+{
+	std::string Document = "{\"version\":1,\"shortcuts\":";
+	Document += ShortcutsArrayJson;
+	Document += "}";
+	const std::wstring Path = GetShortcutsJsonPath();
+	const size_t Slash = Path.find_last_of(L"\\/");
+	if(Slash != std::wstring::npos)
+		CreateDirectoryW(Path.substr(0, Slash).c_str(), nullptr);
+	if(WriteUtf8FileAtomic(Path, Document))
+		g_ShortcutsFileJson = Document;
+}
+
+static void ToggleShortcutEnabled(const std::string &Id, bool Enabled)
+{
+	EnsureShortcutsLoaded();
+	std::string ArrayJson;
+	if(!ExtractJsonRawValue(g_ShortcutsFileJson, "shortcuts", ArrayJson) || ArrayJson.size() < 2)
+		return;
+	std::string Out;
+	Out.reserve(ArrayJson.size());
+	size_t Pos = 1;
+	while(Pos < ArrayJson.size())
+	{
+		while(Pos < ArrayJson.size() && isspace((unsigned char)ArrayJson[Pos]))
+			++Pos;
+		if(Pos >= ArrayJson.size() || ArrayJson[Pos] == ']')
+			break;
+		if(ArrayJson[Pos] != '{')
+		{
+			++Pos;
+			continue;
+		}
+		int Depth = 0;
+		const size_t ObjStart = Pos;
+		for(; Pos < ArrayJson.size(); ++Pos)
+		{
+			if(ArrayJson[Pos] == '{')
+				++Depth;
+			else if(ArrayJson[Pos] == '}')
+			{
+				--Depth;
+				if(Depth == 0)
+				{
+					++Pos;
+					break;
+				}
+			}
+		}
+		std::string Obj = ArrayJson.substr(ObjStart, Pos - ObjStart);
+		std::string ObjId;
+		if(!ExtractJsonString(Obj, "id", ObjId) || ObjId != Id)
+			continue;
+		std::string NewObj = Obj;
+		const std::string EnabledNeedle = "\"enabled\":";
+		const size_t EnabledPos = NewObj.find(EnabledNeedle);
+		if(EnabledPos != std::string::npos)
+		{
+			size_t j = EnabledPos + EnabledNeedle.size();
+			while(j < NewObj.size() && isspace((unsigned char)NewObj[j]))
+				++j;
+			const size_t ValueStart = j;
+			while(j < NewObj.size() && (NewObj[j] == 't' || NewObj[j] == 'r' || NewObj[j] == 'u' || NewObj[j] == 'e' || NewObj[j] == 'f' || NewObj[j] == 'a' || NewObj[j] == 'l' || NewObj[j] == 's'))
+				++j;
+			NewObj.replace(ValueStart, j - ValueStart, Enabled ? "true" : "false");
+		}
+		else
+		{
+			if(NewObj.size() >= 2 && NewObj.back() == '}')
+				NewObj.insert(NewObj.size() - 1, Enabled ? ",\"enabled\":true" : ",\"enabled\":false");
+		}
+		std::string NewArray = "[";
+		bool First = true;
+		size_t Scan = 1;
+		while(Scan < ArrayJson.size())
+		{
+			while(Scan < ArrayJson.size() && isspace((unsigned char)ArrayJson[Scan]))
+				++Scan;
+			if(Scan >= ArrayJson.size() || ArrayJson[Scan] == ']')
+				break;
+			if(ArrayJson[Scan] != '{')
+			{
+				++Scan;
+				continue;
+			}
+			int Depth = 0;
+			const size_t Start = Scan;
+			for(; Scan < ArrayJson.size(); ++Scan)
+			{
+				if(ArrayJson[Scan] == '{')
+					++Depth;
+				else if(ArrayJson[Scan] == '}')
+				{
+					--Depth;
+					if(Depth == 0)
+					{
+						++Scan;
+						break;
+					}
+				}
+			}
+			if(!First)
+				NewArray += ",";
+			First = false;
+			if(Start == ObjStart)
+				NewArray += NewObj;
+			else
+				NewArray += ArrayJson.substr(Start, Scan - Start);
+		}
+		NewArray += "]";
+		SaveShortcutsDocument(NewArray);
+		return;
+	}
+}
+
+static void DeleteShortcutById(const std::string &Id)
+{
+	EnsureShortcutsLoaded();
+	std::string ArrayJson;
+	if(!ExtractJsonRawValue(g_ShortcutsFileJson, "shortcuts", ArrayJson) || ArrayJson.size() < 2)
+		return;
+	std::string NewArray = "[";
+	bool First = true;
+	size_t Pos = 1;
+	while(Pos < ArrayJson.size())
+	{
+		while(Pos < ArrayJson.size() && isspace((unsigned char)ArrayJson[Pos]))
+			++Pos;
+		if(Pos >= ArrayJson.size() || ArrayJson[Pos] == ']')
+			break;
+		if(ArrayJson[Pos] != '{')
+		{
+			++Pos;
+			continue;
+		}
+		int Depth = 0;
+		const size_t ObjStart = Pos;
+		for(; Pos < ArrayJson.size(); ++Pos)
+		{
+			if(ArrayJson[Pos] == '{')
+				++Depth;
+			else if(ArrayJson[Pos] == '}')
+			{
+				--Depth;
+				if(Depth == 0)
+				{
+					++Pos;
+					break;
+				}
+			}
+		}
+		std::string Obj = ArrayJson.substr(ObjStart, Pos - ObjStart);
+		std::string ObjId;
+		if(ExtractJsonString(Obj, "id", ObjId) && ObjId == Id)
+			continue;
+		if(!First)
+			NewArray += ",";
+		First = false;
+		NewArray += Obj;
+	}
+	NewArray += "]";
+	SaveShortcutsDocument(NewArray);
+}
+
 static std::string JsonEscapeValue(const std::string &In)
 {
 	std::string Out;
@@ -4795,7 +5066,15 @@ static std::string BuildStateJson()
 		_snprintf_s(aSize, _TRUNCATE, "\"size\":%llu}", (unsigned long long)BackupVersions[i].Size);
 		Json += aSize;
 	}
-	Json += "],\"friends\":[";
+	Json += "],";
+
+	EnsureShortcutsLoaded();
+	std::string ShortcutsArray;
+	if(!ExtractJsonRawValue(g_ShortcutsFileJson, "shortcuts", ShortcutsArray))
+		ShortcutsArray = "[]";
+	Json += "\"shortcuts\":";
+	Json += ShortcutsArray;
+	Json += ",\"friends\":[";
 	for(size_t i = 0; i < Friends.size(); ++i)
 	{
 		if(i)
@@ -5009,6 +5288,34 @@ static void OnWebMessage(const std::string &Json)
 		else
 			ExtractWebString(Json, "id", pWork->Id);
 		StartBackupWork(pWork);
+	}
+	else if(Cmd == "shortcutsSave")
+	{
+		std::string ShortcutsArray;
+		if(ExtractJsonRawValue(Json, "shortcuts", ShortcutsArray))
+		{
+			SaveShortcutsDocument(ShortcutsArray);
+			PushWebState(true);
+		}
+	}
+	else if(Cmd == "shortcutsToggle")
+	{
+		std::string Id;
+		const bool Enabled = Json.find("\"enabled\":true") != std::string::npos;
+		if(ExtractJsonString(Json, "id", Id) && !Id.empty())
+		{
+			ToggleShortcutEnabled(Id, Enabled);
+			PushWebState(true);
+		}
+	}
+	else if(Cmd == "shortcutsDelete")
+	{
+		std::string Id;
+		if(ExtractJsonString(Json, "id", Id) && !Id.empty())
+		{
+			DeleteShortcutById(Id);
+			PushWebState(true);
+		}
 	}
 }
 

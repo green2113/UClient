@@ -467,6 +467,7 @@ void CGameClient::OnConsoleInit()
 					      &m_Players,
 						  &m_MovingTilesBackground, // TClient
 						  &m_FastPractice, // BestClient
+						  &m_Automation, // BestClient
 						  &m_MapLayersForeground,
 						  &m_MovingTilesForeground, // TClient
 					      &m_SelfTimeCp, // BestClient

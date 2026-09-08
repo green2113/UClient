@@ -10,6 +10,7 @@
 //               playBlocked, updateAvailable, gameRunning, buttonHint,
 //               devBuild, devForceUpdate, devForcePlayBlocked, devForceGameRunning, devInjectNotice,
 //               notices[] {id, title, body, severity, blocksPlay, expiresAt?},
+//               shortcuts[] {id, name, enabled, trigger, actions[]},
 //               updateStage, downloadDone, downloadTotal, downloadSpeed, etaSeconds,
 //               friends[] {name, clan, online, afk, server, map, address}
 //
@@ -97,16 +98,73 @@ body{
 #mascot{width:34px;height:34px;object-fit:contain;margin-top:6px;
   filter:drop-shadow(0 3px 10px rgba(0,0,0,.6));animation:pop .6s var(--ease) both}
 #rail .spacer{flex:1}
-#btn-gear{
+.rail-btn,#btn-gear{
   width:44px;height:44px;border:0;background:transparent;border-radius:13px;color:var(--muted);
   display:grid;place-items:center;cursor:pointer;position:relative;
   transition:background .18s var(--ease),color .18s var(--ease);
 }
-#btn-gear svg{transition:transform .5s var(--ease)}
-#btn-gear:hover{background:rgba(255,255,255,.07);color:#fff}
+.rail-btn{margin-top:8px}
+.rail-btn svg,#btn-gear svg{transition:transform .5s var(--ease)}
+.rail-btn:hover,#btn-gear:hover{background:rgba(255,255,255,.07);color:#fff}
+.rail-btn.on,#btn-gear.on{color:#fff;background:rgba(124,108,240,.16)}
+.rail-btn.on::before,#btn-gear.on::before{content:"";position:absolute;left:-14px;top:11px;width:3px;height:22px;border-radius:2px;background:var(--accent)}
 #btn-gear:hover svg{transform:rotate(60deg)}
-#btn-gear.on{color:#fff;background:rgba(124,108,240,.16)}
-#btn-gear.on::before{content:"";position:absolute;left:-14px;top:11px;width:3px;height:22px;border-radius:2px;background:var(--accent)}
+#rail-nav{display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:18px}
+#shell.shortcuts-mode #main,#shell.shortcuts-mode #friends{display:none}
+#shortcuts-view{display:none;grid-column:2/4;min-width:0;padding:56px 34px 34px 44px;flex-direction:column;background:linear-gradient(160deg,#12141c 0%,#08090d 100%)}
+#shell.shortcuts-mode #shortcuts-view{display:flex}
+.sc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.sc-head h1{font:800 34px/1 inherit;letter-spacing:-.5px}
+.sc-section{color:#8e8e93;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin:8px 0 12px}
+.sc-card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);border-radius:16px;overflow:hidden}
+.sc-row{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.06);cursor:pointer;transition:background .15s var(--ease)}
+.sc-row:last-child{border-bottom:0}
+.sc-row:hover{background:rgba(255,255,255,.04)}
+.sc-row.off{opacity:.55}
+.sc-flow{display:flex;align-items:center;gap:6px}
+.sc-ico{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font-size:14px;background:rgba(255,255,255,.08)}
+.sc-ico.chat{background:rgba(52,199,89,.18);color:#34c759}
+.sc-ico.action{background:rgba(124,108,240,.22);color:#b8afff}
+.sc-arrow{color:var(--muted);font-size:12px}
+.sc-text b{display:block;font-size:15px;font-weight:600}
+.sc-text small{display:block;color:var(--muted);font-size:12px;margin-top:3px}
+.sc-sw{width:46px;height:28px;border-radius:99px;background:rgba(255,255,255,.14);position:relative;flex:0 0 auto;cursor:pointer;transition:background .22s var(--ease)}
+.sc-sw::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.35);transition:transform .22s var(--ease)}
+.sc-sw.on{background:#34c759}
+.sc-sw.on::after{transform:translateX(18px)}
+.sc-empty{padding:36px 20px;text-align:center;color:var(--muted)}
+.sc-empty b{display:block;color:var(--text);font-size:17px;margin-bottom:8px}
+.sc-fab{position:fixed;right:calc(372px + 34px);bottom:34px;width:56px;height:56px;border:0;border-radius:50%;background:var(--accent);color:#fff;font-size:28px;line-height:1;cursor:pointer;box-shadow:0 10px 28px rgba(124,108,240,.45);z-index:25;transition:transform .15s var(--ease),background .15s var(--ease);display:none}
+.sc-fab:hover{transform:scale(1.05);background:var(--accent-hi)}
+#shell.shortcuts-mode .sc-fab{display:block}
+#sc-editor{position:fixed;inset:0;z-index:320;display:none;flex-direction:column;background:#f2f2f7;color:#111}
+#sc-editor.on{display:flex}
+.sc-ed-head{display:flex;align-items:center;gap:12px;padding:14px 18px;background:#fff;border-bottom:1px solid rgba(0,0,0,.08)}
+.sc-ed-back{width:36px;height:36px;border:0;border-radius:10px;background:transparent;cursor:pointer;color:#007aff;font-size:22px;line-height:1}
+.sc-ed-title{flex:1;border:0;background:transparent;font:700 18px/1 inherit;color:#111;outline:none}
+.sc-ed-save{border:0;border-radius:999px;background:#007aff;color:#fff;font:600 14px/1 inherit;padding:10px 18px;cursor:pointer}
+.sc-ed-canvas{flex:1;overflow:auto;padding:18px 18px 240px}
+.sc-block{background:#fff;border-radius:14px;padding:14px 16px;margin-bottom:10px;box-shadow:0 1px 2px rgba(0,0,0,.06);position:relative}
+.sc-block .sc-del{position:absolute;top:10px;right:10px;width:24px;height:24px;border:0;border-radius:6px;background:rgba(0,0,0,.05);color:#888;cursor:pointer;font-size:14px;line-height:1}
+.sc-block-line{font-size:15px;line-height:1.7;color:#111}
+.sc-pill{display:inline-block;border:0;border-radius:8px;background:rgba(0,122,255,.12);color:#007aff;font:600 14px/1.2 inherit;padding:4px 10px;margin:0 2px;cursor:pointer}
+.sc-pill.input{min-width:40px;text-align:center}
+.sc-drawer{position:absolute;left:0;right:0;bottom:0;height:min(52vh,460px);background:#fff;border-radius:18px 18px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.12);display:flex;flex-direction:column;transform:translateY(55%);transition:transform .28s var(--ease)}
+.sc-drawer.expanded{transform:translateY(0)}
+.sc-drawer-handle{width:40px;height:5px;border-radius:99px;background:rgba(0,0,0,.15);margin:10px auto 8px;cursor:pointer}
+.sc-drawer-search{margin:0 16px 10px;padding:12px 14px;border-radius:12px;border:0;background:#f2f2f7;font:15px/1 inherit;outline:none}
+.sc-drawer-chips{display:flex;gap:8px;padding:0 16px 10px;overflow:auto}
+.sc-chip{border:0;border-radius:999px;background:#f2f2f7;color:#007aff;font:600 13px/1 inherit;padding:8px 14px;cursor:pointer;white-space:nowrap}
+.sc-chip.on{background:rgba(0,122,255,.12)}
+.sc-drawer-list{flex:1;overflow:auto;padding:0 16px 16px}
+.sc-catalog{display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;cursor:pointer;transition:background .15s var(--ease)}
+.sc-catalog:hover{background:#f2f2f7}
+.sc-catalog-ico{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;background:#f2f2f7;font-size:16px}
+.sc-pop{position:fixed;z-index:400;background:#fff;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.18);padding:6px;min-width:160px;max-height:240px;overflow:auto}
+.sc-pop button{display:block;width:100%;border:0;background:transparent;text-align:left;padding:10px 12px;border-radius:8px;font:15px/1 inherit;cursor:pointer;color:#111}
+.sc-pop button:hover{background:#f2f2f7}
+.sc-toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:rgba(0,0,0,.82);color:#fff;padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s var(--ease);z-index:360}
+.sc-toast.on{opacity:1}
 
 /* -- main -------------------------------------------------------------- */
 #main{position:relative;z-index:20;padding:56px 34px 34px 44px;display:flex;flex-direction:column;min-width:0}
@@ -689,6 +747,18 @@ body.dev-build #dev-panel{display:block}
 <div id="shell">
   <aside id="rail">
     <img id="mascot" alt="">
+    <div id="rail-nav">
+      <button class="rail-btn on" id="btn-home" type="button" title="Home">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <button class="rail-btn" id="btn-shortcuts" type="button" title="Shortcuts">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M7 4h10a2 2 0 0 1 2 2v3H5V6a2 2 0 0 1 2-2zm-2 7h14v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-9z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </div>
     <div class="spacer"></div>
     <button id="btn-gear" title="Settings">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -803,7 +873,31 @@ body.dev-build #dev-panel{display:block}
     </div>
     <div id="fr-list"></div>
   </aside>
+
+  <section id="shortcuts-view" aria-hidden="true">
+    <div class="sc-head"><h1>Automation</h1></div>
+    <div class="sc-section">Personal</div>
+    <div class="sc-card" id="sc-list"></div>
+    <button class="sc-fab" id="sc-fab" type="button" title="Create automation">+</button>
+  </section>
 </div>
+
+<div id="sc-editor" aria-hidden="true">
+  <div class="sc-ed-head">
+    <button class="sc-ed-back" id="sc-ed-back" type="button" title="Back">&lsaquo;</button>
+    <input class="sc-ed-title" id="sc-ed-title" type="text" placeholder="New Shortcut" maxlength="64">
+    <button class="sc-ed-save" id="sc-ed-save" type="button">Save</button>
+    <button class="sc-ed-save" id="sc-ed-delete" type="button" style="background:#ff3b30;display:none">Delete</button>
+  </div>
+  <div class="sc-ed-canvas" id="sc-ed-canvas"></div>
+  <div class="sc-drawer" id="sc-drawer">
+    <div class="sc-drawer-handle" id="sc-drawer-handle"></div>
+    <input class="sc-drawer-search" id="sc-drawer-search" type="search" placeholder="Search actions">
+    <div class="sc-drawer-chips" id="sc-drawer-chips"></div>
+    <div class="sc-drawer-list" id="sc-drawer-list"></div>
+  </div>
+</div>
+<div class="sc-toast" id="sc-toast">Saved</div>
 
 <div id="onboarding">
   <div class="onboard-box">
@@ -1865,6 +1959,356 @@ function setArt(st) {
   }
 }
 
+  }
+}
+
+/* -- shortcuts / automation -------------------------------------------- */
+var activeRailView = "home";
+var shortcutsLocal = [];
+var shortcutsSig = "";
+var scEditing = null;
+var scDrawerFilter = "all";
+var scPopEl = null;
+
+var SC_TRIGGERS = [{
+  id: "chat_received", label: "When chat message received", icon: "\u2709",
+  defaults: {type: "chat_received", channel: "all", sender: "everyone", senderName: "", match: "contains", text: "hi"}
+}];
+var SC_ACTIONS = [
+  {id: "send_chat", label: "Send chat message", icon: "\u2709", defaults: {type: "send_chat", channel: "all", message: "hello"}},
+  {id: "wait", label: "Wait", icon: "\u23f1", defaults: {type: "wait", seconds: 1}},
+  {id: "switch_weapon_use", label: "Switch weapon and use", icon: "\u2692", defaults: {type: "switch_weapon_use", weapon: "hammer"}},
+  {id: "set_skin", label: "Set skin", icon: "\u2728", defaults: {type: "set_skin", target: "player", skin: "default"}},
+  {id: "set_custom_color", label: "Set custom colors", icon: "\u25cf", defaults: {type: "set_custom_color", target: "player", enabled: true}},
+  {id: "set_body_color", label: "Set body color", icon: "\u25cf", defaults: {type: "set_body_color", target: "player", color: 0}},
+  {id: "set_feet_color", label: "Set feet color", icon: "\u25cf", defaults: {type: "set_feet_color", target: "player", color: 0}},
+  {id: "set_name", label: "Set name", icon: "\u270e", defaults: {type: "set_name", target: "player", name: "name"}}
+];
+
+function scUuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return "sc-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9);
+}
+function scLabelChannel(ch) {
+  if (ch === "team") return "Team";
+  if (ch === "uclient") return "UClient";
+  return "All";
+}
+function scLabelWeapon(w) {
+  var m = {hammer: "Hammer", gun: "Gun", pistol: "Gun", shotgun: "Shotgun", grenade: "Grenade", laser: "Laser"};
+  return m[w] || "Hammer";
+}
+function scSummaryTrigger(t) {
+  if (!t || t.type !== "chat_received") return "When something happens";
+  var sender = t.sender === "me" ? "Me" : t.sender === "specific" ? (t.senderName || "Player") : "Everyone";
+  return "When " + scLabelChannel(t.channel) + " chat from " + sender + ' "' + (t.text || "") + '"';
+}
+function scSummaryAction(a) {
+  if (!a) return "Action";
+  if (a.type === "send_chat") return "Send " + scLabelChannel(a.channel) + ' "' + (a.message || "") + '"';
+  if (a.type === "wait") return "Wait " + (a.seconds || 0) + "s";
+  if (a.type === "switch_weapon_use") return scLabelWeapon(a.weapon) + " and use";
+  if (a.type === "set_skin") return "Set " + a.target + " skin to " + (a.skin || "");
+  if (a.type === "set_custom_color") return "Set " + a.target + " custom color " + (a.enabled ? "On" : "Off");
+  if (a.type === "set_body_color") return "Set " + a.target + " body color " + (a.color || 0);
+  if (a.type === "set_feet_color") return "Set " + a.target + " feet color " + (a.color || 0);
+  if (a.type === "set_name") return "Set " + a.target + ' name "' + (a.name || "") + '"';
+  return a.type;
+}
+function scFirstActionLabel(actions) {
+  if (!actions || !actions.length) return "Actions";
+  return scSummaryAction(actions[0]);
+}
+function setRailView(view) {
+  activeRailView = view;
+  $("shell").classList.toggle("shortcuts-mode", view === "shortcuts");
+  $("btn-home").classList.toggle("on", view === "home");
+  $("btn-shortcuts").classList.toggle("on", view === "shortcuts");
+  $("shortcuts-view").setAttribute("aria-hidden", view === "shortcuts" ? "false" : "true");
+  if (settingsOpen) toggleSettings(false);
+}
+$("btn-home").addEventListener("click", function () { setRailView("home"); });
+$("btn-shortcuts").addEventListener("click", function () { setRailView("shortcuts"); });
+
+function renderShortcutsList() {
+  var list = $("sc-list");
+  if (!shortcutsLocal.length) {
+    list.innerHTML = '<div class="sc-empty"><b>No automations yet</b>Create your first shortcut to automate chat, weapons, and appearance.</div>';
+    return;
+  }
+  list.innerHTML = shortcutsLocal.map(function (sc) {
+    var on = sc.enabled !== false;
+    return '<div class="sc-row' + (on ? "" : " off") + '" data-id="' + esc(sc.id) + '">' +
+      '<div class="sc-flow"><span class="sc-ico chat">\u2709</span><span class="sc-arrow">\u2192</span><span class="sc-ico action">\u2699</span></div>' +
+      '<div class="sc-text"><b>' + esc(sc.name || scSummaryTrigger(sc.trigger)) + '</b><small>Chat</small></div>' +
+      '<div class="sc-sw' + (on ? " on" : "") + '" data-toggle="' + esc(sc.id) + '"></div></div>';
+  }).join("");
+}
+function syncShortcutsFromState(st) {
+  var sig = JSON.stringify(st.shortcuts || []);
+  if (sig === shortcutsSig) return;
+  shortcutsSig = sig;
+  shortcutsLocal = JSON.parse(sig);
+  renderShortcutsList();
+}
+function scToast(msg) {
+  var t = $("sc-toast");
+  t.textContent = msg || "Saved";
+  t.classList.add("on");
+  clearTimeout(scToast._timer);
+  scToast._timer = setTimeout(function () { t.classList.remove("on"); }, 1600);
+}
+function scSaveAll() {
+  send({cmd: "shortcutsSave", shortcuts: shortcutsLocal});
+  scToast("Saved");
+}
+function scClosePop() {
+  if (scPopEl) { scPopEl.remove(); scPopEl = null; }
+}
+function scOpenPop(anchor, options, onPick) {
+  scClosePop();
+  scPopEl = document.createElement("div");
+  scPopEl.className = "sc-pop";
+  scPopEl.innerHTML = options.map(function (opt) {
+    return '<button type="button" data-val="' + esc(String(opt.value)) + '">' + esc(opt.label) + '</button>';
+  }).join("");
+  document.body.appendChild(scPopEl);
+  var r = anchor.getBoundingClientRect();
+  scPopEl.style.left = Math.min(r.left, window.innerWidth - scPopEl.offsetWidth - 8) + "px";
+  scPopEl.style.top = (r.bottom + 6) + "px";
+  scPopEl.addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-val]");
+    if (!btn) return;
+    onPick(btn.dataset.val);
+    scClosePop();
+  });
+}
+document.addEventListener("click", function (e) {
+  if (scPopEl && !e.target.closest(".sc-pop") && !e.target.closest(".sc-pill")) scClosePop();
+});
+
+function scRenderEditor() {
+  var canvas = $("sc-ed-canvas");
+  if (!scEditing) { canvas.innerHTML = ""; return; }
+  $("sc-ed-title").value = scEditing.name || "New Shortcut";
+  var html = "";
+  if (scEditing.trigger) {
+    html += scBlockHtml("trigger", scEditing.trigger, 0);
+  }
+  (scEditing.actions || []).forEach(function (act, idx) {
+    html += scBlockHtml("action", act, idx);
+  });
+  canvas.innerHTML = html || '<div class="sc-empty" style="color:#666"><b>No blocks yet</b>Use the drawer below to add a trigger or actions.</div>';
+}
+function scBlockHtml(kind, data, idx) {
+  var del = kind === "action" ? '<button class="sc-del" type="button" data-del-action="' + idx + '">\u00d7</button>' : "";
+  if (data.type === "chat_received") {
+    return '<div class="sc-block">' + del + '<div class="sc-block-line">When ' +
+      scPill("channel", data.channel, idx, kind) + ' chat from ' +
+      scPill("sender", data.sender, idx, kind) +
+      (data.sender === "specific" ? " " + scPillInput("senderName", data.senderName, idx, kind) : "") +
+      " " + scPill("match", data.match, idx, kind) + " " +
+      scPillInput("text", data.text, idx, kind) + "</div></div>";
+  }
+  if (data.type === "send_chat") {
+    return '<div class="sc-block">' + del + '<div class="sc-block-line">Send ' +
+      scPill("channel", data.channel, idx, kind) + " chat " +
+      scPillInput("message", data.message, idx, kind) + "</div></div>";
+  }
+  if (data.type === "wait") {
+    return '<div class="sc-block">' + del + '<div class="sc-block-line">Wait ' +
+      scPillInput("seconds", data.seconds, idx, kind) + " seconds</div></div>";
+  }
+  if (data.type === "switch_weapon_use") {
+    return '<div class="sc-block">' + del + '<div class="sc-block-line">Switch to ' +
+      scPill("weapon", data.weapon, idx, kind) + " and use</div></div>";
+  }
+  if (data.type === "set_skin") {
+    return '<div class="sc-block">' + del + '<div class="sc-block-line">Set ' +
+      scPill("target", data.target, idx, kind) + " skin to " +
+      scPillInput("skin", data.skin, idx, kind) + "</div></div>";
+  }
+  if (data.type === "set_custom_color") {
+    return '<div class="sc-block">' + del + '<div class="sc-block-line">Set " +
+      scPill("target", data.target, idx, kind) + '" custom colors " +
+      scPill("enabled", data.enabled ? "on" : "off", idx, kind) + '"</div></div>';
+  }
+  if (data.type === "set_body_color" || data.type === "set_feet_color") {
+    var part = data.type === "set_body_color" ? "body" : "feet";
+    return '<div class="sc-block">' + del + '<div class="sc-block-line">Set ' +
+      scPill("target", data.target, idx, kind) + " " + part + " color " +
+      scPillInput("color", data.color, idx, kind) + "</div></div>";
+  }
+  if (data.type === "set_name") {
+    return '<div class="sc-block">' + del + '<div class="sc-block-line">Set ' +
+      scPill("target", data.target, idx, kind) + " name " +
+      scPillInput("name", data.name, idx, kind) + "</div></div>";
+  }
+  return "";
+}
+function scPill(field, value, idx, kind) {
+  var label = String(value || "");
+  if (field === "channel") label = scLabelChannel(value);
+  if (field === "sender") label = value === "me" ? "Me" : value === "specific" ? "Specific player" : "Everyone";
+  if (field === "match") label = value === "equals" ? "equals" : value === "starts_with" ? "starts with" : "contains";
+  if (field === "weapon") label = scLabelWeapon(value);
+  if (field === "target") label = value === "dummy" ? "Dummy" : "Player";
+  if (field === "enabled") label = value === "on" || value === true ? "On" : "Off";
+  return '<button type="button" class="sc-pill" data-field="' + esc(field) + '" data-idx="' + idx + '" data-kind="' + kind + '">' + esc(label) + '</button>';
+}
+function scPillInput(field, value, idx, kind) {
+  return '<button type="button" class="sc-pill input" data-input="' + esc(field) + '" data-idx="' + idx + '" data-kind="' + kind + '">' + esc(String(value == null ? "" : value)) + '</button>';
+}
+function scGetBlockRef(kind, idx) {
+  if (!scEditing) return null;
+  return kind === "trigger" ? scEditing.trigger : scEditing.actions[idx];
+}
+function scSetBlockField(kind, idx, field, value) {
+  var ref = scGetBlockRef(kind, idx);
+  if (!ref) return;
+  if (field === "seconds" || field === "color") ref[field] = Number(value) || 0;
+  else if (field === "enabled") ref[field] = value === "on" || value === "true" || value === true;
+  else ref[field] = value;
+  scRenderEditor();
+}
+function scOptionsForField(field) {
+  if (field === "channel") return [{value: "all", label: "All"}, {value: "team", label: "Team"}, {value: "uclient", label: "UClient"}];
+  if (field === "sender") return [{value: "everyone", label: "Everyone"}, {value: "me", label: "Me"}, {value: "specific", label: "Specific player"}];
+  if (field === "match") return [{value: "contains", label: "contains"}, {value: "equals", label: "equals"}, {value: "starts_with", label: "starts with"}];
+  if (field === "weapon") return [{value: "hammer", label: "Hammer"}, {value: "gun", label: "Gun"}, {value: "shotgun", label: "Shotgun"}, {value: "grenade", label: "Grenade"}, {value: "laser", label: "Laser"}];
+  if (field === "target") return [{value: "player", label: "Player"}, {value: "dummy", label: "Dummy"}];
+  if (field === "enabled") return [{value: "on", label: "On"}, {value: "off", label: "Off"}];
+  return [];
+}
+function scOpenEditor(existing) {
+  scEditing = existing ? JSON.parse(JSON.stringify(existing)) : {
+    id: scUuid(), name: "New Shortcut", enabled: true,
+    trigger: null, actions: []
+  };
+  $("sc-ed-delete").style.display = existing ? "inline-block" : "none";
+  $("sc-editor").classList.add("on");
+  $("sc-editor").setAttribute("aria-hidden", "false");
+  $("sc-drawer").classList.remove("expanded");
+  scRenderEditor();
+  scRenderDrawer();
+}
+function scCloseEditor() {
+  $("sc-editor").classList.remove("on");
+  $("sc-editor").setAttribute("aria-hidden", "true");
+  scEditing = null;
+  scClosePop();
+}
+function scRenderDrawer() {
+  var chips = [{id: "all", label: "All"}, {id: "triggers", label: "Triggers"}, {id: "actions", label: "Actions"}];
+  $("sc-drawer-chips").innerHTML = chips.map(function (c) {
+    return '<button type="button" class="sc-chip' + (scDrawerFilter === c.id ? " on" : "") + '" data-chip="' + c.id + '">' + c.label + '</button>';
+  }).join("");
+  var q = ($("sc-drawer-search").value || "").toLowerCase();
+  var items = [];
+  if (scDrawerFilter === "all" || scDrawerFilter === "triggers") {
+    SC_TRIGGERS.forEach(function (t) {
+      if (!q || t.label.toLowerCase().indexOf(q) >= 0) items.push({kind: "trigger", def: t});
+    });
+  }
+  if (scDrawerFilter === "all" || scDrawerFilter === "actions") {
+    SC_ACTIONS.forEach(function (a) {
+      if (!q || a.label.toLowerCase().indexOf(q) >= 0) items.push({kind: "action", def: a});
+    });
+  }
+  $("sc-drawer-list").innerHTML = items.map(function (it) {
+    return '<div class="sc-catalog" data-add-kind="' + it.kind + '" data-add-id="' + esc(it.def.id) + '">' +
+      '<span class="sc-catalog-ico">' + it.def.icon + '</span><span>' + esc(it.def.label) + '</span></div>';
+  }).join("");
+}
+$("sc-fab").addEventListener("click", function () { scOpenEditor(null); });
+$("sc-ed-back").addEventListener("click", function () { scCloseEditor(); });
+$("sc-ed-save").addEventListener("click", function () {
+  if (!scEditing) return;
+  if (!scEditing.trigger) { scToast("Add a trigger"); return; }
+  if (!scEditing.actions || !scEditing.actions.length) { scToast("Add at least one action"); return; }
+  scEditing.name = $("sc-ed-title").value.trim() || scSummaryTrigger(scEditing.trigger);
+  var idx = shortcutsLocal.findIndex(function (s) { return s.id === scEditing.id; });
+  if (idx >= 0) shortcutsLocal[idx] = JSON.parse(JSON.stringify(scEditing));
+  else shortcutsLocal.push(JSON.parse(JSON.stringify(scEditing)));
+  shortcutsSig = JSON.stringify(shortcutsLocal);
+  scSaveAll();
+  renderShortcutsList();
+  scCloseEditor();
+});
+$("sc-ed-delete").addEventListener("click", function () {
+  if (!scEditing) return;
+  send({cmd: "shortcutsDelete", id: scEditing.id});
+  shortcutsLocal = shortcutsLocal.filter(function (s) { return s.id !== scEditing.id; });
+  shortcutsSig = JSON.stringify(shortcutsLocal);
+  renderShortcutsList();
+  scCloseEditor();
+});
+$("sc-drawer-handle").addEventListener("click", function () { $("sc-drawer").classList.toggle("expanded"); });
+$("sc-drawer-search").addEventListener("input", scRenderDrawer);
+$("sc-drawer-chips").addEventListener("click", function (e) {
+  var chip = e.target.closest("[data-chip]");
+  if (!chip) return;
+  scDrawerFilter = chip.dataset.chip;
+  scRenderDrawer();
+});
+$("sc-drawer-list").addEventListener("click", function (e) {
+  var row = e.target.closest("[data-add-kind]");
+  if (!row || !scEditing) return;
+  var kind = row.dataset.addKind;
+  var id = row.dataset.addId;
+  if (kind === "trigger") {
+    var trig = SC_TRIGGERS.find(function (t) { return t.id === id; });
+    if (trig) scEditing.trigger = JSON.parse(JSON.stringify(trig.defaults));
+  } else {
+    var act = SC_ACTIONS.find(function (a) { return a.id === id; });
+    if (act) {
+      if (!scEditing.actions) scEditing.actions = [];
+      scEditing.actions.push(JSON.parse(JSON.stringify(act.defaults)));
+    }
+  }
+  scRenderEditor();
+});
+$("sc-ed-canvas").addEventListener("click", function (e) {
+  if (!scEditing) return;
+  var del = e.target.closest("[data-del-action]");
+  if (del) {
+    scEditing.actions.splice(Number(del.dataset.delAction), 1);
+    scRenderEditor();
+    return;
+  }
+  var pill = e.target.closest(".sc-pill");
+  if (!pill) return;
+  var kind = pill.dataset.kind;
+  var idx = Number(pill.dataset.idx || 0);
+  if (pill.dataset.input) {
+    var field = pill.dataset.input;
+    var cur = scGetBlockRef(kind, idx);
+    var val = prompt("Enter value", cur ? String(cur[field] == null ? "" : cur[field]) : "");
+    if (val != null) scSetBlockField(kind, idx, field, val);
+    return;
+  }
+  var field = pill.dataset.field;
+  scOpenPop(pill, scOptionsForField(field), function (val) { scSetBlockField(kind, idx, field, val); });
+});
+$("sc-list").addEventListener("click", function (e) {
+  var toggle = e.target.closest("[data-toggle]");
+  if (toggle) {
+    e.stopPropagation();
+    var id = toggle.dataset.toggle;
+    var sc = shortcutsLocal.find(function (s) { return s.id === id; });
+    if (!sc) return;
+    sc.enabled = !(sc.enabled !== false);
+    shortcutsSig = JSON.stringify(shortcutsLocal);
+    send({cmd: "shortcutsToggle", id: id, enabled: sc.enabled !== false});
+    renderShortcutsList();
+    return;
+  }
+  var row = e.target.closest(".sc-row");
+  if (!row) return;
+  var sc = shortcutsLocal.find(function (s) { return s.id === row.dataset.id; });
+  if (sc) scOpenEditor(sc);
+});
+
 /* -- state ------------------------------------------------------------- */
 function fmtBytes(n) {
   n = Number(n) || 0;
@@ -1988,6 +2432,7 @@ window.__setState = function (st) {
   playWrap.tabIndex = showHint ? 0 : -1;
   $("play-hint-flyout-inner").textContent = showHint ? st.buttonHint : "";
   renderAlerts(st);
+  syncShortcutsFromState(st);
   $("ov-status").textContent = playButtonShowsStatus(st.phase) || st.phase === "ready" ? "" : (st.status || "");
   $("ov-status").classList.toggle("bad", !!st.failed && st.phase !== "ready");
 

@@ -34,6 +34,7 @@
 #include <game/client/components/uclient/chat_nearby_tab.h>
 #include <game/client/components/uclient/chat_reply.h>
 #include <game/client/components/uclient/uclient.h>
+#include <game/client/components/bestclient/automation/automation.h>
 #include <game/client/components/bestclient/bestclient.h>
 #include <game/client/components/bestclient/clientindicator/client_indicator.h>
 #include <game/client/components/menus.h>
@@ -7873,6 +7874,24 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 
 	// BestClient
 	GameClient()->m_Translate.AutoTranslate(CurrentLine);
+
+	if(!m_ReplayingParkedChat && Client()->State() == IClient::STATE_ONLINE)
+	{
+		if(Team != TEAM_WHISPER_SEND && Team != TEAM_WHISPER_RECV)
+		{
+			CAutomation::SChatEvent Event;
+			if(Team == TEAM_UCLIENT)
+				Event.m_Channel = CAutomation::EChatChannel::UCLIENT;
+			else if(Team == 1)
+				Event.m_Channel = CAutomation::EChatChannel::TEAM;
+			else
+				Event.m_Channel = CAutomation::EChatChannel::ALL;
+			Event.m_ClientId = ClientId;
+			Event.m_Name = CurrentLine.m_aName;
+			Event.m_Text = CurrentLine.m_aText;
+			GameClient()->m_Automation.OnChatReceived(Event);
+		}
+	}
 }
 
 void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const char *pLine, const char *pServerAddress,
