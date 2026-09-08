@@ -55,14 +55,27 @@ public:
 		DUMMY,
 	};
 
+	struct SChatFilter
+	{
+		enum class EKind
+		{
+			SENDER,
+			MESSAGE,
+		};
+
+		EKind m_Kind = EKind::MESSAGE;
+		ESenderFilter m_Sender = ESenderFilter::EVERYONE;
+		std::vector<std::string> m_SenderNames;
+		std::string m_SenderName;
+		ETextMatch m_Match = ETextMatch::CONTAINS;
+		std::string m_Text;
+	};
+
 	struct STrigger
 	{
 		ETriggerType m_Type = ETriggerType::NONE;
 		EChatChannel m_Channel = EChatChannel::ALL;
-		ESenderFilter m_Sender = ESenderFilter::EVERYONE;
-		std::string m_SenderName;
-		ETextMatch m_Match = ETextMatch::CONTAINS;
-		std::string m_Text;
+		std::vector<SChatFilter> m_Filters;
 	};
 
 	struct SAction
@@ -122,6 +135,8 @@ private:
 	bool ParseRulesFile(const char *pJson, size_t Length);
 	void EvaluateChatTriggers(const SChatEvent &Event);
 	bool MatchesChatTrigger(const SShortcut &Shortcut, const SChatEvent &Event) const;
+	bool ChannelsMatch(EChatChannel TriggerChannel, EChatChannel EventChannel) const;
+	bool MatchesChatFilter(const SChatFilter &Filter, const SChatEvent &Event, bool IsMe) const;
 	bool MatchText(ETextMatch Match, const char *pNeedle, const char *pHaystack) const;
 	void StartRunner(size_t ShortcutIndex);
 	void StopRunner();

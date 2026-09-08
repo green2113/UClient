@@ -4967,8 +4967,8 @@ static std::string BuildStateJson()
 	JsonAddString(Json, "phase", pPhase);
 	JsonAddString(Json, "buttonLabel", WideToUtf8(Button));
 	JsonAddString(Json, "version", WideToUtf8(Version));
-	JsonAddString(Json, "launcherVersion", UCLIENT_LAUNCHER_VERSION);
-	JsonAddString(Json, "status", WideToUtf8(Status));
+  JsonAddString(Json, "launcherVersion", UCLIENT_LAUNCHER_VERSION);
+  JsonAddString(Json, "status", WideToUtf8(Status));
 	JsonAddString(Json, "logoUrl", g_LogoUrl);
 	JsonAddString(Json, "mascotUrl", g_MascotUrl);
 	JsonAddString(Json, "accountState", AccountStateName(AccountState));

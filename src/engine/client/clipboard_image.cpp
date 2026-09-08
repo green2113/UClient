@@ -10,6 +10,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <objidl.h>
 #include <SDL_syswm.h>
 #include <SDL_video.h>
 #include <engine/gfx/image_loader.h>
@@ -577,14 +578,72 @@ bool ImagePathExtensionKind(const wchar_t *pPath, EClipboardPastedKind &OutKind)
 	return true;
 }
 
+bool QueryDropFilePathW(HDROP hDrop, UINT Index, std::vector<wchar_t> &OutPath)
+{
+	OutPath.clear();
+	const UINT Length = DragQueryFileW(hDrop, Index, nullptr, 0);
+	if(Length == 0)
+		return false;
+
+	OutPath.resize(Length + 1);
+	if(DragQueryFileW(hDrop, Index, OutPath.data(), Length + 1) == 0)
+	{
+		OutPath.clear();
+		return false;
+	}
+
+	OutPath.resize(Length);
+	return true;
+}
+
+bool OpenExistingFileForRead(const wchar_t *pPath, HANDLE &OutHandle)
+{
+	OutHandle = INVALID_HANDLE_VALUE;
+	if(pPath == nullptr || pPath[0] == L'\0')
+		return false;
+
+	const DWORD ShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+	auto TryOpen = [&](const wchar_t *pCandidate) -> bool {
+		if(pCandidate == nullptr || pCandidate[0] == L'\0')
+			return false;
+		OutHandle = CreateFileW(pCandidate, GENERIC_READ, ShareMode, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		return OutHandle != INVALID_HANDLE_VALUE;
+	};
+
+	if(TryOpen(pPath))
+		return true;
+
+	wchar_t aLongPath[MAX_PATH * 4 + 8] = {};
+	if(pPath[0] != L'\0' && pPath[1] == L':' && wcsncmp(pPath, L"\\\\?\\", 4) != 0)
+	{
+		if(_snwprintf_s(aLongPath, _TRUNCATE, L"\\\\?\\%s", pPath) > 0 && TryOpen(aLongPath))
+			return true;
+	}
+	else if(wcsncmp(pPath, L"\\\\", 2) == 0 && wcsncmp(pPath, L"\\\\?\\", 4) != 0)
+	{
+		if(_snwprintf_s(aLongPath, _TRUNCATE, L"\\\\?\\UNC\\%s", pPath + 2) > 0 && TryOpen(aLongPath))
+			return true;
+	}
+
+	return false;
+}
+
+void LogClipboardPathFailure(const char *pContext, const wchar_t *pPath, DWORD ErrorCode)
+{
+	char aPathUtf8[1024] = {};
+	if(pPath != nullptr && pPath[0] != L'\0')
+		WideCharToMultiByte(CP_UTF8, 0, pPath, -1, aPathUtf8, (int)sizeof(aPathUtf8), nullptr, nullptr);
+	log_info("clipboard", "%s: failed to read '%s' (%lu)", pContext, aPathUtf8[0] != '\0' ? aPathUtf8 : "?", ErrorCode);
+}
+
 bool ReadImageFileBytes(const wchar_t *pPath, EClipboardPastedKind ExpectedKind, std::vector<uint8_t> &OutBytes, size_t MaxBytes)
 {
 	OutBytes.clear();
 	if(pPath == nullptr || pPath[0] == '\0')
 		return false;
 
-	HANDLE hFile = CreateFileW(pPath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if(hFile == INVALID_HANDLE_VALUE)
+	HANDLE hFile = INVALID_HANDLE_VALUE;
+	if(!OpenExistingFileForRead(pPath, hFile))
 		return false;
 
 	LARGE_INTEGER FileSize = {};
@@ -786,20 +845,45 @@ bool ReadClipboardGifFromHDropOpen(std::vector<uint8_t> &OutBytes, size_t MaxByt
 	bool Success = false;
 	const UINT FileCount = DragQueryFileW(hDropList, 0xFFFFFFFF, nullptr, 0);
 	log_info("clipboard", "GIF file paste: CF_HDROP contains %u file(s)", FileCount);
-	for(UINT i = 0; i < FileCount && !Success; ++i)
+	for(int Attempt = 0; Attempt < 4 && !Success; ++Attempt)
 	{
-		wchar_t aPath[MAX_PATH] = {};
-		if(DragQueryFileW(hDropList, i, aPath, std::size(aPath)) == 0)
-			continue;
-		Success = ReadFileBytes(aPath, OutBytes, MaxBytes);
-		if(Success && pFileName != nullptr && FileNameSize > 0)
+		if(Attempt > 0)
+			Sleep(25);
+		for(UINT i = 0; i < FileCount && !Success; ++i)
 		{
-			const wchar_t *pBaseName = wcsrchr(aPath, L'\\');
-			pBaseName = pBaseName != nullptr ? pBaseName + 1 : aPath;
-			WideCharToMultiByte(CP_UTF8, 0, pBaseName, -1, pFileName, (int)FileNameSize, nullptr, nullptr);
-			pFileName[FileNameSize - 1] = '\0';
+			std::vector<wchar_t> Path;
+			if(!QueryDropFilePathW(hDropList, i, Path))
+				continue;
+
+			EClipboardPastedKind PathKind = EClipboardPastedKind::NONE;
+			const bool HasKnownExt = ImagePathExtensionKind(Path.data(), PathKind);
+			if(HasKnownExt && PathKind != EClipboardPastedKind::GIF)
+				continue;
+
+			Success = ReadImageFileBytes(Path.data(), EClipboardPastedKind::GIF, OutBytes, MaxBytes);
+			if(!Success && !HasKnownExt)
+			{
+				std::vector<uint8_t> Candidate;
+				if(ReadImageFileBytes(Path.data(), EClipboardPastedKind::NONE, Candidate, MaxBytes) &&
+					DetectImageKindFromBytes(Candidate.data(), Candidate.size()) == EClipboardPastedKind::GIF)
+				{
+					OutBytes = std::move(Candidate);
+					Success = true;
+				}
+			}
+
+			if(Success && pFileName != nullptr && FileNameSize > 0)
+			{
+				const wchar_t *pBaseName = wcsrchr(Path.data(), L'\\');
+				pBaseName = pBaseName != nullptr ? pBaseName + 1 : Path.data();
+				WideCharToMultiByte(CP_UTF8, 0, pBaseName, -1, pFileName, (int)FileNameSize, nullptr, nullptr);
+				pFileName[FileNameSize - 1] = '\0';
+			}
+			if(!Success && Attempt == 3)
+				LogClipboardPathFailure("GIF file paste", Path.data(), GetLastError());
+			if(Attempt == 0 || Success || Attempt == 3)
+				log_info("clipboard", "GIF file paste: file %u read %s (%zu bytes)", i, Success ? "successfully" : "failed", OutBytes.size());
 		}
-		log_info("clipboard", "GIF file paste: file %u read %s (%zu bytes)", i, Success ? "successfully" : "failed", OutBytes.size());
 	}
 
 	return Success;
@@ -822,16 +906,16 @@ bool ReadClipboardImageFromHDropOpen(std::vector<uint8_t> &OutBytes, EClipboardP
 	const UINT FileCount = DragQueryFileW(hDropList, 0xFFFFFFFF, nullptr, 0);
 	for(UINT i = 0; i < FileCount && !Success; ++i)
 	{
-		wchar_t aPath[MAX_PATH] = {};
-		if(DragQueryFileW(hDropList, i, aPath, std::size(aPath)) == 0)
+		std::vector<wchar_t> Path;
+		if(!QueryDropFilePathW(hDropList, i, Path))
 			continue;
 
 		EClipboardPastedKind PathKind = EClipboardPastedKind::NONE;
-		if(!ImagePathExtensionKind(aPath, PathKind))
+		if(!ImagePathExtensionKind(Path.data(), PathKind))
 			continue;
 
 		std::vector<uint8_t> FileBytes;
-		if(!ReadImageFileBytes(aPath, PathKind, FileBytes, MaxBytes))
+		if(!ReadImageFileBytes(Path.data(), PathKind, FileBytes, MaxBytes))
 			continue;
 
 		OutBytes = std::move(FileBytes);
@@ -841,6 +925,126 @@ bool ReadClipboardImageFromHDropOpen(std::vector<uint8_t> &OutBytes, EClipboardP
 		Success = true;
 	}
 
+	return Success;
+}
+
+bool ReadStreamBytes(IStream *pStream, std::vector<uint8_t> &OutBytes, size_t MaxBytes)
+{
+	OutBytes.clear();
+	if(pStream == nullptr)
+		return false;
+
+	STATSTG Stats = {};
+	if(SUCCEEDED(pStream->Stat(&Stats, STATFLAG_NONAME)) && Stats.cbSize.QuadPart > 0)
+	{
+		if((size_t)Stats.cbSize.QuadPart > MaxBytes)
+			return false;
+		OutBytes.resize((size_t)Stats.cbSize.QuadPart);
+		ULONG ReadBytes = 0;
+		if(SUCCEEDED(pStream->Read(OutBytes.data(), (ULONG)OutBytes.size(), &ReadBytes)) && ReadBytes > 0)
+		{
+			OutBytes.resize(ReadBytes);
+			return true;
+		}
+		OutBytes.clear();
+	}
+
+	LARGE_INTEGER Zero = {};
+	if(FAILED(pStream->Seek(Zero, STREAM_SEEK_SET, nullptr)))
+		return false;
+
+	uint8_t aChunk[64 * 1024];
+	while(OutBytes.size() < MaxBytes)
+	{
+		ULONG ReadBytes = 0;
+		const HRESULT Result = pStream->Read(aChunk, sizeof(aChunk), &ReadBytes);
+		if(ReadBytes > 0)
+			OutBytes.insert(OutBytes.end(), aChunk, aChunk + ReadBytes);
+		if(Result != S_OK || ReadBytes == 0)
+			break;
+	}
+
+	return !OutBytes.empty();
+}
+
+bool ReadClipboardGifFromDataObject(std::vector<uint8_t> &OutBytes, size_t MaxBytes, char *pFileName, size_t FileNameSize)
+{
+	OutBytes.clear();
+	if(pFileName != nullptr && FileNameSize > 0)
+		pFileName[0] = '\0';
+
+	IDataObject *pDataObject = nullptr;
+	if(OleGetClipboard(&pDataObject) != S_OK || pDataObject == nullptr)
+		return false;
+
+	static UINT s_FileContentsFormat = 0;
+	if(s_FileContentsFormat == 0)
+		s_FileContentsFormat = RegisterClipboardFormat(CFSTR_FILECONTENTS);
+
+	auto TryFileIndex = [&](LONG Index) -> bool {
+		if(s_FileContentsFormat == 0)
+			return false;
+
+		FORMATETC Format = {};
+		Format.cfFormat = (CLIPFORMAT)s_FileContentsFormat;
+		Format.ptd = nullptr;
+		Format.dwAspect = DVASPECT_CONTENT;
+		Format.lindex = Index;
+		Format.tymed = TYMED_ISTREAM;
+
+		STGMEDIUM Medium = {};
+		if(pDataObject->GetData(&Format, &Medium) != S_OK || Medium.pstm == nullptr)
+			return false;
+
+		std::vector<uint8_t> FileBytes;
+		const bool ReadOk = ReadStreamBytes(Medium.pstm, FileBytes, MaxBytes);
+		ReleaseStgMedium(&Medium);
+		if(!ReadOk)
+			return false;
+
+		if(DetectImageKindFromBytes(FileBytes.data(), FileBytes.size()) != EClipboardPastedKind::GIF)
+			return false;
+
+		OutBytes = std::move(FileBytes);
+		return true;
+	};
+
+	bool Success = false;
+	for(LONG i = 0; i < 8 && !Success; ++i)
+		Success = TryFileIndex(i);
+
+	if(Success && pFileName != nullptr && FileNameSize > 0)
+	{
+		FORMATETC DropFormat = {};
+		DropFormat.cfFormat = CF_HDROP;
+		DropFormat.ptd = nullptr;
+		DropFormat.dwAspect = DVASPECT_CONTENT;
+		DropFormat.lindex = -1;
+		DropFormat.tymed = TYMED_HGLOBAL;
+
+		STGMEDIUM DropMedium = {};
+		if(pDataObject->GetData(&DropFormat, &DropMedium) == S_OK && DropMedium.hGlobal != nullptr)
+		{
+			const HDROP hDrop = static_cast<HDROP>(GlobalLock(DropMedium.hGlobal));
+			if(hDrop != nullptr)
+			{
+				std::vector<wchar_t> Path;
+				if(QueryDropFilePathW(hDrop, 0, Path))
+				{
+					const wchar_t *pBaseName = wcsrchr(Path.data(), L'\\');
+					pBaseName = pBaseName != nullptr ? pBaseName + 1 : Path.data();
+					WideCharToMultiByte(CP_UTF8, 0, pBaseName, -1, pFileName, (int)FileNameSize, nullptr, nullptr);
+					pFileName[FileNameSize - 1] = '\0';
+				}
+				GlobalUnlock(DropMedium.hGlobal);
+			}
+			ReleaseStgMedium(&DropMedium);
+		}
+	}
+
+	pDataObject->Release();
+	if(Success)
+		log_info("clipboard", "GIF file paste: read successfully from IDataObject stream (%zu bytes)", OutBytes.size());
 	return Success;
 }
 
@@ -880,6 +1084,14 @@ bool ReadClipboardGifOpen(std::vector<uint8_t> &OutBytes, size_t MaxBytes, char 
 	// delayed-rendered clipboard formats before CF_HDROP is read.
 	if(ReadClipboardGifFromHDropOpen(OutBytes, MaxBytes, pFileName, FileNameSize))
 		return true;
+
+	std::vector<uint8_t> PathBytes;
+	EClipboardPastedKind PathKind = EClipboardPastedKind::NONE;
+	if(ReadClipboardUnicodePathOpen(PathBytes, PathKind, MaxBytes) && PathKind == EClipboardPastedKind::GIF && !PathBytes.empty())
+	{
+		OutBytes = std::move(PathBytes);
+		return true;
+	}
 
 	return false;
 }
@@ -1123,6 +1335,10 @@ bool ReadClipboardGifBytes(std::vector<uint8_t> &vOutGif, char *pFileName, size_
 	vOutGif.clear();
 	if(pFileName != nullptr && FileNameSize > 0)
 		pFileName[0] = '\0';
+
+	if(ReadClipboardGifFromDataObject(vOutGif, 64 * 1024 * 1024, pFileName, FileNameSize))
+		return true;
+
 	if(!OpenClipboardForRead())
 		return false;
 

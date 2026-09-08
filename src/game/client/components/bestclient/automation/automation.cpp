@@ -85,6 +85,49 @@ static int ParseWeapon(const char *pValue)
 	return 0; // hammer default
 }
 
+static bool ParseChatFilter(const json_value *pFilter, CAutomation::SChatFilter &Out)
+{
+	if(!pFilter || pFilter->type != json_object)
+		return false;
+	const json_value *pKind = json_object_get(pFilter, "kind");
+	const char *pKindStr = pKind && pKind->type == json_string ? pKind->u.string.ptr : nullptr;
+	if(!pKindStr)
+		return false;
+	if(str_comp(pKindStr, "sender") == 0)
+	{
+		Out.m_Kind = CAutomation::SChatFilter::EKind::SENDER;
+		const json_value *pNames = json_object_get(pFilter, "names");
+		if(pNames && pNames->type == json_array)
+		{
+			const int Count = json_array_length(pNames);
+			for(int i = 0; i < Count; i++)
+			{
+				const json_value *pName = json_array_get(pNames, i);
+				if(pName && pName->type == json_string && pName->u.string.ptr && pName->u.string.ptr[0])
+					Out.m_SenderNames.emplace_back(pName->u.string.ptr);
+			}
+			return true;
+		}
+		const json_value *pSender = json_object_get(pFilter, "sender");
+		Out.m_Sender = ParseSender(pSender && pSender->type == json_string ? pSender->u.string.ptr : nullptr);
+		const json_value *pSenderName = json_object_get(pFilter, "senderName");
+		if(pSenderName && pSenderName->type == json_string && pSenderName->u.string.ptr)
+			Out.m_SenderName = pSenderName->u.string.ptr;
+		return true;
+	}
+	if(str_comp(pKindStr, "message") == 0)
+	{
+		Out.m_Kind = CAutomation::SChatFilter::EKind::MESSAGE;
+		const json_value *pMatch = json_object_get(pFilter, "match");
+		Out.m_Match = ParseMatch(pMatch && pMatch->type == json_string ? pMatch->u.string.ptr : nullptr);
+		const json_value *pText = json_object_get(pFilter, "text");
+		if(pText && pText->type == json_string && pText->u.string.ptr)
+			Out.m_Text = pText->u.string.ptr;
+		return true;
+	}
+	return false;
+}
+
 static bool ParseTrigger(const json_value *pTrigger, CAutomation::STrigger &Out)
 {
 	if(!pTrigger || pTrigger->type != json_object)
@@ -93,20 +136,43 @@ static bool ParseTrigger(const json_value *pTrigger, CAutomation::STrigger &Out)
 	const char *pTypeStr = pType && pType->type == json_string ? pType->u.string.ptr : nullptr;
 	if(!pTypeStr || str_comp(pTypeStr, "chat_received") != 0)
 		return false;
+	Out = CAutomation::STrigger{};
 	Out.m_Type = CAutomation::ETriggerType::CHAT_RECEIVED;
 	const json_value *pChannel = json_object_get(pTrigger, "channel");
 	Out.m_Channel = ParseChannel(pChannel && pChannel->type == json_string ? pChannel->u.string.ptr : nullptr);
+
+	const json_value *pFilters = json_object_get(pTrigger, "filters");
+	if(pFilters && pFilters->type == json_array && json_array_length(pFilters) > 0)
+	{
+		const int Count = json_array_length(pFilters);
+		for(int i = 0; i < Count; ++i)
+		{
+			CAutomation::SChatFilter Filter;
+			if(ParseChatFilter(json_array_get(pFilters, i), Filter))
+				Out.m_Filters.push_back(std::move(Filter));
+		}
+		return !Out.m_Filters.empty();
+	}
+
+	// Legacy flat trigger format.
+	CAutomation::SChatFilter SenderFilter;
+	SenderFilter.m_Kind = CAutomation::SChatFilter::EKind::SENDER;
 	const json_value *pSender = json_object_get(pTrigger, "sender");
-	Out.m_Sender = ParseSender(pSender && pSender->type == json_string ? pSender->u.string.ptr : nullptr);
+	SenderFilter.m_Sender = ParseSender(pSender && pSender->type == json_string ? pSender->u.string.ptr : nullptr);
 	const json_value *pSenderName = json_object_get(pTrigger, "senderName");
 	if(pSenderName && pSenderName->type == json_string && pSenderName->u.string.ptr)
-		Out.m_SenderName = pSenderName->u.string.ptr;
+		SenderFilter.m_SenderName = pSenderName->u.string.ptr;
+	Out.m_Filters.push_back(std::move(SenderFilter));
+
+	CAutomation::SChatFilter MessageFilter;
+	MessageFilter.m_Kind = CAutomation::SChatFilter::EKind::MESSAGE;
 	const json_value *pMatch = json_object_get(pTrigger, "match");
-	Out.m_Match = ParseMatch(pMatch && pMatch->type == json_string ? pMatch->u.string.ptr : nullptr);
+	MessageFilter.m_Match = ParseMatch(pMatch && pMatch->type == json_string ? pMatch->u.string.ptr : nullptr);
 	const json_value *pText = json_object_get(pTrigger, "text");
 	if(!pText || pText->type != json_string || !pText->u.string.ptr)
 		return false;
-	Out.m_Text = pText->u.string.ptr;
+	MessageFilter.m_Text = pText->u.string.ptr;
+	Out.m_Filters.push_back(std::move(MessageFilter));
 	return true;
 }
 
@@ -323,12 +389,55 @@ bool CAutomation::MatchText(ETextMatch Match, const char *pNeedle, const char *p
 	}
 }
 
+bool CAutomation::MatchesChatFilter(const SChatFilter &Filter, const SChatEvent &Event, bool IsMe) const
+{
+	if(Filter.m_Kind == SChatFilter::EKind::SENDER)
+	{
+		if(!Filter.m_SenderNames.empty())
+		{
+			for(const std::string &Name : Filter.m_SenderNames)
+			{
+				if(str_comp_nocase(Event.m_Name.c_str(), Name.c_str()) == 0)
+					return true;
+			}
+			return false;
+		}
+		switch(Filter.m_Sender)
+		{
+		case ESenderFilter::ME:
+			return IsMe;
+		case ESenderFilter::SPECIFIC:
+			if(Filter.m_SenderName.empty())
+				return false;
+			return str_comp_nocase(Event.m_Name.c_str(), Filter.m_SenderName.c_str()) == 0;
+		default:
+			return true;
+		}
+	}
+
+	if(Filter.m_Text.empty())
+		return false;
+	return MatchText(Filter.m_Match, Filter.m_Text.c_str(), Event.m_Text.c_str());
+}
+
+bool CAutomation::ChannelsMatch(EChatChannel TriggerChannel, EChatChannel EventChannel) const
+{
+	if(TriggerChannel == EventChannel)
+		return true;
+	// When UI channel is "All", listen to both global and team server chat.
+	if(TriggerChannel == EChatChannel::ALL && (EventChannel == EChatChannel::ALL || EventChannel == EChatChannel::TEAM))
+		return true;
+	return false;
+}
+
 bool CAutomation::MatchesChatTrigger(const SShortcut &Shortcut, const SChatEvent &Event) const
 {
 	const STrigger &Trigger = Shortcut.m_Trigger;
 	if(Trigger.m_Type != ETriggerType::CHAT_RECEIVED)
 		return false;
-	if(Trigger.m_Channel != Event.m_Channel)
+	if(!ChannelsMatch(Trigger.m_Channel, Event.m_Channel))
+		return false;
+	if(Trigger.m_Filters.empty())
 		return false;
 
 	bool IsMe = false;
@@ -341,23 +450,12 @@ bool CAutomation::MatchesChatTrigger(const SShortcut &Shortcut, const SChatEvent
 		}
 	}
 
-	switch(Trigger.m_Sender)
+	for(const SChatFilter &Filter : Trigger.m_Filters)
 	{
-	case ESenderFilter::ME:
-		if(!IsMe)
+		if(!MatchesChatFilter(Filter, Event, IsMe))
 			return false;
-		break;
-	case ESenderFilter::SPECIFIC:
-		if(Trigger.m_SenderName.empty())
-			return false;
-		if(str_comp_nocase(Event.m_Name.c_str(), Trigger.m_SenderName.c_str()) != 0)
-			return false;
-		break;
-	default:
-		break;
 	}
-
-	return MatchText(Trigger.m_Match, Trigger.m_Text.c_str(), Event.m_Text.c_str());
+	return true;
 }
 
 void CAutomation::OnChatReceived(const SChatEvent &Event)
@@ -410,26 +508,26 @@ void CAutomation::ExecuteAction(const SAction &Action)
 		break;
 	case EActionType::SET_SKIN:
 		str_format(aCmd, sizeof(aCmd), "%s_skin %s", TargetPrefix(Action.m_Target), Action.m_Skin.c_str());
-		Console()->ExecuteLine(aCmd);
+		Console()->ExecuteLine(aCmd, IConsole::CLIENT_ID_UNSPECIFIED);
 		break;
 	case EActionType::SET_CUSTOM_COLOR:
 		str_format(aCmd, sizeof(aCmd), "%s_use_custom_color %d", TargetPrefix(Action.m_Target), Action.m_CustomColorEnabled ? 1 : 0);
-		Console()->ExecuteLine(aCmd);
+		Console()->ExecuteLine(aCmd, IConsole::CLIENT_ID_UNSPECIFIED);
 		break;
 	case EActionType::SET_BODY_COLOR:
 		str_format(aCmd, sizeof(aCmd), "%s_color_body %d", TargetPrefix(Action.m_Target), Action.m_Color);
-		Console()->ExecuteLine(aCmd);
+		Console()->ExecuteLine(aCmd, IConsole::CLIENT_ID_UNSPECIFIED);
 		break;
 	case EActionType::SET_FEET_COLOR:
 		str_format(aCmd, sizeof(aCmd), "%s_color_feet %d", TargetPrefix(Action.m_Target), Action.m_Color);
-		Console()->ExecuteLine(aCmd);
+		Console()->ExecuteLine(aCmd, IConsole::CLIENT_ID_UNSPECIFIED);
 		break;
 	case EActionType::SET_NAME:
 	{
 		char aEscaped[256];
 		EscapeParamLocal(aEscaped, Action.m_Name.c_str(), sizeof(aEscaped));
 		str_format(aCmd, sizeof(aCmd), "%s_name %s", TargetPrefix(Action.m_Target), aEscaped);
-		Console()->ExecuteLine(aCmd);
+		Console()->ExecuteLine(aCmd, IConsole::CLIENT_ID_UNSPECIFIED);
 		break;
 	}
 	default:
