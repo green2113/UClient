@@ -6,12 +6,10 @@
 #include <base/color.h>
 #include <base/log.h>
 #include <base/math.h>
-#include <base/process.h>
 #include <base/system.h>
 #include <base/vmath.h>
 
 #include <engine/client.h>
-#include <engine/client/updater.h>
 #include <engine/config.h>
 #include <engine/editor.h>
 #include <engine/font_icons.h>
@@ -21,7 +19,6 @@
 #include <engine/keys.h>
 #include <engine/serverbrowser.h>
 #include <engine/shared/config.h>
-#include <engine/shared/uclient_launch_gate.h>
 #include <engine/storage.h>
 #include <engine/textrender.h>
 
@@ -649,18 +646,7 @@ void CMenus::RenderMenubar(CUIRect Box, IClient::EClientState ClientState)
 
 		Box.VSplitLeft(33.0f, &Button, &Box);
 
-		bool GotNewsOrUpdate = false;
-
-#if defined(CONF_AUTOUPDATE)
-		int State = Updater()->GetCurrentState();
-		bool NeedUpdate = str_comp(Client()->LatestVersion(), "0");
-		if(State == IUpdater::CLEAN && NeedUpdate)
-		{
-			GotNewsOrUpdate = true;
-		}
-#endif
-
-		GotNewsOrUpdate |= (bool)g_Config.m_UiUnreadNews;
+		const bool GotNews = (bool)g_Config.m_UiUnreadNews;
 
 		ColorRGBA HomeButtonColorAlert(0, 1, 0, 0.25f);
 		ColorRGBA HomeButtonColorAlertHover(0, 1, 0, 0.5f);
@@ -668,7 +654,7 @@ void CMenus::RenderMenubar(CUIRect Box, IClient::EClientState ClientState)
 		ColorRGBA *pHomeButtonColorHover = nullptr;
 
 		const char *pHomeScreenButtonLabel = FontIcon::HOUSE;
-		if(GotNewsOrUpdate)
+		if(GotNews)
 		{
 			pHomeScreenButtonLabel = FontIcon::NEWSPAPER;
 			pHomeButtonColor = &HomeButtonColorAlert;
@@ -1321,66 +1307,6 @@ void CMenus::PopupConfirm(const char *pTitle, const char *pMessage, const char *
 	m_PopupConfirmHasCheckbox = false;
 }
 
-bool CMenus::PopupUpdateRequired()
-{
-	if(!Client()->UpdateRequired())
-		return false;
-
-#if defined(CONF_AUTOUPDATE)
-	const IUpdater::EUpdaterState State = Updater()->GetCurrentState();
-	if(State == IUpdater::NEED_RESTART)
-	{
-		PopupConfirm(Localize("Update required"),
-			Localize("The update has been downloaded. Restart via the launcher to finish updating, then you can join a server."),
-			Localize("Restart launcher"), Localize("Not now"), &CMenus::PopupConfirmStartUpdate);
-	}
-	else if(State == IUpdater::DOWNLOADING || State == IUpdater::GETTING_MANIFEST)
-	{
-		PopupMessage(Localize("Update required"),
-			Localize("The update is downloading. You can join a server as soon as it has been installed."),
-			Localize("Ok"));
-	}
-	else
-	{
-		char aMessage[256];
-		str_format(aMessage, sizeof(aMessage),
-			Localize("UClient %s is available. You have to update before you can join a server."),
-			Updater()->GetLatestVersionString());
-		PopupConfirm(Localize("Update required"), aMessage, Localize("Update now"), Localize("Not now"), &CMenus::PopupConfirmStartUpdate);
-	}
-#else
-	PopupMessage(Localize("Update required"),
-		Localize("A new version of UClient is available. You have to update before you can join a server."),
-		Localize("Ok"));
-#endif
-
-	// Keep the menu open afterwards so the update progress stays visible.
-	m_PopupDeactivateAfterButton = false;
-	SetActive(true);
-	return true;
-}
-
-void CMenus::PopupConfirmStartUpdate()
-{
-#if defined(CONF_AUTOUPDATE)
-	if(Updater()->GetCurrentState() == IUpdater::NEED_RESTART)
-		Updater()->ApplyUpdateAndRestart();
-	else
-	{
-#if defined(CONF_FAMILY_WINDOWS)
-		char aLauncher[IO_MAX_PATH_LENGTH];
-		if(UClientLaunchGate_FindLauncherPath(aLauncher, sizeof(aLauncher)))
-		{
-			process_execute(aLauncher, EShellExecuteWindowState::FOREGROUND);
-			Client()->Quit();
-			return;
-		}
-#endif
-		Updater()->InitiateUpdate();
-	}
-#endif
-}
-
 void CMenus::PopupConfirmWithCheckbox(const char *pTitle, const char *pMessage, const char *pConfirmButtonLabel, const char *pCancelButtonLabel,
 	const char *pCheckboxLabel, bool CheckboxValue, FPopupButtonCallback pfnConfirmButtonCallback, int ConfirmNextPopup,
 	FPopupButtonCallback pfnCancelButtonCallback, int CancelNextPopup)
@@ -1427,8 +1353,6 @@ void CMenus::PopupCancelStoredLink()
 void CMenus::RequestUClientServerJoin(const char *pAddr, const char *pServerName)
 {
 	if(!pAddr || pAddr[0] == '\0')
-		return;
-	if(PopupUpdateRequired())
 		return;
 	str_copy(m_aUClientJoinServerAddr, pAddr, sizeof(m_aUClientJoinServerAddr));
 

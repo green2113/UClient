@@ -69,7 +69,8 @@ void CUClientChatRooms::OnUpdate()
 		return;
 	}
 	// Slow safety net if a UDP room-list push was lost.
-	if(!m_InitialRefresh || (!m_pRequest && Now - m_LastRefresh > 300 * time_freq()))
+	if((!m_InitialRefresh && m_PendingRefreshAt <= 0) ||
+		(!m_pRequest && m_PendingRefreshAt <= 0 && Now - m_LastRefresh > 300 * time_freq()))
 		Refresh();
 }
 
@@ -77,9 +78,34 @@ void CUClientChatRooms::RequestRefreshSoon()
 {
 	if(!GameClient()->m_UClientAccount.IsReady())
 		return;
-	const int64_t Due = time_get() + time_freq(); // debounce ~1s
+	const int64_t Due = time_get();
 	if(m_PendingRefreshAt <= 0 || Due < m_PendingRefreshAt)
 		m_PendingRefreshAt = Due;
+}
+
+bool CUClientChatRooms::ApplyRoomMetadata(const char *pRoomId, const char *pRoomName, unsigned NameColor)
+{
+	for(SRoom &Room : m_vRooms)
+	{
+		if(str_comp(Room.m_aId, pRoomId))
+			continue;
+
+		bool Changed = false;
+		if(pRoomName && pRoomName[0] && str_comp(Room.m_aName, pRoomName))
+		{
+			str_copy(Room.m_aName, pRoomName, sizeof(Room.m_aName));
+			Changed = true;
+		}
+		if(Room.m_NameColor != NameColor)
+		{
+			Room.m_NameColor = NameColor;
+			Changed = true;
+		}
+		if(Changed)
+			GameClient()->m_Chat.RebuildChat();
+		return true;
+	}
+	return false;
 }
 
 const char *CUClientChatRooms::SelectedSendRoomId() const
@@ -154,11 +180,7 @@ void CUClientChatRooms::Refresh()
 		return;
 	char aUrl[384];
 	str_format(aUrl, sizeof(aUrl), "%s/rooms", g_Config.m_UcApiBaseUrl);
-	if(Begin(HttpGet(aUrl), ERequest::REFRESH))
-	{
-		m_InitialRefresh = true;
-		m_LastRefresh = time_get();
-	}
+	Begin(HttpGet(aUrl), ERequest::REFRESH);
 }
 
 void CUClientChatRooms::RefreshIfStale(int MaxAgeSeconds)
@@ -234,7 +256,12 @@ void CUClientChatRooms::UpdateSettings(const char *pRoomId, const char *pName, b
 	if(HasInviteCodePublic)
 		AppendField(InviteCodePublic ? "\"invite_code_public\":true" : "\"invite_code_public\":false");
 	Json += "}";
-	BeginJsonPost(aPath, Json.c_str());
+	if(BeginJsonPost(aPath, Json.c_str()) && HasColor)
+	{
+		str_copy(m_aPendingColorRoomId, pRoomId, sizeof(m_aPendingColorRoomId));
+		m_PendingNameColor = NameColor;
+		m_HasPendingNameColor = true;
+	}
 }
 
 void CUClientChatRooms::RegenerateCode(const char *pRoomId)
@@ -303,6 +330,13 @@ void CUClientChatRooms::SetMemberAdmin(const char *pRoomId, const char *pMemberI
 void CUClientChatRooms::Finish()
 {
 	const ERequest Request = m_Request;
+	const bool HasPendingNameColor = m_HasPendingNameColor;
+	const unsigned PendingNameColor = m_PendingNameColor;
+	char aPendingColorRoomId[sizeof(m_aPendingColorRoomId)];
+	str_copy(aPendingColorRoomId, m_aPendingColorRoomId, sizeof(aPendingColorRoomId));
+	m_aPendingColorRoomId[0] = '\0';
+	m_PendingNameColor = 0;
+	m_HasPendingNameColor = false;
 	const EHttpState State = m_pRequest->State();
 	const int Status = State == EHttpState::DONE ? m_pRequest->StatusCode() : 0;
 	json_value *pRoot = State == EHttpState::DONE ? m_pRequest->ResultJson() : nullptr;
@@ -310,30 +344,44 @@ void CUClientChatRooms::Finish()
 	m_Request = ERequest::NONE;
 	if(State != EHttpState::DONE)
 	{
+		if(Request == ERequest::REFRESH)
+			m_PendingRefreshAt = time_get() + 5 * time_freq();
 		str_copy(m_aError, Localize("Could not contact the UClient rooms service."), sizeof(m_aError));
 		return;
 	}
 	if(Status >= 200 && Status < 300)
 	{
-		if(Request == ERequest::REFRESH && pRoot && pRoot->type == json_object)
-			ParseRooms(pRoot);
+		const bool RefreshParsed = Request != ERequest::REFRESH ||
+			(pRoot && pRoot->type == json_object && ParseRooms(pRoot));
 		if(pRoot)
 			json_value_free(pRoot);
+		if(!RefreshParsed)
+		{
+			m_PendingRefreshAt = time_get() + 5 * time_freq();
+			str_copy(m_aError, Localize("The UClient rooms service returned an invalid response."), sizeof(m_aError));
+			return;
+		}
 		if(Request == ERequest::MUTATE)
+		{
+			if(HasPendingNameColor)
+				ApplyRoomMetadata(aPendingColorRoomId, nullptr, PendingNameColor);
 			Refresh();
+		}
 		return;
 	}
 	const char *pMessage = pRoot && pRoot->type == json_object ? JsonString(pRoot, "message") : "";
 	str_copy(m_aError, pMessage[0] ? pMessage : Localize("The UClient room request failed."), sizeof(m_aError));
+	if(Request == ERequest::REFRESH)
+		m_PendingRefreshAt = time_get() + 5 * time_freq();
 	if(pRoot)
 		json_value_free(pRoot);
 }
 
-void CUClientChatRooms::ParseRooms(const json_value *pRoot)
+bool CUClientChatRooms::ParseRooms(const json_value *pRoot)
 {
 	const json_value *pRooms = json_object_get(pRoot, "rooms");
 	if(!pRooms || pRooms->type != json_array)
-		return;
+		return false;
 	std::vector<SRoom> vRooms;
 	for(unsigned RoomIndex = 0; RoomIndex < pRooms->u.array.length; ++RoomIndex)
 	{
@@ -376,6 +424,8 @@ void CUClientChatRooms::ParseRooms(const json_value *pRoot)
 			vRooms.push_back(std::move(Room));
 	}
 	m_vRooms = std::move(vRooms);
+	m_InitialRefresh = true;
+	m_LastRefresh = time_get();
 	GameClient()->m_Chat.RebuildChat();
 	if(g_Config.m_UcChatSendRoom[0] && !RoomNameById(g_Config.m_UcChatSendRoom))
 		SelectSendRoom("");
@@ -384,4 +434,5 @@ void CUClientChatRooms::ParseRooms(const json_value *pRoot)
 		g_Config.m_UcServerJoinSendRoom[0] = '\0';
 		ConfigManager()->Save();
 	}
+	return true;
 }

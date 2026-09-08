@@ -4,16 +4,12 @@
 
 #include <algorithm>
 
-#include <engine/client/updater.h>
 #include <engine/font_icons.h>
 #include <engine/graphics.h>
 #include <engine/keys.h>
 #include <engine/serverbrowser.h>
 #include <engine/shared/config.h>
-#include <engine/shared/uclient_launch_gate.h>
 #include <engine/textrender.h>
-
-#include <base/process.h>
 
 #include <generated/client_data.h>
 
@@ -47,7 +43,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 		TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 	};
 
-	// Left panel: Discord, Telegram, Check update
+	// Left panel: Discord and Telegram
 	CUIRect ExtMenu;
 	MainView.VSplitLeft(30.0f, nullptr, &ExtMenu);
 	ExtMenu.VSplitLeft(100.0f, &ExtMenu, nullptr);
@@ -63,16 +59,6 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	static CButtonContainer s_TelegramButton;
 	if(GameClient()->m_Menus.DoButton_Menu(&s_TelegramButton, Localize("Telegram"), 0, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 		Client()->ViewLink("https://t.me/bestddnet");
-
-	ExtMenu.HSplitBottom(5.0f, &ExtMenu, nullptr);
-	ExtMenu.HSplitBottom(20.0f, &ExtMenu, &Button);
-	static CButtonContainer s_CheckUpdateButton;
-	if(GameClient()->m_Menus.DoButton_Menu(&s_CheckUpdateButton, Localize("Check update"), 0, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
-	{
-#if defined(CONF_AUTOUPDATE)
-		Updater()->CheckForUpdate();
-#endif
-	}
 
 	// Center block: logo + 5 buttons, vertically centered
 	constexpr float LogoW = 360.0f;
@@ -234,7 +220,6 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	}
 
 	// Settings
-	const CUIRect SettingsButton = aMenuButtons[4];
 	{
 		CUIRect ScaledButton = ScaleButtonRect(aMenuButtons[4], s_aMenuButtonScale[4]);
 		static CButtonContainer s_SettingsButton;
@@ -257,88 +242,6 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 		if(Ui()->DoButtonLogic(&s_ClansButton, 0, &ScaledButton, BUTTONFLAG_LEFT) || CheckHotKey(KEY_C))
 			NewPage = CMenus::PAGE_CLANS;
 	}
-
-#if defined(CONF_AUTOUPDATE)
-	{
-		char aUpdateBuf[128] = "";
-		const IUpdater::EUpdaterState State = Updater()->GetCurrentState();
-		const bool NeedUpdate = Updater()->GetLatestVersionString()[0] != '\0';
-		const bool ShowDownloadButton = State == IUpdater::VERSION_AVAILABLE;
-		const bool ShowRetryButton = NeedUpdate && State == IUpdater::FAIL;
-		const bool ShowRestartButton = State == IUpdater::NEED_RESTART;
-		const bool ShowUpdateProgress = State == IUpdater::DOWNLOADING;
-
-		if(ShowDownloadButton || ShowRetryButton || ShowRestartButton || ShowUpdateProgress)
-		{
-			CUIRect UpdateRow = SettingsButton;
-			UpdateRow.y += SettingsButton.h + ButtonGap + ClansBtnH + ButtonGap;
-			UpdateRow.h = 22.0f;
-
-			CUIRect UpdateLabel, UpdateButton;
-			UpdateRow.VSplitRight(120.0f, &UpdateLabel, &UpdateButton);
-			UpdateLabel.VSplitRight(10.0f, &UpdateLabel, nullptr);
-
-			if(ShowDownloadButton)
-			{
-				str_format(aUpdateBuf, sizeof(aUpdateBuf), Localize("BestClient %s is out!"), Updater()->GetLatestVersionString());
-				TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
-			}
-			else if(ShowUpdateProgress)
-			{
-				if(State == IUpdater::GETTING_MANIFEST)
-					str_copy(aUpdateBuf, Localize("Preparing update..."));
-				else
-					str_format(aUpdateBuf, sizeof(aUpdateBuf), Localize("Downloading %d%%"), Updater()->GetCurrentPercent());
-			}
-			else if(ShowRetryButton)
-			{
-				str_copy(aUpdateBuf, Localize("Update failed"));
-				TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
-			}
-			else if(ShowRestartButton)
-			{
-				str_copy(aUpdateBuf, Localize("Update ready — restart via launcher"));
-				TextRender()->TextColor(0.7f, 1.0f, 0.7f, 1.0f);
-			}
-
-			Ui()->DoLabel(&UpdateLabel, aUpdateBuf, 14.0f, TEXTALIGN_ML);
-			TextRender()->TextColor(TextRender()->DefaultTextColor());
-
-			if(ShowDownloadButton || ShowRetryButton)
-			{
-				static CButtonContainer s_MenuUpdateDownload;
-				if(GameClient()->m_Menus.DoButton_Menu(&s_MenuUpdateDownload, Localize("Open launcher"), 0, &UpdateButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
-				{
-#if defined(CONF_FAMILY_WINDOWS)
-					char aLauncher[IO_MAX_PATH_LENGTH];
-					if(UClientLaunchGate_FindLauncherPath(aLauncher, sizeof(aLauncher)))
-					{
-						process_execute(aLauncher, EShellExecuteWindowState::FOREGROUND);
-						Client()->Quit();
-					}
-					else
-#endif
-						Updater()->InitiateUpdate();
-				}
-			}
-			else if(ShowRestartButton)
-			{
-				static CButtonContainer s_MenuUpdateRestart;
-#if defined(CONF_PLATFORM_ANDROID)
-				const char *pRestartButtonLabel = Localize("Install");
-#else
-				const char *pRestartButtonLabel = Localize("Restart launcher");
-#endif
-				if(GameClient()->m_Menus.DoButton_Menu(&s_MenuUpdateRestart, pRestartButtonLabel, 0, &UpdateButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
-					Updater()->ApplyUpdateAndRestart();
-			}
-			else
-			{
-				Ui()->RenderProgressBar(UpdateButton, Updater()->GetCurrentPercent() / 100.0f);
-			}
-		}
-	}
-#endif
 
 	// Quit вЂ” square icon button at bottom center
 	{

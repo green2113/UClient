@@ -82,6 +82,28 @@ endif()
 
 file(APPEND "${DATA_VERSION_FILE}" "UClient ${UCLIENT_PACKAGE_VERSION}\n")
 
+file(STRINGS src/game/version.h UCLIENT_LAUNCHER_VERSION_LINE
+  LIMIT_COUNT 1
+  REGEX "^#define UCLIENT_LAUNCHER_VERSION "
+)
+
+if(UCLIENT_LAUNCHER_VERSION_LINE MATCHES "([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+  set(UCLIENT_LAUNCHER_PACKAGE_VERSION "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
+elseif(UCLIENT_LAUNCHER_VERSION_LINE MATCHES "([0-9]+)\\.([0-9]+)")
+  set(UCLIENT_LAUNCHER_PACKAGE_VERSION "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}")
+else()
+  message(FATAL_ERROR "Couldn't parse UClient launcher version from src/game/version.h")
+endif()
+
+add_executable(uclient-version-info EXCLUDE_FROM_ALL
+  src/tools/uclient_version_info.cpp
+)
+target_include_directories(uclient-version-info PRIVATE src)
+set_target_properties(uclient-version-info PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+  RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
+)
+
 # </TClient>
 
 # <BestClient>
@@ -3349,8 +3371,11 @@ if(CLIENT)
     target_link_libraries(uclient-launcher shell32 winhttp advapi32 gdi32 user32 msimg32 windowscodecs ole32)
     set_property(TARGET uclient-launcher PROPERTY OUTPUT_NAME "UClient")
     target_compile_definitions(uclient-launcher PRIVATE
-      UCLIENT_LAUNCHER_VERSION="${UCLIENT_PACKAGE_VERSION}"
+      UCLIENT_CLIENT_VERSION="${UCLIENT_PACKAGE_VERSION}"
+      UCLIENT_LAUNCHER_VERSION="${UCLIENT_LAUNCHER_PACKAGE_VERSION}"
       UCLIENT_UPDATE_LATEST_URL="https://ddnet.under1111.com/api/uclient/update/latest"
+      UCLIENT_CLIENT_UPDATE_LATEST_URL="https://ddnet.under1111.com/uclient/client/latest.json"
+      UCLIENT_LAUNCHER_UPDATE_LATEST_URL="https://ddnet.under1111.com/uclient/launcher/latest.json"
       UCLIENT_API_BASE_URL="https://uclient.under1111.com"
       $<$<CONFIG:DevRelease>:CONF_UCLIENT_LAUNCHER_DEV>
     )

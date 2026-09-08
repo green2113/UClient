@@ -26,6 +26,7 @@
 #include <cstring>
 #include <ctime>
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -49,8 +50,17 @@
 #ifndef UCLIENT_LAUNCHER_VERSION
 #define UCLIENT_LAUNCHER_VERSION "0.0.0"
 #endif
+#ifndef UCLIENT_CLIENT_VERSION
+#define UCLIENT_CLIENT_VERSION "0.0.0"
+#endif
 #ifndef UCLIENT_UPDATE_LATEST_URL
 #define UCLIENT_UPDATE_LATEST_URL "https://ddnet.under1111.com/api/uclient/update/latest"
+#endif
+#ifndef UCLIENT_CLIENT_UPDATE_LATEST_URL
+#define UCLIENT_CLIENT_UPDATE_LATEST_URL "https://ddnet.under1111.com/uclient/client/latest.json"
+#endif
+#ifndef UCLIENT_LAUNCHER_UPDATE_LATEST_URL
+#define UCLIENT_LAUNCHER_UPDATE_LATEST_URL "https://ddnet.under1111.com/uclient/launcher/latest.json"
 #endif
 #ifndef UCLIENT_API_BASE_URL
 #define UCLIENT_API_BASE_URL "https://uclient.under1111.com"
@@ -59,15 +69,20 @@
 static const wchar_t *kTokenArg = L"--uclient-from-launcher";
 static const wchar_t *kTokenFile = L"uclient_launch.token";
 static const wchar_t *kVersionFile = L"uclient_version.txt";
-static const wchar_t *kPendingVersionFile = L"uclient_pending_version.txt";
+static const wchar_t *kClientPendingVersionFile = L"uclient_client_pending_version.txt";
+static const wchar_t *kLegacyPendingVersionFile = L"uclient_pending_version.txt";
 static const wchar_t *kApplyUpdateArg = L"--uclient-apply-update";
 static const wchar_t *kWaitPidArg = L"--uclient-wait-pid";
+static const wchar_t *kWriteVersionInfoArg = L"--write-version-info";
+static const wchar_t *kLauncherUpdateEventArg = L"--uclient-launcher-update-event";
 static const wchar_t *kFromGameArg = L"--uclient-from-game";
 static const wchar_t *kGameExe = L"DDNet.exe";
 static const wchar_t kPlayLabel[] = L"Play";
-static const wchar_t kUpdateLabel[] = L"Update";
 static const wchar_t kRunningLabel[] = L"RUNNING";
-static const wchar_t *kArchiveRel = L"update\\bestclient-release.zip";
+static const wchar_t *kClientArchiveRel = L"update\\uclient-client.zip";
+static const wchar_t *kLegacyArchiveRel = L"update\\bestclient-release.zip";
+static const wchar_t *kLauncherArchiveRel = L"update\\uclient-launcher.zip";
+static const wchar_t *kBuildManifestFile = L"uclient_build_manifest.json";
 
 static const wchar_t *k_aUserDirs[] = {
 	L"data\\assets\\arrow",
@@ -76,8 +91,12 @@ static const wchar_t *k_aUserDirs[] = {
 	L"data\\audio",
 };
 
-static const int WND_W = 1160;
-static const int WND_H = 700;
+static const int REFERENCE_SCREEN_W = 2560;
+static const int REFERENCE_SCREEN_H = 1440;
+static const int REFERENCE_WND_W = 1280;
+static const int REFERENCE_WND_H = 800;
+static int g_WindowW = REFERENCE_WND_W;
+static int g_WindowH = REFERENCE_WND_H;
 static const int WND_RADIUS = 12;
 static const int RAIL_W = 76;
 static const int PANEL_W = 360;
@@ -123,11 +142,38 @@ enum class EMainTab
 	Updates,
 };
 
+enum class EAccountState
+{
+	Checking,
+	NeedsOnboarding,
+	ReadyAnonymous,
+	ReadyEmail,
+	Busy,
+	Error,
+	Banned,
+};
+
+struct BackupFileView
+{
+	std::string Path;
+	uint64_t Size = 0;
+};
+
+struct BackupVersionView
+{
+	std::string Id;
+	std::string Path;
+	std::string CreatedAt;
+	std::string Sha256;
+	uint64_t Size = 0;
+};
+
 struct FriendView
 {
 	std::string Name;
 	std::string Clan;
 	bool Online = false;
+	bool Afk = false;
 	std::string ServerName;
 	std::string MapName;
 	std::string Address;
@@ -152,7 +198,19 @@ struct LauncherArgs
 	std::wstring SelfPath;
 	std::vector<std::wstring> ForwardArgs;
 	std::wstring ApplyArchive; // non-empty → apply zip then start game (no update check)
+	std::wstring VersionInfoPath;
+	std::wstring LauncherUpdateEvent;
 	DWORD WaitPid = 0;
+};
+
+struct UpdateMetadata
+{
+	std::string Component;
+	std::string Version;
+	std::string Url;
+	std::string Sha256;
+	std::string MinLauncherVersion;
+	uint64_t Size = 0;
 };
 
 static HWND g_hWnd = nullptr;
@@ -200,8 +258,7 @@ static bool g_UpdateCheckRefreshing = false;
 static std::atomic<bool> g_UpdateDownloadRunning{false};
 static bool g_UpdateAvailable = false;
 static bool g_GameRunning = false;
-static std::string g_PendingRemoteVersion;
-static std::string g_PendingArchiveUrl;
+static UpdateMetadata g_PendingClientUpdate;
 static std::wstring g_ButtonHint;
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
 static struct
@@ -215,6 +272,21 @@ static struct
 static std::vector<FriendView> g_Friends;
 static std::vector<NoticeView> g_Notices;
 static bool g_PlayBlocked = false;
+static EAccountState g_AccountState = EAccountState::Checking;
+static std::string g_AccountEmail;
+static std::string g_AccountError;
+static std::string g_AccountInstallId;
+static std::string g_AccountSecret;
+static bool g_AccountWorkerRunning = false;
+static bool g_AccountSignedOut = false;
+static bool g_HasSavedAccount = false;
+static std::string g_SavedAccountInstallId;
+static bool g_BackupBusy = false;
+static std::string g_BackupError;
+static std::vector<BackupFileView> g_BackupFiles;
+static std::vector<BackupVersionView> g_BackupVersions;
+static uint64_t g_BackupUsed = 0;
+static uint64_t g_BackupLimit = 0;
 static std::wstring g_ConnectAddress;
 static HANDLE g_hLaunchedGame = nullptr;
 static DWORD g_LaunchPollStartTick = 0;
@@ -248,6 +320,9 @@ static int g_MascotH = 0;
 #define WM_NOTICES_READY (WM_APP + 4)
 #define WM_UPDATE_CHECK_READY (WM_APP + 5)
 #define WM_SHOW_LAUNCHER (WM_APP + 6)
+#define WM_ACCOUNT_READY (WM_APP + 7)
+#define WM_BACKUP_READY (WM_APP + 8)
+static constexpr ULONG_PTR COPYDATA_FORWARD_LAUNCH_ARG = 0x55434C46;
 
 #define ANIM_TIMER_ID 1
 #define LAUNCH_TIMER_ID 2
@@ -270,10 +345,13 @@ static void RefreshGameRunningState();
 static void RequestUpdateCheck();
 static void RequestUpdateDownload();
 static void TryStartupAutoUpdate();
+static void RequestAccountCheck();
 static void ShowLauncherWindow(HWND hWnd);
 static void ActivateExistingLauncherWindow(HWND hWnd);
-static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallDir);
-static bool RunUpdateDownload(LauncherArgs *pA, const std::string &RemoteVersion, const std::string &ArchiveUrl);
+static bool IsForwardableShellArg(const std::wstring &Arg);
+static std::wstring SingleInstanceMutexName(const std::wstring &InstallDir);
+static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallDir, const std::vector<std::wstring> &ForwardArgs);
+static bool RunUpdateDownload(LauncherArgs *pA, const UpdateMetadata &Metadata);
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
 static void RequestFakeDownload();
 static void HandleDevCommand(const std::string &Json);
@@ -962,6 +1040,7 @@ static void SaveLauncherSettings(const std::wstring &InstallDir);
 static void LoadLauncherSettings(const std::wstring &InstallDir)
 {
 	g_AutoLaunch = false;
+	g_AccountSignedOut = false;
 	std::string Text;
 	const std::wstring AppPath = GetLauncherSettingsPath();
 	const bool HasLauncherCfg = !AppPath.empty() && ReadTextFile(AppPath, Text);
@@ -973,6 +1052,7 @@ static void LoadLauncherSettings(const std::wstring &InstallDir)
 			g_AutoUpdate = true;
 		else if(Text.find("auto_update=0") != std::string::npos)
 			g_AutoUpdate = false;
+		g_AccountSignedOut = Text.find("account_signed_out=1") != std::string::npos;
 	}
 	else
 	{
@@ -997,23 +1077,30 @@ static void SaveLauncherSettings(const std::wstring &InstallDir)
 	Text = g_AutoLaunch ? "auto_launch=1\n" : "auto_launch=0\n";
 	Text += g_AutoUpdate ? "auto_update=1\n" : "auto_update=0\n";
 	Text += g_DiscordRpc ? "discord_rpc=1\n" : "discord_rpc=0\n";
+	Text += g_AccountSignedOut ? "account_signed_out=1\n" : "account_signed_out=0\n";
 	WriteTextFile(Path, Text);
 }
 
-// Prefer on-disk stamp so updates stop looping even if UClient.exe in the zip
-// was missing/outdated. Commit any pending stamp left by a finished apply.
-static std::string ResolveLocalVersion(const std::wstring &InstallDir)
+// Prefer the on-disk client stamp and migrate the legacy pending filename once.
+static std::string ResolveLocalClientVersion(const std::wstring &InstallDir)
 {
 	const std::wstring VersionPath = JoinPath(InstallDir, kVersionFile);
-	const std::wstring PendingPath = JoinPath(InstallDir, kPendingVersionFile);
-	const std::wstring ArchivePath = JoinPath(InstallDir, kArchiveRel);
+	const std::wstring PendingPath = JoinPath(InstallDir, kClientPendingVersionFile);
+	const std::wstring LegacyPendingPath = JoinPath(InstallDir, kLegacyPendingVersionFile);
+	const std::wstring ArchivePath = JoinPath(InstallDir, kClientArchiveRel);
+	const std::wstring LegacyArchivePath = JoinPath(InstallDir, kLegacyArchiveRel);
+
+	if(GetFileAttributesW(PendingPath.c_str()) == INVALID_FILE_ATTRIBUTES &&
+		GetFileAttributesW(LegacyPendingPath.c_str()) != INVALID_FILE_ATTRIBUTES)
+		MoveFileExW(LegacyPendingPath.c_str(), PendingPath.c_str(), MOVEFILE_REPLACE_EXISTING);
 
 	std::string Pending;
 	if(ReadTextFile(PendingPath, Pending))
 	{
 		// Updater deletes the zip after a successful apply. If the archive is gone,
 		// treat pending as committed even when an older updater didn't write the stamp.
-		if(GetFileAttributesW(ArchivePath.c_str()) == INVALID_FILE_ATTRIBUTES)
+		if(GetFileAttributesW(ArchivePath.c_str()) == INVALID_FILE_ATTRIBUTES &&
+			GetFileAttributesW(LegacyArchivePath.c_str()) == INVALID_FILE_ATTRIBUTES)
 		{
 			WriteTextFile(VersionPath, Pending);
 			DeleteFileW(PendingPath.c_str());
@@ -1023,20 +1110,33 @@ static std::string ResolveLocalVersion(const std::wstring &InstallDir)
 	std::string OnDisk;
 	if(ReadTextFile(VersionPath, OnDisk))
 	{
-		if(CompareVersions(OnDisk, UCLIENT_LAUNCHER_VERSION) >= 0)
+		if(CompareVersions(OnDisk, UCLIENT_CLIENT_VERSION) >= 0)
 			return OnDisk;
 	}
-	return UCLIENT_LAUNCHER_VERSION;
+	return UCLIENT_CLIENT_VERSION;
 }
 
 static void CommitPendingVersion(const std::wstring &InstallDir)
 {
-	const std::wstring PendingPath = JoinPath(InstallDir, kPendingVersionFile);
+	const std::wstring PendingPath = JoinPath(InstallDir, kClientPendingVersionFile);
 	const std::wstring VersionPath = JoinPath(InstallDir, kVersionFile);
 	if(GetFileAttributesW(PendingPath.c_str()) == INVALID_FILE_ATTRIBUTES)
 		return;
 	DeleteFileW(VersionPath.c_str());
 	MoveFileExW(PendingPath.c_str(), VersionPath.c_str(), MOVEFILE_REPLACE_EXISTING);
+}
+
+static void FinalizePendingLauncherUpdate(const std::wstring &InstallDir, const std::wstring &SelfPath)
+{
+	const std::wstring PendingPath = JoinPath(InstallDir, L"update\\launcher.pending");
+	std::string PendingVersion;
+	if(!ReadTextFile(PendingPath, PendingVersion) ||
+		CompareVersions(UCLIENT_LAUNCHER_VERSION, PendingVersion) < 0)
+		return;
+	const std::wstring OldPath = SelfPath + L".old";
+	if(GetFileAttributesW(OldPath.c_str()) != INVALID_FILE_ATTRIBUTES && !DeleteFileW(OldPath.c_str()))
+		MoveFileExW(OldPath.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+	DeleteFileW(PendingPath.c_str());
 }
 
 // ─── In-process update apply (merged from bestclient-updater) ─────────────────
@@ -1130,6 +1230,8 @@ static int CountFiles(const wchar_t *pDir)
 	{
 		if(!wcscmp(Fd.cFileName, L".") || !wcscmp(Fd.cFileName, L".."))
 			continue;
+		if(Fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+			continue;
 		if(Fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
 		{
 			std::wstring Sub(pDir);
@@ -1143,6 +1245,55 @@ static int CountFiles(const wchar_t *pDir)
 	FindClose(h);
 	return N > 0 ? N : 1;
 }
+
+static bool SafeArchiveEntry(const std::wstring &Entry)
+{
+	if(Entry.empty() || Entry[0] == L'/' || Entry[0] == L'\\' || Entry.find(L':') != std::wstring::npos)
+		return false;
+	std::wstring Normal = Entry;
+	std::replace(Normal.begin(), Normal.end(), L'\\', L'/');
+	size_t Start = 0;
+	while(Start <= Normal.size())
+	{
+		const size_t End = Normal.find(L'/', Start);
+		const std::wstring Part = Normal.substr(Start, End == std::wstring::npos ? std::wstring::npos : End - Start);
+		if(Part == L"..")
+			return false;
+		if(End == std::wstring::npos)
+			break;
+		Start = End + 1;
+	}
+	return true;
+}
+
+static bool ValidateArchiveEntries(const std::wstring &ArchivePath, bool AllowLauncherExecutable)
+{
+	wchar_t aCommand[1024];
+	_snwprintf_s(aCommand, _TRUNCATE, L"tar.exe -tf \"%ls\"", ArchivePath.c_str());
+	bool Valid = true;
+	int Entries = 0;
+	const int ExitCode = RunProcess(aCommand, [&](const wchar_t *pLine) {
+		const std::wstring Entry = pLine;
+		if(Entry.empty())
+			return;
+		++Entries;
+		if(!SafeArchiveEntry(Entry))
+		{
+			Valid = false;
+			return;
+		}
+		std::wstring Normal = Entry;
+		std::replace(Normal.begin(), Normal.end(), L'\\', L'/');
+		const size_t Slash = Normal.find_last_of(L'/');
+		std::wstring Name = Normal.substr(Slash == std::wstring::npos ? 0 : Slash + 1);
+		std::transform(Name.begin(), Name.end(), Name.begin(), [](wchar_t Ch) { return (wchar_t)towlower(Ch); });
+		if(!AllowLauncherExecutable && Name == L"uclient.exe")
+			Valid = false;
+	});
+	return ExitCode == 0 && Entries > 0 && Valid;
+}
+
+static bool ExtractJsonString(const std::string &Json, const char *Key, std::string &Out);
 
 static void DeleteTree(const wchar_t *pPath)
 {
@@ -1159,8 +1310,11 @@ static void DeleteTree(const wchar_t *pPath)
 			std::wstring Full(pPath);
 			Full += L"\\";
 			Full += Fd.cFileName;
-			if(Fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			if((Fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+				!(Fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
 				DeleteTree(Full.c_str());
+			else if(Fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+				RemoveDirectoryW(Full.c_str());
 			else
 				DeleteFileW(Full.c_str());
 		} while(FindNextFileW(h, &Fd));
@@ -1187,6 +1341,8 @@ static void CopyTree(const wchar_t *pSrc, const wchar_t *pDst, const std::wstrin
 	{
 		if(!wcscmp(Fd.cFileName, L".") || !wcscmp(Fd.cFileName, L".."))
 			continue;
+		if(Fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+			continue;
 		std::wstring Src(pSrc);
 		Src += L"\\";
 		Src += Fd.cFileName;
@@ -1212,7 +1368,8 @@ static void CopyTree(const wchar_t *pSrc, const wchar_t *pDst, const std::wstrin
 	FindClose(h);
 }
 
-static bool ApplyUpdateArchive(const std::wstring &ArchivePath, const std::wstring &InstallDir, const std::wstring &SelfPath)
+static bool ApplyUpdateArchive(const std::wstring &ArchivePath, const std::wstring &InstallDir, const std::wstring &SelfPath,
+	const std::string &ExpectedClientVersion = {}, bool RequireBuildManifest = false, bool AllowLauncherExecutable = true)
 {
 	g_UpdateStage = EUpdateStage::Apply;
 	g_DownloadSpeed = 0;
@@ -1220,6 +1377,12 @@ static bool ApplyUpdateArchive(const std::wstring &ArchivePath, const std::wstri
 	SetButtonLabel(L"Applying update");
 	SetStatus(L"Extracting update...");
 	SetPercent(10);
+	if(!ValidateArchiveEntries(ArchivePath, AllowLauncherExecutable))
+	{
+		SetStatus(L"Update archive contains an unsafe or unexpected path");
+		g_Failed = true;
+		return false;
+	}
 
 	const std::wstring ExtractDir = JoinPath(InstallDir, L"update\\extract");
 	DeleteTree(ExtractDir.c_str());
@@ -1274,6 +1437,21 @@ static bool ApplyUpdateArchive(const std::wstring &ArchivePath, const std::wstri
 				if(GetFileAttributesW(Sub.c_str()) & FILE_ATTRIBUTE_DIRECTORY)
 					CopyRoot = Sub;
 			}
+		}
+	}
+
+	if(RequireBuildManifest)
+	{
+		std::string BuildManifest;
+		std::string BuiltClientVersion;
+		if(!ReadTextFile(JoinPath(CopyRoot, kBuildManifestFile), BuildManifest) ||
+			!ExtractJsonString(BuildManifest, "clientVersion", BuiltClientVersion) ||
+			BuiltClientVersion != ExpectedClientVersion)
+		{
+			SetStatus(L"Built client version does not match update metadata");
+			g_Failed = true;
+			DeleteTree(ExtractDir.c_str());
+			return false;
 		}
 	}
 
@@ -1355,8 +1533,14 @@ static bool ExtractJsonString(const std::string &Json, const char *Key, std::str
 		size_t Q2 = Q1 + 1;
 		while(Q2 < Json.size())
 		{
-			if(Json[Q2] == '"' && Json[Q2 - 1] != '\\')
-				break;
+			if(Json[Q2] == '"')
+			{
+				size_t Slashes = 0;
+				for(size_t Back = Q2; Back > Q1 + 1 && Json[Back - 1] == '\\'; --Back)
+					++Slashes;
+				if((Slashes & 1) == 0)
+					break;
+			}
 			++Q2;
 		}
 		if(Q2 >= Json.size())
@@ -1366,14 +1550,63 @@ static bool ExtractJsonString(const std::string &Json, const char *Key, std::str
 	}
 }
 
-static bool ExtractWindowsUrl(const std::string &Json, std::string &Version, std::string &Url)
+static uint64_t ExtractJsonUint64(const std::string &Json, const char *pKey);
+
+static bool AllowedUpdateUrl(const std::string &Url)
 {
-	if(!ExtractJsonString(Json, "version", Version))
+	const std::wstring Wide = Utf8ToWide(Url.c_str());
+	URL_COMPONENTS Components = {};
+	Components.dwStructSize = sizeof(Components);
+	wchar_t aHost[256] = {};
+	Components.lpszHostName = aHost;
+	Components.dwHostNameLength = 256;
+	if(!WinHttpCrackUrl(Wide.c_str(), 0, 0, &Components) || Components.nScheme != INTERNET_SCHEME_HTTPS)
+		return false;
+	std::wstring Host(aHost, Components.dwHostNameLength);
+	std::transform(Host.begin(), Host.end(), Host.begin(), [](wchar_t Ch) { return (wchar_t)towlower(Ch); });
+	return Host == L"ddnet.under1111.com";
+}
+
+static bool ValidSha256(const std::string &Sha256)
+{
+	if(Sha256.size() != 64)
+		return false;
+	for(unsigned char Ch : Sha256)
+		if(!std::isxdigit(Ch))
+			return false;
+	return true;
+}
+
+static bool ValidComponentVersion(const std::string &Version)
+{
+	int Major = 0;
+	int Minor = 0;
+	int Patch = 0;
+	char Extra = '\0';
+	return sscanf_s(Version.c_str(), "%d.%d.%d%c", &Major, &Minor, &Patch, &Extra, 1) == 3 &&
+		Major >= 0 && Minor >= 0 && Patch >= 0;
+}
+
+static bool ExtractUpdateMetadata(const std::string &Json, const char *pExpectedComponent, bool AllowLegacy, UpdateMetadata &Out)
+{
+	UpdateMetadata Metadata;
+	ExtractJsonString(Json, "component", Metadata.Component);
+	if(!ExtractJsonString(Json, "version", Metadata.Version))
 	{
-		if(!ExtractJsonString(Json, "tag_name", Version))
-			ExtractJsonString(Json, "name", Version);
+		if(!AllowLegacy || (!ExtractJsonString(Json, "tag_name", Metadata.Version) &&
+			!ExtractJsonString(Json, "name", Metadata.Version)))
+			return false;
 	}
-	if(Version.empty())
+	if(!ValidComponentVersion(Metadata.Version))
+		return false;
+	ExtractJsonString(Json, "minLauncherVersion", Metadata.MinLauncherVersion);
+	if(Metadata.MinLauncherVersion.empty())
+		ExtractJsonString(Json, "min_launcher_version", Metadata.MinLauncherVersion);
+	if(!Metadata.MinLauncherVersion.empty() && !ValidComponentVersion(Metadata.MinLauncherVersion))
+		return false;
+	if(!Metadata.Component.empty() && _stricmp(Metadata.Component.c_str(), pExpectedComponent) != 0)
+		return false;
+	if(Metadata.Component.empty() && !AllowLegacy)
 		return false;
 
 	const size_t Platforms = Json.find("\"platforms\"");
@@ -1386,12 +1619,41 @@ static bool ExtractWindowsUrl(const std::string &Json, std::string &Version, std
 	if(ObjEnd == std::string::npos)
 		return false;
 	const std::string Slice = Json.substr(Windows, ObjEnd - Windows + 1);
-	if(!ExtractJsonString(Slice, "url", Url))
+	if(!ExtractJsonString(Slice, "url", Metadata.Url))
 	{
-		if(!ExtractJsonString(Slice, "download_url", Url))
-			ExtractJsonString(Slice, "browser_download_url", Url);
+		if(!ExtractJsonString(Slice, "download_url", Metadata.Url))
+			ExtractJsonString(Slice, "browser_download_url", Metadata.Url);
 	}
-	return !Url.empty();
+	ExtractJsonString(Slice, "sha256", Metadata.Sha256);
+	Metadata.Size = ExtractJsonUint64(Slice, "size");
+	if(Metadata.Url.empty() || !AllowedUpdateUrl(Metadata.Url) ||
+		!ValidSha256(Metadata.Sha256) || Metadata.Size < 4)
+		return false;
+	Out = std::move(Metadata);
+	return true;
+}
+
+static bool FetchUpdateMetadata(const char *pUrl, const char *pComponent, bool AllowLegacy, UpdateMetadata &Out)
+{
+	char aUrl[768];
+	_snprintf_s(aUrl, _TRUNCATE, "%s?t=%lld", pUrl, (long long)time(nullptr));
+	std::string Body;
+	return HttpGetToString(Utf8ToWide(aUrl), Body) &&
+		ExtractUpdateMetadata(Body, pComponent, AllowLegacy, Out);
+}
+
+static bool FetchClientUpdateMetadata(UpdateMetadata &Out)
+{
+	if(FetchUpdateMetadata(UCLIENT_CLIENT_UPDATE_LATEST_URL, "client", false, Out))
+		return true;
+	UpdateMetadata Legacy;
+	if(FetchUpdateMetadata(UCLIENT_UPDATE_LATEST_URL, "client", true, Legacy) &&
+		CompareVersions(Legacy.Version, UCLIENT_CLIENT_VERSION) <= 0)
+	{
+		Out = std::move(Legacy);
+		return true;
+	}
+	return false;
 }
 
 static bool ExtractJsonBool(const std::string &Json, const char *Key, bool &Out)
@@ -1524,7 +1786,128 @@ static std::wstring GetUclientAccountPath()
 	return std::wstring(aAppData) + L"\\DDNet\\uclient_account.json";
 }
 
-static bool LoadAccountCredentials(std::string &InstallId, std::string &Secret)
+static std::string JsonEscapeValue(const std::string &In)
+{
+	std::string Out;
+	Out.reserve(In.size() + 8);
+	for(unsigned char Ch : In)
+	{
+		switch(Ch)
+		{
+		case '"': Out += "\\\""; break;
+		case '\\': Out += "\\\\"; break;
+		case '\b': Out += "\\b"; break;
+		case '\f': Out += "\\f"; break;
+		case '\n': Out += "\\n"; break;
+		case '\r': Out += "\\r"; break;
+		case '\t': Out += "\\t"; break;
+		default:
+			if(Ch < 0x20)
+			{
+				char aBuf[8];
+				_snprintf_s(aBuf, _TRUNCATE, "\\u%04x", (unsigned)Ch);
+				Out += aBuf;
+			}
+			else
+				Out.push_back((char)Ch);
+		}
+	}
+	return Out;
+}
+
+static std::string JsonUnescapeValue(const std::string &In)
+{
+	std::string Out;
+	for(size_t i = 0; i < In.size(); ++i)
+	{
+		if(In[i] != '\\' || i + 1 >= In.size())
+		{
+			Out.push_back(In[i]);
+			continue;
+		}
+		const char Ch = In[++i];
+		switch(Ch)
+		{
+		case '"': Out.push_back('"'); break;
+		case '\\': Out.push_back('\\'); break;
+		case '/': Out.push_back('/'); break;
+		case 'b': Out.push_back('\b'); break;
+		case 'f': Out.push_back('\f'); break;
+		case 'n': Out.push_back('\n'); break;
+		case 'r': Out.push_back('\r'); break;
+		case 't': Out.push_back('\t'); break;
+		default: Out.push_back(Ch); break;
+		}
+	}
+	return Out;
+}
+
+static bool EnsureDirectoryTree(const std::wstring &Dir)
+{
+	if(Dir.empty())
+		return false;
+	const DWORD Attr = GetFileAttributesW(Dir.c_str());
+	if(Attr != INVALID_FILE_ATTRIBUTES)
+		return (Attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
+	const std::wstring Parent = ParentDir(Dir);
+	if(!Parent.empty() && Parent != Dir && !EnsureDirectoryTree(Parent))
+		return false;
+	return CreateDirectoryW(Dir.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS;
+}
+
+static bool RandomBytes(unsigned char *pBytes, DWORD Size)
+{
+	HCRYPTPROV hProv = 0;
+	if(!CryptAcquireContextW(&hProv, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT))
+		return false;
+	const BOOL Ok = CryptGenRandom(hProv, Size, pBytes);
+	CryptReleaseContext(hProv, 0);
+	return Ok == TRUE;
+}
+
+static bool GenerateAccountCredentials(std::string &InstallId, std::string &Secret)
+{
+	unsigned char aUuid[16], aSecret[32];
+	if(!RandomBytes(aUuid, sizeof(aUuid)) || !RandomBytes(aSecret, sizeof(aSecret)))
+		return false;
+	aUuid[6] = (aUuid[6] & 0x0f) | 0x40;
+	aUuid[8] = (aUuid[8] & 0x3f) | 0x80;
+	char aId[37];
+	_snprintf_s(aId, _TRUNCATE,
+		"%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+		aUuid[0], aUuid[1], aUuid[2], aUuid[3], aUuid[4], aUuid[5], aUuid[6], aUuid[7],
+		aUuid[8], aUuid[9], aUuid[10], aUuid[11], aUuid[12], aUuid[13], aUuid[14], aUuid[15]);
+	char aHex[65] = {};
+	for(int i = 0; i < 32; ++i)
+		_snprintf_s(aHex + i * 2, 3, _TRUNCATE, "%02x", aSecret[i]);
+	InstallId = aId;
+	Secret = aHex;
+	return true;
+}
+
+static bool ValidInstallUuid(const std::string &Value)
+{
+	if(Value.size() != 36)
+		return false;
+	for(size_t i = 0; i < Value.size(); ++i)
+	{
+		const bool Hyphen = i == 8 || i == 13 || i == 18 || i == 23;
+		if(Hyphen ? Value[i] != '-' : !isxdigit((unsigned char)Value[i]))
+			return false;
+	}
+	return true;
+}
+
+static bool ValidAccountSecret(const std::string &Value)
+{
+	if(Value.size() < 32 || Value.size() > 128)
+		return false;
+	return std::all_of(Value.begin(), Value.end(), [](unsigned char Ch) {
+		return Ch >= 0x21 && Ch <= 0x7e;
+	});
+}
+
+static bool LoadAccountCredentials(std::string &InstallId, std::string &Secret, std::string *pGraceToken = nullptr, int64_t *pGraceExpiresAt = nullptr)
 {
 	InstallId.clear();
 	Secret.clear();
@@ -1537,7 +1920,37 @@ static bool LoadAccountCredentials(std::string &InstallId, std::string &Secret)
 	if(!ExtractJsonString(Text, "install_uuid", InstallId))
 		ExtractJsonString(Text, "install_id", InstallId);
 	ExtractJsonString(Text, "secret", Secret);
-	return !InstallId.empty() && !Secret.empty();
+	if(pGraceToken)
+		ExtractJsonString(Text, "grace_token", *pGraceToken);
+	if(pGraceExpiresAt)
+	{
+		bool Known = false, Permanent = false;
+		ExtractJsonExpiresAt(Text, "grace_expires_at", Known, Permanent, *pGraceExpiresAt);
+	}
+	return ValidInstallUuid(InstallId) && ValidAccountSecret(Secret);
+}
+
+static bool SaveAccountCredentials(const std::string &InstallId, const std::string &Secret, const std::string &GraceToken, int64_t GraceExpiresAt)
+{
+	const std::wstring Path = GetUclientAccountPath();
+	if(Path.empty() || !ValidInstallUuid(InstallId) || !ValidAccountSecret(Secret) || !EnsureDirectoryTree(ParentDir(Path)))
+		return false;
+	std::string Json = "{\"install_id\":\"" + JsonEscapeValue(InstallId) +
+		"\",\"install_uuid\":\"" + JsonEscapeValue(InstallId) +
+		"\",\"secret\":\"" + JsonEscapeValue(Secret) +
+		"\",\"grace_token\":\"" + JsonEscapeValue(GraceToken) + "\"";
+	char aNum[96];
+	_snprintf_s(aNum, _TRUNCATE, ",\"grace_expires_at\":%lld,\"registered\":true}\n", (long long)GraceExpiresAt);
+	Json += aNum;
+	const std::wstring Temp = Path + L".tmp";
+	if(!WriteTextFile(Temp, Json))
+		return false;
+	if(!MoveFileExW(Temp.c_str(), Path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+	{
+		DeleteFileW(Temp.c_str());
+		return false;
+	}
+	return true;
 }
 
 static void UpsertBanNotice(std::vector<NoticeView> &Notices, const std::string &Reason, bool HasExpiry, bool Permanent, int64_t ExpiresAt)
@@ -1579,7 +1992,8 @@ static void RecomputePlayBlocked(const std::vector<NoticeView> &Notices)
 	}
 }
 
-static bool HttpJsonRequest(const wchar_t *pMethod, const std::wstring &Url, const std::string &BodyIn, std::string &BodyOut, int &StatusOut);
+static bool HttpJsonRequest(const wchar_t *pMethod, const std::wstring &Url, const std::string &BodyIn, std::string &BodyOut, int &StatusOut, const std::wstring &ExtraHeaders = L"");
+static bool HttpBinaryRequest(const wchar_t *pMethod, const std::wstring &Url, const void *pData, size_t DataSize, std::vector<unsigned char> &BodyOut, int &StatusOut, const std::wstring &ExtraHeaders = L"", const wchar_t *pContentType = L"application/octet-stream");
 static bool HttpGetToString(const std::wstring &Url, std::string &OutBody);
 
 static void RefreshLauncherNotices()
@@ -1596,8 +2010,8 @@ static void RefreshLauncherNotices()
 	{
 		char aPayload[1024];
 		_snprintf_s(aPayload, _TRUNCATE,
-			"{\"install_id\":\"%s\",\"secret\":\"%s\",\"version\":\"%s\"}",
-			InstallId.c_str(), Secret.c_str(), UCLIENT_LAUNCHER_VERSION);
+			"{\"install_id\":\"%s\",\"secret\":\"%s\"}",
+			InstallId.c_str(), Secret.c_str());
 		std::string VerifyBody;
 		int Status = 0;
 		const std::wstring VerifyUrl = Utf8ToWide((std::string(UCLIENT_API_BASE_URL) + "/account/verify").c_str());
@@ -1887,6 +2301,7 @@ struct PlayerLoc
 	std::string Address;
 	std::string ServerName;
 	std::string MapName;
+	bool Afk = false;
 };
 
 static std::string FriendLookupKey(std::string Name)
@@ -1894,21 +2309,6 @@ static std::string FriendLookupKey(std::string Name)
 	for(char &Ch : Name)
 		Ch = (char)tolower((unsigned char)Ch);
 	return Name;
-}
-
-static bool IsClientNameEntry(const std::string &Json, size_t CNameKey)
-{
-	const size_t CountryKey = Json.find("\"country\"", CNameKey);
-	if(CountryKey != std::string::npos && CountryKey < CNameKey + 220)
-		return true;
-	const size_t ScoreKey = Json.find("\"score\"", CNameKey);
-	if(ScoreKey != std::string::npos && ScoreKey < CNameKey + 220)
-		return true;
-	const size_t IsPlayerKey = Json.find("\"is_player\"", CNameKey);
-	if(IsPlayerKey != std::string::npos && IsPlayerKey < CNameKey + 220)
-		return true;
-	const size_t ClanKey = Json.find("\"clan\"", CNameKey);
-	return ClanKey != std::string::npos && ClanKey < CNameKey + 220;
 }
 
 static void MatchFriendsOnline(std::vector<FriendView> &Friends, const std::string &Json)
@@ -1987,20 +2387,26 @@ static void MatchFriendsOnline(std::vector<FriendView> &Friends, const std::stri
 					size_t CPos = ClientsArr;
 					while(CPos < ClientsEnd)
 					{
-						const size_t CNameKey = Json.find("\"name\"", CPos);
-						if(CNameKey == std::string::npos || CNameKey >= ClientsEnd)
+						const size_t ClientObj = Json.find('{', CPos);
+						if(ClientObj == std::string::npos || ClientObj >= ClientsEnd)
 							break;
+						const size_t ClientEnd = FindMatchingBracket(Json, ClientObj, '{', '}');
+						if(ClientEnd == std::string::npos || ClientEnd > ClientsEnd)
+							break;
+						const size_t CNameKey = Json.find("\"name\"", ClientObj);
 						std::string PlayerName;
-						if(ExtractJsonStringAt(Json, CNameKey, PlayerName) && !PlayerName.empty() &&
-							IsClientNameEntry(Json, CNameKey))
+						if(CNameKey != std::string::npos && CNameKey < ClientEnd &&
+							ExtractJsonStringAt(Json, CNameKey, PlayerName) && !PlayerName.empty())
 						{
 							PlayerLoc Loc;
 							Loc.Address = Address;
 							Loc.ServerName = ServerName;
 							Loc.MapName = MapName;
+							const std::string ClientJson = Json.substr(ClientObj, ClientEnd - ClientObj + 1);
+							ExtractJsonBool(ClientJson, "afk", Loc.Afk);
 							ByName.emplace(FriendLookupKey(PlayerName), std::move(Loc));
 						}
-						CPos = CNameKey + 5;
+						CPos = ClientEnd + 1;
 					}
 				}
 			}
@@ -2018,6 +2424,7 @@ static void MatchFriendsOnline(std::vector<FriendView> &Friends, const std::stri
 		F.Address = It->second.Address;
 		F.ServerName = It->second.ServerName;
 		F.MapName = It->second.MapName;
+		F.Afk = It->second.Afk;
 	}
 
 	std::stable_sort(Friends.begin(), Friends.end(), [](const FriendView &A, const FriendView &B) {
@@ -2080,27 +2487,36 @@ static void RequestFriendsRefresh()
 
 // ─── HTTP (WinHTTP) ───────────────────────────────────────────────────────────
 
-static bool HttpJsonRequest(const wchar_t *pMethod, const std::wstring &Url, const std::string &BodyIn, std::string &BodyOut, int &StatusOut)
+static bool HttpBinaryRequest(const wchar_t *pMethod, const std::wstring &Url, const void *pData, size_t DataSize, std::vector<unsigned char> &BodyOut, int &StatusOut, const std::wstring &ExtraHeaders, const wchar_t *pContentType)
 {
 	StatusOut = 0;
 	BodyOut.clear();
+	if(DataSize > MAXDWORD)
+		return false;
 
 	URL_COMPONENTS Uc = {};
 	Uc.dwStructSize = sizeof(Uc);
 	wchar_t aHost[256];
 	wchar_t aPath[2048];
+	wchar_t aExtra[2048];
 	Uc.lpszHostName = aHost;
 	Uc.dwHostNameLength = 256;
 	Uc.lpszUrlPath = aPath;
 	Uc.dwUrlPathLength = 2048;
+	Uc.lpszExtraInfo = aExtra;
+	Uc.dwExtraInfoLength = 2048;
 	if(!WinHttpCrackUrl(Url.c_str(), 0, 0, &Uc))
 		return false;
+	std::wstring RequestPath(aPath, Uc.dwUrlPathLength);
+	if(Uc.dwExtraInfoLength)
+		RequestPath.append(aExtra, Uc.dwExtraInfoLength);
 
 	const std::wstring Ua = Utf8ToWide((std::string("UClientLauncher/") + UCLIENT_LAUNCHER_VERSION).c_str());
 	HINTERNET hSession = WinHttpOpen(Ua.c_str(),
 		WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
 	if(!hSession)
 		return false;
+	WinHttpSetTimeouts(hSession, 10000, 10000, 30000, 30000);
 
 	HINTERNET hConnect = WinHttpConnect(hSession, aHost, Uc.nPort, 0);
 	if(!hConnect)
@@ -2110,7 +2526,7 @@ static bool HttpJsonRequest(const wchar_t *pMethod, const std::wstring &Url, con
 	}
 
 	DWORD Flags = (Uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-	HINTERNET hRequest = WinHttpOpenRequest(hConnect, pMethod, aPath, nullptr,
+	HINTERNET hRequest = WinHttpOpenRequest(hConnect, pMethod, RequestPath.c_str(), nullptr,
 		WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, Flags);
 	if(!hRequest)
 	{
@@ -2119,10 +2535,13 @@ static bool HttpJsonRequest(const wchar_t *pMethod, const std::wstring &Url, con
 		return false;
 	}
 
-	const wchar_t *pHeaders = L"Content-Type: application/json\r\nAccept: application/json";
-	BOOL Ok = WinHttpSendRequest(hRequest, pHeaders, (DWORD)-1L,
-		BodyIn.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)BodyIn.data(),
-		(DWORD)BodyIn.size(), (DWORD)BodyIn.size(), 0);
+	std::wstring Headers = L"Accept: application/json\r\n";
+	if(pContentType && pContentType[0])
+		Headers += std::wstring(L"Content-Type: ") + pContentType + L"\r\n";
+	Headers += ExtraHeaders;
+	BOOL Ok = WinHttpSendRequest(hRequest, Headers.c_str(), (DWORD)-1L,
+		DataSize == 0 ? WINHTTP_NO_REQUEST_DATA : const_cast<void *>(pData),
+		(DWORD)DataSize, (DWORD)DataSize, 0);
 	if(Ok)
 		Ok = WinHttpReceiveResponse(hRequest, nullptr);
 
@@ -2137,15 +2556,20 @@ static bool HttpJsonRequest(const wchar_t *pMethod, const std::wstring &Url, con
 		DWORD Avail = 0;
 		while(WinHttpQueryDataAvailable(hRequest, &Avail) && Avail > 0)
 		{
-			std::string Chunk(Avail, '\0');
-			DWORD Read = 0;
-			if(!WinHttpReadData(hRequest, Chunk.data(), Avail, &Read))
+			const size_t OldSize = BodyOut.size();
+			if(OldSize + Avail > 12 * 1024 * 1024)
 			{
 				Ok = FALSE;
 				break;
 			}
-			Chunk.resize(Read);
-			BodyOut += Chunk;
+			BodyOut.resize(OldSize + Avail);
+			DWORD Read = 0;
+			if(!WinHttpReadData(hRequest, BodyOut.data() + OldSize, Avail, &Read))
+			{
+				Ok = FALSE;
+				break;
+			}
+			BodyOut.resize(OldSize + Read);
 		}
 	}
 
@@ -2153,6 +2577,15 @@ static bool HttpJsonRequest(const wchar_t *pMethod, const std::wstring &Url, con
 	WinHttpCloseHandle(hConnect);
 	WinHttpCloseHandle(hSession);
 	return Ok == TRUE;
+}
+
+static bool HttpJsonRequest(const wchar_t *pMethod, const std::wstring &Url, const std::string &BodyIn, std::string &BodyOut, int &StatusOut, const std::wstring &ExtraHeaders)
+{
+	std::vector<unsigned char> Bytes;
+	if(!HttpBinaryRequest(pMethod, Url, BodyIn.data(), BodyIn.size(), Bytes, StatusOut, ExtraHeaders, L"application/json"))
+		return false;
+	BodyOut.assign((const char *)Bytes.data(), Bytes.size());
+	return true;
 }
 
 static bool HttpGetToString(const std::wstring &Url, std::string &OutBody)
@@ -2163,7 +2596,862 @@ static bool HttpGetToString(const std::wstring &Url, std::string &OutBody)
 	return Status >= 200 && Status < 300 && !OutBody.empty();
 }
 
-static bool HttpDownloadFile(const std::wstring &Url, const std::wstring &DestPath)
+static std::wstring AccountAuthHeaders(const std::string &InstallId, const std::string &Secret)
+{
+	return L"Authorization: Bearer " + Utf8ToWide(Secret.c_str()) + L"\r\nx-uclient-install-id: " + Utf8ToWide(InstallId.c_str()) + L"\r\n";
+}
+
+static uint64_t ExtractJsonUint64(const std::string &Json, const char *pKey)
+{
+	const std::string Needle = std::string("\"") + pKey + "\"";
+	size_t Pos = Json.find(Needle);
+	if(Pos == std::string::npos || (Pos = Json.find(':', Pos + Needle.size())) == std::string::npos)
+		return 0;
+	return _strtoui64(Json.c_str() + Pos + 1, nullptr, 10);
+}
+
+static void PublishAccount(EAccountState State, const std::string &Email = {}, const std::string &Error = {})
+{
+	EnterCriticalSection(&g_Lock);
+	g_AccountState = State;
+	g_AccountEmail = Email;
+	g_AccountError = Error;
+	g_AccountWorkerRunning = false;
+	if(State == EAccountState::Banned)
+		g_PlayBlocked = true;
+	LeaveCriticalSection(&g_Lock);
+	if(g_hWnd)
+		PostMessage(g_hWnd, WM_ACCOUNT_READY, 0, 0);
+}
+
+static bool IsAccountReady()
+{
+	EnterCriticalSection(&g_Lock);
+	const bool Ready = g_AccountState == EAccountState::ReadyAnonymous || g_AccountState == EAccountState::ReadyEmail;
+	LeaveCriticalSection(&g_Lock);
+	return Ready;
+}
+
+static bool ParseAndSaveAccountResponse(const std::string &Body, const std::string &FallbackInstallId, const std::string &Secret, std::string &Email, bool &HasEmail)
+{
+	std::string InstallId = FallbackInstallId, GraceToken;
+	int64_t GraceExpiresAt = 0;
+	ExtractJsonString(Body, "install_id", InstallId);
+	ExtractJsonString(Body, "grace_token", GraceToken);
+	bool Known = false, Permanent = false;
+	ExtractJsonExpiresAt(Body, "grace_expires_at", Known, Permanent, GraceExpiresAt);
+	ExtractJsonBool(Body, "has_email", HasEmail);
+	ExtractJsonString(Body, "email", Email);
+	InstallId = JsonUnescapeValue(InstallId);
+	GraceToken = JsonUnescapeValue(GraceToken);
+	Email = JsonUnescapeValue(Email);
+	if(InstallId.empty() || Secret.empty() || !SaveAccountCredentials(InstallId, Secret, GraceToken, GraceExpiresAt))
+		return false;
+	EnterCriticalSection(&g_Lock);
+	g_AccountInstallId = InstallId;
+	g_AccountSecret = Secret;
+	LeaveCriticalSection(&g_Lock);
+	return true;
+}
+
+enum class EAccountOp
+{
+	Check,
+	RegisterEmail,
+	LoginEmail,
+	LoginKey,
+	LoginSaved,
+	RegisterAnonymous,
+	LinkEmail,
+	Logout,
+};
+
+struct AccountWork
+{
+	EAccountOp Op = EAccountOp::Check;
+	std::string Email;
+	std::string Password;
+	std::string InstallId;
+	std::string Secret;
+};
+
+static void SecureClear(std::string &Value)
+{
+	if(!Value.empty())
+		SecureZeroMemory(Value.data(), Value.size());
+	Value.clear();
+}
+
+static void MarkAccountSignedIn()
+{
+	g_AccountSignedOut = false;
+	SaveLauncherSettings(g_InstallDir);
+}
+
+static DWORD WINAPI AccountThread(LPVOID pData)
+{
+	std::unique_ptr<AccountWork> Work((AccountWork *)pData);
+	std::string InstallId = Work->InstallId;
+	std::string Secret = Work->Secret;
+	std::string Body, Response, Email;
+	bool HasEmail = false;
+	int Status = 0;
+	const std::wstring Base = Utf8ToWide(UCLIENT_API_BASE_URL);
+
+	if(Work->Op == EAccountOp::Logout)
+	{
+		RefreshGameRunningState();
+		if(EffectiveGameRunning())
+		{
+			EnterCriticalSection(&g_Lock);
+			g_AccountWorkerRunning = false;
+			LeaveCriticalSection(&g_Lock);
+			if(g_hWnd)
+				PostMessage(g_hWnd, WM_ACCOUNT_READY, 0, 0);
+			return 0;
+		}
+		g_AccountSignedOut = true;
+		SaveLauncherSettings(g_InstallDir);
+		EnterCriticalSection(&g_Lock);
+		g_AccountEmail.clear();
+		g_AccountError.clear();
+		g_SavedAccountInstallId = g_AccountInstallId;
+		SecureClear(g_AccountSecret);
+		g_AccountInstallId.clear();
+		g_BackupFiles.clear();
+		g_BackupVersions.clear();
+		LeaveCriticalSection(&g_Lock);
+		PublishAccount(EAccountState::NeedsOnboarding);
+		return 0;
+	}
+
+	if(Work->Op == EAccountOp::Check)
+	{
+		if(!LoadAccountCredentials(InstallId, Secret))
+		{
+			EnterCriticalSection(&g_Lock);
+			g_HasSavedAccount = false;
+			g_SavedAccountInstallId.clear();
+			LeaveCriticalSection(&g_Lock);
+			PublishAccount(EAccountState::NeedsOnboarding);
+			return 0;
+		}
+		EnterCriticalSection(&g_Lock);
+		g_HasSavedAccount = true;
+		g_SavedAccountInstallId = InstallId;
+		LeaveCriticalSection(&g_Lock);
+		if(g_AccountSignedOut)
+		{
+			PublishAccount(EAccountState::NeedsOnboarding, {}, "signin:");
+			return 0;
+		}
+		Body = "{\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"}";
+		if(!HttpJsonRequest(L"POST", Base + L"/account/verify", Body, Response, Status))
+		{
+			PublishAccount(EAccountState::Error, {}, "Could not verify this account. Check your connection.");
+			return 0;
+		}
+		if(Status == 423)
+		{
+			PublishAccount(EAccountState::Banned, {}, "This account is suspended.");
+			return 0;
+		}
+		if(Status == 403 || Status == 404)
+		{
+			PublishAccount(EAccountState::NeedsOnboarding, {}, "signin:");
+			return 0;
+		}
+		if(Status < 200 || Status >= 300)
+		{
+			PublishAccount(EAccountState::Error, {}, "Account verification failed.");
+			return 0;
+		}
+		if(!ParseAndSaveAccountResponse(Response, InstallId, Secret, Email, HasEmail))
+		{
+			PublishAccount(EAccountState::Error, {}, "Could not save the refreshed account credentials.");
+			return 0;
+		}
+		Response.clear();
+		if(!HttpJsonRequest(L"GET", Base + L"/account/profile", {}, Response, Status, AccountAuthHeaders(InstallId, Secret)))
+		{
+			PublishAccount(EAccountState::Error, {}, "Could not load the account profile.");
+			return 0;
+		}
+		if(Status == 423)
+		{
+			PublishAccount(EAccountState::Banned, {}, "This account is suspended.");
+			return 0;
+		}
+		if(Status == 403 || Status == 404)
+		{
+			PublishAccount(EAccountState::NeedsOnboarding, {}, "signin:");
+			return 0;
+		}
+		if(Status < 200 || Status >= 300)
+		{
+			PublishAccount(EAccountState::Error, {}, "Could not load the account profile.");
+			return 0;
+		}
+		ExtractJsonBool(Response, "has_email", HasEmail);
+		ExtractJsonString(Response, "email", Email);
+		Email = JsonUnescapeValue(Email);
+		EnterCriticalSection(&g_Lock);
+		g_AccountInstallId = InstallId;
+		g_AccountSecret = Secret;
+		LeaveCriticalSection(&g_Lock);
+		PublishAccount(HasEmail ? EAccountState::ReadyEmail : EAccountState::ReadyAnonymous, Email);
+		return 0;
+	}
+
+	if(Work->Op == EAccountOp::LoginKey || Work->Op == EAccountOp::LoginSaved)
+	{
+		if(Work->Op == EAccountOp::LoginSaved && !LoadAccountCredentials(InstallId, Secret))
+		{
+			EnterCriticalSection(&g_Lock);
+			g_HasSavedAccount = false;
+			g_SavedAccountInstallId.clear();
+			LeaveCriticalSection(&g_Lock);
+			PublishAccount(EAccountState::NeedsOnboarding, {}, "signin:Saved account credentials are unavailable.");
+			return 0;
+		}
+		Body = "{\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"}";
+		HttpJsonRequest(L"POST", Base + L"/account/verify", Body, Response, Status);
+		if(Status >= 200 && Status < 300 && ParseAndSaveAccountResponse(Response, InstallId, Secret, Email, HasEmail))
+		{
+			Response.clear();
+			HttpJsonRequest(L"GET", Base + L"/account/profile", {}, Response, Status, AccountAuthHeaders(InstallId, Secret));
+			ExtractJsonBool(Response, "has_email", HasEmail);
+			ExtractJsonString(Response, "email", Email);
+			Email = JsonUnescapeValue(Email);
+			EnterCriticalSection(&g_Lock);
+			g_AccountInstallId = InstallId;
+			g_AccountSecret = Secret;
+			g_HasSavedAccount = true;
+			g_SavedAccountInstallId = InstallId;
+			LeaveCriticalSection(&g_Lock);
+			MarkAccountSignedIn();
+			PublishAccount(HasEmail ? EAccountState::ReadyEmail : EAccountState::ReadyAnonymous, Email);
+		}
+		else if(Status == 423)
+			PublishAccount(EAccountState::Banned, {}, "This account is suspended.");
+		else
+			PublishAccount(EAccountState::NeedsOnboarding, {}, "signin:Invalid UUID or account key.");
+		return 0;
+	}
+
+	if(Work->Op == EAccountOp::LinkEmail)
+	{
+		Body = "{\"email\":\"" + JsonEscapeValue(Work->Email) + "\",\"password\":\"" + JsonEscapeValue(Work->Password) + "\"}";
+		HttpJsonRequest(L"POST", Base + L"/account/link-email", Body, Response, Status, AccountAuthHeaders(InstallId, Secret));
+		SecureClear(Body);
+		SecureClear(Work->Password);
+		if(Status >= 200 && Status < 300)
+			PublishAccount(EAccountState::ReadyEmail, Work->Email);
+		else
+			PublishAccount(EAccountState::ReadyAnonymous, {}, Status == 409 ? "That email is already in use." : "Could not link the email.");
+		return 0;
+	}
+
+	if(!GenerateAccountCredentials(InstallId, Secret))
+	{
+		SecureClear(Work->Password);
+		PublishAccount(EAccountState::NeedsOnboarding, {}, "Secure credential generation failed.");
+		return 0;
+	}
+	std::wstring Endpoint;
+	if(Work->Op == EAccountOp::RegisterEmail)
+	{
+		Endpoint = L"/account/register-email";
+		Body = "{\"email\":\"" + JsonEscapeValue(Work->Email) + "\",\"password\":\"" + JsonEscapeValue(Work->Password) +
+			"\",\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"}";
+	}
+	else if(Work->Op == EAccountOp::LoginEmail)
+	{
+		Endpoint = L"/account/login-email";
+		Body = "{\"email\":\"" + JsonEscapeValue(Work->Email) + "\",\"password\":\"" + JsonEscapeValue(Work->Password) +
+			"\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"}";
+	}
+	else
+	{
+		Endpoint = L"/account/register";
+		Body = "{\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"}";
+	}
+	HttpJsonRequest(L"POST", Base + Endpoint, Body, Response, Status);
+	SecureClear(Body);
+	SecureClear(Work->Password);
+	if(Status == 423)
+		PublishAccount(EAccountState::Banned, {}, "This account is suspended.");
+	else if(Status >= 200 && Status < 300 && ParseAndSaveAccountResponse(Response, InstallId, Secret, Email, HasEmail))
+	{
+		EnterCriticalSection(&g_Lock);
+		g_HasSavedAccount = true;
+		g_SavedAccountInstallId = g_AccountInstallId;
+		LeaveCriticalSection(&g_Lock);
+		MarkAccountSignedIn();
+		PublishAccount(HasEmail ? EAccountState::ReadyEmail : EAccountState::ReadyAnonymous, Email.empty() ? Work->Email : Email);
+	}
+	else
+		PublishAccount(EAccountState::NeedsOnboarding, {}, Status == 409 ? "This email is already registered." : "Account request failed. Check your details and try again.");
+	return 0;
+}
+
+static bool StartAccountWork(AccountWork *pWork)
+{
+	EnterCriticalSection(&g_Lock);
+	if(g_AccountWorkerRunning)
+	{
+		LeaveCriticalSection(&g_Lock);
+		delete pWork;
+		return false;
+	}
+	g_AccountWorkerRunning = true;
+	g_AccountState = pWork->Op == EAccountOp::Check ? EAccountState::Checking : EAccountState::Busy;
+	g_AccountError.clear();
+	LeaveCriticalSection(&g_Lock);
+	HANDLE hThread = CreateThread(nullptr, 0, AccountThread, pWork, 0, nullptr);
+	if(hThread)
+	{
+		CloseHandle(hThread);
+		return true;
+	}
+	delete pWork;
+	PublishAccount(EAccountState::Error, {}, "Could not start the account operation.");
+	return false;
+}
+
+static void RequestAccountCheck()
+{
+	auto *pWork = new AccountWork();
+	pWork->Op = EAccountOp::Check;
+	StartAccountWork(pWork);
+}
+
+static std::wstring GetBackupRoot()
+{
+	wchar_t aAppData[MAX_PATH] = {};
+	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
+		return {};
+	std::wstring Ddnet = std::wstring(aAppData) + L"\\DDNet";
+	if(GetFileAttributesW(Ddnet.c_str()) != INVALID_FILE_ATTRIBUTES)
+		return Ddnet;
+	std::wstring Legacy = std::wstring(aAppData) + L"\\Teeworlds";
+	return GetFileAttributesW(Legacy.c_str()) != INVALID_FILE_ATTRIBUTES ? Legacy : Ddnet;
+}
+
+static bool SafeRelativePath(const std::string &Path);
+
+static void ScanBackupTree(const std::wstring &Root, const std::wstring &Relative, std::vector<BackupFileView> &Out)
+{
+	const std::wstring Dir = Relative.empty() ? Root : JoinPath(Root, Relative.c_str());
+	WIN32_FIND_DATAW Fd = {};
+	HANDLE hFind = FindFirstFileW((Dir + L"\\*").c_str(), &Fd);
+	if(hFind == INVALID_HANDLE_VALUE)
+		return;
+	do
+	{
+		if(!wcscmp(Fd.cFileName, L".") || !wcscmp(Fd.cFileName, L".."))
+			continue;
+		const std::wstring Rel = Relative.empty() ? Fd.cFileName : Relative + L"\\" + Fd.cFileName;
+		if(Fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+		{
+			if(!(Fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+				ScanBackupTree(Root, Rel, Out);
+			continue;
+		}
+		const std::string Utf8Rel = WideToUtf8(Rel);
+		if((Fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) || !SafeRelativePath(Utf8Rel))
+			continue;
+		BackupFileView File;
+		File.Path = Utf8Rel;
+		File.Size = ((uint64_t)Fd.nFileSizeHigh << 32) | Fd.nFileSizeLow;
+		Out.push_back(std::move(File));
+	} while(FindNextFileW(hFind, &Fd));
+	FindClose(hFind);
+}
+
+static std::wstring UrlEncode(const std::string &Value)
+{
+	static const char *pHex = "0123456789ABCDEF";
+	std::string Out;
+	for(unsigned char Ch : Value)
+	{
+		if((Ch >= 'a' && Ch <= 'z') || (Ch >= 'A' && Ch <= 'Z') || (Ch >= '0' && Ch <= '9') || Ch == '-' || Ch == '_' || Ch == '.' || Ch == '~')
+			Out.push_back((char)Ch);
+		else
+		{
+			Out.push_back('%');
+			Out.push_back(pHex[Ch >> 4]);
+			Out.push_back(pHex[Ch & 15]);
+		}
+	}
+	return Utf8ToWide(Out.c_str());
+}
+
+static bool ReadBinaryFile(const std::wstring &Path, std::vector<unsigned char> &Out)
+{
+	FILE *pFile = nullptr;
+	if(_wfopen_s(&pFile, Path.c_str(), L"rb") != 0 || !pFile)
+		return false;
+	_fseeki64(pFile, 0, SEEK_END);
+	const __int64 Size = _ftelli64(pFile);
+	_fseeki64(pFile, 0, SEEK_SET);
+	if(Size < 0 || Size > MAXDWORD)
+	{
+		fclose(pFile);
+		return false;
+	}
+	Out.resize((size_t)Size);
+	const bool Ok = Out.empty() || fread(Out.data(), 1, Out.size(), pFile) == Out.size();
+	fclose(pFile);
+	return Ok;
+}
+
+static bool Sha256Hex(const std::vector<unsigned char> &Data, std::string &Out)
+{
+	HCRYPTPROV hProv = 0;
+	HCRYPTHASH hHash = 0;
+	if(!CryptAcquireContextW(&hProv, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT) ||
+		!CryptCreateHash(hProv, CALG_SHA_256, 0, 0, &hHash))
+	{
+		if(hProv)
+			CryptReleaseContext(hProv, 0);
+		return false;
+	}
+	BOOL Ok = Data.empty() || CryptHashData(hHash, Data.data(), (DWORD)Data.size(), 0);
+	unsigned char aHash[32];
+	DWORD Size = sizeof(aHash);
+	Ok = Ok && CryptGetHashParam(hHash, HP_HASHVAL, aHash, &Size, 0);
+	CryptDestroyHash(hHash);
+	CryptReleaseContext(hProv, 0);
+	if(!Ok || Size != 32)
+		return false;
+	char aHex[65] = {};
+	for(int i = 0; i < 32; ++i)
+		_snprintf_s(aHex + i * 2, 3, _TRUNCATE, "%02x", aHash[i]);
+	Out = aHex;
+	return true;
+}
+
+static bool SafeRelativePath(const std::string &Path)
+{
+	if(Path.empty() || Path[0] == '/' || Path[0] == '\\' || Path.find(':') != std::string::npos)
+		return false;
+	std::string Normal = Path;
+	std::replace(Normal.begin(), Normal.end(), '\\', '/');
+	if(Normal != ".." && Normal.find("../") != 0 && Normal.find("/../") == std::string::npos)
+	{
+		for(unsigned char Ch : Normal)
+			if(Ch < 0x20 || Ch == '<' || Ch == '>' || Ch == '"' || Ch == '|' || Ch == '?' || Ch == '*')
+				return false;
+		std::string Lower = Normal;
+		std::transform(Lower.begin(), Lower.end(), Lower.begin(), [](unsigned char Ch) { return (char)std::tolower(Ch); });
+		size_t SegmentStart = 0;
+		while(SegmentStart <= Lower.size())
+		{
+			const size_t SegmentEnd = Lower.find('/', SegmentStart);
+			const std::string Segment = Lower.substr(SegmentStart, SegmentEnd == std::string::npos ? std::string::npos : SegmentEnd - SegmentStart);
+			if(Segment == "dumps" || Segment == "downloadedskins" ||
+				Segment == "communityicons" || Segment == "communityicsons")
+				return false;
+			if(SegmentEnd == std::string::npos)
+				break;
+			SegmentStart = SegmentEnd + 1;
+		}
+		const size_t Slash = Lower.find_last_of('/');
+		const std::string Name = Lower.substr(Slash == std::string::npos ? 0 : Slash + 1);
+		if(Name == "steam_uclient_account.json" || Name == "uclient_account.json")
+			return false;
+		const size_t Dot = Lower.find_last_of('.');
+		if(Dot == std::string::npos || (Slash != std::string::npos && Dot < Slash))
+			return false;
+		const std::string Extension = Lower.substr(Dot);
+		return Extension == ".cfg" || Extension == ".txt" || Extension == ".png" ||
+			Extension == ".jpg" || Extension == ".jpeg" || Extension == ".log";
+	}
+	return false;
+}
+
+static bool ValidBackupContents(const std::string &Path, const std::vector<unsigned char> &Data)
+{
+	std::string Lower = Path;
+	std::transform(Lower.begin(), Lower.end(), Lower.begin(), [](unsigned char Ch) { return (char)std::tolower(Ch); });
+	const size_t Dot = Lower.find_last_of('.');
+	const std::string Extension = Dot == std::string::npos ? "" : Lower.substr(Dot);
+	if(Extension == ".png")
+	{
+		static const unsigned char s_aPng[] = {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+		return Data.size() >= sizeof(s_aPng) && memcmp(Data.data(), s_aPng, sizeof(s_aPng)) == 0;
+	}
+	if(Extension == ".jpg" || Extension == ".jpeg")
+		return Data.size() >= 4 && Data[0] == 0xff && Data[1] == 0xd8 && Data[2] == 0xff &&
+			Data[Data.size() - 2] == 0xff && Data[Data.size() - 1] == 0xd9;
+	if(Extension != ".cfg" && Extension != ".txt" && Extension != ".log")
+		return false;
+	for(unsigned char Ch : Data)
+		if(Ch < 0x20 && Ch != '\t' && Ch != '\r' && Ch != '\n')
+			return false;
+	std::string Text(Data.begin(), Data.end());
+	std::transform(Text.begin(), Text.end(), Text.begin(), [](unsigned char Ch) { return (char)std::tolower(Ch); });
+	const size_t First = Text.find_first_not_of(" \t\r\n");
+	const size_t Last = Text.find_last_not_of(" \t\r\n");
+	if(First != std::string::npos && Text[First] == '{' && Text[Last] == '}' &&
+		Text.find("\"install_id\"") != std::string::npos &&
+		(Text.find("\"secret\"") != std::string::npos || Text.find("\"grace_token\"") != std::string::npos))
+		return false;
+	return true;
+}
+
+static bool PathUsesReparsePoint(const std::wstring &Root, const std::wstring &Relative)
+{
+	std::wstring Current = Root;
+	const DWORD RootAttributes = GetFileAttributesW(Current.c_str());
+	if(RootAttributes != INVALID_FILE_ATTRIBUTES && (RootAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+		return true;
+	size_t Start = 0;
+	while(Start < Relative.size())
+	{
+		const size_t Separator = Relative.find_first_of(L"\\/", Start);
+		const std::wstring Part = Relative.substr(Start, Separator == std::wstring::npos ? std::wstring::npos : Separator - Start);
+		if(!Part.empty())
+		{
+			Current = JoinPath(Current, Part.c_str());
+			const DWORD Attributes = GetFileAttributesW(Current.c_str());
+			if(Attributes != INVALID_FILE_ATTRIBUTES && (Attributes & FILE_ATTRIBUTE_REPARSE_POINT))
+				return true;
+		}
+		if(Separator == std::wstring::npos)
+			break;
+		Start = Separator + 1;
+	}
+	return false;
+}
+
+static std::string FormatBackupTimestamp(uint64_t Timestamp)
+{
+	const time_t Time = (time_t)Timestamp;
+	tm Local = {};
+	if(localtime_s(&Local, &Time) != 0)
+		return std::to_string(Timestamp);
+	char aBuffer[64];
+	if(strftime(aBuffer, sizeof(aBuffer), "%Y-%m-%d %H:%M:%S", &Local) == 0)
+		return std::to_string(Timestamp);
+	return aBuffer;
+}
+
+static void ParseBackupVersions(const std::string &Json, std::vector<BackupVersionView> &Out)
+{
+	Out.clear();
+	size_t Pos = 0;
+	while((Pos = Json.find('{', Pos)) != std::string::npos)
+	{
+		const size_t End = Json.find('}', Pos);
+		if(End == std::string::npos)
+			break;
+		const std::string Obj = Json.substr(Pos, End - Pos + 1);
+		BackupVersionView V;
+		ExtractJsonString(Obj, "id", V.Id);
+		if(!ExtractJsonString(Obj, "relative_path", V.Path))
+			ExtractJsonString(Obj, "path", V.Path);
+		const uint64_t Timestamp = ExtractJsonUint64(Obj, "created_at");
+		if(Timestamp)
+			V.CreatedAt = FormatBackupTimestamp(Timestamp);
+		else
+			ExtractJsonString(Obj, "server_date", V.CreatedAt);
+		ExtractJsonString(Obj, "sha256", V.Sha256);
+		V.Id = JsonUnescapeValue(V.Id);
+		V.Path = JsonUnescapeValue(V.Path);
+		V.CreatedAt = JsonUnescapeValue(V.CreatedAt);
+		V.Sha256 = JsonUnescapeValue(V.Sha256);
+		V.Size = ExtractJsonUint64(Obj, "size_bytes");
+		if(!V.Size)
+			V.Size = ExtractJsonUint64(Obj, "size");
+		if(!V.Id.empty() && SafeRelativePath(V.Path))
+			Out.push_back(std::move(V));
+		Pos = End + 1;
+	}
+}
+
+enum class EBackupOp { Refresh, Upload, Restore, Delete };
+struct BackupWork
+{
+	EBackupOp Op = EBackupOp::Refresh;
+	std::vector<std::string> Paths;
+	std::string Id;
+	std::vector<std::string> Ids;
+};
+
+static bool BackupCredentials(std::string &InstallId, std::string &Secret)
+{
+	EnterCriticalSection(&g_Lock);
+	InstallId = g_AccountInstallId;
+	Secret = g_AccountSecret;
+	LeaveCriticalSection(&g_Lock);
+	return !InstallId.empty() && !Secret.empty();
+}
+
+static void RefreshBackupData(std::string &Error)
+{
+	std::string InstallId, Secret, Body;
+	int Status = 0;
+	std::vector<BackupFileView> Files;
+	ScanBackupTree(GetBackupRoot(), L"", Files);
+	std::sort(Files.begin(), Files.end(), [](const BackupFileView &A, const BackupFileView &B) {
+		return _stricmp(A.Path.c_str(), B.Path.c_str()) < 0;
+	});
+	if(!BackupCredentials(InstallId, Secret) ||
+		!HttpJsonRequest(L"GET", Utf8ToWide((std::string(UCLIENT_API_BASE_URL) + "/backups/cfg").c_str()), {}, Body, Status, AccountAuthHeaders(InstallId, Secret)) ||
+		Status < 200 || Status >= 300)
+		Error = "Could not load server backups.";
+	std::vector<BackupVersionView> Versions;
+	if(Error.empty())
+		ParseBackupVersions(Body, Versions);
+	EnterCriticalSection(&g_Lock);
+	g_BackupFiles = std::move(Files);
+	g_BackupVersions = std::move(Versions);
+	g_BackupUsed = ExtractJsonUint64(Body, "used_bytes");
+	if(!g_BackupUsed)
+		g_BackupUsed = ExtractJsonUint64(Body, "used");
+	if(!g_BackupUsed)
+		g_BackupUsed = ExtractJsonUint64(Body, "usage");
+	g_BackupLimit = ExtractJsonUint64(Body, "quota_bytes");
+	if(!g_BackupLimit)
+		g_BackupLimit = ExtractJsonUint64(Body, "limit");
+	LeaveCriticalSection(&g_Lock);
+}
+
+static DWORD WINAPI BackupThread(LPVOID pData)
+{
+	std::unique_ptr<BackupWork> Work((BackupWork *)pData);
+	std::string InstallId, Secret, Error, Response;
+	int Status = 0;
+	const std::wstring Root = GetBackupRoot();
+	const std::wstring Base = Utf8ToWide((std::string(UCLIENT_API_BASE_URL) + "/backups/cfg").c_str());
+	if(!BackupCredentials(InstallId, Secret))
+		Error = "Account credentials are unavailable.";
+	const std::wstring Auth = AccountAuthHeaders(InstallId, Secret);
+
+	if(Error.empty() && Work->Op == EBackupOp::Upload)
+	{
+		for(const std::string &Rel : Work->Paths)
+		{
+			if(!SafeRelativePath(Rel))
+			{
+				Error = "A selected file path is not allowed.";
+				break;
+			}
+			std::vector<unsigned char> Data, Reply;
+			const std::wstring WideRel = Utf8ToWide(Rel.c_str());
+			if(PathUsesReparsePoint(Root, WideRel))
+			{
+				Error = "A selected file uses an unsupported directory link.";
+				break;
+			}
+			if(!ReadBinaryFile(JoinPath(Root, WideRel.c_str()), Data))
+			{
+				Error = "One or more selected files could not be read.";
+				break;
+			}
+			if(!ValidBackupContents(Rel, Data))
+			{
+				Error = "The selected file \"" + Rel + "\" has invalid contents or contains account credentials.";
+				break;
+			}
+			if(!HttpBinaryRequest(L"PUT", Base, Data.data(), Data.size(), Reply, Status,
+					Auth + L"x-uclient-path: " + UrlEncode(Rel) + L"\r\n") ||
+				Status < 200 || Status >= 300)
+			{
+				Error = Status == 413 ? "The 10 MB account backup limit would be exceeded." :
+					"One or more files could not be uploaded.";
+				break;
+			}
+		}
+	}
+	else if(Error.empty() && Work->Op == EBackupOp::Delete)
+	{
+		HttpJsonRequest(L"DELETE", Base + L"/" + UrlEncode(Work->Id), {}, Response, Status, Auth);
+		if(Status < 200 || Status >= 300)
+			Error = "Could not delete this backup.";
+	}
+	else if(Error.empty() && Work->Op == EBackupOp::Restore)
+	{
+		struct RestoreItem
+		{
+			BackupVersionView Meta;
+			std::vector<unsigned char> Data;
+			std::wstring Rel;
+			std::wstring Dest;
+			std::wstring ExistingCopy;
+			bool HadExisting = false;
+		};
+		std::vector<BackupVersionView> Available;
+		EnterCriticalSection(&g_Lock);
+		Available = g_BackupVersions;
+		LeaveCriticalSection(&g_Lock);
+		std::vector<RestoreItem> Items;
+		std::vector<std::string> NormalPaths;
+		if(Work->Ids.empty())
+			Error = "No backup versions were selected.";
+		for(const std::string &Id : Work->Ids)
+		{
+			if(!Error.empty())
+				break;
+			RestoreItem Item;
+			for(const auto &V : Available)
+				if(V.Id == Id)
+				{
+					Item.Meta = V;
+					break;
+				}
+			if(Item.Meta.Id.empty() || !SafeRelativePath(Item.Meta.Path))
+			{
+				Error = "Backup metadata no longer matches a selected item.";
+				break;
+			}
+			std::string Normal = Item.Meta.Path;
+			std::replace(Normal.begin(), Normal.end(), '\\', '/');
+			std::transform(Normal.begin(), Normal.end(), Normal.begin(), [](unsigned char Ch) { return (char)std::tolower(Ch); });
+			if(std::find(NormalPaths.begin(), NormalPaths.end(), Normal) != NormalPaths.end())
+			{
+				Error = "Different versions of the same file cannot be restored together.";
+				break;
+			}
+			NormalPaths.push_back(Normal);
+			Items.push_back(std::move(Item));
+		}
+		for(RestoreItem &Item : Items)
+		{
+			if(!Error.empty())
+				break;
+			if(!HttpBinaryRequest(L"GET", Base + L"/" + UrlEncode(Item.Meta.Id), nullptr, 0, Item.Data, Status, Auth, nullptr) ||
+				Status < 200 || Status >= 300 || Item.Data.size() != Item.Meta.Size)
+			{
+				Error = "A downloaded backup size did not match.";
+				break;
+			}
+			std::string Hash;
+			if(!Sha256Hex(Item.Data, Hash) || _stricmp(Hash.c_str(), Item.Meta.Sha256.c_str()) != 0)
+			{
+				Error = "A downloaded backup checksum did not match.";
+				break;
+			}
+			if(!ValidBackupContents(Item.Meta.Path, Item.Data))
+			{
+				Error = "A downloaded backup no longer matches its allowed file type.";
+				break;
+			}
+			Item.Rel = Utf8ToWide(Item.Meta.Path.c_str());
+			Item.Dest = JoinPath(Root, Item.Rel.c_str());
+			if(PathUsesReparsePoint(Root, Item.Rel))
+				Error = "A restore path contains an unsupported directory link.";
+		}
+		const std::wstring BackupBase = ParentDir(ParentDir(GetUclientAccountPath())) +
+			L"\\UClient\\restore-backups\\" + std::to_wstring((long long)time(nullptr)) + L"-" + std::to_wstring(GetCurrentProcessId());
+		for(RestoreItem &Item : Items)
+		{
+			if(!Error.empty())
+				break;
+			if(!EnsureDirectoryTree(ParentDir(Item.Dest)))
+			{
+				Error = "Could not create a restore directory.";
+				break;
+			}
+			const DWORD Attributes = GetFileAttributesW(Item.Dest.c_str());
+			Item.HadExisting = Attributes != INVALID_FILE_ATTRIBUTES;
+			if(Item.HadExisting)
+			{
+				if(Attributes & FILE_ATTRIBUTE_DIRECTORY)
+				{
+					Error = "A restore destination is a directory.";
+					break;
+				}
+				Item.ExistingCopy = JoinPath(BackupBase, Item.Rel.c_str());
+				if(!EnsureDirectoryTree(ParentDir(Item.ExistingCopy)) ||
+					!CopyFileW(Item.Dest.c_str(), Item.ExistingCopy.c_str(), FALSE))
+				{
+					Error = "Could not preserve an existing file.";
+					break;
+				}
+			}
+		}
+		std::vector<size_t> Applied;
+		for(size_t i = 0; i < Items.size() && Error.empty(); ++i)
+		{
+			const std::wstring Temp = Items[i].Dest + L".uclient-restore.tmp";
+			DeleteFileW(Temp.c_str());
+			FILE *pFile = nullptr;
+			if(_wfopen_s(&pFile, Temp.c_str(), L"wb") != 0 || !pFile ||
+				(!Items[i].Data.empty() && fwrite(Items[i].Data.data(), 1, Items[i].Data.size(), pFile) != Items[i].Data.size()))
+				Error = "Could not write a restored file.";
+			if(pFile)
+				fclose(pFile);
+			if(Error.empty() && !MoveFileExW(Temp.c_str(), Items[i].Dest.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+				Error = "Could not replace a restored file.";
+			if(Error.empty())
+				Applied.push_back(i);
+			else
+				DeleteFileW(Temp.c_str());
+		}
+		if(!Error.empty() && !Applied.empty())
+		{
+			bool RollbackOk = true;
+			for(auto It = Applied.rbegin(); It != Applied.rend(); ++It)
+			{
+				RestoreItem &Item = Items[*It];
+				if(Item.HadExisting)
+				{
+					const std::wstring Temp = Item.Dest + L".uclient-rollback.tmp";
+					DeleteFileW(Temp.c_str());
+					if(!CopyFileW(Item.ExistingCopy.c_str(), Temp.c_str(), FALSE) ||
+						!MoveFileExW(Temp.c_str(), Item.Dest.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+					{
+						DeleteFileW(Temp.c_str());
+						RollbackOk = false;
+					}
+				}
+				else if(!DeleteFileW(Item.Dest.c_str()) && GetLastError() != ERROR_FILE_NOT_FOUND)
+					RollbackOk = false;
+			}
+			if(!RollbackOk)
+				Error += " Some files could not be rolled back.";
+		}
+	}
+	if(Error.empty() || Work->Op == EBackupOp::Refresh)
+		RefreshBackupData(Error);
+	EnterCriticalSection(&g_Lock);
+	g_BackupBusy = false;
+	g_BackupError = Error;
+	LeaveCriticalSection(&g_Lock);
+	if(g_hWnd)
+		PostMessage(g_hWnd, WM_BACKUP_READY, 0, 0);
+	return 0;
+}
+
+static void StartBackupWork(BackupWork *pWork)
+{
+	EnterCriticalSection(&g_Lock);
+	if(g_BackupBusy || g_GameRunning)
+	{
+		LeaveCriticalSection(&g_Lock);
+		delete pWork;
+		return;
+	}
+	g_BackupBusy = true;
+	g_BackupError.clear();
+	LeaveCriticalSection(&g_Lock);
+	HANDLE hThread = CreateThread(nullptr, 0, BackupThread, pWork, 0, nullptr);
+	if(hThread)
+		CloseHandle(hThread);
+	else
+	{
+		delete pWork;
+		EnterCriticalSection(&g_Lock);
+		g_BackupBusy = false;
+		g_BackupError = "Could not start the backup operation.";
+		LeaveCriticalSection(&g_Lock);
+	}
+}
+
+static bool HttpDownloadFile(const std::wstring &Url, const std::wstring &DestPath, uint64_t ExpectedSize, const std::string &ExpectedSha256)
 {
 	URL_COMPONENTS Uc = {};
 	Uc.dwStructSize = sizeof(Uc);
@@ -2201,6 +3489,14 @@ static bool HttpDownloadFile(const std::wstring &Url, const std::wstring &DestPa
 		WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
 	if(Ok)
 		Ok = WinHttpReceiveResponse(hRequest, nullptr);
+	if(Ok)
+	{
+		wchar_t aFinalUrl[2048] = {};
+		DWORD FinalUrlBytes = sizeof(aFinalUrl);
+		if(!WinHttpQueryOption(hRequest, WINHTTP_OPTION_URL, aFinalUrl, &FinalUrlBytes) ||
+			!AllowedUpdateUrl(WideToUtf8(aFinalUrl)))
+			Ok = FALSE;
+	}
 
 	FILE *pFile = nullptr;
 	if(Ok)
@@ -2215,6 +3511,8 @@ static bool HttpDownloadFile(const std::wstring &Url, const std::wstring &DestPa
 	DWORD LenSize = sizeof(ContentLen);
 	WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
 		WINHTTP_HEADER_NAME_BY_INDEX, &ContentLen, &LenSize, WINHTTP_NO_HEADER_INDEX);
+	if(Ok && ContentLen > 0 && ExpectedSize > 0 && ContentLen != ExpectedSize)
+		Ok = FALSE;
 
 	if(Ok)
 	{
@@ -2236,8 +3534,17 @@ static bool HttpDownloadFile(const std::wstring &Url, const std::wstring &DestPa
 				Ok = FALSE;
 				break;
 			}
-			fwrite(Buf.data(), 1, Read, pFile);
+			if(fwrite(Buf.data(), 1, Read, pFile) != Read)
+			{
+				Ok = FALSE;
+				break;
+			}
 			Total += Read;
+			if(ExpectedSize > 0 && Total > ExpectedSize)
+			{
+				Ok = FALSE;
+				break;
+			}
 			g_DownloadDone = Total;
 			if(ContentLen > 0)
 				SetPercent((int)((Total * 100ull) / ContentLen));
@@ -2270,7 +3577,7 @@ static bool HttpDownloadFile(const std::wstring &Url, const std::wstring &DestPa
 	WinHttpCloseHandle(hConnect);
 	WinHttpCloseHandle(hSession);
 
-	if(!Ok || Total < 4)
+	if(!Ok || Total < 4 || (ExpectedSize > 0 && Total != ExpectedSize))
 	{
 		DeleteFileW(DestPath.c_str());
 		return false;
@@ -2289,6 +3596,195 @@ static bool HttpDownloadFile(const std::wstring &Url, const std::wstring &DestPa
 			return false;
 		}
 	}
+	std::vector<unsigned char> Downloaded;
+	std::string ActualSha256;
+	if(!ReadBinaryFile(DestPath, Downloaded) || !Sha256Hex(Downloaded, ActualSha256) ||
+		_stricmp(ActualSha256.c_str(), ExpectedSha256.c_str()) != 0)
+	{
+		DeleteFileW(DestPath.c_str());
+		return false;
+	}
+	return true;
+}
+
+static bool InspectLauncherUpdateTree(const std::wstring &Directory, std::wstring &ExecutablePath, std::wstring &ManifestPath)
+{
+	WIN32_FIND_DATAW Data = {};
+	HANDLE hFind = FindFirstFileW((Directory + L"\\*").c_str(), &Data);
+	if(hFind == INVALID_HANDLE_VALUE)
+		return false;
+	bool Valid = true;
+	do
+	{
+		if(!wcscmp(Data.cFileName, L".") || !wcscmp(Data.cFileName, L".."))
+			continue;
+		if(Data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+		{
+			Valid = false;
+			break;
+		}
+		const std::wstring Path = JoinPath(Directory, Data.cFileName);
+		if(Data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+		{
+			if(!InspectLauncherUpdateTree(Path, ExecutablePath, ManifestPath))
+			{
+				Valid = false;
+				break;
+			}
+			continue;
+		}
+		if(_wcsicmp(Data.cFileName, L"UClient.exe") == 0 && ExecutablePath.empty())
+			ExecutablePath = Path;
+		else if(_wcsicmp(Data.cFileName, kBuildManifestFile) == 0 && ManifestPath.empty())
+			ManifestPath = Path;
+		else
+		{
+			Valid = false;
+			break;
+		}
+	} while(FindNextFileW(hFind, &Data));
+	FindClose(hFind);
+	return Valid;
+}
+
+static bool ApplyLauncherUpdate(LauncherArgs *pA, const UpdateMetadata &Metadata)
+{
+	if(!pA || Metadata.Version.empty())
+		return false;
+	SetPhase(EUiPhase::Updating);
+	g_UpdateStage = EUpdateStage::Download;
+	SetButtonLabel(L"Updating launcher");
+	SetStatus(L"Downloading launcher update...");
+	SetPercent(0);
+
+	const std::wstring ArchivePath = JoinPath(pA->InstallDir, kLauncherArchiveRel);
+	if(!HttpDownloadFile(Utf8ToWide(Metadata.Url.c_str()), ArchivePath, Metadata.Size, Metadata.Sha256))
+	{
+		SetStatus(L"Launcher update download or verification failed");
+		g_Failed = true;
+		return false;
+	}
+	if(!ValidateArchiveEntries(ArchivePath, true))
+	{
+		SetStatus(L"Launcher update archive is unsafe");
+		g_Failed = true;
+		DeleteFileW(ArchivePath.c_str());
+		return false;
+	}
+
+	const std::wstring ExtractDir = JoinPath(pA->InstallDir, L"update\\launcher-extract");
+	DeleteTree(ExtractDir.c_str());
+	EnsureDirectoryTree(ExtractDir);
+	wchar_t aCommand[1024];
+	_snwprintf_s(aCommand, _TRUNCATE, L"tar.exe -xf \"%ls\" -C \"%ls\"", ArchivePath.c_str(), ExtractDir.c_str());
+	if(RunProcess(aCommand) != 0)
+	{
+		SetStatus(L"Could not extract launcher update");
+		g_Failed = true;
+		DeleteTree(ExtractDir.c_str());
+		DeleteFileW(ArchivePath.c_str());
+		return false;
+	}
+
+	std::wstring NewExecutable;
+	std::wstring BuildManifestPath;
+	if(!InspectLauncherUpdateTree(ExtractDir, NewExecutable, BuildManifestPath) ||
+		NewExecutable.empty() || BuildManifestPath.empty())
+	{
+		SetStatus(L"Launcher update contains unexpected files");
+		g_Failed = true;
+		DeleteTree(ExtractDir.c_str());
+		DeleteFileW(ArchivePath.c_str());
+		return false;
+	}
+	std::string BuildManifest;
+	std::string BuiltVersion;
+	if(!ReadTextFile(BuildManifestPath, BuildManifest) ||
+		!ExtractJsonString(BuildManifest, "launcherVersion", BuiltVersion) ||
+		BuiltVersion != Metadata.Version)
+	{
+		SetStatus(L"Built launcher version does not match update metadata");
+		g_Failed = true;
+		DeleteTree(ExtractDir.c_str());
+		DeleteFileW(ArchivePath.c_str());
+		return false;
+	}
+
+	g_UpdateStage = EUpdateStage::Apply;
+	SetStatus(L"Installing launcher update...");
+	SetPercent(80);
+	const std::wstring OldPath = pA->SelfPath + L".old";
+	DeleteFileW(OldPath.c_str());
+	const bool MovedOld = MoveFileExW(pA->SelfPath.c_str(), OldPath.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
+	if(!MovedOld || !CopyFileW(NewExecutable.c_str(), pA->SelfPath.c_str(), FALSE))
+	{
+		if(MovedOld)
+		{
+			DeleteFileW(pA->SelfPath.c_str());
+			MoveFileExW(OldPath.c_str(), pA->SelfPath.c_str(), MOVEFILE_REPLACE_EXISTING);
+		}
+		SetStatus(L"Could not replace launcher");
+		g_Failed = true;
+		return false;
+	}
+
+	const std::wstring PendingPath = JoinPath(pA->InstallDir, L"update\\launcher.pending");
+	WriteTextFile(PendingPath, Metadata.Version);
+	DeleteTree(ExtractDir.c_str());
+	DeleteFileW(ArchivePath.c_str());
+
+	wchar_t aEventName[128];
+	_snwprintf_s(aEventName, _TRUNCATE, L"Local\\UClientLauncherUpdate_%lu_%lu", GetCurrentProcessId(), GetTickCount());
+	HANDLE hReadyEvent = CreateEventW(nullptr, TRUE, FALSE, aEventName);
+	if(!hReadyEvent)
+	{
+		DeleteFileW(pA->SelfPath.c_str());
+		MoveFileExW(OldPath.c_str(), pA->SelfPath.c_str(), MOVEFILE_REPLACE_EXISTING);
+		DeleteFileW(PendingPath.c_str());
+		SetStatus(L"Could not prepare launcher restart");
+		g_Failed = true;
+		return false;
+	}
+
+	if(g_hSingleInstanceMutex)
+	{
+		CloseHandle(g_hSingleInstanceMutex);
+		g_hSingleInstanceMutex = nullptr;
+	}
+	std::vector<std::wstring> RestartArgs = pA->ForwardArgs;
+	RestartArgs.emplace_back(kLauncherUpdateEventArg);
+	RestartArgs.emplace_back(aEventName);
+	HANDLE hNewProcess = nullptr;
+	if(!LaunchProcess(pA->SelfPath, RestartArgs, pA->InstallDir, false, &hNewProcess))
+	{
+		CloseHandle(hReadyEvent);
+		DeleteFileW(pA->SelfPath.c_str());
+		MoveFileExW(OldPath.c_str(), pA->SelfPath.c_str(), MOVEFILE_REPLACE_EXISTING);
+		DeleteFileW(PendingPath.c_str());
+		g_hSingleInstanceMutex = CreateMutexW(nullptr, TRUE, SingleInstanceMutexName(pA->InstallDir).c_str());
+		SetStatus(L"Could not restart updated launcher");
+		g_Failed = true;
+		return false;
+	}
+	const bool Restarted = WaitForSingleObject(hReadyEvent, 15000) == WAIT_OBJECT_0;
+	CloseHandle(hReadyEvent);
+	if(!Restarted)
+	{
+		TerminateProcess(hNewProcess, 1);
+		WaitForSingleObject(hNewProcess, 5000);
+		CloseHandle(hNewProcess);
+		DeleteFileW(pA->SelfPath.c_str());
+		MoveFileExW(OldPath.c_str(), pA->SelfPath.c_str(), MOVEFILE_REPLACE_EXISTING);
+		DeleteFileW(PendingPath.c_str());
+		g_hSingleInstanceMutex = CreateMutexW(nullptr, TRUE, SingleInstanceMutexName(pA->InstallDir).c_str());
+		SetStatus(L"Updated launcher did not start; the previous version was restored");
+		g_Failed = true;
+		return false;
+	}
+	CloseHandle(hNewProcess);
+	SetPercent(100);
+	if(g_hWnd)
+		PostMessage(g_hWnd, WM_CLOSE, 0, 0);
 	return true;
 }
 
@@ -2350,6 +3846,7 @@ static void RestorePendingArgs(LauncherArgs *pA)
 	FILE *pFile = nullptr;
 	if(_wfopen_s(&pFile, Pending.c_str(), L"rb") != 0 || !pFile)
 		return;
+	std::vector<std::wstring> RestoredArgs;
 	char aLine[1024];
 	while(fgets(aLine, sizeof(aLine), pFile))
 	{
@@ -2357,10 +3854,16 @@ static void RestorePendingArgs(LauncherArgs *pA)
 		while(N > 0 && (aLine[N - 1] == '\n' || aLine[N - 1] == '\r'))
 			aLine[--N] = '\0';
 		if(N > 0)
-			pA->ForwardArgs.push_back(Utf8ToWide(aLine));
+			RestoredArgs.push_back(Utf8ToWide(aLine));
 	}
 	fclose(pFile);
 	DeleteFileW(Pending.c_str());
+	if(!RestoredArgs.empty())
+	{
+		EnterCriticalSection(&g_Lock);
+		pA->ForwardArgs.insert(pA->ForwardArgs.end(), RestoredArgs.begin(), RestoredArgs.end());
+		LeaveCriticalSection(&g_Lock);
+	}
 }
 
 static std::wstring NormalizePathLower(std::wstring Path)
@@ -2436,10 +3939,7 @@ static void SyncReadyButtonLabel()
 {
 	if(g_Phase != EUiPhase::Ready)
 		return;
-	if(EffectiveUpdateAvailable())
-		SetButtonLabel(kUpdateLabel);
-	else
-		SetButtonLabel(kPlayLabel);
+	SetButtonLabel(kPlayLabel);
 }
 
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
@@ -2635,9 +4135,9 @@ static void SyncButtonHint()
 	LeaveCriticalSection(&g_Lock);
 }
 
-static bool RunUpdateDownload(LauncherArgs *pA, const std::string &RemoteVersion, const std::string &ArchiveUrl)
+static bool RunUpdateDownload(LauncherArgs *pA, const UpdateMetadata &Metadata)
 {
-	if(!pA || RemoteVersion.empty() || ArchiveUrl.empty())
+	if(!pA || Metadata.Version.empty() || Metadata.Url.empty())
 		return false;
 
 	SetPhase(EUiPhase::Updating);
@@ -2645,14 +4145,14 @@ static bool RunUpdateDownload(LauncherArgs *pA, const std::string &RemoteVersion
 	g_UpdateStage = EUpdateStage::Download;
 	g_Failed = false;
 	wchar_t aInfo[128];
-	_snwprintf_s(aInfo, _TRUNCATE, L"Version %hs", RemoteVersion.c_str());
+	_snwprintf_s(aInfo, _TRUNCATE, L"Version %hs", Metadata.Version.c_str());
 	SetStatus(aInfo);
 	SetPercent(0);
 
-	const std::wstring ArchivePath = JoinPath(pA->InstallDir, kArchiveRel);
+	const std::wstring ArchivePath = JoinPath(pA->InstallDir, kClientArchiveRel);
 	CreateDirectoryW(JoinPath(pA->InstallDir, L"update").c_str(), nullptr);
 
-	if(!HttpDownloadFile(Utf8ToWide(ArchiveUrl.c_str()), ArchivePath))
+	if(!HttpDownloadFile(Utf8ToWide(Metadata.Url.c_str()), ArchivePath, Metadata.Size, Metadata.Sha256))
 	{
 		SetStatus(L"Download failed — you can still play the current version");
 		g_Failed = true;
@@ -2660,11 +4160,11 @@ static bool RunUpdateDownload(LauncherArgs *pA, const std::string &RemoteVersion
 		return false;
 	}
 
-	WriteTextFile(JoinPath(pA->InstallDir, kPendingVersionFile), RemoteVersion);
+	WriteTextFile(JoinPath(pA->InstallDir, kClientPendingVersionFile), Metadata.Version);
 	SetStatus(L"");
 	g_UpdateStage = EUpdateStage::Apply;
 	SetButtonLabel(L"Applying update");
-	if(!ApplyUpdateArchive(ArchivePath, pA->InstallDir, pA->SelfPath))
+	if(!ApplyUpdateArchive(ArchivePath, pA->InstallDir, pA->SelfPath, Metadata.Version, true, false))
 	{
 		SetStatus(L"Update failed — you can still play");
 		g_Failed = true;
@@ -2672,8 +4172,8 @@ static bool RunUpdateDownload(LauncherArgs *pA, const std::string &RemoteVersion
 		return false;
 	}
 
-	WriteTextFile(JoinPath(pA->InstallDir, kVersionFile), RemoteVersion);
-	SetVersionLabel(RemoteVersion);
+	WriteTextFile(JoinPath(pA->InstallDir, kVersionFile), Metadata.Version);
+	SetVersionLabel(Metadata.Version);
 	g_UpdateStage = EUpdateStage::None;
 	g_DownloadSpeed = 0;
 	g_EtaSeconds = -1;
@@ -2685,21 +4185,18 @@ static bool RunUpdateDownload(LauncherArgs *pA, const std::string &RemoteVersion
 
 static DWORD WINAPI UpdateDownloadThread(LPVOID)
 {
-	std::string RemoteVersion;
-	std::string ArchiveUrl;
+	UpdateMetadata Metadata;
 	EnterCriticalSection(&g_Lock);
-	RemoteVersion = g_PendingRemoteVersion;
-	ArchiveUrl = g_PendingArchiveUrl;
+	Metadata = g_PendingClientUpdate;
 	LeaveCriticalSection(&g_Lock);
 
 	LauncherArgs *pA = g_pArgs;
-	const bool Ok = pA && RunUpdateDownload(pA, RemoteVersion, ArchiveUrl);
+	const bool Ok = pA && RunUpdateDownload(pA, Metadata);
 	if(Ok)
 	{
 		EnterCriticalSection(&g_Lock);
 		g_UpdateAvailable = false;
-		g_PendingRemoteVersion.clear();
-		g_PendingArchiveUrl.clear();
+		g_PendingClientUpdate = {};
 		LeaveCriticalSection(&g_Lock);
 	}
 
@@ -2720,7 +4217,7 @@ static void RequestUpdateDownload()
 		return;
 
 	EnterCriticalSection(&g_Lock);
-	if(g_PendingRemoteVersion.empty() || g_PendingArchiveUrl.empty())
+	if(g_PendingClientUpdate.Version.empty() || g_PendingClientUpdate.Url.empty())
 	{
 		LeaveCriticalSection(&g_Lock);
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
@@ -2770,18 +4267,14 @@ static DWORD WINAPI UpdateCheckThread(LPVOID)
 		return 0;
 	}
 
-	const std::string LocalVersion = ResolveLocalVersion(g_pArgs->InstallDir);
-	char aUrlUtf8[512];
-	_snprintf_s(aUrlUtf8, _TRUNCATE, "%s?t=%lld", UCLIENT_UPDATE_LATEST_URL, (long long)time(nullptr));
-	const std::wstring Url = Utf8ToWide(aUrlUtf8);
-
-	std::string Body;
-	std::string RemoteVersion;
-	std::string ArchiveUrl;
+	const std::string LocalVersion = ResolveLocalClientVersion(g_pArgs->InstallDir);
+	UpdateMetadata Metadata;
 	bool NeedUpdate = false;
-	if(HttpGetToString(Url, Body) && ExtractWindowsUrl(Body, RemoteVersion, ArchiveUrl))
+	if(FetchClientUpdateMetadata(Metadata))
 	{
-		if(CompareVersions(RemoteVersion, LocalVersion) > 0)
+		if((Metadata.MinLauncherVersion.empty() ||
+			   CompareVersions(UCLIENT_LAUNCHER_VERSION, Metadata.MinLauncherVersion) >= 0) &&
+			CompareVersions(Metadata.Version, LocalVersion) > 0)
 			NeedUpdate = true;
 	}
 
@@ -2789,14 +4282,10 @@ static DWORD WINAPI UpdateCheckThread(LPVOID)
 	g_UpdateAvailable = NeedUpdate;
 	if(NeedUpdate)
 	{
-		g_PendingRemoteVersion = RemoteVersion;
-		g_PendingArchiveUrl = ArchiveUrl;
+		g_PendingClientUpdate = Metadata;
 	}
 	else
-	{
-		g_PendingRemoteVersion.clear();
-		g_PendingArchiveUrl.clear();
-	}
+		g_PendingClientUpdate = {};
 	g_UpdateCheckRefreshing = false;
 	LeaveCriticalSection(&g_Lock);
 
@@ -2807,7 +4296,7 @@ static DWORD WINAPI UpdateCheckThread(LPVOID)
 		if(NeedUpdate)
 		{
 			wchar_t aInfo[128];
-			_snwprintf_s(aInfo, _TRUNCATE, L"Update available: %hs", RemoteVersion.c_str());
+			_snwprintf_s(aInfo, _TRUNCATE, L"Update available: %hs", Metadata.Version.c_str());
 			SetStatus(aInfo);
 		}
 	}
@@ -2873,7 +4362,19 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 		}
 
 		SetStatus(L"Applying update...");
-		if(!ApplyUpdateArchive(pA->ApplyArchive, pA->InstallDir, pA->SelfPath))
+		const size_t ArchiveSlash = pA->ApplyArchive.find_last_of(L"\\/");
+		const std::wstring ArchiveName = pA->ApplyArchive.substr(ArchiveSlash == std::wstring::npos ? 0 : ArchiveSlash + 1);
+		const bool IsSeparatedClientArchive = _wcsicmp(ArchiveName.c_str(), L"uclient-client.zip") == 0;
+		std::string ExpectedVersion;
+		if(IsSeparatedClientArchive)
+			ReadTextFile(JoinPath(pA->InstallDir, kClientPendingVersionFile), ExpectedVersion);
+		if(!ApplyUpdateArchive(
+			   pA->ApplyArchive,
+			   pA->InstallDir,
+			   pA->SelfPath,
+			   ExpectedVersion,
+			   IsSeparatedClientArchive,
+			   !IsSeparatedClientArchive))
 		{
 			g_UpdateStage = EUpdateStage::None;
 			SetPhase(EUiPhase::Ready);
@@ -2888,7 +4389,7 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 		SetPhase(EUiPhase::Launching);
 		SetButtonLabel(kRunningLabel);
 		SetStatus(L"Starting UClient...");
-		if(!g_PlayBlocked)
+		if(IsAccountReady() && !g_PlayBlocked)
 		{
 			HANDLE hProcess = nullptr;
 			if(LaunchGame(pA, &hProcess))
@@ -2914,22 +4415,36 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 	SetStatus(L"");
 	SetPercent(0);
 
-	const std::string LocalVersion = ResolveLocalVersion(pA->InstallDir);
+	UpdateMetadata LauncherMetadata;
+	if(FetchUpdateMetadata(UCLIENT_LAUNCHER_UPDATE_LATEST_URL, "launcher", false, LauncherMetadata) &&
+		CompareVersions(LauncherMetadata.Version, UCLIENT_LAUNCHER_VERSION) > 0)
+	{
+		if(ApplyLauncherUpdate(pA, LauncherMetadata))
+			return 0;
+		SetPhase(EUiPhase::Ready);
+		g_UpdateStage = EUpdateStage::None;
+		SetButtonLabel(kPlayLabel);
+		SyncButtonHint();
+		PostMessage(g_hWnd, WM_UPDATE_READY, 0, 0);
+		return 0;
+	}
+
+	const std::string LocalVersion = ResolveLocalClientVersion(pA->InstallDir);
 	SetVersionLabel(LocalVersion);
 	RefreshLauncherNotices();
 
-	char aUrlUtf8[512];
-	_snprintf_s(aUrlUtf8, _TRUNCATE, "%s?t=%lld", UCLIENT_UPDATE_LATEST_URL, (long long)time(nullptr));
-	const std::wstring aUrl = Utf8ToWide(aUrlUtf8);
-
-	std::string Body;
-	std::string RemoteVersion;
-	std::string ArchiveUrl;
+	UpdateMetadata ClientMetadata;
 	bool NeedUpdate = false;
 
-	if(HttpGetToString(aUrl, Body) && ExtractWindowsUrl(Body, RemoteVersion, ArchiveUrl))
+	if(FetchClientUpdateMetadata(ClientMetadata))
 	{
-		if(CompareVersions(RemoteVersion, LocalVersion) > 0)
+		if(!ClientMetadata.MinLauncherVersion.empty() &&
+			CompareVersions(UCLIENT_LAUNCHER_VERSION, ClientMetadata.MinLauncherVersion) < 0)
+		{
+			SetStatus(L"This client update requires a newer launcher");
+			g_Failed = true;
+		}
+		else if(CompareVersions(ClientMetadata.Version, LocalVersion) > 0)
 			NeedUpdate = true;
 	}
 	else
@@ -2942,16 +4457,15 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 	{
 		EnterCriticalSection(&g_Lock);
 		g_UpdateAvailable = true;
-		g_PendingRemoteVersion = RemoteVersion;
-		g_PendingArchiveUrl = ArchiveUrl;
+		g_PendingClientUpdate = ClientMetadata;
 		LeaveCriticalSection(&g_Lock);
 		wchar_t aInfo[128];
-		_snwprintf_s(aInfo, _TRUNCATE, L"Update available: %hs", RemoteVersion.c_str());
+		_snwprintf_s(aInfo, _TRUNCATE, L"Update available: %hs", ClientMetadata.Version.c_str());
 		SetStatus(aInfo);
 	}
 
 	RestorePendingArgs(pA);
-	const std::string FinalVersion = ResolveLocalVersion(pA->InstallDir);
+	const std::string FinalVersion = ResolveLocalClientVersion(pA->InstallDir);
 	WriteTextFile(JoinPath(pA->InstallDir, kVersionFile), FinalVersion);
 	SetVersionLabel(FinalVersion);
 	SetPercent(100);
@@ -2974,7 +4488,7 @@ static void RequestLaunchGame(const wchar_t *pConnectAddress = nullptr)
 {
 	if(!g_pArgs || g_Phase == EUiPhase::Launching || g_Phase == EUiPhase::Checking || g_Phase == EUiPhase::Updating)
 		return;
-	if(g_PlayBlocked || EffectiveUpdateAvailable())
+	if(!IsAccountReady() || g_PlayBlocked)
 		return;
 	if(pConnectAddress && pConnectAddress[0])
 		g_ConnectAddress = pConnectAddress;
@@ -2985,9 +4499,20 @@ static void RequestLaunchGame(const wchar_t *pConnectAddress = nullptr)
 	SetButtonLabel(kRunningLabel);
 	SetStatus(L"Starting UClient...");
 	CloseLaunchedGameHandle();
+	LauncherArgs LaunchArgs;
+	EnterCriticalSection(&g_Lock);
+	LaunchArgs = *g_pArgs;
+	g_pArgs->ForwardArgs.clear();
+	LeaveCriticalSection(&g_Lock);
 	HANDLE hProcess = nullptr;
-	if(!LaunchGame(g_pArgs, &hProcess))
+	if(!LaunchGame(&LaunchArgs, &hProcess))
 	{
+		EnterCriticalSection(&g_Lock);
+		g_pArgs->ForwardArgs.insert(
+			g_pArgs->ForwardArgs.begin(),
+			LaunchArgs.ForwardArgs.begin(),
+			LaunchArgs.ForwardArgs.end());
+		LeaveCriticalSection(&g_Lock);
 		SetPhase(EUiPhase::Ready);
 		SyncReadyButtonLabel();
 		g_ConnectAddress.clear();
@@ -3099,6 +4624,20 @@ static const char *UpdateStageName(EUpdateStage Stage)
 	}
 }
 
+static const char *AccountStateName(EAccountState State)
+{
+	switch(State)
+	{
+	case EAccountState::NeedsOnboarding: return "needs_onboarding";
+	case EAccountState::ReadyAnonymous: return "ready_anonymous";
+	case EAccountState::ReadyEmail: return "ready_email";
+	case EAccountState::Busy: return "busy";
+	case EAccountState::Error: return "error";
+	case EAccountState::Banned: return "banned";
+	default: return "checking";
+	}
+}
+
 static std::string BuildStateJson()
 {
 	std::wstring Button, Version, Status;
@@ -3110,6 +4649,13 @@ static std::string BuildStateJson()
 	bool UpdateAvailable = false;
 	bool GameRunning = false;
 	std::wstring ButtonHint;
+	EAccountState AccountState;
+	std::string AccountEmail, AccountError, SavedAccountInstallId, BackupError;
+	bool HasSavedAccount = false;
+	bool BackupBusy = false;
+	uint64_t BackupUsed = 0, BackupLimit = 0;
+	std::vector<BackupFileView> BackupFiles;
+	std::vector<BackupVersionView> BackupVersions;
 	EnterCriticalSection(&g_Lock);
 	Button = g_aButtonLabel;
 	Version = g_aVersionText;
@@ -3122,6 +4668,17 @@ static std::string BuildStateJson()
 	UpdateAvailable = g_UpdateAvailable;
 	GameRunning = g_GameRunning;
 	ButtonHint = g_ButtonHint;
+	AccountState = g_AccountState;
+	AccountEmail = g_AccountEmail;
+	AccountError = g_AccountError;
+	HasSavedAccount = g_HasSavedAccount;
+	SavedAccountInstallId = g_SavedAccountInstallId;
+	BackupBusy = g_BackupBusy;
+	BackupError = g_BackupError;
+	BackupUsed = g_BackupUsed;
+	BackupLimit = g_BackupLimit;
+	BackupFiles = g_BackupFiles;
+	BackupVersions = g_BackupVersions;
 	LeaveCriticalSection(&g_Lock);
 	PlayBlocked = EffectivePlayBlocked();
 	UpdateAvailable = EffectiveUpdateAvailable();
@@ -3139,9 +4696,15 @@ static std::string BuildStateJson()
 	JsonAddString(Json, "phase", pPhase);
 	JsonAddString(Json, "buttonLabel", WideToUtf8(Button));
 	JsonAddString(Json, "version", WideToUtf8(Version));
+	JsonAddString(Json, "launcherVersion", UCLIENT_LAUNCHER_VERSION);
 	JsonAddString(Json, "status", WideToUtf8(Status));
 	JsonAddString(Json, "logoUrl", g_LogoUrl);
 	JsonAddString(Json, "mascotUrl", g_MascotUrl);
+	JsonAddString(Json, "accountState", AccountStateName(AccountState));
+	JsonAddString(Json, "accountEmail", AccountEmail);
+	JsonAddString(Json, "accountError", AccountError);
+	JsonAddString(Json, "savedAccountInstallId", SavedAccountInstallId);
+	JsonAddString(Json, "backupError", BackupError);
 
 	char aNum[64];
 	_snprintf_s(aNum, sizeof(aNum), _TRUNCATE, "\"percent\":%d,", g_Percent.load());
@@ -3164,6 +4727,12 @@ static std::string BuildStateJson()
 	Json += PlayBlocked ? "\"playBlocked\":true," : "\"playBlocked\":false,";
 	Json += UpdateAvailable ? "\"updateAvailable\":true," : "\"updateAvailable\":false,";
 	Json += GameRunning ? "\"gameRunning\":true," : "\"gameRunning\":false,";
+	Json += HasSavedAccount ? "\"hasSavedAccount\":true," : "\"hasSavedAccount\":false,";
+	Json += BackupBusy ? "\"backupBusy\":true," : "\"backupBusy\":false,";
+	_snprintf_s(aNum, sizeof(aNum), _TRUNCATE, "\"backupUsed\":%llu,", (unsigned long long)BackupUsed);
+	Json += aNum;
+	_snprintf_s(aNum, sizeof(aNum), _TRUNCATE, "\"backupLimit\":%llu,", (unsigned long long)BackupLimit);
+	Json += aNum;
 	JsonAddString(Json, "buttonHint", WideToUtf8(ButtonHint));
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
 	Json += "\"devBuild\":true,";
@@ -3201,7 +4770,32 @@ static std::string BuildStateJson()
 	}
 	Json += "],";
 
-	Json += "\"friends\":[";
+	Json += "\"backupFiles\":[";
+	for(size_t i = 0; i < BackupFiles.size(); ++i)
+	{
+		if(i)
+			Json += ",";
+		Json += "{";
+		JsonAddString(Json, "path", BackupFiles[i].Path);
+		char aSize[64];
+		_snprintf_s(aSize, _TRUNCATE, "\"size\":%llu}", (unsigned long long)BackupFiles[i].Size);
+		Json += aSize;
+	}
+	Json += "],\"backupVersions\":[";
+	for(size_t i = 0; i < BackupVersions.size(); ++i)
+	{
+		if(i)
+			Json += ",";
+		Json += "{";
+		JsonAddString(Json, "id", BackupVersions[i].Id);
+		JsonAddString(Json, "path", BackupVersions[i].Path);
+		JsonAddString(Json, "createdAt", BackupVersions[i].CreatedAt);
+		JsonAddString(Json, "sha256", BackupVersions[i].Sha256);
+		char aSize[64];
+		_snprintf_s(aSize, _TRUNCATE, "\"size\":%llu}", (unsigned long long)BackupVersions[i].Size);
+		Json += aSize;
+	}
+	Json += "],\"friends\":[";
 	for(size_t i = 0; i < Friends.size(); ++i)
 	{
 		if(i)
@@ -3212,6 +4806,7 @@ static std::string BuildStateJson()
 		JsonAddString(Json, "server", Friends[i].ServerName);
 		JsonAddString(Json, "map", Friends[i].MapName);
 		JsonAddString(Json, "address", Friends[i].Address);
+		Json += Friends[i].Afk ? "\"afk\":true," : "\"afk\":false,";
 		Json += Friends[i].Online ? "\"online\":true" : "\"online\":false";
 		Json += "}";
 	}
@@ -3228,6 +4823,50 @@ static void PushWebState(bool Force)
 		return;
 	g_WebStateSent = Json;
 	WebUi::PostState(Json);
+}
+
+static bool ExtractWebString(const std::string &Json, const char *pKey, std::string &Out)
+{
+	std::string Raw;
+	if(!ExtractJsonString(Json, pKey, Raw))
+		return false;
+	Out = JsonUnescapeValue(Raw);
+	return true;
+}
+
+static std::vector<std::string> ExtractWebStringArray(const std::string &Json, const char *pKey)
+{
+	std::vector<std::string> Out;
+	const std::string Needle = std::string("\"") + pKey + "\"";
+	size_t Pos = Json.find(Needle);
+	if(Pos == std::string::npos || (Pos = Json.find('[', Pos + Needle.size())) == std::string::npos)
+		return Out;
+	for(++Pos; Pos < Json.size() && Json[Pos] != ']';)
+	{
+		while(Pos < Json.size() && Json[Pos] != '"' && Json[Pos] != ']')
+			++Pos;
+		if(Pos >= Json.size() || Json[Pos] == ']')
+			break;
+		const size_t Start = ++Pos;
+		bool Escape = false;
+		for(; Pos < Json.size(); ++Pos)
+		{
+			if(Json[Pos] == '"' && !Escape)
+				break;
+			Escape = Json[Pos] == '\\' && !Escape;
+			if(Json[Pos] != '\\')
+				Escape = false;
+		}
+		Out.push_back(JsonUnescapeValue(Json.substr(Start, Pos - Start)));
+		if(Pos < Json.size())
+			++Pos;
+	}
+	return Out;
+}
+
+static bool AccountAllowsPlay()
+{
+	return IsAccountReady();
 }
 
 static void OnWebMessage(const std::string &Json)
@@ -3257,7 +4896,7 @@ static void OnWebMessage(const std::string &Json)
 	}
 	else if(Cmd == "play")
 	{
-		if(g_Phase == EUiPhase::Ready && !EffectivePlayBlocked() && !EffectiveUpdateAvailable())
+		if(AccountAllowsPlay() && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked())
 			RequestLaunchGame();
 	}
 	else if(Cmd == "update")
@@ -3273,7 +4912,7 @@ static void OnWebMessage(const std::string &Json)
 	else if(Cmd == "join")
 	{
 		std::string Address;
-		if(ExtractJsonString(Json, "address", Address) && !Address.empty() && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked() && !EffectiveUpdateAvailable())
+		if(AccountAllowsPlay() && ExtractJsonString(Json, "address", Address) && !Address.empty() && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked())
 			RequestLaunchGame(Utf8ToWide(Address.c_str()).c_str());
 	}
 	else if(Cmd == "autolaunch")
@@ -3296,6 +4935,80 @@ static void OnWebMessage(const std::string &Json)
 	else if(Cmd == "refreshFriends")
 	{
 		RequestFriendsRefresh();
+	}
+	else if(Cmd == "accountRetry")
+	{
+		RequestAccountCheck();
+	}
+	else if(Cmd == "accountRegisterEmail" || Cmd == "accountLoginEmail" || Cmd == "accountLinkEmail")
+	{
+		auto *pWork = new AccountWork();
+		pWork->Op = Cmd == "accountRegisterEmail" ? EAccountOp::RegisterEmail :
+			(Cmd == "accountLoginEmail" ? EAccountOp::LoginEmail : EAccountOp::LinkEmail);
+		ExtractWebString(Json, "email", pWork->Email);
+		ExtractWebString(Json, "password", pWork->Password);
+		if(pWork->Op == EAccountOp::LinkEmail)
+			BackupCredentials(pWork->InstallId, pWork->Secret);
+		StartAccountWork(pWork);
+	}
+	else if(Cmd == "accountLoginKey")
+	{
+		auto *pWork = new AccountWork();
+		pWork->Op = EAccountOp::LoginKey;
+		ExtractWebString(Json, "installId", pWork->InstallId);
+		ExtractWebString(Json, "accountKey", pWork->Secret);
+		StartAccountWork(pWork);
+	}
+	else if(Cmd == "accountLoginSaved")
+	{
+		auto *pWork = new AccountWork();
+		pWork->Op = EAccountOp::LoginSaved;
+		StartAccountWork(pWork);
+	}
+	else if(Cmd == "accountRegisterAnonymous")
+	{
+		auto *pWork = new AccountWork();
+		pWork->Op = EAccountOp::RegisterAnonymous;
+		StartAccountWork(pWork);
+	}
+	else if(Cmd == "accountLogout")
+	{
+		RefreshGameRunningState();
+		if(EffectiveGameRunning())
+		{
+			PushWebState(true);
+			return;
+		}
+		auto *pWork = new AccountWork();
+		pWork->Op = EAccountOp::Logout;
+		StartAccountWork(pWork);
+	}
+	else if(Cmd == "backupRefresh")
+	{
+		auto *pWork = new BackupWork();
+		pWork->Op = EBackupOp::Refresh;
+		StartBackupWork(pWork);
+	}
+	else if(Cmd == "backupUpload")
+	{
+		auto *pWork = new BackupWork();
+		pWork->Op = EBackupOp::Upload;
+		pWork->Paths = ExtractWebStringArray(Json, "paths");
+		StartBackupWork(pWork);
+	}
+	else if(Cmd == "backupRestore" || Cmd == "backupDelete")
+	{
+		auto *pWork = new BackupWork();
+		pWork->Op = Cmd == "backupRestore" ? EBackupOp::Restore : EBackupOp::Delete;
+		if(pWork->Op == EBackupOp::Restore)
+		{
+			pWork->Ids = ExtractWebStringArray(Json, "ids");
+			if(pWork->Ids.empty() && ExtractWebString(Json, "id", pWork->Id))
+				pWork->Ids.push_back(pWork->Id);
+		}
+		else
+			ExtractWebString(Json, "id", pWork->Id);
+		StartBackupWork(pWork);
 	}
 }
 
@@ -3456,7 +5169,7 @@ static void EnsureBackground(HDC Ref)
 	g_hBgDc = CreateCompatibleDC(Ref);
 	if(!g_hBgDc)
 		return;
-	g_hBgBmp = CreateCompatibleBitmap(Ref, WND_W, WND_H);
+	g_hBgBmp = CreateCompatibleBitmap(Ref, g_WindowW, g_WindowH);
 	if(!g_hBgBmp)
 	{
 		DeleteDC(g_hBgDc);
@@ -3465,17 +5178,17 @@ static void EnsureBackground(HDC Ref)
 	}
 	g_hBgOld = SelectObject(g_hBgDc, g_hBgBmp);
 
-	RECT Full = {0, 0, WND_W, WND_H};
+	RECT Full = {0, 0, g_WindowW, g_WindowH};
 	FillVerticalGradient(g_hBgDc, Full, RGB(16, 18, 26), RGB(5, 5, 8));
-	DrawGlow(g_hBgDc, WND_W - 180, 110, 330, C_BLUE, 48);
-	DrawGlow(g_hBgDc, RAIL_W + 240, WND_H - 10, 330, C_ORANGE, 36);
-	DrawGlow(g_hBgDc, WND_W / 2 - 40, 250, 240, RGB(80, 36, 64), 28);
+	DrawGlow(g_hBgDc, g_WindowW - 180, 110, 330, C_BLUE, 48);
+	DrawGlow(g_hBgDc, RAIL_W + 240, g_WindowH - 10, 330, C_ORANGE, 36);
+	DrawGlow(g_hBgDc, g_WindowW / 2 - 40, 250, 240, RGB(80, 36, 64), 28);
 
-	RECT Side = {0, 0, RAIL_W, WND_H};
+	RECT Side = {0, 0, RAIL_W, g_WindowH};
 	HBRUSH SideBrush = CreateSolidBrush(C_SIDE);
 	FillRect(g_hBgDc, &Side, SideBrush);
 	DeleteObject(SideBrush);
-	RECT RailEdge = {RAIL_W - 1, 0, RAIL_W, WND_H};
+	RECT RailEdge = {RAIL_W - 1, 0, RAIL_W, g_WindowH};
 	HBRUSH EdgeBrush = CreateSolidBrush(RGB(34, 36, 44));
 	FillRect(g_hBgDc, &RailEdge, EdgeBrush);
 	DeleteObject(EdgeBrush);
@@ -3503,12 +5216,12 @@ static void Paint(HWND hWnd)
 	PAINTSTRUCT Ps;
 	HDC Dc = BeginPaint(hWnd, &Ps);
 	HDC Mem = CreateCompatibleDC(Dc);
-	HBITMAP Bmp = CreateCompatibleBitmap(Dc, WND_W, WND_H);
+	HBITMAP Bmp = CreateCompatibleBitmap(Dc, g_WindowW, g_WindowH);
 	HGDIOBJ Old = SelectObject(Mem, Bmp);
 
 	EnsureBackground(Dc);
 	if(g_hBgDc)
-		BitBlt(Mem, 0, 0, WND_W, WND_H, g_hBgDc, 0, 0, SRCCOPY);
+		BitBlt(Mem, 0, 0, g_WindowW, g_WindowH, g_hBgDc, 0, 0, SRCCOPY);
 
 	SetBkMode(Mem, TRANSPARENT);
 	EnsureFonts();
@@ -3534,20 +5247,20 @@ static void Paint(HWND hWnd)
 	FriendsLoaded = g_FriendsLoaded;
 	LeaveCriticalSection(&g_Lock);
 
-	g_CloseRc = {WND_W - 52, 12, WND_W - 14, 46};
-	g_MinRc = {WND_W - 96, 12, WND_W - 58, 46};
-	g_GearRc = {RAIL_W / 2 - 20, WND_H - 64, RAIL_W / 2 + 20, WND_H - 24};
+	g_CloseRc = {g_WindowW - 52, 12, g_WindowW - 14, 46};
+	g_MinRc = {g_WindowW - 96, 12, g_WindowW - 58, 46};
+	g_GearRc = {RAIL_W / 2 - 20, g_WindowH - 64, RAIL_W / 2 + 20, g_WindowH - 24};
 
-	const int PanelL = WND_W - PANEL_W - 24;
+	const int PanelL = g_WindowW - PANEL_W - 24;
 	const int ContentL = RAIL_W + 44;
 	const int ContentR = PanelL - 32;
 
-	g_BackRc = {ContentL, WND_H - 84, ContentL + 128, WND_H - 44};
+	g_BackRc = {ContentL, g_WindowH - 84, ContentL + 128, g_WindowH - 44};
 	g_CheckRc = {ContentL + 4, 176, ContentR, 262};
 	g_AutoUpdateCheckRc = {ContentL + 4, 280, ContentR, 366};
 	g_DiscordCheckRc = {ContentL + 4, 428, ContentR, 514};
-	g_FriendAreaRc = {PanelL + 12, 182, WND_W - 36, WND_H - 44};
-	g_FriendRefreshRc = {WND_W - 78, 68, WND_W - 44, 102};
+	g_FriendAreaRc = {PanelL + 12, 182, g_WindowW - 36, g_WindowH - 44};
+	g_FriendRefreshRc = {g_WindowW - 78, 68, g_WindowW - 44, 102};
 
 	// Tabs: equal cells sized from the widest label, centered over the content area.
 	{
@@ -3573,7 +5286,7 @@ static void Paint(HWND hWnd)
 		if(BtnW > ContentR - ContentL)
 			BtnW = ContentR - ContentL;
 		const int Lift = (int)((1.0f - g_AnimIntro) * 18.0f);
-		g_PlayBtnRc = {ContentL, WND_H - 132 + Lift, ContentL + BtnW, WND_H - 80 + Lift};
+		g_PlayBtnRc = {ContentL, g_WindowH - 132 + Lift, ContentL + BtnW, g_WindowH - 80 + Lift};
 	}
 
 	if(g_hMascotBmp)
@@ -3602,7 +5315,7 @@ static void Paint(HWND hWnd)
 	DrawCaptionButton(Mem, g_CloseRc, g_CloseHover, true);
 	DrawCaptionButton(Mem, g_MinRc, g_MinHover, false);
 
-	RECT Panel = {PanelL, 52, WND_W - 24, WND_H - 28};
+	RECT Panel = {PanelL, 52, g_WindowW - 24, g_WindowH - 28};
 	FillRoundRect(Mem, Panel, 18, RGB(18, 20, 26));
 	StrokeRoundRect(Mem, Panel, 18, C_BORDER);
 
@@ -3636,7 +5349,7 @@ static void Paint(HWND hWnd)
 	SetTextColor(Mem, C_MUTED);
 	TextOutW(Mem, PanelL + 24, 143, L"Double-click a friend to join", 29);
 
-	RECT Div = {PanelL + 24, 170, WND_W - 48, 171};
+	RECT Div = {PanelL + 24, 170, g_WindowW - 48, 171};
 	HBRUSH DivBrush = CreateSolidBrush(C_BORDER);
 	FillRect(Mem, &Div, DivBrush);
 	DeleteObject(DivBrush);
@@ -3698,7 +5411,7 @@ static void Paint(HWND hWnd)
 
 			const int TextL = Friends[i].HitRc.left + 34 + Slide;
 			RECT Dot = {Friends[i].HitRc.left + 12 + Slide, Y + 22, Friends[i].HitRc.left + 22 + Slide, Y + 32};
-			FillRoundRect(Mem, Dot, 10, Friends[i].Online ? RGB(90, 210, 130) : RGB(88, 90, 100));
+			FillRoundRect(Mem, Dot, 10, Friends[i].Online ? (Friends[i].Afk ? RGB(232, 185, 75) : RGB(90, 210, 130)) : RGB(88, 90, 100));
 
 			const std::wstring NameW = Utf8ToWide(Friends[i].Name.c_str());
 			SelectObject(Mem, BodyFont);
@@ -3921,9 +5634,8 @@ static void Paint(HWND hWnd)
 			}
 		}
 
-		const bool CanUpdate = g_Phase == EUiPhase::Ready && EffectiveUpdateAvailable() && !EffectivePlayBlocked() && !EffectiveGameRunning();
-		const bool CanPlay = g_Phase == EUiPhase::Ready && !EffectivePlayBlocked() && !EffectiveUpdateAvailable();
-		const bool BtnActive = CanPlay || CanUpdate;
+		const bool CanPlay = IsAccountReady() && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked();
+		const bool BtnActive = CanPlay;
 		const bool IsRunning = g_Phase == EUiPhase::Launching;
 		const bool ShowBar = g_Phase == EUiPhase::Updating || g_Phase == EUiPhase::Checking;
 		const int BtnH = g_PlayBtnRc.bottom - g_PlayBtnRc.top;
@@ -3994,8 +5706,27 @@ static void Paint(HWND hWnd)
 		TextOutW(Mem, g_PlayBtnRc.left + 2, g_PlayBtnRc.bottom + 8, aVersion, (int)wcslen(aVersion));
 	}
 
+	if(!IsAccountReady())
+	{
+		RECT Overlay = {0, 0, g_WindowW, g_WindowH};
+		HBRUSH OverlayBrush = CreateSolidBrush(RGB(8, 9, 13));
+		FillRect(Mem, &Overlay, OverlayBrush);
+		DeleteObject(OverlayBrush);
+		SelectObject(Mem, TitleFont);
+		SetTextColor(Mem, C_TITLE);
+		RECT Title = {160, 235, g_WindowW - 160, 290};
+		DrawTextW(Mem, L"Account setup required", -1, &Title, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		SelectObject(Mem, BodyFont);
+		SetTextColor(Mem, C_DIM);
+		RECT Help = {180, 300, g_WindowW - 180, 390};
+		DrawTextW(Mem, L"Account onboarding requires Microsoft Edge WebView2.\nInstall or repair the WebView2 Runtime, then restart UClient Launcher.", -1, &Help, DT_CENTER | DT_WORDBREAK);
+		DrawCaptionButton(Mem, g_CloseRc, g_CloseHover, true);
+		DrawCaptionButton(Mem, g_MinRc, g_MinHover, false);
+		g_PlayBtnRc = {};
+	}
+
 	SelectObject(Mem, GetStockObject(SYSTEM_FONT));
-	BitBlt(Dc, 0, 0, WND_W, WND_H, Mem, 0, 0, SRCCOPY);
+	BitBlt(Dc, 0, 0, g_WindowW, g_WindowH, Mem, 0, 0, SRCCOPY);
 	SelectObject(Mem, Old);
 	DeleteObject(Bmp);
 	DeleteDC(Mem);
@@ -4134,8 +5865,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 			Hand = PtInRectI(g_CheckRc, Pt.x, Pt.y) || PtInRectI(g_AutoUpdateCheckRc, Pt.x, Pt.y) || PtInRectI(g_DiscordCheckRc, Pt.x, Pt.y) || PtInRectI(g_BackRc, Pt.x, Pt.y);
 		else if(PtInRectI(g_TabOverviewRc, Pt.x, Pt.y) || PtInRectI(g_TabUpdatesRc, Pt.x, Pt.y))
 			Hand = true;
-		else if(PtInRectI(g_PlayBtnRc, Pt.x, Pt.y) && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked() &&
-			(!EffectiveUpdateAvailable() || !EffectiveGameRunning()))
+		else if(PtInRectI(g_PlayBtnRc, Pt.x, Pt.y) && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked())
 			Hand = true;
 		else
 		{
@@ -4153,6 +5883,27 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 			return TRUE;
 		}
 		SetCursor(LoadCursor(nullptr, IDC_ARROW));
+		return TRUE;
+	}
+	case WM_COPYDATA:
+	{
+		const COPYDATASTRUCT *pCopy = reinterpret_cast<const COPYDATASTRUCT *>(lParam);
+		if(!pCopy || pCopy->dwData != COPYDATA_FORWARD_LAUNCH_ARG ||
+			!pCopy->lpData || pCopy->cbData < sizeof(wchar_t) ||
+			pCopy->cbData > 32768 * sizeof(wchar_t) ||
+			pCopy->cbData % sizeof(wchar_t) != 0)
+			return FALSE;
+		const size_t Chars = pCopy->cbData / sizeof(wchar_t);
+		const wchar_t *pArg = static_cast<const wchar_t *>(pCopy->lpData);
+		if(pArg[Chars - 1] != L'\0' || wcsnlen_s(pArg, Chars) != Chars - 1)
+			return FALSE;
+		const std::wstring Arg(pArg, Chars - 1);
+		if(!IsForwardableShellArg(Arg) || !g_pArgs)
+			return FALSE;
+		EnterCriticalSection(&g_Lock);
+		g_pArgs->ForwardArgs.push_back(Arg);
+		LeaveCriticalSection(&g_Lock);
+		ShowLauncherWindow(hWnd);
 		return TRUE;
 	}
 	case WM_SHOW_LAUNCHER:
@@ -4175,13 +5926,36 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		InvalidateRect(hWnd, nullptr, FALSE);
 		PushWebState(true);
 		return 0;
+	case WM_ACCOUNT_READY:
+		InvalidateRect(hWnd, nullptr, FALSE);
+		PushWebState(true);
+		if(IsAccountReady())
+		{
+			EnterCriticalSection(&g_Lock);
+			const bool HasEmail = g_AccountState == EAccountState::ReadyEmail;
+			LeaveCriticalSection(&g_Lock);
+			if(HasEmail)
+			{
+				auto *pWork = new BackupWork();
+				pWork->Op = EBackupOp::Refresh;
+				StartBackupWork(pWork);
+			}
+			if(g_AutoLaunch && g_LaunchedFromGame && g_Phase == EUiPhase::Ready &&
+				!EffectivePlayBlocked() && g_pArgs && g_pArgs->ApplyArchive.empty())
+				RequestLaunchGame();
+		}
+		return 0;
+	case WM_BACKUP_READY:
+		InvalidateRect(hWnd, nullptr, FALSE);
+		PushWebState(true);
+		return 0;
 	case WM_UPDATE_READY:
 		InvalidateRect(hWnd, nullptr, FALSE);
 		PushWebState();
 		RequestFriendsRefresh();
 		RequestNoticesRefresh();
 		TryStartupAutoUpdate();
-		if(g_AutoLaunch && g_LaunchedFromGame && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked() && !EffectiveUpdateAvailable() && g_pArgs && g_pArgs->ApplyArchive.empty())
+		if(IsAccountReady() && g_AutoLaunch && g_LaunchedFromGame && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked() && g_pArgs && g_pArgs->ApplyArchive.empty())
 			RequestLaunchGame();
 		return 0;
 	case WM_WORKER_DONE:
@@ -4223,8 +5997,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 
 		const int X = (short)LOWORD(lParam);
 		const int Y = (short)HIWORD(lParam);
-		const bool PlayHover = !g_ShowSettings && PtInRectI(g_PlayBtnRc, X, Y) && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked() &&
-			(!EffectiveUpdateAvailable() || !EffectiveGameRunning());
+		const bool PlayHover = !g_ShowSettings && PtInRectI(g_PlayBtnRc, X, Y) && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked();
 		const bool GearHover = PtInRectI(g_GearRc, X, Y);
 		const bool BackHover = g_ShowSettings && PtInRectI(g_BackRc, X, Y);
 		const bool MinHover = PtInRectI(g_MinRc, X, Y);
@@ -4318,12 +6091,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		if(FriendHitIndex(X, Y) >= 0)
 			return 0; // joining a friend needs a double-click
 		if(PtInRectI(g_PlayBtnRc, X, Y) && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked())
-		{
-			if(EffectiveUpdateAvailable() && !EffectiveGameRunning())
-				RequestUpdateDownload();
-			else if(!EffectiveUpdateAvailable())
-				RequestLaunchGame();
-		}
+			RequestLaunchGame();
 		return 0;
 	}
 	case WM_LBUTTONDBLCLK:
@@ -4338,17 +6106,12 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 			if(Fi < (int)g_Friends.size() && g_Friends[Fi].Online && !g_Friends[Fi].Address.empty())
 				Addr = Utf8ToWide(g_Friends[Fi].Address.c_str());
 			LeaveCriticalSection(&g_Lock);
-			if(!Addr.empty() && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked() && !EffectiveUpdateAvailable())
+			if(!Addr.empty() && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked())
 				RequestLaunchGame(Addr.c_str());
 			return 0;
 		}
 		if(PtInRectI(g_PlayBtnRc, X, Y) && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked())
-		{
-			if(EffectiveUpdateAvailable() && !EffectiveGameRunning())
-				RequestUpdateDownload();
-			else if(!EffectiveUpdateAvailable())
-				RequestLaunchGame();
-		}
+			RequestLaunchGame();
 		return 0;
 	}
 	case WM_NCLBUTTONDBLCLK:
@@ -4371,16 +6134,9 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 				g_ShowSettings = false;
 				InvalidateRect(hWnd, nullptr, FALSE);
 			}
-			else if(g_Phase == EUiPhase::Ready)
-				DestroyWindow(hWnd);
 		}
 		else if(wParam == VK_RETURN && g_Phase == EUiPhase::Ready && !g_ShowSettings && !EffectivePlayBlocked())
-		{
-			if(EffectiveUpdateAvailable() && !EffectiveGameRunning())
-				RequestUpdateDownload();
-			else if(!EffectiveUpdateAvailable())
-				RequestLaunchGame();
-		}
+			RequestLaunchGame();
 		return 0;
 	}
 	return DefWindowProcW(hWnd, Msg, wParam, lParam);
@@ -4456,8 +6212,46 @@ static void ActivateExistingLauncherWindow(HWND hWnd)
 	SendMessageTimeoutW(hWnd, WM_SHOW_LAUNCHER, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 3000, &Result);
 }
 
+static bool IsForwardableShellArg(const std::wstring &Arg)
+{
+	if(Arg.empty())
+		return false;
+	std::wstring Lower = Arg;
+	std::transform(Lower.begin(), Lower.end(), Lower.begin(), [](wchar_t Ch) {
+		return (wchar_t)towlower(Ch);
+	});
+	const auto EndsWith = [&](const wchar_t *pSuffix) {
+		const size_t SuffixLength = wcslen(pSuffix);
+		return Lower.size() >= SuffixLength &&
+			Lower.compare(Lower.size() - SuffixLength, SuffixLength, pSuffix) == 0;
+	};
+	return Lower.rfind(L"ddnet://", 0) == 0 || EndsWith(L".demo") || EndsWith(L".map");
+}
+
+static void ForwardShellArgsToExistingLauncher(HWND hWnd, const std::vector<std::wstring> &ForwardArgs)
+{
+	for(const std::wstring &Arg : ForwardArgs)
+	{
+		if(!IsForwardableShellArg(Arg))
+			continue;
+		COPYDATASTRUCT Copy = {};
+		Copy.dwData = COPYDATA_FORWARD_LAUNCH_ARG;
+		Copy.cbData = (DWORD)((Arg.size() + 1) * sizeof(wchar_t));
+		Copy.lpData = const_cast<wchar_t *>(Arg.c_str());
+		DWORD_PTR Result = 0;
+		SendMessageTimeoutW(
+			hWnd,
+			WM_COPYDATA,
+			0,
+			reinterpret_cast<LPARAM>(&Copy),
+			SMTO_ABORTIFHUNG | SMTO_BLOCK,
+			3000,
+			&Result);
+	}
+}
+
 // Returns true when this process should continue starting a new launcher window.
-static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallDir)
+static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallDir, const std::vector<std::wstring> &ForwardArgs)
 {
 	const std::wstring MutexName = SingleInstanceMutexName(InstallDir);
 	g_hSingleInstanceMutex = CreateMutexW(nullptr, TRUE, MutexName.c_str());
@@ -4474,6 +6268,7 @@ static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallD
 			HWND hExisting = FindLauncherWindow();
 			if(hExisting)
 			{
+				ForwardShellArgsToExistingLauncher(hExisting, ForwardArgs);
 				ActivateExistingLauncherWindow(hExisting);
 				break;
 			}
@@ -4482,6 +6277,41 @@ static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallD
 		return false;
 	}
 	return true;
+}
+
+static void ConfigureWindowBounds(int &X, int &Y)
+{
+	POINT Cursor = {};
+	GetCursorPos(&Cursor);
+	const HMONITOR Monitor = MonitorFromPoint(Cursor, MONITOR_DEFAULTTOPRIMARY);
+	MONITORINFO Info = {};
+	Info.cbSize = sizeof(Info);
+	if(!GetMonitorInfoW(Monitor, &Info))
+	{
+		Info.rcMonitor = {0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
+		Info.rcWork = Info.rcMonitor;
+	}
+
+	const int MonitorW = Info.rcMonitor.right - Info.rcMonitor.left;
+	const int MonitorH = Info.rcMonitor.bottom - Info.rcMonitor.top;
+	const double ResolutionScale = std::min(
+		(double)MonitorW / REFERENCE_SCREEN_W,
+		(double)MonitorH / REFERENCE_SCREEN_H);
+	g_WindowW = std::max(960, (int)std::lround(REFERENCE_WND_W * ResolutionScale));
+	g_WindowH = std::max(600, (int)std::lround(REFERENCE_WND_H * ResolutionScale));
+
+	const int WorkW = Info.rcWork.right - Info.rcWork.left;
+	const int WorkH = Info.rcWork.bottom - Info.rcWork.top;
+	const double FitScale = std::min(
+		(double)std::max(1, WorkW - 24) / g_WindowW,
+		(double)std::max(1, WorkH - 24) / g_WindowH);
+	if(FitScale < 1.0)
+	{
+		g_WindowW = std::max(640, (int)std::lround(g_WindowW * FitScale));
+		g_WindowH = std::max(400, (int)std::lround(g_WindowH * FitScale));
+	}
+	X = Info.rcWork.left + (WorkW - g_WindowW) / 2;
+	Y = Info.rcWork.top + (WorkH - g_WindowH) / 2;
 }
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
@@ -4518,15 +6348,37 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 			g_pArgs->WaitPid = (DWORD)_wtol(ppArgv[++i]);
 			continue;
 		}
+		if(!wcscmp(ppArgv[i], kWriteVersionInfoArg) && i + 1 < Argc)
+		{
+			g_pArgs->VersionInfoPath = ppArgv[++i];
+			continue;
+		}
+		if(!wcscmp(ppArgv[i], kLauncherUpdateEventArg) && i + 1 < Argc)
+		{
+			g_pArgs->LauncherUpdateEvent = ppArgv[++i];
+			continue;
+		}
 		g_pArgs->ForwardArgs.emplace_back(ppArgv[i]);
 	}
 	LocalFree(ppArgv);
+	if(!g_pArgs->VersionInfoPath.empty())
+	{
+		const std::string Json = std::string("{\"component\":\"launcher\",\"clientVersion\":\"") +
+			UCLIENT_CLIENT_VERSION + "\",\"launcherVersion\":\"" + UCLIENT_LAUNCHER_VERSION +
+			"\",\"platform\":\"windows\",\"architecture\":\"x86_64\"}";
+		const bool Ok = WriteTextFile(g_pArgs->VersionInfoPath, Json);
+		delete g_pArgs;
+		g_pArgs = nullptr;
+		DeleteCriticalSection(&g_Lock);
+		CoUninitialize();
+		return Ok ? 0 : 1;
+	}
 
 	LoadLauncherSettings(g_InstallDir);
 	LoadLauncherArt(g_InstallDir);
-	SetVersionLabel(ResolveLocalVersion(g_InstallDir));
+	SetVersionLabel(ResolveLocalClientVersion(g_InstallDir));
 
-	if(g_pArgs->ApplyArchive.empty() && !AcquireSingleInstanceOrActivateExisting(g_InstallDir))
+	if(g_pArgs->ApplyArchive.empty() && !AcquireSingleInstanceOrActivateExisting(g_InstallDir, g_pArgs->ForwardArgs))
 	{
 		delete g_pArgs;
 		g_pArgs = nullptr;
@@ -4549,10 +6401,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 	Wc.hIconSm = Wc.hIcon;
 	RegisterClassExW(&Wc);
 
-	const int X = (GetSystemMetrics(SM_CXSCREEN) - WND_W) / 2;
-	const int Y = (GetSystemMetrics(SM_CYSCREEN) - WND_H) / 2;
+	int X = 0;
+	int Y = 0;
+	ConfigureWindowBounds(X, Y);
 	g_hWnd = CreateWindowExW(WS_EX_APPWINDOW, L"UClientLauncher", L"UClient Launcher",
-		WS_POPUP | WS_VISIBLE, X, Y, WND_W, WND_H, nullptr, nullptr, hInst, nullptr);
+		WS_POPUP | WS_VISIBLE, X, Y, g_WindowW, g_WindowH, nullptr, nullptr, hInst, nullptr);
 	if(!g_hWnd)
 		return 1;
 	ApplyWindowRoundCorners(g_hWnd);
@@ -4572,10 +6425,21 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 	RequestFriendsRefresh();
 	RequestNoticesRefresh();
 	RequestUpdateCheck();
+	RequestAccountCheck();
 
 	HANDLE hThread = CreateThread(nullptr, 0, WorkerThread, g_pArgs, 0, nullptr);
 	if(hThread)
 		CloseHandle(hThread);
+	if(!g_pArgs->LauncherUpdateEvent.empty())
+	{
+		HANDLE hReadyEvent = OpenEventW(EVENT_MODIFY_STATE, FALSE, g_pArgs->LauncherUpdateEvent.c_str());
+		if(hReadyEvent)
+		{
+			SetEvent(hReadyEvent);
+			CloseHandle(hReadyEvent);
+		}
+	}
+	FinalizePendingLauncherUpdate(g_InstallDir, g_pArgs->SelfPath);
 
 	MSG Msg;
 	while(GetMessageW(&Msg, nullptr, 0, 0))

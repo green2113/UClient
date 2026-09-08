@@ -1,6 +1,5 @@
 #include "account.h"
 
-#include <base/secure.h>
 #include <base/system.h>
 
 #include <engine/shared/config.h>
@@ -35,7 +34,6 @@ constexpr int ACCOUNT_ERROR_INVALID_REQUEST = 201;
 constexpr int ACCOUNT_ERROR_NOT_FOUND = 202;
 constexpr int ACCOUNT_ERROR_BAD_SECRET = 203;
 constexpr int ACCOUNT_ERROR_RATE_LIMITED = 205;
-constexpr int ACCOUNT_ERROR_ALREADY_EXISTS = 206;
 constexpr int ACCOUNT_ERROR_SERVER = 299;
 
 const char *JsonString(const json_value *pObject, const char *pKey)
@@ -48,12 +46,6 @@ int64_t JsonInteger(const json_value *pObject, const char *pKey)
 {
 	const json_value *pValue = json_object_get(pObject, pKey);
 	return pValue && pValue->type == json_integer ? pValue->u.integer : 0;
-}
-
-bool JsonBool(const json_value *pObject, const char *pKey)
-{
-	const json_value *pValue = json_object_get(pObject, pKey);
-	return pValue && pValue->type == json_boolean && pValue->u.boolean;
 }
 
 std::string JsonEscape(const char *pText)
@@ -117,9 +109,13 @@ bool VerifyEd25519(const unsigned char *pMessage, size_t MessageSize, const unsi
 void CUClientAccount::OnInit()
 {
 	LoadAccount();
-	if(!m_HadAccountFile)
-		GenerateIdentity(g_Config.m_UcInstallUuid[0] != '\0');
-	// HTTP register/verify is deferred to StartAuth() after asset loading.
+	if(!m_HadAccountFile || (!m_Registered && !m_aGraceToken[0]))
+	{
+		SetBlocked(EState::BLOCKED_NOT_REGISTERED,
+			Localize("Open the UClient launcher and sign in or create an account before starting the game."),
+			"");
+	}
+	// HTTP verification is deferred to StartAuth() after asset loading.
 }
 
 void CUClientAccount::StartAuth()
@@ -127,10 +123,14 @@ void CUClientAccount::StartAuth()
 	if(m_AuthStarted || m_State != EState::PENDING || m_pRequest)
 		return;
 	m_AuthStarted = true;
-	if(m_HadAccountFile && m_Registered)
-		BeginVerify();
-	else
-		BeginRegister();
+	if(!m_HadAccountFile || (!m_Registered && !m_aGraceToken[0]))
+	{
+		SetBlocked(EState::BLOCKED_NOT_REGISTERED,
+			Localize("Open the UClient launcher and sign in or create an account before starting the game."),
+			"");
+		return;
+	}
+	BeginVerify();
 }
 
 void CUClientAccount::OnShutdown()
@@ -171,15 +171,34 @@ void CUClientAccount::LoadAccount()
 			json_value_free(pRoot);
 		return;
 	}
-	str_copy(m_aInstallId, JsonString(pRoot, "install_uuid"), sizeof(m_aInstallId));
-	str_copy(m_aSecret, JsonString(pRoot, "secret"), sizeof(m_aSecret));
-	str_copy(m_aGraceToken, JsonString(pRoot, "grace_token"), sizeof(m_aGraceToken));
-	m_GraceExpiresAt = JsonInteger(pRoot, "grace_expires_at");
-	m_Registered = JsonBool(pRoot, "registered") || m_aGraceToken[0] != '\0';
+	const json_value *pInstallUuid = json_object_get(pRoot, "install_uuid");
+	const json_value *pSecret = json_object_get(pRoot, "secret");
+	const json_value *pGraceToken = json_object_get(pRoot, "grace_token");
+	const json_value *pGraceExpiresAt = json_object_get(pRoot, "grace_expires_at");
+	const json_value *pRegistered = json_object_get(pRoot, "registered");
+	const bool HasExpectedFormat =
+		pInstallUuid && pInstallUuid->type == json_string &&
+		pSecret && pSecret->type == json_string &&
+		pGraceToken && pGraceToken->type == json_string &&
+		pGraceExpiresAt && pGraceExpiresAt->type == json_integer &&
+		pRegistered && pRegistered->type == json_boolean &&
+		pSecret->u.string.ptr[0] != '\0' &&
+		str_length(pSecret->u.string.ptr) < (int)sizeof(m_aSecret) &&
+		str_length(pGraceToken->u.string.ptr) < (int)sizeof(m_aGraceToken);
+	CUuid InstallUuid;
+	if(!HasExpectedFormat || ParseUuid(&InstallUuid, pInstallUuid->u.string.ptr) || InstallUuid == UUID_ZEROED)
+	{
+		json_value_free(pRoot);
+		return;
+	}
+	FormatUuid(InstallUuid, m_aInstallId, sizeof(m_aInstallId));
+	str_copy(m_aSecret, pSecret->u.string.ptr, sizeof(m_aSecret));
+	str_copy(m_aGraceToken, pGraceToken->u.string.ptr, sizeof(m_aGraceToken));
+	m_GraceExpiresAt = pGraceExpiresAt->u.integer;
+	m_Registered = pRegistered->u.boolean;
 	json_value_free(pRoot);
-	m_HadAccountFile = m_aInstallId[0] != '\0' && m_aSecret[0] != '\0';
-	if(m_HadAccountFile)
-		str_copy(g_Config.m_UcInstallUuid, m_aInstallId, sizeof(g_Config.m_UcInstallUuid));
+	m_HadAccountFile = true;
+	str_copy(g_Config.m_UcInstallUuid, m_aInstallId, sizeof(g_Config.m_UcInstallUuid));
 }
 
 void CUClientAccount::SaveAccount() const
@@ -197,37 +216,6 @@ void CUClientAccount::SaveAccount() const
 	io_close(File);
 }
 
-void CUClientAccount::GenerateIdentity(bool KeepInstallId)
-{
-	if(!KeepInstallId || g_Config.m_UcInstallUuid[0] == '\0')
-		FormatUuid(RandomUuid(), g_Config.m_UcInstallUuid, sizeof(g_Config.m_UcInstallUuid));
-	str_copy(m_aInstallId, g_Config.m_UcInstallUuid, sizeof(m_aInstallId));
-	secure_random_password(m_aSecret, sizeof(m_aSecret), 64);
-	m_aGraceToken[0] = '\0';
-	m_GraceExpiresAt = 0;
-	m_Registered = false;
-	SaveAccount();
-}
-
-void CUClientAccount::BeginRegister()
-{
-	char aUrl[384];
-	str_format(aUrl, sizeof(aUrl), "%s/account/register", g_Config.m_UcApiBaseUrl);
-	const std::string PlayerName = JsonEscape(Client()->PlayerName());
-	char aJson[768];
-	str_format(aJson, sizeof(aJson),
-		"{\"install_id\":\"%s\",\"secret\":\"%s\",\"player_name\":\"%s\",\"version\":\"%s\"}",
-		m_aInstallId, m_aSecret, PlayerName.c_str(), UCLIENT_VERSION);
-	m_pRequest = HttpPostJson(aUrl, aJson);
-	m_pRequest->FailOnErrorStatus(false);
-	m_pRequest->Timeout(CTimeout{10000, 30000, 500, 5});
-	m_Request = ERequest::REGISTER;
-	m_State = EState::PENDING;
-	m_aError[0] = '\0';
-	m_aErrorCode[0] = '\0';
-	Http()->Run(m_pRequest);
-}
-
 void CUClientAccount::BeginVerify()
 {
 	char aUrl[384];
@@ -240,7 +228,6 @@ void CUClientAccount::BeginVerify()
 	m_pRequest = HttpPostJson(aUrl, aJson);
 	m_pRequest->FailOnErrorStatus(false);
 	m_pRequest->Timeout(CTimeout{10000, 30000, 500, 5});
-	m_Request = ERequest::VERIFY;
 	m_State = EState::PENDING;
 	m_aError[0] = '\0';
 	m_aErrorCode[0] = '\0';
@@ -271,12 +258,10 @@ void CUClientAccount::SetBlocked(EState State, const char *pMessage, const char 
 
 void CUClientAccount::FinishRequest()
 {
-	const ERequest Request = m_Request;
 	const EHttpState HttpState = m_pRequest->State();
 	const int Status = HttpState == EHttpState::DONE ? m_pRequest->StatusCode() : 0;
 	json_value *pRoot = HttpState == EHttpState::DONE ? m_pRequest->ResultJson() : nullptr;
 	m_pRequest = nullptr;
-	m_Request = ERequest::NONE;
 	char aErrorCode[128];
 	const auto FormatErrorCode = [&](int Code) {
 		str_format(aErrorCode, sizeof(aErrorCode), "%d", Code);
@@ -293,18 +278,9 @@ void CUClientAccount::FinishRequest()
 		else
 		{
 			FormatErrorCode(HttpState == EHttpState::ABORTED ? ACCOUNT_ERROR_ABORTED : ACCOUNT_ERROR_NETWORK);
-			if(Request == ERequest::REGISTER)
-			{
-				SetBlocked(EState::BLOCKED_NOT_REGISTERED,
-					Localize("Could not create a UClient account. Check your internet connection and try again."),
-					aErrorCode);
-			}
-			else
-			{
-				SetBlocked(EState::BLOCKED_NOT_REGISTERED,
-					Localize("UClient account verification is unavailable and the offline pass has expired."),
-					aErrorCode);
-			}
+			SetBlocked(EState::BLOCKED_NOT_REGISTERED,
+				Localize("UClient account verification is unavailable and the offline pass has expired."),
+				aErrorCode);
 		}
 		return;
 	}
@@ -325,15 +301,6 @@ void CUClientAccount::FinishRequest()
 		json_value_free(pRoot);
 		return;
 	}
-	if(Request == ERequest::REGISTER && Status == 409 && !m_RetriedWithNewIdentity)
-	{
-		if(pRoot)
-			json_value_free(pRoot);
-		m_RetriedWithNewIdentity = true;
-		GenerateIdentity(false);
-		BeginRegister();
-		return;
-	}
 	const char *pApiError = pRoot && pRoot->type == json_object ? JsonString(pRoot, "error") : "";
 	int ErrorCode = ACCOUNT_ERROR_SERVER;
 	if(Status >= 200 && Status < 300)
@@ -346,8 +313,6 @@ void CUClientAccount::FinishRequest()
 		ErrorCode = ACCOUNT_ERROR_BAD_SECRET;
 	else if(!str_comp(pApiError, "registration_rate_limited"))
 		ErrorCode = ACCOUNT_ERROR_RATE_LIMITED;
-	else if(!str_comp(pApiError, "account_exists"))
-		ErrorCode = ACCOUNT_ERROR_ALREADY_EXISTS;
 	else if(Status == 400)
 		ErrorCode = ACCOUNT_ERROR_INVALID_REQUEST;
 	else if(Status == 404)
@@ -356,8 +321,6 @@ void CUClientAccount::FinishRequest()
 		ErrorCode = ACCOUNT_ERROR_BAD_SECRET;
 	else if(Status == 429)
 		ErrorCode = ACCOUNT_ERROR_RATE_LIMITED;
-	else if(Status == 409)
-		ErrorCode = ACCOUNT_ERROR_ALREADY_EXISTS;
 	FormatErrorCode(ErrorCode);
 	if(pRoot)
 		json_value_free(pRoot);

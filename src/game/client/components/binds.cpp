@@ -4,7 +4,9 @@
 
 #include <base/log.h>
 #include <base/system.h>
+#include <base/vmath.h>
 
+#include <engine/client.h>
 #include <engine/config.h>
 #include <engine/console.h>
 #include <engine/shared/config.h>
@@ -14,7 +16,12 @@
 #include <game/client/components/console.h>
 #include <game/client/gameclient.h>
 
+#include <algorithm>
+#include <string>
+#include <vector>
+
 static constexpr LOG_COLOR BIND_PRINT_COLOR{255, 255, 204};
+static constexpr const char *NEAREST_PLAYER_PLACEHOLDER = "%nearestPlayer%";
 
 static void ApplyGoresModeSuffix(CGameClient *pGameClient, char *pBind, int Size)
 {
@@ -25,6 +32,185 @@ static void ApplyGoresModeSuffix(CGameClient *pGameClient, char *pBind, int Size
 	{
 		str_append(pBind, ";+prevweapon", Size);
 	}
+}
+
+static bool IsInsideQuotedArgument(const std::string &Command, size_t Position)
+{
+	bool InQuotes = false;
+	for(size_t i = 0; i < Position; ++i)
+	{
+		if(Command[i] == '\\' && i + 1 < Position && Command[i + 1] == '"')
+		{
+			++i;
+			continue;
+		}
+		if(Command[i] == '"')
+			InQuotes = !InQuotes;
+	}
+	return InQuotes;
+}
+
+static std::string EscapeQuotedConsoleValue(const char *pValue)
+{
+	std::string Escaped;
+	for(const char *p = pValue; *p != '\0'; ++p)
+	{
+		if(*p == '\\' || *p == '"')
+			Escaped.push_back('\\');
+		Escaped.push_back(*p);
+	}
+	return Escaped;
+}
+
+static std::string ExpandNearestPlayerPlaceholder(const std::string &Command, const char *pPlayerName)
+{
+	std::string Expanded;
+	size_t Cursor = 0;
+	while(true)
+	{
+		const size_t Placeholder = Command.find(NEAREST_PLAYER_PLACEHOLDER, Cursor);
+		if(Placeholder == std::string::npos)
+		{
+			Expanded.append(Command, Cursor, std::string::npos);
+			break;
+		}
+
+		Expanded.append(Command, Cursor, Placeholder - Cursor);
+		if(IsInsideQuotedArgument(Command, Placeholder))
+			Expanded += EscapeQuotedConsoleValue(pPlayerName);
+		else
+			Expanded += pPlayerName;
+		Cursor = Placeholder + str_length(NEAREST_PLAYER_PLACEHOLDER);
+	}
+	return Expanded;
+}
+
+static std::vector<std::string> SplitBindCommands(const char *pBind)
+{
+	std::vector<std::string> vCommands;
+	const char *pCommand = pBind;
+	if(const char *pWithoutPrefix = str_startswith(pCommand, "mc;"))
+		pCommand = pWithoutPrefix;
+
+	const char *pStart = pCommand;
+	bool InQuotes = false;
+	for(const char *p = pCommand;; ++p)
+	{
+		if(*p == '\\' && p[1] == '"')
+		{
+			++p;
+			continue;
+		}
+		if(*p == '"')
+			InQuotes = !InQuotes;
+		else if(*p == '\0' || (!InQuotes && (*p == ';' || *p == '#')))
+		{
+			vCommands.emplace_back(pStart, p - pStart);
+			if(*p == '\0' || *p == '#')
+				break;
+			pStart = p + 1;
+		}
+	}
+	return vCommands;
+}
+
+bool CBinds::FindNearestPlayerName(char *pName, size_t NameSize)
+{
+	if(NameSize == 0)
+		return false;
+	pName[0] = '\0';
+
+	if(Client()->State() != IClient::STATE_ONLINE)
+		return false;
+
+	const int LocalClientId = GameClient()->m_Snap.m_LocalClientId;
+	if(LocalClientId < 0 || LocalClientId >= MAX_CLIENTS ||
+		!GameClient()->m_aClients[LocalClientId].m_Active ||
+		!GameClient()->m_Snap.m_aCharacters[LocalClientId].m_Active)
+	{
+		return false;
+	}
+
+	const vec2 LocalPos = GameClient()->m_aClients[LocalClientId].m_RenderPos;
+	int NearestClientId = -1;
+	float NearestDistance = -1.0f;
+	for(int ClientId = 0; ClientId < MAX_CLIENTS; ++ClientId)
+	{
+		if(ClientId == LocalClientId)
+			continue;
+
+		const CGameClient::CClientData &ClientData = GameClient()->m_aClients[ClientId];
+		if(!ClientData.m_Active || !GameClient()->m_Snap.m_aCharacters[ClientId].m_Active || ClientData.m_aName[0] == '\0')
+			continue;
+		if(GameClient()->IsOtherTeam(ClientId))
+			continue;
+
+		const CNetObj_PlayerInfo *pInfo = GameClient()->m_Snap.m_apPlayerInfos[ClientId];
+		if(pInfo && pInfo->m_Team == TEAM_SPECTATORS)
+			continue;
+
+		const float Distance = distance(LocalPos, ClientData.m_RenderPos);
+		if(NearestClientId < 0 || Distance < NearestDistance)
+		{
+			NearestClientId = ClientId;
+			NearestDistance = Distance;
+		}
+	}
+
+	if(NearestClientId < 0)
+		return false;
+	str_copy(pName, GameClient()->m_aClients[NearestClientId].m_aName, NameSize);
+	return true;
+}
+
+std::string CBinds::ExecuteBind(int Stroke, const char *pBind, bool ReportPlaceholderError, const char *pNearestPlayerOverride)
+{
+	char aBind[IConsole::CMDLINE_LENGTH];
+	str_copy(aBind, pBind, sizeof(aBind));
+	ApplyGoresModeSuffix(GameClient(), aBind, sizeof(aBind));
+
+	const bool HasPlaceholder = str_find(aBind, NEAREST_PLAYER_PLACEHOLDER) != nullptr;
+	char aNearestPlayer[MAX_NAME_LENGTH] = "";
+	bool HasNearestPlayer = !HasPlaceholder;
+	if(HasPlaceholder)
+	{
+		if(pNearestPlayerOverride)
+		{
+			str_copy(aNearestPlayer, pNearestPlayerOverride, sizeof(aNearestPlayer));
+			HasNearestPlayer = aNearestPlayer[0] != '\0';
+		}
+		else
+		{
+			HasNearestPlayer = FindNearestPlayerName(aNearestPlayer, sizeof(aNearestPlayer));
+		}
+	}
+	bool SkippedPlaceholderCommand = false;
+
+	for(const std::string &Command : SplitBindCommands(aBind))
+	{
+		if(Command.empty())
+			continue;
+
+		const bool CommandHasPlaceholder = Command.find(NEAREST_PLAYER_PLACEHOLDER) != std::string::npos;
+		if(CommandHasPlaceholder && !HasNearestPlayer)
+		{
+			SkippedPlaceholderCommand = true;
+			continue;
+		}
+
+		const std::string Expanded = CommandHasPlaceholder ? ExpandNearestPlayerPlaceholder(Command, aNearestPlayer) : Command;
+		if(Expanded.size() >= IConsole::CMDLINE_LENGTH)
+		{
+			if(ReportPlaceholderError)
+				Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "binds", "Expanded bind command is too long.");
+			continue;
+		}
+		Console()->ExecuteLineStroked(Stroke, Expanded.c_str(), IConsole::CLIENT_ID_UNSPECIFIED, false);
+	}
+
+	if(SkippedPlaceholderCommand && ReportPlaceholderError)
+		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "binds", "No same-team player is available for %nearestPlayer%.");
+	return aNearestPlayer;
 }
 
 bool CBinds::CBindsSpecial::OnInput(const IInput::CEvent &Event)
@@ -137,24 +323,22 @@ bool CBinds::OnInput(const IInput::CEvent &Event)
 
 	if(Event.m_Flags & IInput::FLAG_PRESS)
 	{
-		auto ActiveBind = std::find_if(m_vActiveBinds.begin(), m_vActiveBinds.end(), [&](const CBindSlot &Bind) {
-			return Event.m_Key == Bind.m_Key;
+		auto ActiveBind = std::find_if(m_vActiveBinds.begin(), m_vActiveBinds.end(), [&](const CActiveBind &Bind) {
+			return Event.m_Key == Bind.m_Slot.m_Key;
 		});
 		if(ActiveBind == m_vActiveBinds.end())
 		{
 			const auto &&OnKeyPress = [&](int Mask) {
-				char aBind[512];
-				str_copy(aBind, m_aapKeyBindings[Mask][Event.m_Key], sizeof(aBind));
+				const char *pBind = m_aapKeyBindings[Mask][Event.m_Key];
 				if(g_Config.m_ClSubTickAiming)
 				{
-					if(str_comp("+fire", aBind) == 0 || str_comp("+hook", aBind) == 0)
+					if(str_comp("+fire", pBind) == 0 || str_comp("+hook", pBind) == 0)
 					{
 						m_MouseOnAction = true;
 					}
 				}
-				ApplyGoresModeSuffix(GameClient(), aBind, sizeof(aBind));
-				Console()->ExecuteLineStroked(1, aBind, IConsole::CLIENT_ID_UNSPECIFIED);
-				m_vActiveBinds.emplace_back(Event.m_Key, Mask);
+				std::string NearestPlayerName = ExecuteBind(1, pBind, true);
+				m_vActiveBinds.emplace_back(Event.m_Key, Mask, std::move(NearestPlayerName));
 			};
 
 			if(m_aapKeyBindings[ModifierMask][Event.m_Key])
@@ -174,12 +358,9 @@ bool CBinds::OnInput(const IInput::CEvent &Event)
 		{
 			// Repeat active bind while key is held down
 			// Have to check for nullptr again because the previous execute can unbind itself
-			if(m_aapKeyBindings[ActiveBind->m_ModifierMask][ActiveBind->m_Key])
+			if(m_aapKeyBindings[ActiveBind->m_Slot.m_ModifierMask][ActiveBind->m_Slot.m_Key])
 			{
-				char aBind[512];
-				str_copy(aBind, m_aapKeyBindings[ActiveBind->m_ModifierMask][ActiveBind->m_Key], sizeof(aBind));
-				ApplyGoresModeSuffix(GameClient(), aBind, sizeof(aBind));
-				Console()->ExecuteLineStroked(1, aBind, IConsole::CLIENT_ID_UNSPECIFIED);
+				ExecuteBind(1, m_aapKeyBindings[ActiveBind->m_Slot.m_ModifierMask][ActiveBind->m_Slot.m_Key], false, ActiveBind->m_NearestPlayerName.c_str());
 			}
 			Handled = true;
 		}
@@ -187,7 +368,7 @@ bool CBinds::OnInput(const IInput::CEvent &Event)
 
 	if(Event.m_Flags & IInput::FLAG_RELEASE)
 	{
-		const auto &&OnKeyRelease = [&](const CBindSlot &Bind) {
+		const auto &&OnKeyRelease = [&](const CActiveBind &Bind) {
 			// Prevent binds from being deactivated while chat, console and menus are open, as these components will
 			// still allow key release events to be forwarded to this component, so the active binds can be cleared.
 			if(GameClient()->m_Chat.IsActive() ||
@@ -197,19 +378,16 @@ bool CBinds::OnInput(const IInput::CEvent &Event)
 				return;
 			}
 			// Have to check for nullptr again because the previous execute can unbind itself
-			if(!m_aapKeyBindings[Bind.m_ModifierMask][Bind.m_Key])
+			if(!m_aapKeyBindings[Bind.m_Slot.m_ModifierMask][Bind.m_Slot.m_Key])
 			{
 				return;
 			}
-			char aBind[512];
-			str_copy(aBind, m_aapKeyBindings[Bind.m_ModifierMask][Bind.m_Key], sizeof(aBind));
-			ApplyGoresModeSuffix(GameClient(), aBind, sizeof(aBind));
-			Console()->ExecuteLineStroked(0, aBind, IConsole::CLIENT_ID_UNSPECIFIED);
+			ExecuteBind(0, m_aapKeyBindings[Bind.m_Slot.m_ModifierMask][Bind.m_Slot.m_Key], false, Bind.m_NearestPlayerName.c_str());
 		};
 
 		// Release active bind that uses this primary key
-		auto ActiveBind = std::find_if(m_vActiveBinds.begin(), m_vActiveBinds.end(), [&](const CBindSlot &Bind) {
-			return Event.m_Key == Bind.m_Key;
+		auto ActiveBind = std::find_if(m_vActiveBinds.begin(), m_vActiveBinds.end(), [&](const CActiveBind &Bind) {
+			return Event.m_Key == Bind.m_Slot.m_Key;
 		});
 		if(ActiveBind != m_vActiveBinds.end())
 		{
@@ -223,8 +401,8 @@ bool CBinds::OnInput(const IInput::CEvent &Event)
 		{
 			while(true)
 			{
-				auto ActiveModifierBind = std::find_if(m_vActiveBinds.begin(), m_vActiveBinds.end(), [&](const CBindSlot &Bind) {
-					return (Bind.m_ModifierMask & KeyModifierMask) != 0;
+				auto ActiveModifierBind = std::find_if(m_vActiveBinds.begin(), m_vActiveBinds.end(), [&](const CActiveBind &Bind) {
+					return (Bind.m_Slot.m_ModifierMask & KeyModifierMask) != 0;
 				});
 				if(ActiveModifierBind == m_vActiveBinds.end())
 					break;

@@ -550,15 +550,19 @@ bool ReadUClientReactionBroadcast(const uint8_t *pData, int DataSize, CUClientRe
 	return Offset == DataSize;
 }
 
-void WriteRoomListChanged(std::vector<uint8_t> &vOut, const char *pRoomId, const char *pRoomName)
+void WriteRoomListChanged(std::vector<uint8_t> &vOut, const char *pRoomId, const char *pRoomName, uint32_t NameColor, bool IncludeNameColor)
 {
 	WriteHeader(vOut, PACKET_ROOM_LIST_CHANGED);
 	WriteString(vOut, pRoomId ? pRoomId : "");
 	WriteString(vOut, pRoomName ? pRoomName : "");
+	if(IncludeNameColor)
+		WriteI32(vOut, (int32_t)NameColor);
 }
 
 bool ReadRoomListChanged(const uint8_t *pData, int DataSize, CRoomListChanged &Out)
 {
+	Out.m_NameColor = 0;
+	Out.m_HasNameColor = false;
 	int Offset = 0;
 	EPacketType Type;
 	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != PACKET_ROOM_LIST_CHANGED ||
@@ -567,6 +571,13 @@ bool ReadRoomListChanged(const uint8_t *pData, int DataSize, CRoomListChanged &O
 	{
 		return false;
 	}
+	if(Offset == DataSize)
+		return true;
+	int32_t NameColor;
+	if(!ReadI32(pData, DataSize, Offset, NameColor))
+		return false;
+	Out.m_NameColor = (uint32_t)NameColor;
+	Out.m_HasNameColor = true;
 	return Offset == DataSize;
 }
 

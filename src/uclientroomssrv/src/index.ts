@@ -13,7 +13,7 @@ interface Env extends Cloudflare.Env {
 	RELAY_INVALIDATE_SECRET?: string;
 	ADMIN_TOKEN?: string;
 	ADMIN_PASSWORD?: string;
-	ASSETS?: Fetcher;
+	CFG_BACKUPS: R2Bucket;
 }
 
 interface AccountInput {
@@ -26,6 +26,29 @@ interface AccountInput {
 interface AuthenticatedAccount {
 	installId: string;
 	ban: BanRow | null;
+}
+
+interface EmailAccountInput {
+	email: string;
+	password: string;
+	install_id?: string;
+	secret: string;
+	version?: string;
+}
+
+interface AccountProfileRow {
+	install_id: string;
+	email_normalized: string | null;
+}
+
+interface BackupRow {
+	id: string;
+	account_install_id: string;
+	relative_path: string;
+	object_key: string;
+	created_at: number;
+	size_bytes: number;
+	sha256: string;
 }
 
 interface BanRow {
@@ -61,9 +84,18 @@ const MEMBER_ID_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const MAX_BODY_BYTES = 16 * 1024;
 const REGISTRATION_WINDOW_SECONDS = 24 * 60 * 60;
 const REGISTRATION_LIMIT_PER_IP = 5;
+const AUTH_WINDOW_SECONDS = 15 * 60;
+const AUTH_FAILURE_LIMIT = 10;
 const GRACE_SECONDS = 7 * 24 * 60 * 60;
 const IP_RETENTION_SECONDS = 90 * 24 * 60 * 60;
 const MAX_OWNED_ROOMS = 5;
+const PASSWORD_MIN_LENGTH = 10;
+const PASSWORD_MAX_LENGTH = 128;
+const PBKDF2_ITERATIONS = 100_000;
+const BACKUP_OBJECT_LIMIT_BYTES = 10 * 1024 * 1024;
+const BACKUP_ACCOUNT_QUOTA_BYTES = 10 * 1024 * 1024;
+const BACKUP_EXTENSIONS = new Set([".cfg", ".txt", ".png", ".jpg", ".jpeg", ".log"]);
+const SENSITIVE_BACKUP_NAMES = new Set(["steam_uclient_account.json", "uclient_account.json"]);
 
 function json(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {status, headers: JSON_HEADERS});
@@ -119,6 +151,61 @@ async function secretHash(secret: string, pepper: string): Promise<string> {
 	return bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", input)));
 }
 
+function decodeBase64Url(value: string): Uint8Array | null {
+	try {
+		const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+		const binary = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="));
+		return Uint8Array.from(binary, character => character.charCodeAt(0));
+	}
+	catch {
+		return null;
+	}
+}
+
+async function derivePassword(password: string, salt: Uint8Array, iterations: number): Promise<Uint8Array> {
+	const key = await crypto.subtle.importKey(
+		"raw",
+		new TextEncoder().encode(password),
+		{name: "PBKDF2"},
+		false,
+		["deriveBits"],
+	);
+	return new Uint8Array(await crypto.subtle.deriveBits(
+		{name: "PBKDF2", hash: "SHA-256", salt, iterations},
+		key,
+		256,
+	));
+}
+
+async function passwordHash(password: string): Promise<string> {
+	const salt = crypto.getRandomValues(new Uint8Array(16));
+	const derived = await derivePassword(password, salt, PBKDF2_ITERATIONS);
+	return `pbkdf2-sha256$v=1$i=${PBKDF2_ITERATIONS}$${base64Url(salt)}$${base64Url(derived)}`;
+}
+
+async function passwordMatches(password: string, stored: string | null): Promise<boolean> {
+	const parts = stored?.split("$") ?? [];
+	const iterationsPart = parts[2] ?? "";
+	const iterations = Number(iterationsPart.startsWith("i=") ? iterationsPart.slice(2) : "");
+	const salt = decodeBase64Url(parts[3] ?? "");
+	const expected = decodeBase64Url(parts[4] ?? "");
+	const valid = parts[0] === "pbkdf2-sha256"
+		&& parts[1] === "v=1"
+		&& Number.isInteger(iterations)
+		&& iterations >= 100_000
+		&& iterations <= PBKDF2_ITERATIONS
+		&& salt !== null
+		&& salt.byteLength >= 16
+		&& expected !== null
+		&& expected.byteLength === 32;
+	const actual = await derivePassword(
+		password,
+		valid ? salt : new Uint8Array(16),
+		valid ? iterations : PBKDF2_ITERATIONS,
+	);
+	return valid && timingSafeEqual(bytesToHex(actual), bytesToHex(expected ?? new Uint8Array()));
+}
+
 function timingSafeEqual(left: string, right: string): boolean {
 	const leftBytes = new TextEncoder().encode(left);
 	const rightBytes = new TextEncoder().encode(right);
@@ -128,6 +215,87 @@ function timingSafeEqual(left: string, right: string): boolean {
 	for(let index = 0; index < leftBytes.byteLength; index++)
 		different |= leftBytes[index]! ^ rightBytes[index]!;
 	return different === 0;
+}
+
+function normalizedEmail(value: unknown): string | null {
+	if(typeof value !== "string")
+		return null;
+	const normalized = value.trim().toLowerCase();
+	if(normalized.length < 3 || normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized))
+		return null;
+	return normalized;
+}
+
+function validPassword(value: unknown): value is string {
+	return typeof value === "string" && value.length >= PASSWORD_MIN_LENGTH && value.length <= PASSWORD_MAX_LENGTH;
+}
+
+async function authRateKey(kind: string, email: string, request: Request): Promise<string> {
+	const value = `${kind}\0${email}\0${clientIp(request)}`;
+	return bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))));
+}
+
+async function authRateLimited(db: D1Database, kind: string, rateKey: string, now: number): Promise<boolean> {
+	const row = await db.prepare(
+		`SELECT COUNT(*) AS count FROM auth_attempts
+		 WHERE kind = ?1 AND rate_key = ?2 AND succeeded = 0 AND created_at > ?3`,
+	).bind(kind, rateKey, now - AUTH_WINDOW_SECONDS).first<{count: number}>();
+	return (row?.count ?? 0) >= AUTH_FAILURE_LIMIT;
+}
+
+async function recordAuthAttempt(
+	db: D1Database,
+	kind: string,
+	rateKey: string,
+	succeeded: boolean,
+	now: number,
+): Promise<void> {
+	if(succeeded) {
+		await db.batch([
+			db.prepare("DELETE FROM auth_attempts WHERE kind = ?1 AND rate_key = ?2").bind(kind, rateKey),
+			db.prepare("DELETE FROM auth_attempts WHERE created_at <= ?1").bind(now - AUTH_WINDOW_SECONDS),
+		]);
+		return;
+	}
+	await db.prepare(
+		"INSERT INTO auth_attempts(kind, rate_key, succeeded, created_at) VALUES (?1, ?2, 0, ?3)",
+	).bind(kind, rateKey, now).run();
+}
+
+async function credentialAccount(
+	db: D1Database,
+	installId: string,
+	hash: string,
+): Promise<{install_id: string} | null> {
+	return await db.prepare(
+		`SELECT a.install_id
+		 FROM accounts a
+		 WHERE a.install_id = ?1
+		   AND (
+		   	a.secret_hash = ?2
+		   	OR EXISTS (
+		   		SELECT 1 FROM account_device_credentials c
+		   		WHERE c.account_install_id = a.install_id AND c.secret_hash = ?2
+		   	)
+		   )
+		 LIMIT 1`,
+	).bind(installId, hash).first<{install_id: string}>();
+}
+
+async function accountSuccess(env: Env, installId: string, now: number, status = 200): Promise<Response> {
+	const account = await env.DB.prepare(
+		"SELECT install_id, email_normalized FROM accounts WHERE install_id = ?1",
+	).bind(installId).first<AccountProfileRow>();
+	if(!account)
+		return error(404, "account_not_found", "This account no longer exists.");
+	const grace = await signGraceToken(env, installId, now);
+	return json({
+		install_id: installId,
+		grace_token: grace.token,
+		grace_expires_at: grace.expires_at,
+		has_email: account.email_normalized !== null,
+		email: account.email_normalized,
+	}, status);
 }
 
 async function activeBan(db: D1Database, installId: string, now: number): Promise<BanRow | null> {
@@ -180,10 +348,10 @@ async function register(request: Request, env: Env): Promise<Response> {
 	const now = Math.floor(Date.now() / 1000);
 	const ip = clientIp(request);
 	const hash = await secretHash(input.secret, env.ACCOUNT_PEPPER);
-	const existing = await env.DB.prepare("SELECT secret_hash FROM accounts WHERE install_id = ?1")
-		.bind(input.install_id).first<{secret_hash: string}>();
+	const existing = await env.DB.prepare("SELECT install_id FROM accounts WHERE install_id = ?1")
+		.bind(input.install_id).first<{install_id: string}>();
 	if(existing) {
-		if(!timingSafeEqual(existing.secret_hash, hash))
+		if(!await credentialAccount(env.DB, input.install_id, hash))
 			return error(409, "account_exists", "This install UUID is already registered.");
 		const ban = await activeBan(env.DB, input.install_id, now);
 		if(ban)
@@ -192,12 +360,15 @@ async function register(request: Request, env: Env): Promise<Response> {
 			`UPDATE accounts
 			 SET last_seen_at = ?2,
 			     last_player_name = CASE WHEN ?3 = '' THEN last_player_name ELSE ?3 END,
-			     last_client_version = ?4,
+			     last_client_version = CASE WHEN ?4 = '' THEN last_client_version ELSE ?4 END,
 			     last_ip = ?5
 			 WHERE install_id = ?1`,
 		).bind(input.install_id, now, input.player_name?.trim() ?? "", input.version?.trim() ?? "", ip).run();
-		const grace = await signGraceToken(env, input.install_id, now);
-		return json({install_id: input.install_id, grace_token: grace.token, grace_expires_at: grace.expires_at});
+		await env.DB.prepare(
+			`INSERT OR IGNORE INTO account_device_credentials(account_install_id, secret_hash, created_at, last_used_at)
+			 VALUES (?1, ?2, ?3, ?3)`,
+		).bind(input.install_id, hash, now).run();
+		return accountSuccess(env, input.install_id, now);
 	}
 
 	if(ip) {
@@ -214,6 +385,10 @@ async function register(request: Request, env: Env): Promise<Response> {
 			 (install_id, secret_hash, created_at, last_seen_at, last_player_name, last_client_version, created_ip, last_ip)
 			 VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6, ?6)`,
 		).bind(input.install_id, hash, now, input.player_name?.trim() ?? "", input.version?.trim() ?? "", ip),
+		env.DB.prepare(
+			`INSERT INTO account_device_credentials(account_install_id, secret_hash, created_at, last_used_at)
+			 VALUES (?1, ?2, ?3, ?3)`,
+		).bind(input.install_id, hash, now),
 		env.DB.prepare("DELETE FROM registration_attempts WHERE created_at <= ?1").bind(now - REGISTRATION_WINDOW_SECONDS),
 		env.DB.prepare(
 			`UPDATE accounts SET
@@ -226,8 +401,7 @@ async function register(request: Request, env: Env): Promise<Response> {
 		statements.push(env.DB.prepare("INSERT INTO registration_attempts(ip, created_at) VALUES (?1, ?2)").bind(ip, now));
 	await env.DB.batch(statements);
 
-	const grace = await signGraceToken(env, input.install_id, now);
-	return json({install_id: input.install_id, grace_token: grace.token, grace_expires_at: grace.expires_at}, 201);
+	return accountSuccess(env, input.install_id, now, 201);
 }
 
 async function verify(request: Request, env: Env): Promise<Response> {
@@ -235,13 +409,13 @@ async function verify(request: Request, env: Env): Promise<Response> {
 	if(!input)
 		return error(400, "invalid_request", "Invalid account verification data.");
 
-	const account = await env.DB.prepare("SELECT secret_hash FROM accounts WHERE install_id = ?1")
-		.bind(input.install_id).first<{secret_hash: string}>();
+	const account = await env.DB.prepare("SELECT install_id FROM accounts WHERE install_id = ?1")
+		.bind(input.install_id).first<{install_id: string}>();
 	if(!account)
 		return error(404, "account_not_found", "This install UUID is not registered.");
 
 	const hash = await secretHash(input.secret, env.ACCOUNT_PEPPER);
-	if(!timingSafeEqual(account.secret_hash, hash))
+	if(!await credentialAccount(env.DB, input.install_id, hash))
 		return error(403, "invalid_credentials", "The account secret is invalid.");
 
 	const now = Math.floor(Date.now() / 1000);
@@ -249,17 +423,151 @@ async function verify(request: Request, env: Env): Promise<Response> {
 	if(ban)
 		return json({error: "account_banned", reason: ban.reason, expires_at: ban.expires_at}, 423);
 
-	await env.DB.prepare(
-		`UPDATE accounts
-		 SET last_seen_at = ?2,
-		     last_player_name = CASE WHEN ?3 = '' THEN last_player_name ELSE ?3 END,
-		     last_client_version = ?4,
-		     last_ip = ?5
-		 WHERE install_id = ?1`,
-	).bind(input.install_id, now, input.player_name?.trim() ?? "", input.version?.trim() ?? "", clientIp(request)).run();
+	await env.DB.batch([
+		env.DB.prepare(
+			`UPDATE accounts
+			 SET last_seen_at = ?2,
+			     last_player_name = CASE WHEN ?3 = '' THEN last_player_name ELSE ?3 END,
+			     last_client_version = CASE WHEN ?4 = '' THEN last_client_version ELSE ?4 END,
+			     last_ip = ?5
+			 WHERE install_id = ?1`,
+		).bind(input.install_id, now, input.player_name?.trim() ?? "", input.version?.trim() ?? "", clientIp(request)),
+		env.DB.prepare(
+			`INSERT OR IGNORE INTO account_device_credentials(account_install_id, secret_hash, created_at, last_used_at)
+			 VALUES (?1, ?2, ?3, ?3)`,
+		).bind(input.install_id, hash, now),
+		env.DB.prepare(
+			"UPDATE account_device_credentials SET last_used_at = ?3 WHERE account_install_id = ?1 AND secret_hash = ?2",
+		).bind(input.install_id, hash, now),
+	]);
 
-	const grace = await signGraceToken(env, input.install_id, now);
-	return json({install_id: input.install_id, grace_token: grace.token, grace_expires_at: grace.expires_at});
+	return accountSuccess(env, input.install_id, now);
+}
+
+async function registerEmail(request: Request, env: Env): Promise<Response> {
+	const input = await readJson<EmailAccountInput>(request);
+	const email = normalizedEmail(input?.email);
+	if(!input
+		|| !email
+		|| !validPassword(input.password)
+		|| !UUID_RE.test(input.install_id ?? "")
+		|| !validText(input.secret, 32, 256)
+		|| (input.version !== undefined && !validText(input.version, 0, 64)))
+		return error(400, "invalid_request", "A valid email, password, install UUID, and device secret are required.");
+
+	const now = Math.floor(Date.now() / 1000);
+	const ip = clientIp(request);
+	if(ip) {
+		const attempts = await env.DB.prepare(
+			"SELECT COUNT(*) AS count FROM registration_attempts WHERE ip = ?1 AND created_at > ?2",
+		).bind(ip, now - REGISTRATION_WINDOW_SECONDS).first<{count: number}>();
+		if((attempts?.count ?? 0) >= REGISTRATION_LIMIT_PER_IP)
+			return error(429, "registration_rate_limited", "Too many accounts were registered from this network.");
+	}
+	const rateKey = await authRateKey("register-email", email, request);
+	if(await authRateLimited(env.DB, "register-email", rateKey, now))
+		return error(429, "auth_rate_limited", "Too many authentication attempts. Try again later.");
+	const duplicate = await env.DB.prepare(
+		"SELECT install_id, email_normalized FROM accounts WHERE install_id = ?1 OR email_normalized = ?2 LIMIT 1",
+	).bind(input.install_id, email).first<AccountProfileRow>();
+	if(duplicate) {
+		await recordAuthAttempt(env.DB, "register-email", rateKey, false, now);
+		return error(409, duplicate.email_normalized === email ? "email_exists" : "account_exists",
+			duplicate.email_normalized === email ? "This email is already registered." : "This install UUID is already registered.");
+	}
+
+	const [deviceHash, storedPassword] = await Promise.all([
+		secretHash(input.secret, env.ACCOUNT_PEPPER),
+		passwordHash(input.password),
+	]);
+	const statements = [
+		env.DB.prepare(
+			`INSERT INTO accounts
+			 (install_id, secret_hash, email_normalized, password_hash, created_at, last_seen_at,
+			  last_player_name, last_client_version, created_ip, last_ip)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?5, '', ?6, ?7, ?7)`,
+		).bind(input.install_id, deviceHash, email, storedPassword, now, input.version?.trim() ?? "", ip),
+		env.DB.prepare(
+			`INSERT INTO account_device_credentials(account_install_id, secret_hash, created_at, last_used_at)
+			 VALUES (?1, ?2, ?3, ?3)`,
+		).bind(input.install_id, deviceHash, now),
+		env.DB.prepare("DELETE FROM registration_attempts WHERE created_at <= ?1").bind(now - REGISTRATION_WINDOW_SECONDS),
+	];
+	if(ip)
+		statements.push(env.DB.prepare("INSERT INTO registration_attempts(ip, created_at) VALUES (?1, ?2)").bind(ip, now));
+	await env.DB.batch(statements);
+	await recordAuthAttempt(env.DB, "register-email", rateKey, true, now);
+	return accountSuccess(env, input.install_id!, now, 201);
+}
+
+async function loginEmail(request: Request, env: Env): Promise<Response> {
+	const input = await readJson<EmailAccountInput>(request);
+	const email = normalizedEmail(input?.email);
+	if(!input
+		|| !email
+		|| !validPassword(input.password)
+		|| !validText(input.secret, 32, 256)
+		|| (input.version !== undefined && !validText(input.version, 0, 64)))
+		return error(400, "invalid_request", "A valid email, password, and device secret are required.");
+
+	const now = Math.floor(Date.now() / 1000);
+	const rateKey = await authRateKey("login-email", email, request);
+	if(await authRateLimited(env.DB, "login-email", rateKey, now))
+		return error(429, "auth_rate_limited", "Too many authentication attempts. Try again later.");
+	const account = await env.DB.prepare(
+		"SELECT install_id, password_hash FROM accounts WHERE email_normalized = ?1",
+	).bind(email).first<{install_id: string; password_hash: string | null}>();
+	if(!await passwordMatches(input.password, account?.password_hash ?? null)) {
+		await recordAuthAttempt(env.DB, "login-email", rateKey, false, now);
+		return error(403, "invalid_credentials", "The email or password is invalid.");
+	}
+
+	const ban = await activeBan(env.DB, account!.install_id, now);
+	if(ban)
+		return json({error: "account_banned", reason: ban.reason, expires_at: ban.expires_at}, 423);
+	const deviceHash = await secretHash(input.secret, env.ACCOUNT_PEPPER);
+	await env.DB.batch([
+		env.DB.prepare(
+			`INSERT OR IGNORE INTO account_device_credentials(account_install_id, secret_hash, created_at, last_used_at)
+			 VALUES (?1, ?2, ?3, ?3)`,
+		).bind(account!.install_id, deviceHash, now),
+		env.DB.prepare(
+			`UPDATE account_device_credentials SET last_used_at = ?3
+			 WHERE account_install_id = ?1 AND secret_hash = ?2`,
+		).bind(account!.install_id, deviceHash, now),
+		env.DB.prepare(
+			`UPDATE accounts
+			 SET last_seen_at = ?2,
+			     last_client_version = CASE WHEN ?3 = '' THEN last_client_version ELSE ?3 END,
+			     last_ip = ?4
+			 WHERE install_id = ?1`,
+		).bind(account!.install_id, now, input.version?.trim() ?? "", clientIp(request)),
+	]);
+	await recordAuthAttempt(env.DB, "login-email", rateKey, true, now);
+	return accountSuccess(env, account!.install_id, now);
+}
+
+async function linkEmail(request: Request, env: Env, installId: string): Promise<Response> {
+	const input = await readJson<{email?: string; password?: string}>(request);
+	const email = normalizedEmail(input?.email);
+	if(!input || !email || !validPassword(input.password))
+		return error(400, "invalid_request", "A valid email and password are required.");
+
+	const existing = await env.DB.prepare(
+		"SELECT install_id, email_normalized FROM accounts WHERE email_normalized = ?1 OR install_id = ?2 ORDER BY install_id = ?2 DESC",
+	).bind(email, installId).all<AccountProfileRow>();
+	const account = existing.results.find(row => row.install_id === installId);
+	if(account?.email_normalized)
+		return error(409, "email_already_linked", "This account already has an email.");
+	if(existing.results.some(row => row.install_id !== installId))
+		return error(409, "email_exists", "This email is already registered.");
+
+	const storedPassword = await passwordHash(input.password);
+	await env.DB.prepare(
+		`UPDATE accounts SET email_normalized = ?2, password_hash = ?3
+		 WHERE install_id = ?1 AND email_normalized IS NULL`,
+	).bind(installId, email, storedPassword).run();
+	return accountSuccess(env, installId, Math.floor(Date.now() / 1000));
 }
 
 async function authenticate(request: Request, env: Env): Promise<AuthenticatedAccount | Response> {
@@ -269,12 +577,8 @@ async function authenticate(request: Request, env: Env): Promise<AuthenticatedAc
 	if(!UUID_RE.test(installId) || !validText(secret, 32, 256))
 		return error(401, "authentication_required", "Account credentials are required.");
 
-	const account = await env.DB.prepare("SELECT secret_hash FROM accounts WHERE install_id = ?1")
-		.bind(installId).first<{secret_hash: string}>();
-	if(!account)
-		return error(401, "invalid_credentials", "Account credentials are invalid.");
 	const hash = await secretHash(secret, env.ACCOUNT_PEPPER);
-	if(!timingSafeEqual(account.secret_hash, hash))
+	if(!await credentialAccount(env.DB, installId, hash))
 		return error(401, "invalid_credentials", "Account credentials are invalid.");
 
 	const ban = await activeBan(env.DB, installId, Math.floor(Date.now() / 1000));
@@ -593,16 +897,21 @@ async function internalMemberships(request: Request, env: Env): Promise<Response
 			.bind(since).all<{room_id: string}>();
 		roomIds = changed.results.map(row => row.room_id);
 	}
-	const rooms = await env.DB.prepare("SELECT id, name FROM rooms ORDER BY id").all<{id: string; name: string}>();
+	const rooms = await env.DB.prepare("SELECT id, name, name_color FROM rooms ORDER BY id").all<{id: string; name: string; name_color: number | null}>();
 	const filtered = roomIds === null ? rooms.results : rooms.results.filter(room => roomIds.includes(room.id));
 	const memberships = await Promise.all(filtered.map(async room => {
 		const members = await env.DB.prepare("SELECT install_id FROM room_members WHERE room_id = ?1")
 			.bind(room.id).all<{install_id: string}>();
-		return {room_id: room.id, room_name: room.name, install_ids: members.results.map(member => member.install_id)};
+		return {
+			room_id: room.id,
+			room_name: room.name,
+			name_color: room.name_color ?? 0,
+			install_ids: members.results.map(member => member.install_id),
+		};
 	}));
 	if(roomIds !== null) {
 		for(const deletedId of roomIds.filter(id => !filtered.some(room => room.id === id)))
-			memberships.push({room_id: deletedId, room_name: "", install_ids: []});
+			memberships.push({room_id: deletedId, room_name: "", name_color: 0, install_ids: []});
 	}
 	return json({sequence: sequenceRow?.sequence ?? 0, rooms: memberships});
 }
@@ -615,6 +924,281 @@ async function internalBans(request: Request, env: Env): Promise<Response> {
 		"SELECT DISTINCT install_id FROM user_bans WHERE expires_at IS NULL OR expires_at > ?1",
 	).bind(now).all<{install_id: string}>();
 	return json({install_ids: bans.results.map(row => row.install_id)});
+}
+
+function backupExtension(path: string): string {
+	const slash = path.lastIndexOf("/");
+	const dot = path.lastIndexOf(".");
+	return dot > slash ? path.slice(dot).toLowerCase() : "";
+}
+
+function backupPath(request: Request): string | null {
+	const encoded = request.headers.get("x-uclient-path");
+	if(!encoded)
+		return null;
+	try {
+		const decoded = decodeURIComponent(encoded).replace(/\\/g, "/");
+		if(decoded.includes("\0") || decoded.startsWith("/") || /^[A-Za-z]:/.test(decoded))
+			return null;
+		const parts = decoded.split("/");
+		if(parts.some(part =>
+			part === ".."
+			|| /[\x00-\x1f<>:"|?*]/.test(part)
+			|| part.endsWith(".")
+			|| part.endsWith(" ")))
+			return null;
+		const normalized = parts.filter(part => part !== "" && part !== ".").join("/");
+		if(!normalized || normalized.length > 1024 || !BACKUP_EXTENSIONS.has(backupExtension(normalized)))
+			return null;
+		if(parts.some(part => {
+			const lower = part.toLowerCase();
+			return lower === "dumps" || lower === "downloadedskins"
+				|| lower === "communityicons" || lower === "communityicsons";
+		}))
+			return null;
+		if(normalized.split("/").some(part => SENSITIVE_BACKUP_NAMES.has(part.toLowerCase())))
+			return null;
+		return normalized;
+	}
+	catch {
+		return null;
+	}
+}
+
+function hasPngSignature(bytes: Uint8Array): boolean {
+	const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+	return bytes.length >= signature.length && signature.every((value, index) => bytes[index] === value);
+}
+
+function hasJpegSignature(bytes: Uint8Array): boolean {
+	return bytes.length >= 4
+		&& bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+		&& bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9;
+}
+
+function validTextBackup(bytes: Uint8Array): boolean {
+	for(const byte of bytes) {
+		if(byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d)
+			return false;
+	}
+	let text: string;
+	try {
+		text = new TextDecoder("utf-8", {fatal: true, ignoreBOM: false}).decode(bytes);
+	}
+	catch {
+		return false;
+	}
+	const trimmed = text.trim();
+	if(!trimmed.startsWith("{") || !trimmed.endsWith("}"))
+		return true;
+	try {
+		const parsed = JSON.parse(trimmed);
+		if(!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+			return true;
+		const keys = new Set(Object.keys(parsed as Record<string, unknown>).map(key => key.toLowerCase()));
+		return !(keys.has("install_id") && (keys.has("secret") || keys.has("grace_token")));
+	}
+	catch {
+		return true;
+	}
+}
+
+function validBackupBody(path: string, body: ArrayBuffer): boolean {
+	const bytes = new Uint8Array(body);
+	switch(backupExtension(path)) {
+	case ".png":
+		return hasPngSignature(bytes);
+	case ".jpg":
+	case ".jpeg":
+		return hasJpegSignature(bytes);
+	case ".cfg":
+	case ".txt":
+	case ".log":
+		return validTextBackup(bytes);
+	default:
+		return false;
+	}
+}
+
+async function readBackupBody(request: Request): Promise<ArrayBuffer | null> {
+	if(!request.body)
+		return new ArrayBuffer(0);
+	const reader = request.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		while(true) {
+			const {done, value} = await reader.read();
+			if(done)
+				break;
+			total += value.byteLength;
+			if(total > BACKUP_OBJECT_LIMIT_BYTES) {
+				await reader.cancel();
+				return null;
+			}
+			chunks.push(value);
+		}
+	}
+	finally {
+		reader.releaseLock();
+	}
+	const body = new Uint8Array(total);
+	let offset = 0;
+	for(const chunk of chunks) {
+		body.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return body.buffer;
+}
+
+async function backupUsage(db: D1Database, installId: string): Promise<number> {
+	const row = await db.prepare(
+		"SELECT COALESCE(SUM(size_bytes), 0) AS used_bytes FROM cfg_backup_versions WHERE account_install_id = ?1",
+	).bind(installId).first<{used_bytes: number}>();
+	return row?.used_bytes ?? 0;
+}
+
+async function uploadBackup(request: Request, env: Env, installId: string): Promise<Response> {
+	const path = backupPath(request);
+	if(!path)
+		return error(400, "invalid_backup_path", "x-uclient-path must contain an allowed relative backup path.");
+	const contentLength = Number(request.headers.get("content-length") ?? "0");
+	if(Number.isFinite(contentLength) && contentLength > BACKUP_OBJECT_LIMIT_BYTES)
+		return error(413, "backup_too_large", "A backup object cannot exceed 10 MB.");
+
+	const body = await readBackupBody(request);
+	if(!body)
+		return error(413, "backup_too_large", "A backup object cannot exceed 10 MB.");
+	if(!validBackupBody(path, body))
+		return error(400, "invalid_backup_content", "The file contents do not match an allowed backup type or contain account credentials.");
+	const usedBytes = await backupUsage(env.DB, installId);
+	if(usedBytes + body.byteLength > BACKUP_ACCOUNT_QUOTA_BYTES)
+		return error(413, "backup_quota_exceeded", "This account's 10 MB backup quota would be exceeded.");
+
+	const now = Math.floor(Date.now() / 1000);
+	const id = crypto.randomUUID();
+	const objectKey = `accounts/${installId}/${now}-${id}`;
+	const sha256 = bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", body)));
+	await env.CFG_BACKUPS.put(objectKey, body, {
+		httpMetadata: {contentType: "application/octet-stream"},
+		customMetadata: {
+			backupId: id,
+			accountInstallId: installId,
+			relativePath: path,
+			sha256,
+		},
+	});
+	try {
+		const inserted = await env.DB.prepare(
+			`INSERT INTO cfg_backup_versions
+			 (id, account_install_id, relative_path, object_key, created_at, size_bytes, sha256)
+			 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
+			 WHERE ?6 + (
+			 	SELECT COALESCE(SUM(size_bytes), 0)
+			 	FROM cfg_backup_versions WHERE account_install_id = ?2
+			 ) <= ?8`,
+		).bind(id, installId, path, objectKey, now, body.byteLength, sha256, BACKUP_ACCOUNT_QUOTA_BYTES).run();
+		if(!inserted.meta.changes) {
+			await env.CFG_BACKUPS.delete(objectKey);
+			return error(413, "backup_quota_exceeded", "This account's 10 MB backup quota would be exceeded.");
+		}
+	}
+	catch(errorValue) {
+		await env.CFG_BACKUPS.delete(objectKey);
+		throw errorValue;
+	}
+	const currentUsedBytes = await backupUsage(env.DB, installId);
+	return json({
+		version: {id, relative_path: path, created_at: now, size_bytes: body.byteLength, sha256},
+		used_bytes: currentUsedBytes,
+		quota_bytes: BACKUP_ACCOUNT_QUOTA_BYTES,
+	}, 201);
+}
+
+async function listBackups(env: Env, installId: string): Promise<Response> {
+	const versions = await env.DB.prepare(
+		`SELECT id, relative_path, created_at, size_bytes, sha256
+		 FROM cfg_backup_versions WHERE account_install_id = ?1
+		 ORDER BY created_at DESC, id DESC`,
+	).bind(installId).all<Pick<BackupRow, "id" | "relative_path" | "created_at" | "size_bytes" | "sha256">>();
+	const usedBytes = versions.results.reduce((sum, version) => sum + version.size_bytes, 0);
+	return json({versions: versions.results, used_bytes: usedBytes, quota_bytes: BACKUP_ACCOUNT_QUOTA_BYTES});
+}
+
+async function backupForAccount(env: Env, installId: string, id: string): Promise<BackupRow | null> {
+	if(!UUID_RE.test(id))
+		return null;
+	return await env.DB.prepare(
+		`SELECT id, account_install_id, relative_path, object_key, created_at, size_bytes, sha256
+		 FROM cfg_backup_versions WHERE id = ?1 AND account_install_id = ?2`,
+	).bind(id, installId).first<BackupRow>();
+}
+
+async function downloadBackup(env: Env, installId: string, id: string): Promise<Response> {
+	const version = await backupForAccount(env, installId, id);
+	if(!version)
+		return error(404, "backup_not_found", "Backup version not found.");
+	const object = await env.CFG_BACKUPS.get(version.object_key);
+	if(!object) {
+		await env.DB.prepare(
+			"DELETE FROM cfg_backup_versions WHERE id = ?1 AND account_install_id = ?2",
+		).bind(id, installId).run();
+		return error(410, "backup_object_missing", "The backup object is unavailable and its stale metadata was removed.");
+	}
+	return new Response(object.body, {
+		headers: {
+			"content-type": object.httpMetadata?.contentType ?? "application/octet-stream",
+			"content-length": String(version.size_bytes),
+			"cache-control": "private, no-store",
+			"x-uclient-backup-id": version.id,
+			"x-uclient-path": encodeURIComponent(version.relative_path),
+			"x-uclient-created-at": String(version.created_at),
+			"x-uclient-sha256": version.sha256,
+		},
+	});
+}
+
+async function deleteBackup(env: Env, installId: string, id: string): Promise<Response> {
+	const version = await backupForAccount(env, installId, id);
+	if(!version)
+		return error(404, "backup_not_found", "Backup version not found.");
+	const object = await env.CFG_BACKUPS.get(version.object_key);
+	if(!object) {
+		await env.DB.prepare(
+			"DELETE FROM cfg_backup_versions WHERE id = ?1 AND account_install_id = ?2",
+		).bind(id, installId).run();
+		return json({ok: true, object_missing: true});
+	}
+	const body = await object.arrayBuffer();
+	await env.CFG_BACKUPS.delete(version.object_key);
+	try {
+		await env.DB.prepare(
+			"DELETE FROM cfg_backup_versions WHERE id = ?1 AND account_install_id = ?2",
+		).bind(id, installId).run();
+	}
+	catch(errorValue) {
+		await env.CFG_BACKUPS.put(version.object_key, body, {
+			httpMetadata: object.httpMetadata,
+			customMetadata: object.customMetadata,
+		});
+		throw errorValue;
+	}
+	return json({ok: true});
+}
+
+async function handleBackups(request: Request, env: Env, segments: string[]): Promise<Response> {
+	const authenticated = await authenticate(request, env);
+	if(authenticated instanceof Response)
+		return authenticated;
+	if(segments.length === 2 && request.method === "PUT")
+		return uploadBackup(request, env, authenticated.installId);
+	if(segments.length === 2 && request.method === "GET")
+		return listBackups(env, authenticated.installId);
+	if(segments.length === 3 && request.method === "GET")
+		return downloadBackup(env, authenticated.installId, segments[2]!);
+	if(segments.length === 3 && request.method === "DELETE")
+		return deleteBackup(env, authenticated.installId, segments[2]!);
+	return error(404, "not_found", "Endpoint not found.");
 }
 
 async function handleRooms(request: Request, env: Env, ctx: ExecutionContext, segments: string[]): Promise<Response> {
@@ -656,6 +1240,22 @@ export default {
 				return register(request, env);
 			if(request.method === "POST" && url.pathname === "/account/verify")
 				return verify(request, env);
+			if(request.method === "POST" && url.pathname === "/account/register-email")
+				return registerEmail(request, env);
+			if(request.method === "POST" && url.pathname === "/account/login-email")
+				return loginEmail(request, env);
+			if(request.method === "POST" && url.pathname === "/account/link-email") {
+				const authenticated = await authenticate(request, env);
+				if(authenticated instanceof Response)
+					return authenticated;
+				return linkEmail(request, env, authenticated.installId);
+			}
+			if(request.method === "GET" && url.pathname === "/account/profile") {
+				const authenticated = await authenticate(request, env);
+				if(authenticated instanceof Response)
+					return authenticated;
+				return accountSuccess(env, authenticated.installId, Math.floor(Date.now() / 1000));
+			}
 			if(url.pathname === "/internal/memberships" && request.method === "GET")
 				return internalMemberships(request, env);
 			if(url.pathname === "/internal/bans" && request.method === "GET")
@@ -679,6 +1279,8 @@ export default {
 				if(segments.length === 3 && request.method === "DELETE")
 					return adminDeleteNotice(request, env, segments[2]!);
 			}
+			if(segments[0] === "backups" && segments[1] === "cfg")
+				return handleBackups(request, env, segments);
 			if(segments[0] === "rooms")
 				return handleRooms(request, env, ctx, segments);
 			return error(404, "not_found", "Endpoint not found.");

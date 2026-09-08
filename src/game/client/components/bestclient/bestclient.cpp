@@ -1,8 +1,6 @@
 /* Copyright © 2026 BestProject Team */
 #include "bestclient.h"
 
-#include "version.h"
-
 #include <base/color.h>
 #include <base/log.h>
 #include <base/math.h>
@@ -12,26 +10,21 @@
 #include <engine/client/enums.h>
 #include <engine/demo.h>
 #include <engine/shared/config.h>
-#include <engine/shared/json.h>
 #include <engine/storage.h>
-#include <engine/updater.h>
 
 #include <game/client/components/binds.h>
 #include <game/client/components/hud_layout.h>
 #include <game/client/components/sounds.h>
 #include <game/client/gameclient.h>
 #include <game/localization.h>
-#include <game/version.h>
 
 #include <game/collision.h>
 #include <game/mapitems.h>
 
 #include <algorithm>
-#include <cctype>
 #include <string>
 #include <vector>
 
-static constexpr const char *BestClient_INFO_URL = "https://ddnet.under1111.com/api/uclient/update/latest";
 static constexpr const char *BestClient_STREAMER_WORDS_FILE = "nwords.txt";
 static const char *const gs_apDefaultStreamerWords[] = {
 	"пидор",
@@ -131,176 +124,6 @@ static bool FindSensitiveChatCommandPayload(const char *pInput, const char **ppP
 	}
 
 	return false;
-}
-
-static void NormalizeBestClientVersion(const char *pVersion, char *pBuf, int BufSize)
-{
-	if(BufSize <= 0)
-		return;
-
-	if(!pVersion)
-	{
-		pBuf[0] = '\0';
-		return;
-	}
-
-	while(*pVersion != '\0' && std::isspace(static_cast<unsigned char>(*pVersion)))
-		++pVersion;
-
-	if((pVersion[0] == 'v' || pVersion[0] == 'V') && std::isdigit(static_cast<unsigned char>(pVersion[1])))
-		++pVersion;
-
-	str_copy(pBuf, pVersion, BufSize);
-}
-
-static std::vector<int> ExtractBestClientVersionNumbers(const char *pVersion)
-{
-	std::vector<int> vNumbers;
-	if(!pVersion)
-		return vNumbers;
-
-	int Current = -1;
-	for(const unsigned char *p = reinterpret_cast<const unsigned char *>(pVersion); *p != '\0'; ++p)
-	{
-		if(std::isdigit(*p))
-		{
-			if(Current < 0)
-				Current = 0;
-			Current = Current * 10 + (*p - '0');
-		}
-		else if(Current >= 0)
-		{
-			vNumbers.push_back(Current);
-			Current = -1;
-		}
-	}
-
-	if(Current >= 0)
-		vNumbers.push_back(Current);
-
-	return vNumbers;
-}
-
-static int CompareBestClientVersions(const char *pLeft, const char *pRight)
-{
-	char aLeft[64];
-	char aRight[64];
-	NormalizeBestClientVersion(pLeft, aLeft, sizeof(aLeft));
-	NormalizeBestClientVersion(pRight, aRight, sizeof(aRight));
-
-	const std::vector<int> vLeft = ExtractBestClientVersionNumbers(aLeft);
-	const std::vector<int> vRight = ExtractBestClientVersionNumbers(aRight);
-	const size_t Num = maximum(vLeft.size(), vRight.size());
-	for(size_t i = 0; i < Num; ++i)
-	{
-		const int Left = i < vLeft.size() ? vLeft[i] : 0;
-		const int Right = i < vRight.size() ? vRight[i] : 0;
-		if(Left < Right)
-			return -1;
-		if(Left > Right)
-			return 1;
-	}
-
-	return str_comp_nocase(aLeft, aRight);
-}
-
-static std::string ToLowerAscii(const char *pStr)
-{
-	std::string Lower;
-	if(!pStr)
-		return Lower;
-
-	for(const unsigned char *p = reinterpret_cast<const unsigned char *>(pStr); *p != '\0'; ++p)
-		Lower.push_back(static_cast<char>(std::tolower(*p)));
-	return Lower;
-}
-
-static const char *GetBestClientReleaseVersionString(const json_value *pJson)
-{
-	if(!pJson || pJson->type != json_object)
-		return nullptr;
-
-	const char *pVersion = json_string_get(json_object_get(pJson, "tag_name"));
-	if(!pVersion)
-		pVersion = json_string_get(json_object_get(pJson, "name"));
-	return pVersion;
-}
-
-static int ScoreBestClientReleaseAsset(const char *pAssetName)
-{
-	if(!pAssetName)
-		return -1;
-
-	const std::string Lower = ToLowerAscii(pAssetName);
-	if(Lower.find("bestclient") == std::string::npos)
-		return -1;
-
-#if defined(CONF_FAMILY_WINDOWS)
-	if(!str_endswith_nocase(pAssetName, ".zip"))
-		return -1;
-	if(Lower.find("windows") == std::string::npos && Lower.find("win") == std::string::npos)
-		return -1;
-#elif defined(CONF_PLATFORM_ANDROID)
-	if(!str_endswith_nocase(pAssetName, ".apk"))
-		return -1;
-	if(Lower.find("android") == std::string::npos)
-		return -1;
-#elif defined(CONF_PLATFORM_LINUX)
-	if(!str_endswith_nocase(pAssetName, ".tar.xz"))
-		return -1;
-	if(Lower.find("linux") == std::string::npos)
-		return -1;
-#else
-	return -1;
-#endif
-
-	if(Lower.find("debug") != std::string::npos || Lower.find("symbols") != std::string::npos || Lower.find("source") != std::string::npos)
-		return -1;
-
-	int Score = 100;
-
-#if defined(CONF_FAMILY_WINDOWS)
-	if(Lower == "bestclient-windows.zip")
-		Score += 200;
-#elif defined(CONF_PLATFORM_ANDROID)
-	if(Lower == "bestclient-android.apk")
-		Score += 200;
-#elif defined(CONF_PLATFORM_LINUX)
-	if(Lower == "bestclient-linux.tar.xz")
-		Score += 200;
-#endif
-
-	return Score;
-}
-
-static bool ReleaseHasBestClientAssetForCurrentPlatform(const json_value *pJson)
-{
-	if(!pJson || pJson->type != json_object)
-		return false;
-
-	const json_value *pAssets = json_object_get(pJson, "assets");
-	if(!pAssets || pAssets->type != json_array)
-		return false;
-
-	int BestScore = -1;
-	for(int i = 0; i < json_array_length(pAssets); ++i)
-	{
-		const json_value *pAsset = json_array_get(pAssets, i);
-		if(!pAsset || pAsset->type != json_object)
-			continue;
-
-		const char *pName = json_string_get(json_object_get(pAsset, "name"));
-		BestScore = maximum(BestScore, ScoreBestClientReleaseAsset(pName));
-	}
-
-	return BestScore >= 0;
-}
-
-static void BuildBestClientInfoUrl(char *pBuf, int BufSize)
-{
-	const char *pBase = g_Config.m_UcUpdateLatestUrl[0] != '\0' ? g_Config.m_UcUpdateLatestUrl : BestClient_INFO_URL;
-	const char *pSeparator = str_find(pBase, "?") ? "&" : "?";
-	str_format(pBuf, BufSize, "%s%st=%lld", pBase, pSeparator, (long long)time_timestamp());
 }
 
 bool CBestClient::IsStreamerModeEnabled() const
@@ -536,45 +359,6 @@ void CBestClient::SanitizePlayerName(const char *pInput, char *pOutput, size_t O
 	SanitizeText(pInput, pOutput, OutputSize);
 }
 
-static const char *FindBestClientReleaseVersion(const json_value *pJson)
-{
-	if(!pJson)
-		return nullptr;
-
-	if(pJson->type == json_object)
-	{
-		// uclient API format: {"version": "...", "platforms": {...}}
-		const char *pVersion = json_string_get(json_object_get(pJson, "version"));
-		if(pVersion && json_object_get(pJson, "platforms"))
-			return pVersion;
-		// GitHub release object format
-		return ReleaseHasBestClientAssetForCurrentPlatform(pJson) ? GetBestClientReleaseVersionString(pJson) : nullptr;
-	}
-
-	if(pJson->type == json_array)
-	{
-		const json_value *pBestRelease = nullptr;
-		char aBestVersion[64] = "";
-		for(int i = 0; i < json_array_length(pJson); ++i)
-		{
-			const json_value *pRelease = json_array_get(pJson, i);
-			if(!pRelease || pRelease->type != json_object)
-				continue;
-			const char *pVersion = GetBestClientReleaseVersionString(pRelease);
-			if(!pVersion)
-				continue;
-			if(!pBestRelease || CompareBestClientVersions(pVersion, aBestVersion) > 0)
-			{
-				pBestRelease = pRelease;
-				str_copy(aBestVersion, pVersion, sizeof(aBestVersion));
-			}
-		}
-		return pBestRelease && ReleaseHasBestClientAssetForCurrentPlatform(pBestRelease) ? GetBestClientReleaseVersionString(pBestRelease) : nullptr;
-	}
-
-	return nullptr;
-}
-
 static constexpr int s_HookComboBaseTextCount = 15;
 static constexpr int s_HookComboVariantLimit = 100;
 static constexpr int s_HookComboSoundCount = 7;
@@ -658,14 +442,10 @@ void CBestClient::OnInit()
 {
 	LoadHookComboSounds();
 	ResetHookComboState();
-#if !defined(CONF_HEADLESS_CLIENT)
-	FetchBestClientInfo();
-#endif
 }
 
 void CBestClient::OnShutdown()
 {
-	ResetBestClientInfoTask();
 	ResetHookComboState();
 	UnloadHookComboSounds();
 }
@@ -687,39 +467,6 @@ void CBestClient::OnStateChange(int NewState, int OldState)
 
 void CBestClient::OnRender()
 {
-	if(m_pBestClientInfoTask)
-	{
-		if(m_pBestClientInfoTask->State() == EHttpState::DONE)
-		{
-			FinishBestClientInfo();
-			ResetBestClientInfoTask();
-		}
-		else if(m_pBestClientInfoTask->State() == EHttpState::ERROR || m_pBestClientInfoTask->State() == EHttpState::ABORTED)
-		{
-			ResetBestClientInfoTask();
-		}
-	}
-
-#if defined(CONF_AUTOUPDATE)
-	if(m_bAutoUpdateArmed)
-	{
-		const IUpdater::EUpdaterState State = Updater()->GetCurrentState();
-		if(NeedUpdate() && State == IUpdater::CLEAN)
-		{
-			m_bAutoUpdateArmed = false;
-			Updater()->InitiateUpdate();
-		}
-		else if(!NeedUpdate())
-		{
-			m_bAutoUpdateArmed = false;
-		}
-	}
-	if(g_Config.m_BcAutoUpdate && Updater()->GetCurrentState() == IUpdater::NEED_RESTART)
-	{
-		Updater()->ApplyUpdateAndRestart();
-	}
-#endif
-
 	if(HasHookComboWork())
 		UpdateHookCombo();
 
@@ -1311,73 +1058,6 @@ void CBestClient::ConSaveRollback(IConsole::IResult *pResult, void *pUserData)
 {
 	(void)pResult;
 	static_cast<CBestClient *>(pUserData)->SaveRollback();
-}
-
-bool CBestClient::NeedUpdate()
-{
-	return str_comp(m_aVersionStr, "0") != 0;
-}
-
-bool CBestClient::IsAutoUpdating() const
-{
-#if defined(CONF_AUTOUPDATE)
-	if(!g_Config.m_BcAutoUpdate)
-		return false;
-	const IUpdater::EUpdaterState State = Updater()->GetCurrentState();
-	return State >= IUpdater::GETTING_MANIFEST && State < IUpdater::NEED_RESTART;
-#else
-	return false;
-#endif
-}
-
-void CBestClient::ResetBestClientInfoTask()
-{
-	if(m_pBestClientInfoTask)
-	{
-		m_pBestClientInfoTask->Abort();
-		m_pBestClientInfoTask = nullptr;
-	}
-}
-
-void CBestClient::FetchBestClientInfo()
-{
-	if(m_pBestClientInfoTask && !m_pBestClientInfoTask->Done())
-		return;
-
-	char aUrl[512];
-	BuildBestClientInfoUrl(aUrl, sizeof(aUrl));
-	m_pBestClientInfoTask = HttpGet(aUrl);
-	m_pBestClientInfoTask->HeaderString("Accept", "application/json");
-	m_pBestClientInfoTask->HeaderString("User-Agent", CLIENT_NAME);
-	m_pBestClientInfoTask->HeaderString("Cache-Control", "no-cache");
-	m_pBestClientInfoTask->HeaderString("Pragma", "no-cache");
-	m_pBestClientInfoTask->Timeout(CTimeout{10000, 0, 500, 10});
-	m_pBestClientInfoTask->IpResolve(IPRESOLVE::V4);
-	Http()->Run(m_pBestClientInfoTask);
-}
-
-void CBestClient::FinishBestClientInfo()
-{
-	json_value *pJson = m_pBestClientInfoTask->ResultJson();
-	if(!pJson)
-		return;
-
-	const char *pCurrentVersion = FindBestClientReleaseVersion(pJson);
-
-	// Update is available only when the remote tag is higher than current UClient version.
-	if(pCurrentVersion && CompareBestClientVersions(pCurrentVersion, UCLIENT_VERSION) > 0)
-		str_copy(m_aVersionStr, pCurrentVersion, sizeof(m_aVersionStr));
-	else
-	{
-		m_aVersionStr[0] = '0';
-		m_aVersionStr[1] = '\0';
-	}
-
-	m_FetchedBestClientInfo = true;
-#if defined(CONF_AUTOUPDATE)
-	m_bAutoUpdateArmed = g_Config.m_BcAutoUpdate != 0;
-#endif
-	json_value_free(pJson);
 }
 
 void CBestClient::OnConsoleInit()

@@ -16,7 +16,7 @@ MACRO_CONFIG_COL(UcChatImagePenColor, uc_chat_image_pen_color, 255, CFGFLAG_CLIE
 MACRO_CONFIG_STR(UcInstallUuid, uc_install_uuid, 64, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient install UUID generated once on first start")
 MACRO_CONFIG_STR(UcApiBaseUrl, uc_api_base_url, 256, "https://uclient.under1111.com", CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient account and chat room API base URL")
 MACRO_CONFIG_STR(UcChatSendRoom, uc_chat_send_room, 64, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient chat room selected as the current send target")
-MACRO_CONFIG_STR(UcUpdateLatestUrl, uc_update_latest_url, 256, "https://ddnet.under1111.com/api/uclient/update/latest", CFGFLAG_CLIENT | CFGFLAG_SAVE, "HTTP endpoint used to fetch latest UClient update metadata")
+MACRO_CONFIG_STR(UcUpdateLatestUrl, uc_update_latest_url, 256, "https://ddnet.under1111.com/uclient/client/latest.json", CFGFLAG_CLIENT | CFGFLAG_SAVE, "HTTP endpoint used to fetch latest UClient client update metadata")
 MACRO_CONFIG_STR(UcPresenceApiBaseUrl, uc_presence_api_base_url, 256, "https://ddnet.under1111.com/api/presence", CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient presence API base URL (GET list, POST /join /heartbeat /leave /switch)")
 MACRO_CONFIG_STR(UcPresenceUdpServerAddress, uc_presence_udp_server_address, 256, "presence-udp.ddnet.under1111.com:8778", CFGFLAG_CLIENT | CFGFLAG_SAVE, "UClient presence UDP relay address (empty disables UDP presence)")
 MACRO_CONFIG_STR(UcPresenceUdpSharedToken, uc_presence_udp_shared_token, 256, "d6409a4e897e834040a74cfc9bd63ccf7e5682c3aed36d15135c9b95151bbaaf", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Shared token used to authenticate UClient presence UDP packets")

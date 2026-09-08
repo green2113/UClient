@@ -28,7 +28,6 @@ public:
 	EState State() const { return m_State; }
 	bool IsReady() const { return m_State == EState::OK; }
 	bool IsPending() const { return m_State == EState::PENDING; }
-	bool IsCreating() const { return m_Request == ERequest::REGISTER; }
 	const char *InstallId() const { return m_aInstallId; }
 	const char *Secret() const { return m_aSecret; }
 	const char *BanReason() const { return m_aBanReason; }
@@ -36,22 +35,13 @@ public:
 	const char *ErrorMessage() const { return m_aError; }
 	const char *ErrorCode() const { return m_aErrorCode; }
 
-	// Starts register/verify after assets are loaded so the HTTP timeout is not
+	// Starts verification after assets are loaded so the HTTP timeout is not
 	// eaten by the long component/image init phase.
 	void StartAuth();
 
 private:
-	enum class ERequest
-	{
-		NONE,
-		REGISTER,
-		VERIFY,
-	};
-
 	void LoadAccount();
 	void SaveAccount() const;
-	void GenerateIdentity(bool KeepInstallId);
-	void BeginRegister();
 	void BeginVerify();
 	void FinishRequest();
 	bool VerifyGraceToken() const;
@@ -59,7 +49,8 @@ private:
 	void ApplySuccess(const json_value *pRoot);
 
 	EState m_State = EState::PENDING;
-	ERequest m_Request = ERequest::NONE;
+	// Preserve the component layout after removing the former request enum.
+	int m_AccountAbiPadding = 0;
 	std::shared_ptr<CHttpRequest> m_pRequest;
 	char m_aInstallId[64] = "";
 	char m_aSecret[129] = "";
@@ -71,7 +62,8 @@ private:
 	char m_aErrorCode[128] = "";
 	bool m_HadAccountFile = false;
 	bool m_Registered = false;
-	bool m_RetriedWithNewIdentity = false;
+	// Preserve the component layout after removing the former retry flag.
+	bool m_AccountAbiFlagPadding = false;
 	bool m_AuthStarted = false;
 };
 

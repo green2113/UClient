@@ -416,11 +416,6 @@ protected:
 		FPopupButtonCallback pfnConfirmButtonCallback = &CMenus::DefaultButtonCallback, int ConfirmNextPopup = POPUP_NONE,
 		FPopupButtonCallback pfnCancelButtonCallback = &CMenus::DefaultButtonCallback, int CancelNextPopup = POPUP_NONE);
 
-	// Explains the mandatory update and offers to start it. Returns true when a pending update
-	// blocks the attempted server join, in which case the caller must not connect.
-	bool PopupUpdateRequired();
-	void PopupConfirmStartUpdate();
-
 	// some settings
 	static float ms_ButtonHeight;
 	static float ms_ListheaderHeight;
@@ -429,7 +424,6 @@ protected:
 	// for settings
 	bool m_NeedRestartGraphics;
 	bool m_NeedRestartSound;
-	bool m_NeedRestartUpdate;
 	bool m_NeedSendinfo;
 	bool m_NeedSendDummyinfo;
 	int m_SettingPlayerPage;

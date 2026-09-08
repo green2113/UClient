@@ -62,7 +62,6 @@ class CUpdater : public IUpdater
 
 	std::shared_ptr<CHttpRequest> m_pCurrentTask;
 	ETaskKind m_TaskKind = ETaskKind::NONE;
-	bool m_bAutoCheckPending = false;
 
 	bool m_CheckCompleted = false;
 

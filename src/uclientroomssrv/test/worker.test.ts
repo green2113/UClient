@@ -86,6 +86,10 @@ describe("rooms Worker integration", () => {
 		const retryRegisterResponse = await SELF.fetch(jsonRequest("/account/register", owner));
 		expect(retryRegisterResponse.status).toBe(200);
 		expect((await responseJson<{grace_token: string}>(retryRegisterResponse)).grace_token).toContain(".");
+		const ownerVersion = await testEnv.DB.prepare(
+			"SELECT last_client_version FROM accounts WHERE install_id = ?1",
+		).bind(owner.install_id).first<{last_client_version: string}>();
+		expect(ownerVersion?.last_client_version).toBe("test");
 		const conflictingRegisterResponse = await SELF.fetch(jsonRequest("/account/register", {
 			install_id: owner.install_id,
 			secret: "different-secret-with-at-least-32-characters",
@@ -124,7 +128,7 @@ describe("rooms Worker integration", () => {
 		const colorAsAdminResponse = await SELF.fetch(jsonRequest(`/rooms/${created.id}`, {
 			name_color: 123456,
 		}, member));
-		expect(colorAsAdminResponse.status).toBe(403);
+		expect(colorAsAdminResponse.status).toBe(200);
 
 		const colorAsOwnerResponse = await SELF.fetch(jsonRequest(`/rooms/${created.id}`, {
 			name_color: 123456,
@@ -194,12 +198,13 @@ describe("rooms Worker integration", () => {
 		expect(membershipsResponse.status).toBe(200);
 		const memberships = await responseJson<{
 			sequence: number;
-			rooms: Array<{room_id: string; install_ids: string[]}>;
+			rooms: Array<{room_id: string; room_name: string; name_color: number; install_ids: string[]}>;
 		}>(membershipsResponse);
 		expect(memberships.sequence).toBeGreaterThan(0);
 		expect(memberships.rooms).toContainEqual({
 			room_id: recreated.id,
 			room_name: "Integration Room 2",
+			name_color: 0,
 			install_ids: expect.arrayContaining([owner.install_id, member.install_id]),
 		});
 
@@ -319,5 +324,219 @@ describe("launcher notices", () => {
 
 		const deleteResponse = await SELF.fetch(adminRequest(`/admin/notices/${created.notice.id}`, "DELETE"));
 		expect(deleteResponse.status).toBe(200);
+	});
+});
+
+describe("email accounts", () => {
+	beforeAll(async () => {
+		await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
+	});
+
+	it("preserves legacy accounts while linking email and adding device secrets", async () => {
+		const legacy = {
+			install_id: "33333333-3333-4333-8333-333333333333",
+			secret: "legacy-secret-with-at-least-32-characters",
+		};
+		expect((await SELF.fetch(jsonRequest("/account/register", legacy))).status).toBe(201);
+
+		const linkResponse = await SELF.fetch(jsonRequest("/account/link-email", {
+			email: "  Legacy.User@Example.COM ",
+			password: "a-secure-password",
+		}, legacy));
+		expect(linkResponse.status).toBe(200);
+		expect(await responseJson<{install_id: string; has_email: boolean; email: string}>(linkResponse)).toMatchObject({
+			install_id: legacy.install_id,
+			has_email: true,
+			email: "legacy.user@example.com",
+		});
+
+		const newDevice = {secret: "new-device-secret-with-at-least-32-characters"};
+		const loginResponse = await SELF.fetch(jsonRequest("/account/login-email", {
+			email: "LEGACY.USER@example.com",
+			password: "a-secure-password",
+			secret: newDevice.secret,
+			version: "email-test",
+		}));
+		expect(loginResponse.status).toBe(200);
+		expect(await responseJson<{install_id: string}>(loginResponse)).toMatchObject({install_id: legacy.install_id});
+
+		for(const secret of [legacy.secret, newDevice.secret]) {
+			const verifyResponse = await SELF.fetch(jsonRequest("/account/verify", {
+				install_id: legacy.install_id,
+				secret,
+			}));
+			expect(verifyResponse.status).toBe(200);
+		}
+
+		const profile = await SELF.fetch(authenticatedRequest("/account/profile", "GET", {
+			install_id: legacy.install_id,
+			secret: newDevice.secret,
+		}));
+		expect(profile.status).toBe(200);
+		expect(await responseJson<{email: string; grace_token: string}>(profile)).toMatchObject({
+			email: "legacy.user@example.com",
+			grace_token: expect.stringContaining("."),
+		});
+	});
+
+	it("supports email signup, rejects duplicates and invalid passwords, and rate limits bad logins", async () => {
+		const emailAccount = {
+			install_id: "44444444-4444-4444-8444-444444444444",
+			secret: "email-signup-secret-with-at-least-32-characters",
+			email: "Signup.User@Example.com",
+			password: "signup-password",
+			version: "email-test",
+		};
+		const signup = await SELF.fetch(jsonRequest("/account/register-email", emailAccount));
+		expect(signup.status).toBe(201);
+		expect(await responseJson<{install_id: string; email: string}>(signup)).toMatchObject({
+			install_id: emailAccount.install_id,
+			email: "signup.user@example.com",
+		});
+
+		const duplicate = await SELF.fetch(jsonRequest("/account/register-email", {
+			...emailAccount,
+			install_id: "55555555-5555-4555-8555-555555555555",
+			secret: "duplicate-secret-with-at-least-32-characters",
+			email: " signup.user@EXAMPLE.COM ",
+		}));
+		expect(duplicate.status).toBe(409);
+		expect(await responseJson<{error: string}>(duplicate)).toMatchObject({error: "email_exists"});
+
+		const shortPassword = await SELF.fetch(jsonRequest("/account/register-email", {
+			...emailAccount,
+			install_id: "66666666-6666-4666-8666-666666666666",
+			email: "short@example.com",
+			password: "too-short",
+		}));
+		expect(shortPassword.status).toBe(400);
+
+		for(let attempt = 0; attempt < 10; attempt++) {
+			const badLogin = await SELF.fetch(jsonRequest("/account/login-email", {
+				email: emailAccount.email,
+				password: "incorrect-password",
+				secret: "rate-limit-secret-with-at-least-32-characters",
+			}));
+			expect(badLogin.status).toBe(403);
+		}
+		const limited = await SELF.fetch(jsonRequest("/account/login-email", {
+			email: emailAccount.email,
+			password: emailAccount.password,
+			secret: "rate-limit-secret-with-at-least-32-characters",
+		}));
+		expect(limited.status).toBe(429);
+	});
+});
+
+describe("cfg backups", () => {
+	beforeAll(async () => {
+		await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
+	});
+
+	it("uploads, lists, downloads, and deletes immutable cfg versions", async () => {
+		const account = {
+			install_id: "77777777-7777-4777-8777-777777777777",
+			secret: "backup-secret-with-at-least-32-characters",
+		};
+		expect((await SELF.fetch(jsonRequest("/account/register", account))).status).toBe(201);
+		const bytes = new TextEncoder().encode("seta name \"backup-test\"\n");
+		const upload = await SELF.fetch(new Request("https://worker.test/backups/cfg", {
+			method: "PUT",
+			headers: {
+				authorization: `Bearer ${account.secret}`,
+				"x-uclient-install-id": account.install_id,
+				"x-uclient-path": encodeURIComponent("configs\\autoexec.cfg"),
+			},
+			body: bytes,
+		}));
+		expect(upload.status).toBe(201);
+		const uploaded = await responseJson<{
+			version: {id: string; relative_path: string; size_bytes: number; sha256: string};
+			used_bytes: number;
+			quota_bytes: number;
+		}>(upload);
+		expect(uploaded.version).toMatchObject({
+			relative_path: "configs/autoexec.cfg",
+			size_bytes: bytes.byteLength,
+		});
+		expect(uploaded.version.sha256).toMatch(/^[0-9a-f]{64}$/);
+		expect(uploaded.used_bytes).toBe(bytes.byteLength);
+		expect(uploaded.quota_bytes).toBe(10 * 1024 * 1024);
+
+		const list = await SELF.fetch(authenticatedRequest("/backups/cfg", "GET", account));
+		expect(list.status).toBe(200);
+		expect(await responseJson<{versions: Array<{id: string}>}>(list)).toMatchObject({
+			versions: [{id: uploaded.version.id}],
+		});
+
+		const download = await SELF.fetch(authenticatedRequest(`/backups/cfg/${uploaded.version.id}`, "GET", account));
+		expect(download.status).toBe(200);
+		expect(download.headers.get("x-uclient-path")).toBe(encodeURIComponent("configs/autoexec.cfg"));
+		expect(new Uint8Array(await download.arrayBuffer())).toEqual(bytes);
+
+		const remove = await SELF.fetch(authenticatedRequest(`/backups/cfg/${uploaded.version.id}`, "DELETE", account));
+		expect(remove.status).toBe(200);
+		expect((await SELF.fetch(authenticatedRequest(`/backups/cfg/${uploaded.version.id}`, "GET", account))).status).toBe(404);
+	});
+
+	it("rejects invalid paths, oversized objects, and account quota overflow", async () => {
+		const account = {
+			install_id: "88888888-8888-4888-8888-888888888888",
+			secret: "backup-quota-secret-with-at-least-32-characters",
+		};
+		expect((await SELF.fetch(jsonRequest("/account/register", account))).status).toBe(201);
+		const upload = (path: string, body: Uint8Array) => SELF.fetch(new Request("https://worker.test/backups/cfg", {
+			method: "PUT",
+			headers: {
+				authorization: `Bearer ${account.secret}`,
+				"x-uclient-install-id": account.install_id,
+				"x-uclient-path": encodeURIComponent(path),
+			},
+			body,
+		}));
+		expect((await upload("../stolen.cfg", new Uint8Array(1))).status).toBe(400);
+		expect((await upload("readme.exe", new Uint8Array(1))).status).toBe(400);
+		expect((await upload("dumps/crash.log", new TextEncoder().encode("crash"))).status).toBe(400);
+		expect((await upload("DUMPS/crash.log", new TextEncoder().encode("crash"))).status).toBe(400);
+		expect((await upload("downloadedskins/skin.png", new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).status).toBe(400);
+		expect((await upload("communityicons/ddnet.png", new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).status).toBe(400);
+		expect((await upload("large.cfg", new Uint8Array(10 * 1024 * 1024 + 1))).status).toBe(413);
+
+		await testEnv.DB.prepare(
+			`INSERT INTO cfg_backup_versions
+			 (id, account_install_id, relative_path, object_key, created_at, size_bytes, sha256)
+			 VALUES (?1, ?2, 'existing.cfg', ?3, ?4, ?5, ?6)`,
+		).bind(
+			"99999999-9999-4999-8999-999999999999",
+			account.install_id,
+			"test/quota-existing",
+			Math.floor(Date.now() / 1000),
+			9 * 1024 * 1024,
+			"0".repeat(64),
+		).run();
+		expect((await upload("quota.cfg", new Uint8Array(2 * 1024 * 1024).fill(0x61))).status).toBe(413);
+	});
+
+	it("validates allowed formats and rejects disguised account credentials", async () => {
+		const account = {
+			install_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			secret: "backup-validation-secret-at-least-32-characters",
+		};
+		expect((await SELF.fetch(jsonRequest("/account/register", account))).status).toBe(201);
+		const upload = (path: string, body: Uint8Array) => SELF.fetch(new Request("https://worker.test/backups/cfg", {
+			method: "PUT",
+			headers: {
+				authorization: `Bearer ${account.secret}`,
+				"x-uclient-install-id": account.install_id,
+				"x-uclient-path": encodeURIComponent(path),
+			},
+			body,
+		}));
+
+		expect((await upload("notes.txt", new TextEncoder().encode("backup notes\n"))).status).toBe(201);
+		expect((await upload("image.png", new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).status).toBe(201);
+		expect((await upload("renamed.png", new TextEncoder().encode("{\"install_id\":\"x\",\"secret\":\"y\"}"))).status).toBe(400);
+		expect((await upload("renamed.txt", new TextEncoder().encode("{\"install_id\":\"x\",\"secret\":\"y\"}"))).status).toBe(400);
+		expect((await upload("uclient_account.json", new TextEncoder().encode("{}"))).status).toBe(400);
 	});
 });

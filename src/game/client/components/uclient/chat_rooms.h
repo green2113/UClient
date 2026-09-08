@@ -52,6 +52,7 @@ public:
 	void Refresh();
 	void RefreshIfStale(int MaxAgeSeconds);
 	void RequestRefreshSoon();
+	bool ApplyRoomMetadata(const char *pRoomId, const char *pRoomName, unsigned NameColor);
 	bool Create(const char *pName, const char *pDisplayName);
 	void Rename(const char *pRoomId, const char *pName);
 	void UpdateSettings(const char *pRoomId, const char *pName, bool HasName, unsigned NameColor, bool HasColor, bool InviteCodePublic, bool HasInviteCodePublic);
@@ -73,7 +74,7 @@ private:
 	void AuthHeader(CHttpRequest *pRequest) const;
 	bool Begin(std::shared_ptr<CHttpRequest> pRequest, ERequest Request);
 	void Finish();
-	void ParseRooms(const json_value *pRoot);
+	bool ParseRooms(const json_value *pRoot);
 	bool BeginJsonPost(const char *pPath, const char *pJson);
 	void BeginDelete(const char *pPath);
 
@@ -84,6 +85,9 @@ private:
 	bool m_InitialRefresh = false;
 	int64_t m_LastRefresh = 0;
 	int64_t m_PendingRefreshAt = 0;
+	char m_aPendingColorRoomId[64] = "";
+	unsigned m_PendingNameColor = 0;
+	bool m_HasPendingNameColor = false;
 };
 
 #endif

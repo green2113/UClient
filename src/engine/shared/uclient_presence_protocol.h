@@ -230,6 +230,8 @@ struct CRoomListChanged
 {
 	std::string m_RoomId;
 	std::string m_RoomName;
+	uint32_t m_NameColor = 0;
+	bool m_HasNameColor = false;
 };
 
 using BestClientIndicator::AppendProof;
@@ -324,7 +326,7 @@ void WriteUClientReactionClientBody(std::vector<uint8_t> &vOut, const char *pPla
 	CUuid ReactorKey, const char *pEmoji, uint8_t Action);
 bool ReadUClientReactionBroadcast(const uint8_t *pData, int DataSize, CUClientReactionBroadcast &Out);
 
-void WriteRoomListChanged(std::vector<uint8_t> &vOut, const char *pRoomId, const char *pRoomName);
+void WriteRoomListChanged(std::vector<uint8_t> &vOut, const char *pRoomId, const char *pRoomName, uint32_t NameColor = 0, bool IncludeNameColor = false);
 bool ReadRoomListChanged(const uint8_t *pData, int DataSize, CRoomListChanged &Out);
 }
 

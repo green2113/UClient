@@ -129,11 +129,28 @@ jobs:
         ccache -s || true
 
     - name: Package
+      shell: bash
       run: |
         cd release
         ${{ matrix.cmake-path }}cmake --build . --config Release --target package_default ${{ matrix.build-args }}
+        ${{ matrix.cmake-path }}cmake --build . --config Release --target uclient-version-info ${{ matrix.build-args }}
         mkdir artifacts
         mv ${{ matrix.package-file }} artifacts
+        VERSION_INFO="$(find . -type f \( -name 'uclient-version-info' -o -name 'uclient-version-info.exe' \) | head -n 1)"
+        test -n "$VERSION_INFO"
+        CLIENT_BIN="$(find . -type f \( -name 'DDNet' -o -name 'DDNet.exe' \) | head -n 1)"
+        if [[ -n "$CLIENT_BIN" ]] && "$CLIENT_BIN" --write-version-info artifacts/uclient_build_manifest.json; then
+          echo "Read version from the built client binary"
+        else
+          "$VERSION_INFO" > artifacts/uclient_build_manifest.json
+        fi
+        python - <<'PY'
+        import json, os, pathlib
+        path = pathlib.Path("artifacts/uclient_build_manifest.json")
+        data = json.loads(path.read_text())
+        data["gitSha"] = os.environ["GITHUB_SHA"]
+        path.write_text(json.dumps(data, separators=(",", ":")) + "\n")
+        PY
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4

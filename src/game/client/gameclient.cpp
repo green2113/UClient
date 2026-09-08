@@ -829,16 +829,13 @@ void CGameClient::OnInit()
 		pChecksum->m_aComponentsChecksum[i] = Size;
 	}
 
-	// Keep the startup loading screen until UClient account create/verify finishes,
+	// Keep the startup loading screen until UClient account verification finishes,
 	// then hand off to the main menu (success) or the account error gate (failure).
 	m_UClientAccount.StartAuth();
 	while(m_UClientAccount.IsPending())
 	{
 		m_UClientAccount.OnUpdate();
-		const char *pAccountMessage = m_UClientAccount.IsCreating() ?
-						       Localize("Creating UClient account...") :
-						       Localize("Verifying UClient account...");
-		m_Menus.RenderLoading(pLoadingDDNetCaption, pAccountMessage, 0);
+		m_Menus.RenderLoading(pLoadingDDNetCaption, Localize("Verifying UClient account..."), 0);
 		std::this_thread::sleep_for(10ms);
 	}
 

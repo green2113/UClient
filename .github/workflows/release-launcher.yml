@@ -1,0 +1,398 @@
+name: Release UClient Launcher
+
+on:
+  push:
+    tags:
+      - "launcher-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version from UCLIENT_LAUNCHER_VERSION (for example, 1.1.0)"
+        required: true
+        type: string
+      run_id:
+        description: "Optional Fast Build run ID from the same commit"
+        required: false
+        default: ""
+        type: string
+      release_name:
+        description: "Optional GitHub release name"
+        required: false
+        type: string
+      body:
+        description: "Optional GitHub release notes"
+        required: false
+        type: string
+      r2_bucket:
+        description: "Cloudflare R2 bucket"
+        required: false
+        default: "download"
+        type: string
+      r2_public_base_url:
+        description: "Public URL ending at /uclient (without trailing slash)"
+        required: false
+        default: "https://ddnet.under1111.com/uclient"
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: release-launcher-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate launcher version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Match tag or input to version.h
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          header_version="$(
+            awk '/^#define UCLIENT_LAUNCHER_VERSION "/ {
+              gsub(/"/, "", $3)
+              print $3
+              exit
+            }' src/game/version.h
+          )"
+          test -n "$header_version" || {
+            echo "::error::Could not read UCLIENT_LAUNCHER_VERSION from src/game/version.h"
+            exit 1
+          }
+
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            requested="${GITHUB_REF_NAME#launcher-v}"
+            expected_tag="launcher-v${header_version}"
+            [[ "$GITHUB_REF_NAME" == "$expected_tag" ]] || {
+              echo "::error::Tag '$GITHUB_REF_NAME' must equal '$expected_tag'"
+              exit 1
+            }
+          else
+            requested="${INPUT_VERSION#launcher-v}"
+            requested="${requested#v}"
+          fi
+
+          [[ "$requested" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Invalid launcher version '$requested'"
+            exit 1
+          }
+          [[ "$requested" == "$header_version" ]] || {
+            echo "::error::Requested version '$requested' does not match UCLIENT_LAUNCHER_VERSION '$header_version'"
+            exit 1
+          }
+
+          echo "version=$header_version" >> "$GITHUB_OUTPUT"
+          echo "tag=launcher-v${header_version}" >> "$GITHUB_OUTPUT"
+          echo "Validated launcher version ${header_version}" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build Windows launcher
+    needs: validate
+    if: inputs.run_id == ''
+    runs-on: windows-latest
+    env:
+      CARGO_HTTP_MULTIPLEXING: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure launcher build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cmake -S . -B build-launcher -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCLIENT=ON `
+            -DSERVER=OFF `
+            -DTOOLS=OFF `
+            -DDOWNLOAD_GTEST=OFF `
+            -DVULKAN=OFF
+
+      - name: Build only uclient-launcher
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cmake --build build-launcher --config Release --target uclient-launcher
+
+      - name: Generate, package, and validate launcher manifest
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $artifactDir = Join-Path $PWD "artifacts"
+          $stageDir = Join-Path $env:RUNNER_TEMP "launcher-package"
+          New-Item -ItemType Directory -Force $artifactDir | Out-Null
+          if (Test-Path $stageDir) { Remove-Item -Recurse -Force $stageDir }
+          New-Item -ItemType Directory -Force $stageDir | Out-Null
+
+          $launcher = Get-ChildItem build-launcher -Recurse -File -Filter UClient.exe |
+            Where-Object { $_.FullName -notmatch '[\\/]webview2-sdk[\\/]' } |
+            Select-Object -First 1
+          if (-not $launcher) { throw "The uclient-launcher target did not produce UClient.exe" }
+          Copy-Item $launcher.FullName (Join-Path $stageDir "UClient.exe")
+
+          $manifestPath = Join-Path $stageDir "uclient_build_manifest.json"
+          & $launcher.FullName --write-version-info $manifestPath
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $manifestPath)) {
+            throw "Could not read version information from the built launcher binary"
+          }
+
+          $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+          $manifest | Add-Member -NotePropertyName gitSha -NotePropertyValue $env:GITHUB_SHA -Force
+          $manifest | ConvertTo-Json -Compress | Set-Content -Encoding utf8NoBOM $manifestPath
+          $manifestVersion = $manifest.launcherVersion
+          if ($manifestVersion -ne $env:RELEASE_VERSION) {
+            throw "Manifest version '$manifestVersion' does not match '$env:RELEASE_VERSION'"
+          }
+          if ($manifest.component -ne "launcher") {
+            throw "Manifest component '$($manifest.component)' is not 'launcher'"
+          }
+          python scripts/verify_uclient_release.py manifest `
+            --component launcher --version $env:RELEASE_VERSION `
+            --git-sha $env:GITHUB_SHA --path $manifestPath
+          if ($LASTEXITCODE -ne 0) { throw "Launcher manifest verification failed" }
+
+          $zip = Join-Path $artifactDir "UClient-launcher-windows.zip"
+          Compress-Archive -Path (Join-Path $stageDir "*") -DestinationPath $zip
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+            $files = @($archive.Entries | Where-Object { -not $_.FullName.EndsWith("/") })
+            $names = @($files | ForEach-Object { $_.FullName })
+            if ($files.Count -ne 2) {
+              throw "Launcher ZIP must contain exactly two files; found: $($names -join ', ')"
+            }
+            if ($names -notcontains "UClient.exe" -or $names -notcontains "uclient_build_manifest.json") {
+              throw "Launcher ZIP may contain only UClient.exe and uclient_build_manifest.json"
+            }
+          } finally {
+            $archive.Dispose()
+          }
+
+      - name: Upload launcher package
+        uses: actions/upload-artifact@v4
+        with:
+          name: launcher-windows
+          path: artifacts/UClient-launcher-windows.zip
+          if-no-files-found: error
+
+  reuse:
+    name: Reuse Windows launcher build
+    needs: validate
+    if: inputs.run_id != ''
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject artifact from another commit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $runSha = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:RUN_ID" --jq .head_sha
+          if ($runSha -ne $env:GITHUB_SHA) {
+            throw "Fast Build run $env:RUN_ID is from $runSha, expected $env:GITHUB_SHA"
+          }
+
+      - name: Download Windows build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ddnet-windows-latest
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: reused
+
+      - name: Extract and verify actual launcher binary
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $sourceZip = Get-ChildItem reused -Recurse -File -Filter "*-win64.zip" | Select-Object -First 1
+          if (-not $sourceZip) { throw "Reused run has no Windows package" }
+          $source = Join-Path $env:RUNNER_TEMP "reused-launcher-source"
+          $stage = Join-Path $env:RUNNER_TEMP "reused-launcher-package"
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue -Path @($source, $stage)
+          New-Item -ItemType Directory -Force $source, $stage | Out-Null
+          Expand-Archive -LiteralPath $sourceZip.FullName -DestinationPath $source
+          $launcher = Get-ChildItem $source -Recurse -File -Filter UClient.exe | Select-Object -First 1
+          if (-not $launcher) { throw "Reused package has no UClient.exe" }
+          Copy-Item $launcher.FullName (Join-Path $stage "UClient.exe")
+          $manifestPath = Join-Path $stage "uclient_build_manifest.json"
+          & $launcher.FullName --write-version-info $manifestPath
+          if ($LASTEXITCODE -ne 0) { throw "Could not query reused launcher binary" }
+          $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+          $manifest | Add-Member -NotePropertyName gitSha -NotePropertyValue $env:GITHUB_SHA -Force
+          $manifest | ConvertTo-Json -Compress | Set-Content -Encoding utf8NoBOM $manifestPath
+          python scripts/verify_uclient_release.py manifest `
+            --component launcher --version $env:RELEASE_VERSION `
+            --git-sha $env:GITHUB_SHA --path $manifestPath
+          if ($LASTEXITCODE -ne 0) { throw "Reused launcher version verification failed" }
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath artifacts/UClient-launcher-windows.zip
+
+      - name: Upload reused launcher package
+        uses: actions/upload-artifact@v4
+        with:
+          name: launcher-windows
+          path: artifacts/UClient-launcher-windows.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish launcher release
+    needs:
+      - validate
+      - build
+      - reuse
+    if: >-
+      always() &&
+      needs.validate.result == 'success' &&
+      (needs.build.result == 'success' || needs.reuse.result == 'success')
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+      R2_BUCKET: ${{ inputs.r2_bucket || 'download' }}
+      R2_PUBLIC_BASE_URL: ${{ inputs.r2_public_base_url || 'https://ddnet.under1111.com/uclient' }}
+      CF_R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      CF_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      CF_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download validated launcher package
+        uses: actions/download-artifact@v4
+        with:
+          name: launcher-windows
+          path: artifacts
+
+      - name: Validate launcher package contents again
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s artifacts/UClient-launcher-windows.zip
+          python3 - <<'PY'
+          import json, os, pathlib, zipfile
+
+          archive = pathlib.Path("artifacts/UClient-launcher-windows.zip")
+          with zipfile.ZipFile(archive) as zf:
+              files = sorted(name for name in zf.namelist() if not name.endswith("/"))
+              expected = ["UClient.exe", "uclient_build_manifest.json"]
+              assert files == expected, f"unexpected launcher ZIP contents: {files}"
+              manifest = json.loads(zf.read("uclient_build_manifest.json"))
+          version = (
+              manifest.get("version")
+              or manifest.get("launcherVersion")
+              or manifest.get("uclientLauncherVersion")
+          )
+          assert version == os.environ["VERSION"], (
+              f"manifest version {version!r} does not match {os.environ['VERSION']!r}"
+          )
+          assert manifest.get("component") == "launcher"
+          assert manifest.get("gitSha") == os.environ["GITHUB_SHA"]
+          PY
+          python3 scripts/verify_uclient_release.py package \
+            --component launcher --version "$VERSION" --git-sha "$GITHUB_SHA" \
+            --archive artifacts/UClient-launcher-windows.zip
+
+      - name: Create GitHub Release after successful build
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ inputs.release_name || format('UClient Launcher {0}', needs.validate.outputs.version) }}
+          body: ${{ inputs.body }}
+          generate_release_notes: ${{ inputs.body == '' }}
+          files: artifacts/UClient-launcher-windows.zip
+
+      - name: Prepare launcher update metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${R2_PUBLIC_BASE_URL%/}"
+          released_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          mkdir -p artifacts/update-meta
+          jq -n \
+            --arg version "$VERSION" \
+            --arg releasedAt "$released_at" \
+            --arg base "$base" \
+            --arg sha "$(sha256sum artifacts/UClient-launcher-windows.zip | cut -d' ' -f1)" \
+            --argjson size "$(stat -c%s artifacts/UClient-launcher-windows.zip)" \
+            '{
+              component: "launcher",
+              version: $version,
+              releasedAt: $releasedAt,
+              platforms: {
+                windows: {
+                  name: "UClient-launcher-windows.zip",
+                  path: ("uclient/launcher/" + $version + "/windows/UClient-launcher-windows.zip"),
+                  url: ($base + "/launcher/" + $version + "/windows/UClient-launcher-windows.zip"),
+                  sha256: $sha,
+                  size: $size
+                }
+              }
+            }' > artifacts/update-meta/latest.json
+          echo "RELEASED_AT=$released_at" >> "$GITHUB_ENV"
+
+      - name: Install rclone
+        if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends rclone
+
+      - name: Upload launcher package and metadata to R2
+        if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          r2=(--s3-provider Cloudflare
+              --s3-endpoint "https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+              --s3-access-key-id "$CF_R2_ACCESS_KEY_ID"
+              --s3-secret-access-key "$CF_R2_SECRET_ACCESS_KEY")
+          copy() {
+            rclone copyto "$1" ":s3:${R2_BUCKET}/$2" "${r2[@]}"
+          }
+
+          copy artifacts/UClient-launcher-windows.zip \
+            "uclient/launcher/${VERSION}/windows/UClient-launcher-windows.zip"
+
+          existing='[]'
+          if rclone cat ":s3:${R2_BUCKET}/uclient/launcher/versions.json" "${r2[@]}" \
+              > /tmp/launcher-versions.json 2>/dev/null &&
+              jq -e 'type == "array"' /tmp/launcher-versions.json >/dev/null; then
+            existing="$(jq -c . /tmp/launcher-versions.json)"
+          fi
+          jq -n \
+            --arg version "$VERSION" \
+            --arg releasedAt "$RELEASED_AT" \
+            --argjson existing "$existing" \
+            '([{
+              version: $version,
+              releasedAt: $releasedAt
+            }] + ($existing | map(select(.version != $version))))' \
+            > artifacts/update-meta/versions.json
+
+          copy artifacts/update-meta/latest.json "uclient/launcher/latest.json"
+          copy artifacts/update-meta/latest.json "uclient/launcher/${VERSION}/latest.json"
+          copy artifacts/update-meta/versions.json "uclient/launcher/versions.json"
+
+      - name: Report skipped R2 publishing
+        if: env.CF_R2_ACCOUNT_ID == '' || env.CF_R2_ACCESS_KEY_ID == '' || env.CF_R2_SECRET_ACCESS_KEY == ''
+        shell: bash
+        run: echo "::warning::R2 secrets are not configured; GitHub Release was created without R2 publishing"

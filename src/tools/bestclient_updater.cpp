@@ -388,12 +388,11 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 	DeleteTree(aExtract);
 	DeleteTree(aBackup);
 
-	// Commit launcher pending version stamp (stops update loops when UClient.exe
-	// inside the zip is missing or still reports an older compile-time version).
+	// Commit the pending client version stamp after the client files were applied.
 	{
 		wchar_t aPending[MAX_PATH];
 		wchar_t aVersion[MAX_PATH];
-		_snwprintf_s(aPending, _TRUNCATE, L"%ls\\uclient_pending_version.txt", pA->aInstallDir);
+		_snwprintf_s(aPending, _TRUNCATE, L"%ls\\uclient_client_pending_version.txt", pA->aInstallDir);
 		_snwprintf_s(aVersion, _TRUNCATE, L"%ls\\uclient_version.txt", pA->aInstallDir);
 		if(GetFileAttributesW(aPending) != INVALID_FILE_ATTRIBUTES)
 		{

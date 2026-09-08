@@ -1,5 +1,5 @@
 # .github/workflows/release.yml
-name: Create Release
+name: Full UClient Distribution Release
 
 on:
   release:
@@ -41,7 +41,9 @@ env:
 jobs:
   build-cmake:
     name: Build Release (${{ matrix.name }})
-    if: github.event_name == 'release' || github.event.inputs.run_id == ''
+    if: >-
+      (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_id == '')
     runs-on: ${{ matrix.os }}
     env:
       CARGO_HTTP_MULTIPLEXING: false
@@ -102,7 +104,9 @@ jobs:
 
   build-android:
     name: Build Release (android)
-    if: github.event_name == 'release' || github.event.inputs.run_id == ''
+    if: >-
+      (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_id == '')
     runs-on: ubuntu-24.04
     env:
       CARGO_HTTP_MULTIPLEXING: false
@@ -254,6 +258,28 @@ jobs:
 
     - name: List downloaded release packages
       run: ls -R artifacts
+
+    - name: Verify full Windows distribution contents
+      shell: bash
+      run: |
+        python3 - <<'PY'
+        import pathlib
+        import zipfile
+
+        package = pathlib.Path("artifacts/UClient-windows.zip")
+        if not package.is_file():
+            raise SystemExit("Full Windows distribution is missing")
+        with zipfile.ZipFile(package) as archive:
+            names = {
+                pathlib.PurePosixPath(name.replace("\\", "/")).name.lower()
+                for name in archive.namelist()
+                if not name.endswith("/")
+            }
+        required = {"ddnet.exe", "uclient.exe"}
+        missing = sorted(required - names)
+        if missing:
+            raise SystemExit(f"Full Windows distribution is incomplete; missing: {missing}")
+        PY
 
     - name: Attach assets to published GitHub release
       if: github.event_name == 'release'

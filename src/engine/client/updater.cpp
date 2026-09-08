@@ -11,7 +11,6 @@
 #include <engine/shared/config.h>
 #include <engine/shared/http.h>
 #include <engine/shared/json.h>
-#include <engine/shared/uclient_launch_gate.h>
 #include <engine/storage.h>
 
 #include <game/client/components/bestclient/version.h>
@@ -38,18 +37,19 @@ static bool StrEndsWithNoCase(const char *pStr, const char *pSuffix)
 	return str_comp_nocase(pStr + StrLen - SuffixLen, pSuffix) == 0;
 }
 
-static constexpr const char *DEFAULT_UPDATE_LATEST_URL = "https://ddnet.under1111.com/api/uclient/update/latest";
+static constexpr const char *DEFAULT_UPDATE_LATEST_URL = "https://ddnet.under1111.com/uclient/client/latest.json";
+static constexpr const char *LEGACY_UPDATE_LATEST_URL = "https://ddnet.under1111.com/api/uclient/update/latest";
 static constexpr const char *GITHUB_LATEST_RELEASE_URL = "https://github.com/BestProjectTeam/BestClient/releases/latest";
 static constexpr const char *UPDATE_SCRIPT_PATH = "update/apply_uclient_update.ps1";
 #if defined(CONF_PLATFORM_ANDROID)
-static constexpr const char *UPDATE_ARCHIVE_PATH = "update/bestclient-release.apk";
+static constexpr const char *UPDATE_ARCHIVE_PATH = "update/uclient-client.apk";
 #else
-static constexpr const char *UPDATE_ARCHIVE_PATH = "update/bestclient-release.zip";
+static constexpr const char *UPDATE_ARCHIVE_PATH = "update/uclient-client.zip";
 #endif
 static constexpr const char *UCLIENT_LAUNCHER_EXEC_WIN = "UClient.exe";
 static constexpr const char *UCLIENT_APPLY_UPDATE_ARG = "--uclient-apply-update";
 static constexpr const char *UCLIENT_WAIT_PID_ARG = "--uclient-wait-pid";
-static constexpr const char *UCLIENT_PENDING_VERSION_FILE = "uclient_pending_version.txt";
+static constexpr const char *UCLIENT_PENDING_VERSION_FILE = "uclient_client_pending_version.txt";
 
 static const char *CurrentPlatformKey()
 {
@@ -64,7 +64,11 @@ static const char *CurrentPlatformKey()
 
 static void BuildUpdateLatestUrl(char *pBuf, int BufSize)
 {
-	const char *pBase = g_Config.m_UcUpdateLatestUrl[0] != '\0' ? g_Config.m_UcUpdateLatestUrl : DEFAULT_UPDATE_LATEST_URL;
+	const char *pBase =
+		g_Config.m_UcUpdateLatestUrl[0] != '\0' &&
+			str_comp(g_Config.m_UcUpdateLatestUrl, LEGACY_UPDATE_LATEST_URL) != 0 ?
+		g_Config.m_UcUpdateLatestUrl :
+		DEFAULT_UPDATE_LATEST_URL;
 	const char *pSeparator = str_find(pBase, "?") ? "&" : "?";
 	str_format(pBuf, BufSize, "%s%st=%lld", pBase, pSeparator, (long long)time_timestamp());
 }
@@ -407,15 +411,6 @@ void CUpdater::Init(CHttp *pHttp)
 	m_pClient = Kernel()->RequestInterface<IClient>();
 	m_pStorage = Kernel()->RequestInterface<IStorage>();
 	m_pHttp = pHttp;
-
-#if !defined(CONF_HEADLESS_CLIENT) && (defined(CONF_FAMILY_WINDOWS) || defined(CONF_PLATFORM_LINUX) || defined(CONF_PLATFORM_ANDROID))
-#if defined(CONF_FAMILY_WINDOWS)
-	// Pre-game launcher owns update checks when present — avoid download loops.
-	char aLauncher[IO_MAX_PATH_LENGTH];
-	if(!UClientLaunchGate_FindLauncherPath(aLauncher, sizeof(aLauncher)))
-#endif
-		m_bAutoCheckPending = true;
-#endif
 }
 
 void CUpdater::SetCurrentState(EUpdaterState NewState)
@@ -871,32 +866,6 @@ void CUpdater::ApplyUpdateAndRestart()
 
 void CUpdater::Update()
 {
-	if(g_Config.m_BcAutoUpdate != 0)
-	{
-		const EUpdaterState State = GetCurrentState();
-		if(State == IUpdater::VERSION_AVAILABLE)
-		{
-#if defined(CONF_FAMILY_WINDOWS)
-			char aLauncher[IO_MAX_PATH_LENGTH];
-			if(UClientLaunchGate_FindLauncherPath(aLauncher, sizeof(aLauncher)))
-			{
-				process_execute(aLauncher, EShellExecuteWindowState::FOREGROUND);
-				m_pClient->Quit();
-				return;
-			}
-#endif
-			InitiateUpdate();
-		}
-		else if(State == IUpdater::NEED_RESTART)
-			ApplyUpdateAndRestart();
-	}
-
-	if(m_bAutoCheckPending && m_pHttp && GetCurrentState() == CLEAN)
-	{
-		m_bAutoCheckPending = false;
-		CheckForUpdate();
-	}
-
 	if(!m_pCurrentTask)
 		return;
 
@@ -909,8 +878,7 @@ void CUpdater::Update()
 
 	if(m_pCurrentTask->State() != EHttpState::DONE || m_pCurrentTask->StatusCode() >= 400)
 	{
-		// A failed check still counts as completed: waiting forever would keep callers that gate on
-		// the check result (the mandatory update) hanging whenever the update host is unreachable.
+		// A failed manual check still counts as completed so the UI can leave its checking state.
 		if(m_TaskKind == ETaskKind::FETCH_RELEASE)
 			m_CheckCompleted = true;
 		ResetTask();

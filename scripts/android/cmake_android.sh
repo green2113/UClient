@@ -263,6 +263,27 @@ rm -rf assets/asset_integrity_files/data
 mkdir -p assets/asset_integrity_files
 cp -R "$ANDROID_SUB_BUILD_DIR/$ANDROID_BUILD_DUMMY/data" ./assets/asset_integrity_files
 
+if [ -n "${UCLIENT_BUILD_MANIFEST_VERSION:-}" ]; then
+	python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+manifest = {
+    "component": "client",
+    "clientVersion": os.environ["UCLIENT_BUILD_MANIFEST_VERSION"],
+    "launcherVersion": "n/a",
+    "gitSha": os.environ.get("UCLIENT_BUILD_GIT_SHA", "unknown"),
+    "platform": "android",
+    "architecture": "multi",
+}
+Path("assets/uclient_build_manifest.json").write_text(
+    json.dumps(manifest, separators=(",", ":")) + "\n",
+    encoding="utf-8",
+)
+PY
+fi
+
 log_info "Creating integrity index file..."
 python3 "${SCRIPT_DIR}/generate_asset_integrity_index.py"
 

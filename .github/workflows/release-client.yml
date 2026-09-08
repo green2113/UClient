@@ -1,0 +1,749 @@
+name: Release UClient
+
+on:
+  push:
+    tags:
+      - "client-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version from UCLIENT_VERSION (for example, 2.10.0)"
+        required: true
+        type: string
+      min_launcher_version:
+        description: "Minimum compatible launcher version (defaults to version.h)"
+        required: false
+        type: string
+      run_id:
+        description: "Optional Fast Build run ID from the same commit"
+        required: false
+        default: ""
+        type: string
+      release_name:
+        description: "Optional GitHub release name"
+        required: false
+        type: string
+      body:
+        description: "Optional GitHub release notes"
+        required: false
+        type: string
+      r2_bucket:
+        description: "Cloudflare R2 bucket"
+        required: false
+        default: "download"
+        type: string
+      r2_public_base_url:
+        description: "Public URL ending at /uclient (without trailing slash)"
+        required: false
+        default: "https://ddnet.under1111.com/uclient"
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: release-client-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CLIENT_NAME: UClient
+
+jobs:
+  validate:
+    name: Validate client version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      min_launcher_version: ${{ steps.version.outputs.min_launcher_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Match tag or input to version.h
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_MIN_LAUNCHER_VERSION: ${{ inputs.min_launcher_version }}
+        run: |
+          set -euo pipefail
+          header_version="$(
+            awk '/^#define UCLIENT_VERSION "/ {
+              gsub(/"/, "", $3)
+              print $3
+              exit
+            }' src/game/version.h
+          )"
+          test -n "$header_version" || {
+            echo "::error::Could not read UCLIENT_VERSION from src/game/version.h"
+            exit 1
+          }
+
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            requested="${GITHUB_REF_NAME#client-v}"
+            expected_tag="client-v${header_version}"
+            [[ "$GITHUB_REF_NAME" == "$expected_tag" ]] || {
+              echo "::error::Tag '$GITHUB_REF_NAME' must equal '$expected_tag'"
+              exit 1
+            }
+          else
+            requested="${INPUT_VERSION#client-v}"
+            requested="${requested#v}"
+          fi
+
+          [[ "$requested" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Invalid client version '$requested'"
+            exit 1
+          }
+          [[ "$requested" == "$header_version" ]] || {
+            echo "::error::Requested version '$requested' does not match UCLIENT_VERSION '$header_version'"
+            exit 1
+          }
+
+          echo "version=$header_version" >> "$GITHUB_OUTPUT"
+          echo "tag=client-v${header_version}" >> "$GITHUB_OUTPUT"
+          source_launcher_version="$(
+            awk '/^#define UCLIENT_LAUNCHER_VERSION "/ {
+              gsub(/"/, "", $3)
+              print $3
+              exit
+            }' src/game/version.h
+          )"
+          min_launcher_version="${INPUT_MIN_LAUNCHER_VERSION:-$source_launcher_version}"
+          [[ "$min_launcher_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Invalid minimum launcher version '$min_launcher_version'"
+            exit 1
+          }
+          echo "min_launcher_version=$min_launcher_version" >> "$GITHUB_OUTPUT"
+          echo "Validated client version ${header_version}" >> "$GITHUB_STEP_SUMMARY"
+
+  build-desktop:
+    name: Build client (${{ matrix.platform }})
+    needs: validate
+    if: inputs.run_id == ''
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_HTTP_MULTIPLEXING: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            cmake_args: >-
+              -A x64 -DCMAKE_BUILD_TYPE=Release -DTOOLS=OFF
+              -DDOWNLOAD_GTEST=OFF -DAUTOUPDATE=ON -DVULKAN=ON
+            package_glob: "*-win64.zip"
+            asset_name: UClient-windows.zip
+          - platform: linux
+            os: ubuntu-24.04
+            cmake_args: >-
+              -G Ninja -DCMAKE_BUILD_TYPE=Release -DPREFER_BUNDLED_LIBS=ON
+              -DDISCORD_DYNAMIC=ON -DAUTOUPDATE=ON -DVULKAN=ON
+            package_glob: "*-linux_x86_64.tar.xz"
+            asset_name: UClient-ubuntu-linux_x86_64.tar.xz
+          - platform: macos
+            os: macos-latest
+            cmake_args: >-
+              -G Ninja -DCMAKE_BUILD_TYPE=Release -DPREFER_BUNDLED_LIBS=ON
+              -DAUTOUPDATE=ON -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+              -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+              -DCMAKE_SYSTEM_IGNORE_PATH=/usr/lib -DCMAKE_FIND_FRAMEWORK=LAST
+              -DPNG_LIBRARY=${GITHUB_WORKSPACE}/ddnet-libs/png/mac/libfat/libpng16.16.dylib
+              -DPNG_INCLUDEDIR=${GITHUB_WORKSPACE}/ddnet-libs/png/include
+            package_glob: "*-macos.dmg"
+            asset_name: UClient-macos.dmg
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Prepare Linux
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            pkg-config ninja-build libcurl4-openssl-dev libfreetype6-dev \
+            libnotify-dev libogg-dev libopus-dev libopusfile-dev libsdl2-dev \
+            libsqlite3-dev libavcodec-dev libavformat-dev libavutil-dev \
+            libswresample-dev libswscale-dev libx264-dev libpng-dev \
+            libvulkan-dev libglew-dev
+
+      - name: Prepare macOS
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          brew install pkg-config ninja molten-vk vulkan-headers glslang spirv-tools glew \
+            googletest libpng opusfile wavpack x264 || true
+          pip3 install --break-system-packages dmgbuild
+          echo /Library/Frameworks/Python.framework/Versions/3.12/bin >> "$GITHUB_PATH"
+
+      - name: Install Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.3.296.0
+          cache: true
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            ./
+
+      - name: Configure and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-release ${{ matrix.cmake_args }}
+          cmake --build build-release --config Release --target package_default
+          mkdir -p artifacts
+          mapfile -t packages < <(find build-release -maxdepth 2 -type f -name '${{ matrix.package_glob }}')
+          [[ "${#packages[@]}" -eq 1 ]] || {
+            echo "::error::Expected exactly one package matching ${{ matrix.package_glob }}, found ${#packages[@]}"
+            printf '%s\n' "${packages[@]}"
+            exit 1
+          }
+          cp "${packages[0]}" "artifacts/${{ matrix.asset_name }}"
+
+      - name: Generate or collect build manifest
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          ASSET_NAME: ${{ matrix.asset_name }}
+        run: |
+          set -euo pipefail
+          manifest="artifacts/${ASSET_NAME}.manifest.json"
+          client_bin="$(find build-release -type f \( -name DDNet -o -name DDNet.exe \) -print -quit)"
+          test -n "$client_bin" || {
+            echo "::error::Built client executable was not found"
+            exit 1
+          }
+          chmod +x "$client_bin" || true
+          "$client_bin" --write-version-info "$manifest"
+          python3 - "$manifest" <<'PY'
+          import json, os, pathlib, sys
+          path = pathlib.Path(sys.argv[1])
+          data = json.loads(path.read_text(encoding="utf-8-sig"))
+          data["component"] = "client"
+          data["gitSha"] = os.environ["GITHUB_SHA"]
+          path.write_text(json.dumps(data, separators=(",", ":")) + "\n")
+          PY
+          python3 scripts/verify_uclient_release.py manifest \
+            --component client --version "$RELEASE_VERSION" \
+            --git-sha "$GITHUB_SHA" --path "$manifest"
+
+      - name: Remove launcher from Windows client update ZIP
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = "artifacts/${{ matrix.asset_name }}"
+          $stage = Join-Path $env:RUNNER_TEMP "client-update"
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          Expand-Archive -LiteralPath $zip -DestinationPath $stage
+          Get-ChildItem $stage -Recurse -File |
+            Where-Object { $_.Name -ieq "UClient.exe" } |
+            Remove-Item -Force
+          $top = @(Get-ChildItem -Force $stage)
+          $contentRoot = if ($top.Count -eq 1 -and $top[0].PSIsContainer) { $top[0].FullName } else { $stage }
+          Copy-Item "artifacts/${{ matrix.asset_name }}.manifest.json" (Join-Path $contentRoot "uclient_build_manifest.json")
+          Remove-Item -Force $zip
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path $zip))
+          try {
+            $names = @($archive.Entries | ForEach-Object { [IO.Path]::GetFileName($_.FullName) })
+            if ($names -icontains "UClient.exe") { throw "Client update ZIP contains UClient.exe" }
+            if ($names -inotcontains "uclient_build_manifest.json") { throw "Client update ZIP has no build manifest" }
+          } finally {
+            $archive.Dispose()
+          }
+
+      - name: Add build manifest to Linux client archive
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="artifacts/${{ matrix.asset_name }}"
+          stage="$RUNNER_TEMP/client-linux"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          tar -xJf "$archive" -C "$stage"
+          mapfile -d '' top < <(find "$stage" -mindepth 1 -maxdepth 1 -print0)
+          content="$stage"
+          if [[ "${#top[@]}" -eq 1 && -d "${top[0]}" ]]; then content="${top[0]}"; fi
+          cp "$archive.manifest.json" "$content/uclient_build_manifest.json"
+          tar -cJf "$archive" -C "$stage" .
+
+      - name: Add build manifest to macOS client image
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="artifacts/${{ matrix.asset_name }}"
+          mount="$RUNNER_TEMP/client-dmg-mount"
+          stage="$RUNNER_TEMP/client-dmg-stage"
+          rm -rf "$mount" "$stage"
+          mkdir -p "$mount" "$stage"
+          hdiutil attach "$image" -nobrowse -readonly -mountpoint "$mount"
+          trap 'hdiutil detach "$mount" -force >/dev/null 2>&1 || true' EXIT
+          ditto "$mount" "$stage"
+          hdiutil detach "$mount"
+          trap - EXIT
+          cp "$image.manifest.json" "$stage/uclient_build_manifest.json"
+          rm -f "$image"
+          hdiutil create -volname UClient -srcfolder "$stage" -ov -format UDZO "$image"
+
+      - name: Upload desktop package
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-${{ matrix.platform }}
+          path: |
+            artifacts/${{ matrix.asset_name }}
+            artifacts/${{ matrix.asset_name }}.manifest.json
+          if-no-files-found: error
+
+  reuse-desktop:
+    name: Reuse client build (${{ matrix.platform }})
+    needs: validate
+    if: inputs.run_id != ''
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            artifact: ddnet-windows-latest
+            package_glob: "*-win64.zip"
+            asset_name: UClient-windows.zip
+          - platform: linux
+            os: ubuntu-24.04
+            artifact: ddnet-ubuntu-24.04
+            package_glob: "*-linux_x86_64.tar.xz"
+            asset_name: UClient-ubuntu-linux_x86_64.tar.xz
+          - platform: macos
+            os: macos-latest
+            artifact: ddnet-macOS-latest
+            package_glob: "*-macos.dmg"
+            asset_name: UClient-macos.dmg
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject artifacts from another commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          run_sha="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq .head_sha)"
+          [[ "$run_sha" == "$GITHUB_SHA" ]] || {
+            echo "::error::Fast Build run $RUN_ID is from $run_sha, expected $GITHUB_SHA"
+            exit 1
+          }
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: reused
+
+      - name: Validate reused manifest
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          manifest="$(find reused -type f -name uclient_build_manifest.json -print -quit)"
+          package="$(find reused -type f -name '${{ matrix.package_glob }}' -print -quit)"
+          test -n "$manifest" -a -n "$package"
+          python3 scripts/verify_uclient_release.py manifest \
+            --component client --version "$RELEASE_VERSION" \
+            --git-sha "$GITHUB_SHA" --path "$manifest"
+          mkdir -p artifacts
+          cp "$manifest" "artifacts/${{ matrix.asset_name }}.manifest.json"
+          cp "$package" "artifacts/${{ matrix.asset_name }}"
+
+      - name: Prepare reused Windows client ZIP
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = "artifacts/${{ matrix.asset_name }}"
+          $stage = Join-Path $env:RUNNER_TEMP "reused-client"
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          Expand-Archive -LiteralPath $zip -DestinationPath $stage
+          Get-ChildItem $stage -Recurse -File |
+            Where-Object { $_.Name -ieq "UClient.exe" } |
+            Remove-Item -Force
+          $top = @(Get-ChildItem -Force $stage)
+          $contentRoot = if ($top.Count -eq 1 -and $top[0].PSIsContainer) { $top[0].FullName } else { $stage }
+          Copy-Item "$zip.manifest.json" (Join-Path $contentRoot "uclient_build_manifest.json")
+          Remove-Item -Force $zip
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip
+
+      - name: Prepare reused Linux client archive
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="artifacts/${{ matrix.asset_name }}"
+          stage="$RUNNER_TEMP/reused-client"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          tar -xJf "$archive" -C "$stage"
+          find "$stage" -type f -iname UClient.exe -delete
+          mapfile -d '' top < <(find "$stage" -mindepth 1 -maxdepth 1 -print0)
+          content="$stage"
+          if [[ "${#top[@]}" -eq 1 && -d "${top[0]}" ]]; then content="${top[0]}"; fi
+          cp "$archive.manifest.json" "$content/uclient_build_manifest.json"
+          tar -cJf "$archive" -C "$stage" .
+
+      - name: Prepare reused macOS client image
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="artifacts/${{ matrix.asset_name }}"
+          mount="$RUNNER_TEMP/reused-dmg-mount"
+          stage="$RUNNER_TEMP/reused-dmg-stage"
+          rm -rf "$mount" "$stage"
+          mkdir -p "$mount" "$stage"
+          hdiutil attach "$image" -nobrowse -readonly -mountpoint "$mount"
+          trap 'hdiutil detach "$mount" -force >/dev/null 2>&1 || true' EXIT
+          ditto "$mount" "$stage"
+          hdiutil detach "$mount"
+          trap - EXIT
+          cp "$image.manifest.json" "$stage/uclient_build_manifest.json"
+          rm -f "$image"
+          hdiutil create -volname UClient -srcfolder "$stage" -ov -format UDZO "$image"
+
+      - name: Upload reused desktop package
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-${{ matrix.platform }}
+          path: |
+            artifacts/${{ matrix.asset_name }}
+            artifacts/${{ matrix.asset_name }}.manifest.json
+          if-no-files-found: error
+
+  build-android:
+    name: Build client (android)
+    needs: validate
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_HTTP_MULTIPLEXING: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Validate Gradle Wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Prepare Android build
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y ninja-build openjdk-21-jdk openssl jq
+          curl -fLO https://github.com/Kitware/CMake/releases/download/v3.22.1/cmake-3.22.1-Linux-x86_64.tar.gz
+          mkdir -p /home/runner/cmake
+          tar --strip-components 1 -C /home/runner/cmake -xf cmake-3.22.1-Linux-x86_64.tar.gz
+          rustup default 1.92.0
+          cargo install cargo-ndk
+          rustup target add armv7-linux-androideabi i686-linux-android aarch64-linux-android x86_64-linux-android
+          scripts/android/download_android_sdk.sh /home/runner
+
+      - name: Install Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.3.296.0
+          cache: true
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            ./
+
+      - name: Prepare Android signing key
+        shell: bash
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          TW_KEY_NAME=/home/runner/DDNet.jks
+          if [[ -n "$RELEASE_KEYSTORE_BASE64" ]]; then
+            printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$TW_KEY_NAME"
+            TW_KEY_ALIAS="$RELEASE_KEY_ALIAS"
+            TW_KEY_PW="$RELEASE_KEYSTORE_PASSWORD"
+          else
+            TW_KEY_ALIAS=DDNet-Key
+            TW_KEY_PW="$(openssl rand -base64 32)"
+            keytool -genkey -v -keystore "$TW_KEY_NAME" -keyalg RSA -keysize 2048 \
+              -validity 10000 -alias "$TW_KEY_ALIAS" -storepass "$TW_KEY_PW" \
+              -dname "CN=DDNet CI, OU=DDNet, O=DDNet"
+            echo "::warning::Android release keystore secrets are absent; using an ephemeral signing key"
+          fi
+          {
+            echo "TW_KEY_NAME=$TW_KEY_NAME"
+            echo "TW_KEY_ALIAS=$TW_KEY_ALIAS"
+            echo "TW_KEY_PW=$TW_KEY_PW"
+            echo "TW_VERSION_CODE=$(date -u +%Y%m%d%H)"
+          } >> "$GITHUB_ENV"
+
+      - name: Build Android package
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME=/home/runner/Android/Sdk
+          unset ANDROID_SDK_ROOT
+          export PATH=/home/runner/cmake/bin:$PATH
+          export UCLIENT_BUILD_MANIFEST_VERSION="$RELEASE_VERSION"
+          export UCLIENT_BUILD_GIT_SHA="$GITHUB_SHA"
+          scripts/android/cmake_android.sh all DDNet org.ddnet.client Release build-android
+          mkdir -p artifacts
+          mv build-android/DDNet.apk artifacts/UClient-android.apk
+
+      - name: Generate and validate Android build manifest
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          manifest=artifacts/UClient-android.apk.manifest.json
+          native="$RUNNER_TEMP/android-native"
+          rm -rf "$native"
+          mkdir -p "$native"
+          unzip -q artifacts/UClient-android.apk 'lib/*/*.so' -d "$native"
+          mapfile -t abi_dirs < <(find "$native/lib" -mindepth 1 -maxdepth 1 -type d)
+          [[ "${#abi_dirs[@]}" -gt 0 ]] || {
+            echo "::error::APK contains no native ABI libraries"
+            exit 1
+          }
+          marker="UCLIENT_COMPILED_VERSION=${RELEASE_VERSION}"
+          for abi in "${abi_dirs[@]}"; do
+            grep -aR -q -- "$marker" "$abi" || {
+              echo "::error::$(basename "$abi") does not contain compiled marker $marker"
+              exit 1
+            }
+          done
+          unzip -p artifacts/UClient-android.apk assets/uclient_build_manifest.json > "$manifest"
+          test -s "$manifest" || {
+            echo "::error::APK does not contain uclient_build_manifest.json"
+            exit 1
+          }
+          python3 scripts/verify_uclient_release.py manifest \
+            --component client --version "$RELEASE_VERSION" \
+            --git-sha "$GITHUB_SHA" --path "$manifest"
+
+      - name: Upload Android package
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-android
+          path: |
+            artifacts/UClient-android.apk
+            artifacts/UClient-android.apk.manifest.json
+          if-no-files-found: error
+
+  publish:
+    name: Publish client release
+    needs:
+      - validate
+      - build-desktop
+      - reuse-desktop
+      - build-android
+    if: >-
+      always() &&
+      needs.validate.result == 'success' &&
+      needs.build-android.result == 'success' &&
+      (needs.build-desktop.result == 'success' || needs.reuse-desktop.result == 'success')
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      MIN_LAUNCHER_VERSION: ${{ needs.validate.outputs.min_launcher_version }}
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+      R2_BUCKET: ${{ inputs.r2_bucket || 'download' }}
+      R2_PUBLIC_BASE_URL: ${{ inputs.r2_public_base_url || 'https://ddnet.under1111.com/uclient' }}
+      CF_R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      CF_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      CF_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download validated packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: client-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Validate complete release set
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=(
+            UClient-windows.zip
+            UClient-ubuntu-linux_x86_64.tar.xz
+            UClient-macos.dmg
+            UClient-android.apk
+          )
+          for asset in "${assets[@]}"; do
+            test -s "artifacts/$asset" || {
+              echo "::error::Missing release asset $asset"
+              exit 1
+            }
+            jq -e --arg version "$VERSION" '
+              type == "object"
+              and ((.version // .clientVersion // .uclientVersion) == $version)
+              and ((.product // "client") == "client")
+            ' "artifacts/$asset.manifest.json" >/dev/null
+            python3 scripts/verify_uclient_release.py manifest \
+              --component client --version "$VERSION" --git-sha "$GITHUB_SHA" \
+              --path "artifacts/$asset.manifest.json"
+          done
+          python3 scripts/verify_uclient_release.py package \
+            --component client --version "$VERSION" --git-sha "$GITHUB_SHA" \
+            --archive artifacts/UClient-windows.zip
+          python3 scripts/verify_uclient_release.py package \
+            --component client --version "$VERSION" --git-sha "$GITHUB_SHA" \
+            --archive artifacts/UClient-ubuntu-linux_x86_64.tar.xz
+          python3 - <<'PY'
+          import pathlib, zipfile
+          archive = pathlib.Path("artifacts/UClient-windows.zip")
+          with zipfile.ZipFile(archive) as zf:
+              names = [pathlib.PurePosixPath(name).name.lower() for name in zf.namelist()]
+          assert "uclient.exe" not in names, "client update ZIP contains UClient.exe"
+          assert "uclient_build_manifest.json" in names, "client update ZIP lacks build manifest"
+          PY
+
+      - name: Create GitHub Release after successful builds
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ inputs.release_name || format('UClient {0}', needs.validate.outputs.version) }}
+          body: ${{ inputs.body }}
+          generate_release_notes: ${{ inputs.body == '' }}
+          files: |
+            artifacts/UClient-windows.zip
+            artifacts/UClient-ubuntu-linux_x86_64.tar.xz
+            artifacts/UClient-macos.dmg
+            artifacts/UClient-android.apk
+
+      - name: Prepare client update metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${R2_PUBLIC_BASE_URL%/}"
+          released_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          mkdir -p artifacts/update-meta
+          jq -n \
+            --arg version "$VERSION" \
+            --arg minLauncherVersion "$MIN_LAUNCHER_VERSION" \
+            --arg releasedAt "$released_at" \
+            --arg base "$base" \
+            --arg win_sha "$(sha256sum artifacts/UClient-windows.zip | cut -d' ' -f1)" \
+            --argjson win_size "$(stat -c%s artifacts/UClient-windows.zip)" \
+            --arg linux_sha "$(sha256sum artifacts/UClient-ubuntu-linux_x86_64.tar.xz | cut -d' ' -f1)" \
+            --argjson linux_size "$(stat -c%s artifacts/UClient-ubuntu-linux_x86_64.tar.xz)" \
+            --arg mac_sha "$(sha256sum artifacts/UClient-macos.dmg | cut -d' ' -f1)" \
+            --argjson mac_size "$(stat -c%s artifacts/UClient-macos.dmg)" \
+            --arg android_sha "$(sha256sum artifacts/UClient-android.apk | cut -d' ' -f1)" \
+            --argjson android_size "$(stat -c%s artifacts/UClient-android.apk)" \
+            '{
+              component: "client",
+              version: $version,
+              minLauncherVersion: $minLauncherVersion,
+              releasedAt: $releasedAt,
+              platforms: {
+                windows: {
+                  name: "UClient-windows.zip",
+                  path: ("uclient/client/" + $version + "/windows/UClient-windows.zip"),
+                  url: ($base + "/client/" + $version + "/windows/UClient-windows.zip"),
+                  sha256: $win_sha, size: $win_size
+                },
+                linux: {
+                  name: "UClient-ubuntu-linux_x86_64.tar.xz",
+                  path: ("uclient/client/" + $version + "/linux/UClient-ubuntu-linux_x86_64.tar.xz"),
+                  url: ($base + "/client/" + $version + "/linux/UClient-ubuntu-linux_x86_64.tar.xz"),
+                  sha256: $linux_sha, size: $linux_size
+                },
+                macos: {
+                  name: "UClient-macos.dmg",
+                  path: ("uclient/client/" + $version + "/macos/UClient-macos.dmg"),
+                  url: ($base + "/client/" + $version + "/macos/UClient-macos.dmg"),
+                  sha256: $mac_sha, size: $mac_size
+                },
+                android: {
+                  name: "UClient-android.apk",
+                  path: ("uclient/client/" + $version + "/android/UClient-android.apk"),
+                  url: ($base + "/client/" + $version + "/android/UClient-android.apk"),
+                  sha256: $android_sha, size: $android_size
+                }
+              }
+            }' > artifacts/update-meta/latest.json
+          echo "RELEASED_AT=$released_at" >> "$GITHUB_ENV"
+
+      - name: Install rclone
+        if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends rclone
+
+      - name: Upload client packages and metadata to R2
+        if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          r2=(--s3-provider Cloudflare
+              --s3-endpoint "https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+              --s3-access-key-id "$CF_R2_ACCESS_KEY_ID"
+              --s3-secret-access-key "$CF_R2_SECRET_ACCESS_KEY")
+          copy() {
+            rclone copyto "$1" ":s3:${R2_BUCKET}/$2" "${r2[@]}"
+          }
+
+          copy artifacts/UClient-windows.zip "uclient/client/${VERSION}/windows/UClient-windows.zip"
+          copy artifacts/UClient-ubuntu-linux_x86_64.tar.xz "uclient/client/${VERSION}/linux/UClient-ubuntu-linux_x86_64.tar.xz"
+          copy artifacts/UClient-macos.dmg "uclient/client/${VERSION}/macos/UClient-macos.dmg"
+          copy artifacts/UClient-android.apk "uclient/client/${VERSION}/android/UClient-android.apk"
+
+          existing='[]'
+          if rclone cat ":s3:${R2_BUCKET}/uclient/client/versions.json" "${r2[@]}" \
+              > /tmp/client-versions.json 2>/dev/null &&
+              jq -e 'type == "array"' /tmp/client-versions.json >/dev/null; then
+            existing="$(jq -c . /tmp/client-versions.json)"
+          fi
+          jq -n \
+            --arg version "$VERSION" \
+            --arg releasedAt "$RELEASED_AT" \
+            --argjson existing "$existing" \
+            '([{
+              version: $version,
+              releasedAt: $releasedAt
+            }] + ($existing | map(select(.version != $version))))' \
+            > artifacts/update-meta/versions.json
+
+          copy artifacts/update-meta/latest.json "uclient/client/latest.json"
+          copy artifacts/update-meta/latest.json "uclient/client/${VERSION}/latest.json"
+          copy artifacts/update-meta/versions.json "uclient/client/versions.json"
+
+      - name: Report skipped R2 publishing
+        if: env.CF_R2_ACCOUNT_ID == '' || env.CF_R2_ACCESS_KEY_ID == '' || env.CF_R2_SECRET_ACCESS_KEY == ''
+        shell: bash
+        run: echo "::warning::R2 secrets are not configured; GitHub Release was created without R2 publishing"

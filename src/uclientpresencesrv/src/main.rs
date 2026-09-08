@@ -143,6 +143,11 @@ struct UdpOutcome {
     dirty: bool,
 }
 
+fn deduplicate_outbound(outbound: &mut Vec<(SocketAddr, Vec<u8>)>) {
+    let mut seen = HashSet::with_capacity(outbound.len());
+    outbound.retain(|(addr, packet)| seen.insert((*addr, packet.clone())));
+}
+
 #[derive(Serialize)]
 struct SyncPayload<'a> {
     event: &'a str,
@@ -180,6 +185,7 @@ struct ServerState {
 #[derive(Clone)]
 struct RoomMembership {
     name: String,
+    name_color: u32,
     install_ids: HashSet<String>,
 }
 
@@ -192,6 +198,8 @@ struct MembershipResponse {
 struct MembershipRoom {
     room_id: String,
     room_name: String,
+    #[serde(default)]
+    name_color: u32,
     install_ids: Vec<String>,
 }
 
@@ -696,7 +704,7 @@ async fn udp_loop(
     loop {
         let (size, from) = socket.recv_from(&mut buf).await?;
         let data = &buf[..size];
-        let outcome = {
+        let mut outcome = {
             let mut state = state.lock().unwrap();
             let outcome = handle_udp_packet(
                 &mut state,
@@ -714,6 +722,7 @@ async fn udp_loop(
             }
             outcome
         };
+        deduplicate_outbound(&mut outcome.outbound);
         if config.sync_enabled {
             for job in outcome.sync_jobs {
                 if let Err(err) = post_sync(&client, &config, job).await {
@@ -738,7 +747,7 @@ async fn cleanup_loop(
     let mut interval = time::interval(CLEANUP_INTERVAL);
     loop {
         interval.tick().await;
-        let (removed_count, outbound, sync_jobs) = {
+        let (removed_count, mut outbound, sync_jobs) = {
             let mut state = state.lock().unwrap();
             let removed = state.cleanup(Instant::now());
             let removed_count = removed.len();
@@ -764,6 +773,7 @@ async fn cleanup_loop(
             }
             (removed_count, packets, sync_jobs)
         };
+        deduplicate_outbound(&mut outbound);
         if removed_count > 0 {
             eprintln!(
                 "presence cleanup evicted {} stale udp entries and refreshed presence.json",
@@ -815,6 +825,7 @@ async fn refresh_room_cache_once(
                 room.room_id,
                 RoomMembership {
                     name: room.room_name,
+                    name_color: room.name_color,
                     install_ids: room.install_ids.into_iter().collect(),
                 },
             )
@@ -1778,11 +1789,14 @@ fn encode_uclient_reaction_broadcast(
     out
 }
 
-fn encode_room_list_changed(room_id: &str, room_name: &str) -> Vec<u8> {
+fn encode_room_list_changed(room_id: &str, room_name: &str, name_color: Option<u32>) -> Vec<u8> {
     let mut out = Vec::new();
     write_header(&mut out, PACKET_ROOM_LIST_CHANGED);
     write_string(&mut out, room_id);
     write_string(&mut out, room_name);
+    if let Some(color) = name_color {
+        out.extend_from_slice(&color.to_be_bytes());
+    }
     out
 }
 
@@ -2584,31 +2598,41 @@ async fn web_loop(
                         ));
                     }
 
-                    let (room_name, notify_ids, peers) = {
+                    let (room_name, room_name_color, notify_ids, peers) = {
                         let guard = state.lock().unwrap();
                         let mut notify_ids = old_install_ids;
-                        let room_name = if let Some(room) = guard.room_cache.get(&request.room_id) {
-                            notify_ids.extend(room.install_ids.iter().cloned());
-                            room.name.clone()
-                        } else {
-                            String::new()
-                        };
-                        let peers: Vec<SocketAddr> = guard
+                        let (room_name, room_name_color) =
+                            if let Some(room) = guard.room_cache.get(&request.room_id) {
+                                notify_ids.extend(room.install_ids.iter().cloned());
+                                (room.name.clone(), room.name_color)
+                            } else {
+                                (String::new(), 0)
+                            };
+                        let peers: HashSet<SocketAddr> = guard
                             .peers_for_players(&notify_ids, None)
                             .into_iter()
                             .map(|peer| peer.return_addr)
                             .collect();
-                        (room_name, notify_ids, peers)
+                        (room_name, room_name_color, notify_ids, peers)
                     };
 
                     if !peers.is_empty() {
                         let peer_count = peers.len();
-                        let packet = encode_room_list_changed(&request.room_id, &room_name);
+                        // Send the legacy invalidation first so older clients still refresh,
+                        // then send the extended packet for immediate metadata updates.
+                        let legacy_packet =
+                            encode_room_list_changed(&request.room_id, &room_name, None);
+                        let metadata_packet = encode_room_list_changed(
+                            &request.room_id,
+                            &room_name,
+                            Some(room_name_color),
+                        );
                         for addr in peers {
-                            if let Err(err) = socket.send_to(&packet, addr).await {
-                                eprintln!(
-                                    "room list changed notify failed for {addr}: {err}"
-                                );
+                            if let Err(err) = socket.send_to(&legacy_packet, addr).await {
+                                eprintln!("room list changed notify failed for {addr}: {err}");
+                            }
+                            if let Err(err) = socket.send_to(&metadata_packet, addr).await {
+                                eprintln!("room metadata changed notify failed for {addr}: {err}");
                             }
                         }
                         eprintln!(
@@ -2828,6 +2852,37 @@ mod tests {
         assert_eq!(
             parsed.from_server_address.as_deref(),
             Some("127.0.0.1:8302")
+        );
+    }
+
+    #[test]
+    fn room_list_changed_metadata_extends_legacy_packet() {
+        let legacy = encode_room_list_changed("room-1", "Room", None);
+        let metadata = encode_room_list_changed("room-1", "Room", Some(0x1234_5678));
+        assert_eq!(&metadata[..legacy.len()], legacy.as_slice());
+        assert_eq!(&metadata[legacy.len()..], &0x1234_5678u32.to_be_bytes());
+    }
+
+    #[test]
+    fn deduplicates_identical_packets_for_shared_dummy_socket() {
+        let shared_addr: SocketAddr = "127.0.0.1:40000".parse().unwrap();
+        let other_addr: SocketAddr = "127.0.0.1:40001".parse().unwrap();
+        let mut outbound = vec![
+            (shared_addr, vec![1, 2, 3]),
+            (shared_addr, vec![1, 2, 3]),
+            (shared_addr, vec![4, 5, 6]),
+            (other_addr, vec![1, 2, 3]),
+        ];
+
+        deduplicate_outbound(&mut outbound);
+
+        assert_eq!(
+            outbound,
+            vec![
+                (shared_addr, vec![1, 2, 3]),
+                (shared_addr, vec![4, 5, 6]),
+                (other_addr, vec![1, 2, 3]),
+            ]
         );
     }
 }

@@ -8,6 +8,9 @@
 
 #include <game/client/component.h>
 
+#include <cstddef>
+#include <string>
+#include <utility>
 #include <vector>
 
 class IConfigManager;
@@ -98,7 +101,23 @@ public:
 	void SetDDRaceBinds(bool FreeOnly);
 
 private:
+	class CActiveBind
+	{
+	public:
+		CBindSlot m_Slot;
+		std::string m_NearestPlayerName;
+
+		CActiveBind(int Key, int ModifierMask, std::string NearestPlayerName) :
+			m_Slot(Key, ModifierMask),
+			m_NearestPlayerName(std::move(NearestPlayerName))
+		{
+		}
+	};
+
+	bool FindNearestPlayerName(char *pName, size_t NameSize);
+	std::string ExecuteBind(int Stroke, const char *pBind, bool ReportPlaceholderError, const char *pNearestPlayerOverride = nullptr);
+
 	char *m_aapKeyBindings[KeyModifier::COMBINATION_COUNT][KEY_LAST];
-	std::vector<CBindSlot> m_vActiveBinds;
+	std::vector<CActiveBind> m_vActiveBinds;
 };
 #endif

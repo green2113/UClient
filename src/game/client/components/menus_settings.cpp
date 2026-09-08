@@ -18,7 +18,6 @@
 #include <engine/shared/protocol7.h>
 #include <engine/storage.h>
 #include <engine/textrender.h>
-#include <engine/updater.h>
 
 #include <generated/protocol.h>
 
@@ -2609,7 +2608,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 
 	if(g_Config.m_BcSettingsLayout == 0)
 	{
-		const bool NeedRestart = m_NeedRestartGraphics || m_NeedRestartSound || m_NeedRestartUpdate;
+		const bool NeedRestart = m_NeedRestartGraphics || m_NeedRestartSound;
 
 		auto RenderSettingsPage = [&](CUIRect PageView) {
 			SetSettingsLinkContext(g_Config.m_UiSettingsPage);
@@ -2691,27 +2690,11 @@ void CMenus::RenderSettings(CUIRect MainView)
 			CUIRect RestartWarning, RestartButton;
 			RestartBar.VSplitRight(125.0f, &RestartWarning, &RestartButton);
 			RestartWarning.VSplitRight(10.0f, &RestartWarning, nullptr);
-			if(m_NeedRestartUpdate)
-			{
-				TextRender()->TextColor(0.7f, 1.0f, 0.7f, 1.0f);
-				Ui()->DoLabel(&RestartWarning, Localize("BestClient update ready! Restart via launcher to apply."), 14.0f, TEXTALIGN_ML);
-				TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
-			}
-			else
-			{
-				Ui()->DoLabel(&RestartWarning, Localize("You must restart the game for all settings to take effect."), 14.0f, TEXTALIGN_ML);
-			}
+			Ui()->DoLabel(&RestartWarning, Localize("You must restart the game for all settings to take effect."), 14.0f, TEXTALIGN_ML);
 
 			static CButtonContainer s_RestartButton;
 			if(DoButton_Menu(&s_RestartButton, Localize("Restart"), 0, &RestartButton))
 			{
-#if defined(CONF_AUTOUPDATE)
-				if(m_NeedRestartUpdate)
-				{
-					Updater()->ApplyUpdateAndRestart();
-				}
-				else
-#endif
 				if(Client()->State() == IClient::STATE_ONLINE || GameClient()->Editor()->HasUnsavedData())
 				{
 					m_Popup = POPUP_RESTART;
@@ -2904,7 +2887,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 	MainView.Draw(ms_ColorTabbarActive, IGraphics::CORNER_B, 10.0f);
 	MainView.Margin(20.0f, &MainView);
 
-	const bool NeedRestart = m_NeedRestartGraphics || m_NeedRestartSound || m_NeedRestartUpdate;
+	const bool NeedRestart = m_NeedRestartGraphics || m_NeedRestartSound;
 	if(NeedRestart)
 	{
 		MainView.HSplitBottom(20.0f, &MainView, &RestartBar);
@@ -3061,27 +3044,11 @@ void CMenus::RenderSettings(CUIRect MainView)
 		CUIRect RestartWarning, RestartButton;
 		RestartBar.VSplitRight(125.0f, &RestartWarning, &RestartButton);
 		RestartWarning.VSplitRight(10.0f, &RestartWarning, nullptr);
-		if(m_NeedRestartUpdate)
-		{
-			TextRender()->TextColor(0.7f, 1.0f, 0.7f, 1.0f);
-			Ui()->DoLabel(&RestartWarning, Localize("BestClient update ready! Restart via launcher to apply."), 14.0f, TEXTALIGN_ML);
-			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
-		}
-		else
-		{
-			Ui()->DoLabel(&RestartWarning, Localize("You must restart the game for all settings to take effect."), 14.0f, TEXTALIGN_ML);
-		}
+		Ui()->DoLabel(&RestartWarning, Localize("You must restart the game for all settings to take effect."), 14.0f, TEXTALIGN_ML);
 
 		static CButtonContainer s_RestartButton;
 		if(DoButton_Menu(&s_RestartButton, Localize("Restart"), 0, &RestartButton))
 		{
-#if defined(CONF_AUTOUPDATE)
-			if(m_NeedRestartUpdate)
-			{
-				Updater()->ApplyUpdateAndRestart();
-			}
-			else
-#endif
 			if(Client()->State() == IClient::STATE_ONLINE || GameClient()->Editor()->HasUnsavedData())
 			{
 				m_Popup = POPUP_RESTART;
@@ -4275,12 +4242,6 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 {
 	CUIRect Button, Left, Right, LeftLeft, Label;
 
-#if defined(CONF_AUTOUPDATE)
-	CUIRect UpdaterRect;
-	MainView.HSplitBottom(20.0f, &MainView, &UpdaterRect);
-	MainView.HSplitBottom(5.0f, &MainView, nullptr);
-#endif
-
 	// demo
 	CUIRect Demo;
 	MainView.HSplitTop(110.0f, &Demo, &MainView);
@@ -4540,45 +4501,6 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 	}
 #endif
 
-	// Updater
-#if defined(CONF_AUTOUPDATE)
-	{
-		IUpdater::EUpdaterState State = Updater()->GetCurrentState();
-
-		char aBuf[256];
-		if(State == IUpdater::VERSION_AVAILABLE)
-		{
-			str_format(aBuf, sizeof(aBuf), Localize("BestClient %s is out!"), Updater()->GetLatestVersionString());
-			UpdaterRect.VSplitLeft(TextRender()->TextWidth(14.0f, aBuf, -1, -1.0f) + 10.0f, &UpdaterRect, &Button);
-			Button.VSplitLeft(100.0f, &Button, nullptr);
-			static CButtonContainer s_ButtonUpdate;
-			if(DoButton_Menu(&s_ButtonUpdate, Localize("Update now"), 0, &Button))
-			{
-				Updater()->InitiateUpdate();
-			}
-		}
-		else if(State == IUpdater::DOWNLOADING)
-			str_copy(aBuf, Localize("Updating…"));
-		else if(State == IUpdater::NEED_RESTART)
-		{
-			str_copy(aBuf, Localize("BestClient updated!"));
-			m_NeedRestartUpdate = true;
-		}
-		else
-		{
-			str_copy(aBuf, Localize("No updates available"));
-			UpdaterRect.VSplitLeft(TextRender()->TextWidth(14.0f, aBuf, -1, -1.0f) + 10.0f, &UpdaterRect, &Button);
-			Button.VSplitLeft(100.0f, &Button, nullptr);
-			static CButtonContainer s_ButtonUpdate;
-			if(DoButton_Menu(&s_ButtonUpdate, Localize("Check now"), 0, &Button))
-			{
-				Updater()->CheckForUpdate();
-			}
-		}
-		Ui()->DoLabel(&UpdaterRect, aBuf, 14.0f, TEXTALIGN_ML);
-		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
-	}
-#endif
 }
 
 CUi::EPopupMenuFunctionResult CMenus::PopupMapPicker(void *pContext, CUIRect View, bool Active)

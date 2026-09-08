@@ -3,13 +3,11 @@
 #define GAME_CLIENT_COMPONENTS_BESTCLIENT_BESTCLIENT_H
 
 #include <engine/shared/console.h>
-#include <engine/shared/http.h>
 
 #include <game/client/component.h>
 
 #include <array>
 #include <cstddef>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -61,8 +59,6 @@ class CBestClient : public CComponent
 	bool m_StreamerWordsLoaded = false;
 	std::vector<std::string> m_vStreamerBlockedWords;
 
-	void FinishBestClientInfo();
-	void ResetBestClientInfoTask();
 	void EnsureStreamerWordsLoaded();
 	void SaveStreamerWords() const;
 
@@ -164,14 +160,6 @@ public:
 	static bool IsComponentDisabledByMask(int Component, int MaskLo, int MaskHi);
 	void RenderHookCombo(bool ForcePreview = false);
 	void RenderSpecMoved();
-
-	std::shared_ptr<CHttpRequest> m_pBestClientInfoTask = nullptr;
-	void FetchBestClientInfo();
-	bool NeedUpdate();
-	bool IsAutoUpdating() const;
-	bool m_FetchedBestClientInfo = false;
-	bool m_bAutoUpdateArmed = false;
-	char m_aVersionStr[64] = "0";
 };
 
 #endif

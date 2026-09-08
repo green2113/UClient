@@ -652,64 +652,11 @@ void CClient::GenerateTimeoutCodes(const NETADDR *pAddrs, int NumAddrs)
 	}
 }
 
-void CClient::UpdateStartupUpdateCheck()
-{
-	if(m_UpdateCheckLatched || m_pUpdater == nullptr)
-		return;
-
-	// Leaving the menu ends the startup window. Whatever a check finds from here on (a slow first
-	// check, or the user pressing "Check now" mid-session) must never interrupt a running session
-	// by blocking a server switch or a reconnect.
-	if(m_State != IClient::STATE_OFFLINE)
-	{
-		m_UpdateCheckLatched = true;
-		return;
-	}
-
-	// Still in the menu, so the verdict may still change: the startup check may not have answered
-	// yet, and a failed one can be retried with "Check now". A non-empty latest version means the
-	// check found a newer release than this build.
-	if(m_pUpdater->HasCompletedCheck())
-		m_UpdateRequired = m_pUpdater->GetLatestVersionString()[0] != '\0';
-}
-
-bool CClient::UpdateRequired()
-{
-	return m_UpdateRequired;
-}
-
-// Loopback targets are the tutorial's local server and the editor's map test, which are not
-// affected by an outdated client, so they stay reachable while an update is pending.
-static bool IsLoopbackConnectAddress(const char *pAddress)
-{
-	if(pAddress == nullptr)
-		return false;
-	while(*pAddress == ' ')
-		++pAddress;
-	return str_startswith_nocase(pAddress, "localhost") != nullptr ||
-	       str_startswith(pAddress, "127.") != nullptr ||
-	       str_startswith(pAddress, "[::1]") != nullptr ||
-	       str_comp(pAddress, "::1") == 0;
-}
-
 void CClient::Connect(const char *pAddress, const char *pPassword)
 {
 	// Disconnect will not change the state if we are already quitting/restarting
 	if(m_State == IClient::STATE_QUITTING || m_State == IClient::STATE_RESTARTING)
 		return;
-
-	// Last line of defence for the mandatory update: every way into a game server (browser,
-	// console, ddnet:// links, auto reconnect, Steam/Discord invites) ends up here. Refuse before
-	// disconnecting so a blocked attempt cannot drop the player from where they already are.
-	if(UpdateRequired() && !IsLoopbackConnectAddress(pAddress))
-	{
-		log_error("client", "refusing to connect to '%s': a mandatory update is available", pAddress);
-		SWarning Warning(Localize("Update required"),
-			Localize("A new version of UClient is available. You have to update before you can join a server."));
-		Warning.m_AutoHide = false;
-		AddWarning(Warning);
-		return;
-	}
 
 	Disconnect();
 	dbg_assert(m_State == IClient::STATE_OFFLINE, "Disconnect must ensure that client is offline");
@@ -3518,7 +3465,6 @@ void CClient::Run()
 
 #if defined(CONF_AUTOUPDATE)
 		Updater()->Update();
-		UpdateStartupUpdateCheck();
 #endif
 
 		// update sound
@@ -5143,6 +5089,14 @@ static bool SaveUnknownCommandCallback(const char *pCommand, void *pUser)
 		Upstream latency
 */
 
+#if defined(_MSC_VER)
+#define UCLIENT_VERSION_MARKER_EXPORT __declspec(dllexport)
+#else
+#define UCLIENT_VERSION_MARKER_EXPORT __attribute__((used, visibility("default")))
+#endif
+extern "C" UCLIENT_VERSION_MARKER_EXPORT const char UCLIENT_COMPILED_VERSION_MARKER[] =
+	"UCLIENT_COMPILED_VERSION=" UCLIENT_VERSION;
+
 #if defined(CONF_PLATFORM_MACOS)
 extern "C" int TWMain(int argc, const char **argv)
 #elif defined(CONF_PLATFORM_ANDROID)
@@ -5169,6 +5123,28 @@ int main(int argc, const char **argv)
 	CWindowsComLifecycle WindowsComLifecycle(true);
 #endif
 	CCmdlineFix CmdlineFix(&argc, &argv);
+
+	if(argc == 3 && str_comp(argv[1], "--write-version-info") == 0)
+	{
+		char aManifest[512];
+		str_format(
+			aManifest,
+			sizeof(aManifest),
+			"{\"component\":\"client\",\"clientVersion\":\"%s\","
+			"\"launcherVersion\":\"%s\",\"platform\":\"%s\","
+			"\"architecture\":\"%s\"}\n",
+			UCLIENT_VERSION,
+			UCLIENT_LAUNCHER_VERSION,
+			CONF_PLATFORM_STRING,
+			CONF_ARCH_STRING);
+		IOHANDLE File = io_open(argv[2], IOFLAG_WRITE);
+		if(!File)
+			return 1;
+		const unsigned Length = str_length(aManifest);
+		const bool Ok = io_write(File, aManifest, Length) == Length;
+		io_close(File);
+		return Ok ? 0 : 1;
+	}
 
 #if defined(CONF_FAMILY_WINDOWS)
 	if(!UClientLaunchGate_EnsureFromLauncher(&argc, &argv))

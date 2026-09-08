@@ -2415,7 +2415,11 @@ void CClientIndicator::ProcessUcPresencePacket(const unsigned char *pData, int D
 	{
 		UClientPresence::CRoomListChanged Changed;
 		if(UClientPresence::ReadRoomListChanged(pData, DataSize, Changed))
+		{
+			if(Changed.m_HasNameColor)
+				GameClient()->m_UClientChatRooms.ApplyRoomMetadata(Changed.m_RoomId.c_str(), Changed.m_RoomName.c_str(), Changed.m_NameColor);
 			GameClient()->m_UClientChatRooms.RequestRefreshSoon();
+		}
 		break;
 	}
 	case UClientPresence::PACKET_CURSOR_BROADCAST:
