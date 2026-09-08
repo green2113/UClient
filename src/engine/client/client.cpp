@@ -79,6 +79,7 @@
 #undef main
 #endif
 
+#include <atomic>
 #include <chrono>
 #include <limits>
 #include <stack>
@@ -86,6 +87,25 @@
 #include <tuple>
 
 using namespace std::chrono_literals;
+
+static std::atomic_bool gs_SuppressDemoFileLogs{false};
+
+static bool ShouldSuppressDemoLogMessage(bool Suppress, const char *pSystem, const char *pMessage)
+{
+	if(!Suppress || !pSystem)
+		return false;
+	if(str_comp(pSystem, "demo_player") == 0 || str_comp(pSystem, "demo") == 0)
+		return true;
+	if(pMessage && (str_comp(pSystem, "client") == 0 || str_comp(pSystem, "client/network") == 0))
+	{
+		return str_startswith(pMessage, "loading map") ||
+			str_startswith(pMessage, "loaded map") ||
+			str_startswith(pMessage, "Loading demo") ||
+			str_startswith(pMessage, "loading done") ||
+			str_startswith(pMessage, "disconnecting.");
+	}
+	return false;
+}
 
 static constexpr ColorRGBA CLIENT_NETWORK_PRINT_COLOR = ColorRGBA(0.7f, 1, 0.7f, 1.0f);
 static constexpr ColorRGBA CLIENT_NETWORK_PRINT_ERROR_COLOR = ColorRGBA(1.0f, 0.25f, 0.25f, 1.0f);
@@ -774,8 +794,10 @@ void CClient::DisconnectWithReason(const char *pReason)
 	if(pReason != nullptr && pReason[0] == '\0')
 		pReason = nullptr;
 
+	if(m_DemoParkedOnline)
+		GameClient()->OnParkedDemoPlaybackEnded(false);
 	m_DemoParkedOnline = false;
-	m_SuppressDemoConsoleLogs = false;
+	SetSuppressDemoConsoleLogs(false);
 
 	DummyDisconnect(pReason);
 
@@ -2457,7 +2479,10 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 
 		// Skip applying live game messages to GameClient while a parked demo owns the view.
 		if(m_DemoParkedOnline)
+		{
+			GameClient()->OnParkedLiveMessage(Msg, &Unpacker, Conn, Dummy);
 			return;
+		}
 
 		GameClient()->OnMessage(Msg, &Unpacker, Conn, Dummy);
 	}
@@ -2712,11 +2737,7 @@ void CClient::PumpNetwork()
 			if(m_aNetClient[CONN_MAIN].State() == NETSTATE_OFFLINE)
 			{
 				if(m_DemoParkedOnline)
-				{
-					m_DemoParkedOnline = false;
-					m_SuppressDemoConsoleLogs = false;
-					m_DemoPlayer.Stop();
-				}
+					FinishParkedDemoPlayback(false);
 				// This will also disconnect the dummy, so the branch below is an `else if`
 				Disconnect();
 				char aBuf[256];
@@ -2904,7 +2925,7 @@ void CClient::Update()
 			}
 			else
 			{
-				m_SuppressDemoConsoleLogs = false;
+				SetSuppressDemoConsoleLogs(false);
 #if defined(CONF_VIDEORECORDER)
 				if(IVideo::Current())
 					IVideo::Current()->Stop();
@@ -4171,7 +4192,7 @@ const char *CClient::DemoPlayer_Play(const char *pFilename, int StorageType)
 	const bool ContinueParkedOnline = State() == IClient::STATE_DEMOPLAYBACK && m_DemoParkedOnline &&
 		m_aNetClient[CONN_MAIN].State() == NETSTATE_ONLINE;
 	const bool ParkOnline = StartParkedOnline || ContinueParkedOnline;
-	m_SuppressDemoConsoleLogs = true;
+	SetSuppressDemoConsoleLogs(true);
 
 	if(StartParkedOnline)
 	{
@@ -4182,10 +4203,12 @@ const char *CClient::DemoPlayer_Play(const char *pFilename, int StorageType)
 		// Replace the viewed demo with the render playback without restoring or
 		// dropping the live server session parked behind it.
 		m_DemoPlayer.Stop();
+		GameClient()->OnParkedDemoPlaybackRestarted();
 	}
 	else if(!ContinueParkedOnline)
 	{
 		Disconnect();
+		SetSuppressDemoConsoleLogs(true);
 		m_aNetClient[CONN_MAIN].ResetErrorString();
 	}
 
@@ -4199,7 +4222,7 @@ const char *CClient::DemoPlayer_Play(const char *pFilename, int StorageType)
 			FinishParkedDemoPlayback(true);
 		else
 		{
-			m_SuppressDemoConsoleLogs = false;
+			SetSuppressDemoConsoleLogs(false);
 			DisconnectWithReason(pError);
 		}
 		return pError;
@@ -4289,6 +4312,7 @@ void CClient::BeginParkedOnlineSession()
 			m_aParkedInputSize[i] = (int)sizeof(CNetObj_PlayerInput);
 		}
 	}
+	GameClient()->OnParkedDemoPlaybackStarted();
 }
 
 void CClient::RewireSnapshotsFromStorage()
@@ -4321,7 +4345,7 @@ void CClient::FinishParkedDemoPlayback(bool RestoreLiveMap)
 	if(!m_DemoParkedOnline)
 	{
 		m_DemoPlayer.Stop();
-		m_SuppressDemoConsoleLogs = false;
+		SetSuppressDemoConsoleLogs(false);
 		return;
 	}
 
@@ -4339,7 +4363,8 @@ void CClient::FinishParkedDemoPlayback(bool RestoreLiveMap)
 			m_aapSnapshots[Conn][SNAP_CURRENT] = nullptr;
 		}
 		m_DemoParkedOnline = false;
-		m_SuppressDemoConsoleLogs = false;
+		SetSuppressDemoConsoleLogs(false);
+		GameClient()->OnParkedDemoPlaybackEnded(false);
 		GameClient()->InvalidateSnapshot();
 		return;
 	}
@@ -4347,7 +4372,8 @@ void CClient::FinishParkedDemoPlayback(bool RestoreLiveMap)
 	if(m_aNetClient[CONN_MAIN].State() != NETSTATE_ONLINE)
 	{
 		m_DemoParkedOnline = false;
-		m_SuppressDemoConsoleLogs = false;
+		SetSuppressDemoConsoleLogs(false);
+		GameClient()->OnParkedDemoPlaybackEnded(false);
 		DisconnectWithReason("connection lost during demo playback");
 		return;
 	}
@@ -4357,7 +4383,8 @@ void CClient::FinishParkedDemoPlayback(bool RestoreLiveMap)
 	if(pError)
 	{
 		m_DemoParkedOnline = false;
-		m_SuppressDemoConsoleLogs = false;
+		SetSuppressDemoConsoleLogs(false);
+		GameClient()->OnParkedDemoPlaybackEnded(false);
 		DisconnectWithReason(pError);
 		return;
 	}
@@ -4376,9 +4403,10 @@ void CClient::FinishParkedDemoPlayback(bool RestoreLiveMap)
 	m_SkipSendInfoOnConnected = false;
 	if(m_aapSnapshots[g_Config.m_ClDummy][SNAP_CURRENT])
 		GameClient()->OnNewSnapshot();
+	GameClient()->OnParkedDemoPlaybackEnded(true);
 
 	m_DemoParkedOnline = false;
-	m_SuppressDemoConsoleLogs = false;
+	SetSuppressDemoConsoleLogs(false);
 }
 
 void CClient::DemoPlayer_Stop()
@@ -4390,7 +4418,7 @@ void CClient::DemoPlayer_Stop()
 		FinishParkedDemoPlayback(true);
 	else
 	{
-		m_SuppressDemoConsoleLogs = false;
+		SetSuppressDemoConsoleLogs(false);
 		Disconnect();
 	}
 }
@@ -4454,22 +4482,13 @@ void CClient::SendParkedKeepaliveInput()
 
 bool CClient::ShouldSuppressDemoConsoleLog(const char *pSystem, const char *pMessage) const
 {
-	if(!m_SuppressDemoConsoleLogs || !pSystem)
-		return false;
-	if(str_comp(pSystem, "demo_player") == 0 || str_comp(pSystem, "demo") == 0)
-		return true;
-	if(pMessage && (str_comp(pSystem, "client") == 0 || str_comp(pSystem, "client/network") == 0))
-	{
-		if(str_startswith(pMessage, "loading map") ||
-			str_startswith(pMessage, "loaded map") ||
-			str_startswith(pMessage, "Loading demo") ||
-			str_startswith(pMessage, "loading done") ||
-			str_startswith(pMessage, "disconnecting."))
-		{
-			return true;
-		}
-	}
-	return false;
+	return ShouldSuppressDemoLogMessage(m_SuppressDemoConsoleLogs, pSystem, pMessage);
+}
+
+void CClient::SetSuppressDemoConsoleLogs(bool Suppress)
+{
+	m_SuppressDemoConsoleLogs = Suppress;
+	gs_SuppressDemoFileLogs.store(Suppress, std::memory_order_relaxed);
 }
 
 #if defined(CONF_VIDEORECORDER)
@@ -5097,6 +5116,36 @@ static bool SaveUnknownCommandCallback(const char *pCommand, void *pUser)
 extern "C" UCLIENT_VERSION_MARKER_EXPORT const char UCLIENT_COMPILED_VERSION_MARKER[] =
 	"UCLIENT_COMPILED_VERSION=" UCLIENT_VERSION;
 
+class CDemoFilteredFileLogger final : public ILogger
+{
+	std::shared_ptr<ILogger> m_pInner;
+
+public:
+	explicit CDemoFilteredFileLogger(std::shared_ptr<ILogger> pInner) :
+		m_pInner(std::move(pInner))
+	{
+	}
+
+	void Log(const CLogMessage *pMessage) override
+	{
+		if(!ShouldSuppressDemoLogMessage(
+			   gs_SuppressDemoFileLogs.load(std::memory_order_relaxed),
+			   pMessage->m_aSystem,
+			   pMessage->Message()))
+			m_pInner->Log(pMessage);
+	}
+
+	void GlobalFinish() override
+	{
+		m_pInner->GlobalFinish();
+	}
+
+	void OnFilterChange() override
+	{
+		m_pInner->SetFilter(m_Filter);
+	}
+};
+
 #if defined(CONF_PLATFORM_MACOS)
 extern "C" int TWMain(int argc, const char **argv)
 #elif defined(CONF_PLATFORM_ANDROID)
@@ -5453,7 +5502,8 @@ int main(int argc, const char **argv)
 		IOHANDLE Logfile = pStorage->OpenFile(g_Config.m_Logfile, Mode, IStorage::TYPE_SAVE_OR_ABSOLUTE);
 		if(Logfile)
 		{
-			pFutureFileLogger->Set(log_logger_file(Logfile));
+			std::shared_ptr<ILogger> pFileLogger = log_logger_file(Logfile);
+			pFutureFileLogger->Set(std::make_shared<CDemoFilteredFileLogger>(std::move(pFileLogger)));
 		}
 		else
 		{

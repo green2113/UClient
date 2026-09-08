@@ -720,6 +720,10 @@ public:
 	void *TranslateGameMsg(int *pMsgId, CUnpacker *pUnpacker, int Conn);
 	int TranslateSnap(CSnapshot *pSnapDstSix, CSnapshot *pSnapSrcSeven, int Conn, bool Dummy) override;
 	void OnMessage(int MsgId, CUnpacker *pUnpacker, int Conn, bool Dummy) override;
+	void OnParkedLiveMessage(int MsgId, CUnpacker *pUnpacker, int Conn, bool Dummy) override;
+	void OnParkedDemoPlaybackStarted() override;
+	void OnParkedDemoPlaybackRestarted() override;
+	void OnParkedDemoPlaybackEnded(bool ReplayPendingChat) override;
 	void InvalidateSnapshot() override;
 	void OnNewSnapshot() override;
 	void OnPredict() override;

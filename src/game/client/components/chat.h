@@ -277,6 +277,41 @@ class CChat : public CComponent
 	CLine m_aLines[MAX_LINES];
 	int m_CurrentLine;
 	int m_BacklogCurLine;
+	enum class EParkedChatEventType
+	{
+		SERVER_CHAT,
+		UCLIENT_CHAT,
+		SERVER_JOIN,
+		SERVER_LEAVE,
+	};
+	struct SParkedChatEvent
+	{
+		EParkedChatEventType m_Type = EParkedChatEventType::SERVER_CHAT;
+		int m_ClientId = -1;
+		int m_Team = 0;
+		int m_SuggestedClientId = -1;
+		std::string m_Name;
+		std::string m_Text;
+		std::string m_ServerAddress;
+		std::string m_ServerName;
+		CUuid m_MessageId = UUID_ZEROED;
+		bool m_Mine = false;
+		std::string m_SkinName;
+		int m_UseCustomColor = 0;
+		int m_ColorBody = 0;
+		int m_ColorFeet = 0;
+		int m_Scope = -1;
+		std::string m_RoomName;
+		std::string m_RoomId;
+		bool m_Moved = false;
+	};
+	CLine m_aParkedLiveLines[MAX_LINES];
+	int m_ParkedLiveCurrentLine = 0;
+	int m_ParkedLiveBacklogCurLine = 0;
+	bool m_ParkedLiveLinesInitialized = false;
+	bool m_ParkedDemoPlaybackActive = false;
+	bool m_ReplayingParkedChat = false;
+	std::vector<SParkedChatEvent> m_vParkedChatEvents;
 	bool m_ScrollbarDragging;
 	float m_ScrollbarDragOffset;
 	std::optional<vec2> m_LastMousePos;
@@ -626,6 +661,8 @@ class CChat : public CComponent
 	bool TryHandleSettingsLinkClick(CLine &Line, vec2 MousePos, float FontSize);
 	static bool LineNeedsNameColon(const CLine &Line);
 	static const char *LineNameSeparator(const CLine &Line);
+	void PrintChatLineToConsole(const CLine &Line);
+	void PopulateParkedServerChatLine(int ClientId, int Team, const char *pText, CLine &Line);
 	// Fills pBuf with the "who can see this" note for a UClient message, or returns false when
 	// the line has no audience worth spelling out.
 	static bool UClientScopeNoteText(const CLine &Line, char *pBuf, size_t BufSize);
@@ -780,6 +817,7 @@ class CChat : public CComponent
 	float LayoutReactionRow(const CLine &Line, float FontSize, float AvailWidth, float OriginX, float OriginY, std::vector<SRenderRect> *pOutRects);
 	void OpenReactionPicker(int LineIndex, float X, float Y);
 	static CUi::EPopupMenuFunctionResult PopupReactionPicker(void *pContext, CUIRect View, bool Active);
+	void QueueParkedChatEvent(SParkedChatEvent &&Event);
 
 	friend class CBindChat;
 	friend class CTranslate;
@@ -850,6 +888,10 @@ public:
 
 	void RebuildChat();
 	void ClearLines();
+	void BeginParkedDemoPlayback();
+	void RestartParkedDemoPlayback();
+	void EndParkedDemoPlayback(bool ReplayPending);
+	void BufferParkedServerChat(int ClientId, int Team, const char *pText);
 	void RenderHud(bool ForcePreview = false);
 	CUIRect GetHudRect(float HudWidth, float HudHeight, bool ForcePreview = false) const;
 

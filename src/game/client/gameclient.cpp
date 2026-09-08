@@ -1504,6 +1504,34 @@ void CGameClient::OnRelease()
 		pComponent->OnRelease();
 }
 
+void CGameClient::OnParkedLiveMessage(int MsgId, CUnpacker *pUnpacker, int Conn, bool Dummy)
+{
+	if(Dummy)
+		return;
+	if(MsgId != NETMSGTYPE_SV_CHAT && MsgId != protocol7::NETMSGTYPE_SV_CHAT)
+		return;
+	void *pRawMsg = TranslateGameMsg(&MsgId, pUnpacker, Conn);
+	if(!pRawMsg || MsgId != NETMSGTYPE_SV_CHAT)
+		return;
+	const CNetMsg_Sv_Chat *pMsg = static_cast<CNetMsg_Sv_Chat *>(pRawMsg);
+	m_Chat.BufferParkedServerChat(pMsg->m_ClientId, pMsg->m_Team, pMsg->m_pMessage);
+}
+
+void CGameClient::OnParkedDemoPlaybackStarted()
+{
+	m_Chat.BeginParkedDemoPlayback();
+}
+
+void CGameClient::OnParkedDemoPlaybackRestarted()
+{
+	m_Chat.RestartParkedDemoPlayback();
+}
+
+void CGameClient::OnParkedDemoPlaybackEnded(bool ReplayPendingChat)
+{
+	m_Chat.EndParkedDemoPlayback(ReplayPendingChat);
+}
+
 void CGameClient::OnMessage(int MsgId, CUnpacker *pUnpacker, int Conn, bool Dummy)
 {
 	// special messages

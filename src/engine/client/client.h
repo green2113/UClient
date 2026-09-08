@@ -501,6 +501,7 @@ public:
 	void DemoPlayer_Stop() override;
 	bool IsDemoParkedOnline() const override { return m_DemoParkedOnline; }
 	bool ShouldSuppressDemoConsoleLog(const char *pSystem, const char *pMessage) const override;
+	void SetSuppressDemoConsoleLogs(bool Suppress);
 	bool ShouldSendInfoOnConnected() const override { return !m_SkipSendInfoOnConnected; }
 	void BeginParkedOnlineSession();
 	void FinishParkedDemoPlayback(bool RestoreLiveMap);

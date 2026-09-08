@@ -795,6 +795,226 @@ void CChat::ClearLines()
 	m_PrevHudLayoutEnabled = true;
 }
 
+void CChat::QueueParkedChatEvent(SParkedChatEvent &&Event)
+{
+	if(m_vParkedChatEvents.size() >= MAX_LINES)
+		m_vParkedChatEvents.erase(m_vParkedChatEvents.begin());
+	m_vParkedChatEvents.emplace_back(std::move(Event));
+}
+
+void CChat::BeginParkedDemoPlayback()
+{
+	if(m_ParkedDemoPlaybackActive)
+	{
+		RestartParkedDemoPlayback();
+		return;
+	}
+	if(!m_ParkedLiveLinesInitialized)
+	{
+		for(auto &Line : m_aParkedLiveLines)
+			Line.Reset(*this);
+		m_ParkedLiveLinesInitialized = true;
+	}
+	if(m_MediaViewerOpen)
+		CloseMediaViewer();
+	DisableMode();
+	m_HasSelection = false;
+	for(int i = 0; i < MAX_LINES; ++i)
+		std::swap(m_aLines[i], m_aParkedLiveLines[i]);
+	m_ParkedLiveCurrentLine = m_CurrentLine;
+	m_ParkedLiveBacklogCurLine = m_BacklogCurLine;
+	m_CurrentLine = 0;
+	m_BacklogCurLine = 0;
+	ClearLines();
+	m_vParkedChatEvents.clear();
+	m_ParkedDemoPlaybackActive = true;
+}
+
+void CChat::RestartParkedDemoPlayback()
+{
+	if(!m_ParkedDemoPlaybackActive)
+		return;
+	ClearLines();
+	m_CurrentLine = 0;
+	m_BacklogCurLine = 0;
+}
+
+void CChat::PrintChatLineToConsole(const CLine &Line)
+{
+	char aBuf[1024];
+	str_format(aBuf, sizeof(aBuf), "%s%s%s", Line.m_aName, LineNeedsNameColon(Line) ? LineNameSeparator(Line) : "", Line.m_aText);
+
+	ColorRGBA ChatLogColor = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
+	if(Line.m_Highlighted)
+	{
+		ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageHighlightColor));
+	}
+	else
+	{
+		if(ShouldShowFriendMarker(Line))
+			ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageFriendColor));
+		else if(Line.m_UClient)
+			ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
+		else if(Line.m_Team)
+			ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageTeamColor));
+		else if(Line.m_ClientId == SERVER_MSG)
+			ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageSystemColor));
+		else if(Line.m_ClientId == CLIENT_MSG)
+			ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
+		else // regular message
+			ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageColor));
+	}
+
+	const char *pFrom;
+	char aUClientFrom[160];
+	if(Line.m_Whisper)
+		pFrom = "chat/whisper";
+	else if(Line.m_UClient)
+	{
+		if(Line.m_aUClientRoomName[0])
+		{
+			str_format(aUClientFrom, sizeof(aUClientFrom), "chat/uclient/%s", Line.m_aUClientRoomName);
+			pFrom = aUClientFrom;
+		}
+		else
+			pFrom = "chat/uclient";
+	}
+	else if(Line.m_Team)
+		pFrom = "chat/team";
+	else if(Line.m_ClientId == SERVER_MSG)
+		pFrom = "chat/server";
+	else if(Line.m_ClientId == CLIENT_MSG)
+		pFrom = "chat/client";
+	else
+		pFrom = "chat/all";
+
+	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, pFrom, aBuf, ChatLogColor);
+}
+
+void CChat::PopulateParkedServerChatLine(int ClientId, int Team, const char *pText, CLine &Line)
+{
+	Line.Reset(*this);
+	Line.m_Initialized = true;
+	Line.m_ClientId = ClientId;
+	Line.m_TeamNumber = Team;
+	Line.m_Team = Team == 1;
+	Line.m_UClient = Team == TEAM_UCLIENT;
+	Line.m_Whisper = Team >= 2 && Team != TEAM_UCLIENT;
+	str_copy(Line.m_aText, pText, sizeof(Line.m_aText));
+
+	if(ClientId == SERVER_MSG)
+	{
+		str_copy(Line.m_aName, "*** ");
+	}
+	else if(ClientId == CLIENT_MSG)
+	{
+		str_copy(Line.m_aName, "— ");
+	}
+	else if(ClientId >= 0 && ClientId < MAX_CLIENTS)
+	{
+		const auto &LineAuthor = GameClient()->m_aClients[ClientId];
+		const char *pFilteredLineAuthor = FilterText(LineAuthor.m_aName);
+
+		if(Team == TEAM_WHISPER_SEND)
+		{
+			str_copy(Line.m_aName, "→");
+			if(LineAuthor.m_Active)
+			{
+				char aSanitizedName[64];
+				GameClient()->m_BestClient.SanitizePlayerName(pFilteredLineAuthor, aSanitizedName, sizeof(aSanitizedName), ClientId);
+				str_append(Line.m_aName, " ");
+				str_append(Line.m_aName, aSanitizedName);
+			}
+			Line.m_Highlighted = false;
+		}
+		else if(Team == TEAM_WHISPER_RECV)
+		{
+			str_copy(Line.m_aName, "←");
+			if(LineAuthor.m_Active)
+			{
+				char aSanitizedName[64];
+				GameClient()->m_BestClient.SanitizePlayerName(pFilteredLineAuthor, aSanitizedName, sizeof(aSanitizedName), ClientId);
+				str_append(Line.m_aName, " ");
+				str_append(Line.m_aName, aSanitizedName);
+			}
+			Line.m_Highlighted = true;
+		}
+		else
+		{
+			GameClient()->m_BestClient.SanitizePlayerName(pFilteredLineAuthor, Line.m_aName, sizeof(Line.m_aName), ClientId);
+		}
+
+		if(LineAuthor.m_Active)
+			Line.m_Friend = LineAuthor.m_Friend;
+	}
+}
+
+void CChat::BufferParkedServerChat(int ClientId, int Team, const char *pText)
+{
+	if(!m_ParkedDemoPlaybackActive || !pText || pText[0] == '\0')
+		return;
+	SParkedChatEvent Event;
+	Event.m_Type = EParkedChatEventType::SERVER_CHAT;
+	Event.m_ClientId = ClientId;
+	Event.m_Team = Team;
+	Event.m_Text = pText;
+	QueueParkedChatEvent(std::move(Event));
+
+	CLine LogLine;
+	PopulateParkedServerChatLine(ClientId, Team, pText, LogLine);
+	PrintChatLineToConsole(LogLine);
+}
+
+void CChat::EndParkedDemoPlayback(bool ReplayPending)
+{
+	if(!m_ParkedDemoPlaybackActive)
+		return;
+
+	if(m_MediaViewerOpen)
+		CloseMediaViewer();
+	ClearLines();
+	for(int i = 0; i < MAX_LINES; ++i)
+		std::swap(m_aLines[i], m_aParkedLiveLines[i]);
+	m_CurrentLine = m_ParkedLiveCurrentLine;
+	m_BacklogCurLine = m_ParkedLiveBacklogCurLine;
+	m_ParkedDemoPlaybackActive = false;
+
+	std::vector<SParkedChatEvent> vEvents = std::move(m_vParkedChatEvents);
+	m_vParkedChatEvents.clear();
+	if(!ReplayPending)
+		return;
+
+	m_ReplayingParkedChat = true;
+	for(const SParkedChatEvent &Event : vEvents)
+	{
+		switch(Event.m_Type)
+		{
+		case EParkedChatEventType::SERVER_CHAT:
+			AddLine(Event.m_ClientId, Event.m_Team, Event.m_Text.c_str());
+			break;
+		case EParkedChatEventType::UCLIENT_CHAT:
+			AddUClientChatLine(
+				Event.m_Name.c_str(), Event.m_SuggestedClientId, Event.m_Text.c_str(), Event.m_ServerAddress.c_str(),
+				Event.m_MessageId, Event.m_Mine, Event.m_SkinName.c_str(), Event.m_UseCustomColor,
+				Event.m_ColorBody, Event.m_ColorFeet, Event.m_Scope, Event.m_RoomName.c_str(), Event.m_RoomId.c_str());
+			break;
+		case EParkedChatEventType::SERVER_JOIN:
+			AddServerJoinLine(
+				Event.m_Name.c_str(), Event.m_ServerAddress.c_str(), Event.m_ServerName.c_str(),
+				Event.m_SkinName.c_str(), Event.m_UseCustomColor, Event.m_ColorBody, Event.m_ColorFeet,
+				Event.m_Moved, Event.m_RoomName.c_str(), Event.m_RoomId.c_str());
+			break;
+		case EParkedChatEventType::SERVER_LEAVE:
+			AddServerLeaveLine(
+				Event.m_Name.c_str(), Event.m_ServerAddress.c_str(), Event.m_SkinName.c_str(),
+				Event.m_UseCustomColor, Event.m_ColorBody, Event.m_ColorFeet,
+				Event.m_RoomName.c_str(), Event.m_RoomId.c_str());
+			break;
+		}
+	}
+	m_ReplayingParkedChat = false;
+}
+
 void CChat::OnWindowResize()
 {
 	RebuildChat();
@@ -7280,57 +7500,6 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 
 	bool Highlighted = false;
 
-	auto &&FChatMsgCheckAndPrint = [this](const CLine &Line) {
-		char aBuf[1024];
-		str_format(aBuf, sizeof(aBuf), "%s%s%s", Line.m_aName, LineNeedsNameColon(Line) ? LineNameSeparator(Line) : "", Line.m_aText);
-
-		ColorRGBA ChatLogColor = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
-		if(Line.m_Highlighted)
-		{
-			ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageHighlightColor));
-		}
-		else
-		{
-			if(ShouldShowFriendMarker(Line))
-				ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageFriendColor));
-			else if(Line.m_UClient)
-				ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcMessageColor));
-			else if(Line.m_Team)
-				ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageTeamColor));
-			else if(Line.m_ClientId == SERVER_MSG)
-				ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageSystemColor));
-			else if(Line.m_ClientId == CLIENT_MSG)
-				ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageClientColor));
-			else // regular message
-				ChatLogColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClMessageColor));
-		}
-
-		const char *pFrom;
-		char aUClientFrom[160];
-		if(Line.m_Whisper)
-			pFrom = "chat/whisper";
-		else if(Line.m_UClient)
-		{
-			if(Line.m_aUClientRoomName[0])
-			{
-				str_format(aUClientFrom, sizeof(aUClientFrom), "chat/uclient/%s", Line.m_aUClientRoomName);
-				pFrom = aUClientFrom;
-			}
-			else
-				pFrom = "chat/uclient";
-		}
-		else if(Line.m_Team)
-			pFrom = "chat/team";
-		else if(Line.m_ClientId == SERVER_MSG)
-			pFrom = "chat/server";
-		else if(Line.m_ClientId == CLIENT_MSG)
-			pFrom = "chat/client";
-		else
-			pFrom = "chat/all";
-
-		Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, pFrom, aBuf, ChatLogColor);
-	};
-
 	// Custom color for new line
 	std::optional<ColorRGBA> CustomColor = std::nullopt;
 	if(ClientId == CLIENT_MSG && Team != TEAM_UCLIENT)
@@ -7357,7 +7526,8 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 		PreviousLine.m_aYOffset[0] = -1.0f;
 		PreviousLine.m_aYOffset[1] = -1.0f;
 
-		FChatMsgCheckAndPrint(PreviousLine);
+		if(!m_ReplayingParkedChat)
+			PrintChatLineToConsole(PreviousLine);
 		return;
 	}
 
@@ -7616,7 +7786,8 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 		}
 	}
 
-	FChatMsgCheckAndPrint(CurrentLine);
+	if(!m_ReplayingParkedChat)
+		PrintChatLineToConsole(CurrentLine);
 
 	// play sound
 	int64_t Now = time();
@@ -7710,6 +7881,26 @@ void CChat::AddUClientChatLine(const char *pName, int SuggestedClientId, const c
 {
 	if(!g_Config.m_UcChat || !pName || !pLine || pName[0] == '\0' || pLine[0] == '\0')
 		return;
+	if(m_ParkedDemoPlaybackActive && !m_ReplayingParkedChat)
+	{
+		SParkedChatEvent Event;
+		Event.m_Type = EParkedChatEventType::UCLIENT_CHAT;
+		Event.m_SuggestedClientId = SuggestedClientId;
+		Event.m_Name = pName;
+		Event.m_Text = pLine;
+		Event.m_ServerAddress = pServerAddress ? pServerAddress : "";
+		Event.m_MessageId = MessageId;
+		Event.m_Mine = Mine;
+		Event.m_SkinName = pSkinName ? pSkinName : "";
+		Event.m_UseCustomColor = UseCustomColor;
+		Event.m_ColorBody = ColorBody;
+		Event.m_ColorFeet = ColorFeet;
+		Event.m_Scope = Scope;
+		Event.m_RoomName = pRoomName ? pRoomName : "";
+		Event.m_RoomId = pRoomId ? pRoomId : "";
+		QueueParkedChatEvent(std::move(Event));
+		return;
+	}
 
 	int ClientId = CLIENT_MSG;
 	const bool SameServer = pServerAddress && pServerAddress[0] != '\0' &&
@@ -7828,6 +8019,21 @@ void CChat::AddServerLeaveLine(const char *pLeaverName, const char *pServerAddre
 {
 	if(!g_Config.m_UcChat || !pLeaverName || pLeaverName[0] == '\0')
 		return;
+	if(m_ParkedDemoPlaybackActive && !m_ReplayingParkedChat)
+	{
+		SParkedChatEvent Event;
+		Event.m_Type = EParkedChatEventType::SERVER_LEAVE;
+		Event.m_Name = pLeaverName;
+		Event.m_ServerAddress = pServerAddress ? pServerAddress : "";
+		Event.m_SkinName = pSkinName ? pSkinName : "";
+		Event.m_UseCustomColor = UseCustomColor;
+		Event.m_ColorBody = ColorBody;
+		Event.m_ColorFeet = ColorFeet;
+		Event.m_RoomName = pRoomName ? pRoomName : "";
+		Event.m_RoomId = pRoomId ? pRoomId : "";
+		QueueParkedChatEvent(std::move(Event));
+		return;
+	}
 
 	// Plain announcement: no server name and nothing clickable.
 	AddUClientChatLine(pLeaverName, -1, Localize("left the server."), pServerAddress, UUID_ZEROED, false,
@@ -7849,6 +8055,23 @@ void CChat::AddServerJoinLine(const char *pJoinerName, const char *pServerAddres
 {
 	if(!g_Config.m_UcChat || !pJoinerName || !pServerAddress || pJoinerName[0] == '\0' || pServerAddress[0] == '\0')
 		return;
+	if(m_ParkedDemoPlaybackActive && !m_ReplayingParkedChat)
+	{
+		SParkedChatEvent Event;
+		Event.m_Type = EParkedChatEventType::SERVER_JOIN;
+		Event.m_Name = pJoinerName;
+		Event.m_ServerAddress = pServerAddress;
+		Event.m_ServerName = pServerName ? pServerName : "";
+		Event.m_SkinName = pSkinName ? pSkinName : "";
+		Event.m_UseCustomColor = UseCustomColor;
+		Event.m_ColorBody = ColorBody;
+		Event.m_ColorFeet = ColorFeet;
+		Event.m_Moved = Moved;
+		Event.m_RoomName = pRoomName ? pRoomName : "";
+		Event.m_RoomId = pRoomId ? pRoomId : "";
+		QueueParkedChatEvent(std::move(Event));
+		return;
+	}
 
 	const char *pName = (pServerName && pServerName[0] != '\0') ? pServerName : pServerAddress;
 
