@@ -1856,6 +1856,15 @@ static void EnsureShortcutsLoaded()
 		g_ShortcutsFileJson = std::move(Content);
 }
 
+static size_t FindMatchingBracket(const std::string &Json, size_t OpenPos, char Open, char Close);
+
+// Position right after the object starting at OpenPos, or npos when unbalanced.
+static size_t JsonObjectEnd(const std::string &Json, size_t OpenPos)
+{
+	const size_t Close = FindMatchingBracket(Json, OpenPos, '{', '}');
+	return Close == std::string::npos ? std::string::npos : Close + 1;
+}
+
 static bool ExtractJsonRawValue(const std::string &Json, const char *pKey, std::string &Out)
 {
 	std::string Needle = "\"";
@@ -1876,23 +1885,12 @@ static bool ExtractJsonRawValue(const std::string &Json, const char *pKey, std::
 	if(Open != '[' && Open != '{')
 		return false;
 	const char Close = Open == '[' ? ']' : '}';
-	int Depth = 0;
-	const size_t Start = i;
-	for(; i < Json.size(); ++i)
-	{
-		if(Json[i] == Open)
-			++Depth;
-		else if(Json[i] == Close)
-		{
-			--Depth;
-			if(Depth == 0)
-			{
-				Out = Json.substr(Start, i - Start + 1);
-				return true;
-			}
-		}
-	}
-	return false;
+	// Brackets inside string values must not affect the depth count.
+	const size_t End = FindMatchingBracket(Json, i, Open, Close);
+	if(End == std::string::npos)
+		return false;
+	Out = Json.substr(i, End - i + 1);
+	return true;
 }
 
 static void SaveShortcutsDocument(const std::string &ShortcutsArrayJson)
@@ -1957,22 +1955,11 @@ static void ToggleShortcutEnabled(const std::string &Id, bool Enabled)
 			++Pos;
 			continue;
 		}
-		int Depth = 0;
 		const size_t ObjStart = Pos;
-		for(; Pos < ArrayJson.size(); ++Pos)
-		{
-			if(ArrayJson[Pos] == '{')
-				++Depth;
-			else if(ArrayJson[Pos] == '}')
-			{
-				--Depth;
-				if(Depth == 0)
-				{
-					++Pos;
-					break;
-				}
-			}
-		}
+		const size_t ObjEnd = JsonObjectEnd(ArrayJson, ObjStart);
+		if(ObjEnd == std::string::npos)
+			break;
+		Pos = ObjEnd;
 		std::string Obj = ArrayJson.substr(ObjStart, Pos - ObjStart);
 		std::string ObjId;
 		if(!ExtractJsonString(Obj, "id", ObjId) || ObjId != Id)
@@ -2009,22 +1996,11 @@ static void ToggleShortcutEnabled(const std::string &Id, bool Enabled)
 				++Scan;
 				continue;
 			}
-			int Depth = 0;
 			const size_t Start = Scan;
-			for(; Scan < ArrayJson.size(); ++Scan)
-			{
-				if(ArrayJson[Scan] == '{')
-					++Depth;
-				else if(ArrayJson[Scan] == '}')
-				{
-					--Depth;
-					if(Depth == 0)
-					{
-						++Scan;
-						break;
-					}
-				}
-			}
+			const size_t End = JsonObjectEnd(ArrayJson, Start);
+			if(End == std::string::npos)
+				break;
+			Scan = End;
 			if(!First)
 				NewArray += ",";
 			First = false;
@@ -2059,22 +2035,11 @@ static void DeleteShortcutById(const std::string &Id)
 			++Pos;
 			continue;
 		}
-		int Depth = 0;
 		const size_t ObjStart = Pos;
-		for(; Pos < ArrayJson.size(); ++Pos)
-		{
-			if(ArrayJson[Pos] == '{')
-				++Depth;
-			else if(ArrayJson[Pos] == '}')
-			{
-				--Depth;
-				if(Depth == 0)
-				{
-					++Pos;
-					break;
-				}
-			}
-		}
+		const size_t ObjEnd = JsonObjectEnd(ArrayJson, ObjStart);
+		if(ObjEnd == std::string::npos)
+			break;
+		Pos = ObjEnd;
 		std::string Obj = ArrayJson.substr(ObjStart, Pos - ObjStart);
 		std::string ObjId;
 		if(ExtractJsonString(Obj, "id", ObjId) && ObjId == Id)

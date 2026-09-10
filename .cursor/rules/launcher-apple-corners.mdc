@@ -1,0 +1,27 @@
+---
+description: UClient launcher / Shortcuts editor — Apple-style squircle corners on all UI chrome
+globs: src/tools/uclient_launcher_ui.h
+alwaysApply: false
+---
+
+# Apple corners (squircle) in launcher UI
+
+All **Shortcuts / Automation editor** surfaces in `uclient_launcher_ui.h` use **continuous curvature (squircle)**, not plain CSS `border-radius` alone.
+
+## Required pattern
+
+1. Set a generous `border-radius` on the element (blocks ~26px, pills 999px, inset fields ~16–22px).
+2. Include the selector in the existing `@supports (corner-shape: squircle)` block so `corner-shape: squircle` applies.
+
+## Must use squircle
+
+- Editor sheet, blocks, drawer, chips, catalog rows, pills, smart menus, run-result boxes, modals, and control surfaces inside `#sc-editor` / `#shortcuts-view`.
+
+## When adding new UI
+
+- Add the new class to the squircle `@supports` list in the same edit.
+- Do not ship sharp-corner-only panels in the shortcut editor unless the host OS cannot parse `corner-shape` (fallback remains `border-radius` only).
+
+## Related
+
+- SVG stroke rounding: `.cursor/rules/launcher-svg-icons.mdc`

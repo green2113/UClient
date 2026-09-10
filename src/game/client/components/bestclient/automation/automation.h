@@ -164,14 +164,26 @@ public:
 	void OnChatReceived(const SChatEvent &Event);
 
 private:
+	// One entry per if block the runner is currently inside, so nested ifs keep
+	// their own "did the condition match" state.
+	struct SIfFrame
+	{
+		size_t m_EndIfIndex = SIZE_MAX;
+		bool m_TrueBranch = false;
+	};
+
 	struct SRunner
 	{
 		size_t m_ShortcutIndex = 0;
+		// Kept so a rules reload mid-run cannot make the index point at another
+		// shortcut's actions.
+		std::string m_ShortcutId;
 		size_t m_ActionIndex = 0;
 		int64_t m_WaitUntil = 0;
 		int m_WeaponUseStep = 0;
-		bool m_IfTrueBranch = false;
-		size_t m_IfEndIndex = SIZE_MAX;
+		int m_WeaponUseTarget = 0;
+		int64_t m_WeaponUseReadyTime = 0;
+		std::vector<SIfFrame> m_vIfFrames;
 		bool m_HadChatEvent = false;
 		bool m_TestRun = false;
 		SChatEvent m_ChatEvent;

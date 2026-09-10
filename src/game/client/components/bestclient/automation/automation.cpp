@@ -88,6 +88,25 @@ static CAutomation::ETarget ParseTarget(const char *pValue)
 	return CAutomation::ETarget::PLAYER;
 }
 
+// Colors may arrive as a double, so accept both number kinds and clamp to RGB.
+static int ParseColorValue(const json_value *pColor)
+{
+	if(!pColor)
+		return 0;
+	double Value = 0.0;
+	if(pColor->type == json_integer)
+		Value = (double)pColor->u.integer;
+	else if(pColor->type == json_double)
+		Value = pColor->u.dbl;
+	else
+		return 0;
+	if(Value < 0.0)
+		return 0;
+	if(Value > 0xFFFFFF)
+		return 0xFFFFFF;
+	return (int)(Value + 0.5);
+}
+
 static int ParseWeapon(const char *pValue)
 {
 	if(!pValue)
@@ -408,6 +427,8 @@ static bool ParseAction(const json_value *pAction, CAutomation::SAction &Out)
 		Out.m_Seconds = pSeconds && pSeconds->type == json_double ? pSeconds->u.dbl :
 									 pSeconds && pSeconds->type == json_integer ? (double)pSeconds->u.integer :
 														 1.0;
+		// The editor only allows whole seconds, one or more.
+		Out.m_Seconds = Out.m_Seconds < 1.0 ? 1.0 : (double)(int64_t)(Out.m_Seconds + 0.5);
 		return true;
 	}
 	if(str_comp(pTypeStr, "switch_weapon_use") == 0)
@@ -442,8 +463,7 @@ static bool ParseAction(const json_value *pAction, CAutomation::SAction &Out)
 		Out.m_Type = CAutomation::EActionType::SET_BODY_COLOR;
 		const json_value *pTarget = json_object_get(pAction, "target");
 		Out.m_Target = ParseTarget(pTarget && pTarget->type == json_string ? pTarget->u.string.ptr : nullptr);
-		const json_value *pColor = json_object_get(pAction, "color");
-		Out.m_Color = pColor && pColor->type == json_integer ? pColor->u.integer : 0;
+		Out.m_Color = ParseColorValue(json_object_get(pAction, "color"));
 		return true;
 	}
 	if(str_comp(pTypeStr, "set_feet_color") == 0)
@@ -451,8 +471,7 @@ static bool ParseAction(const json_value *pAction, CAutomation::SAction &Out)
 		Out.m_Type = CAutomation::EActionType::SET_FEET_COLOR;
 		const json_value *pTarget = json_object_get(pAction, "target");
 		Out.m_Target = ParseTarget(pTarget && pTarget->type == json_string ? pTarget->u.string.ptr : nullptr);
-		const json_value *pColor = json_object_get(pAction, "color");
-		Out.m_Color = pColor && pColor->type == json_integer ? pColor->u.integer : 0;
+		Out.m_Color = ParseColorValue(json_object_get(pAction, "color"));
 		return true;
 	}
 	if(str_comp(pTypeStr, "set_name") == 0)
@@ -564,9 +583,28 @@ void CAutomation::OnUpdate()
 		WriteTestRunState("running");
 }
 
+// Quote a console argument so spaces stay part of the value and a stray ";"
+// cannot start another command.
 static void EscapeParamLocal(char *pDst, const char *pSrc, int Size)
 {
-	str_copy(pDst, pSrc, Size);
+	if(Size <= 0)
+		return;
+	int Out = 0;
+	if(Out < Size - 1)
+		pDst[Out++] = '"';
+	for(const char *p = pSrc ? pSrc : ""; *p && Out < Size - 2; ++p)
+	{
+		if(*p == '"' || *p == '\\')
+		{
+			if(Out >= Size - 3)
+				break;
+			pDst[Out++] = '\\';
+		}
+		pDst[Out++] = *p;
+	}
+	if(Out < Size - 1)
+		pDst[Out++] = '"';
+	pDst[Out] = '\0';
 }
 
 void CAutomation::TryReloadRules()
@@ -725,10 +763,9 @@ bool CAutomation::ChannelsMatch(EChatChannel TriggerChannel, EChatChannel EventC
 {
 	if(TriggerChannel == EventChannel)
 		return true;
-	// When UI channel is "All", listen to both global and team server chat.
-	if(TriggerChannel == EChatChannel::ALL && (EventChannel == EChatChannel::ALL || EventChannel == EChatChannel::TEAM))
-		return true;
-	return false;
+	// The editor has no control for the trigger channel, it always saves "all".
+	// Narrowing down to team or UClient is done through chat filters instead.
+	return TriggerChannel == EChatChannel::ALL;
 }
 
 static bool TargetHasExplicitPort(const char *pTarget)
@@ -869,6 +906,7 @@ void CAutomation::StartRunner(size_t ShortcutIndex, const SChatEvent *pChatEvent
 		return;
 	m_Runner = SRunner{};
 	m_Runner.m_ShortcutIndex = ShortcutIndex;
+	m_Runner.m_ShortcutId = m_vShortcuts[ShortcutIndex].m_Id;
 	m_Runner.m_ActionIndex = 0;
 	if(pChatEvent)
 	{
@@ -898,9 +936,21 @@ const CAutomation::SShortcut *CAutomation::RunnerShortcut() const
 {
 	if(m_Runner.m_TestRun)
 		return m_TestShortcut.has_value() ? &m_TestShortcut.value() : nullptr;
-	if(m_Runner.m_ShortcutIndex >= m_vShortcuts.size())
-		return nullptr;
-	return &m_vShortcuts[m_Runner.m_ShortcutIndex];
+	if(m_Runner.m_ShortcutIndex < m_vShortcuts.size() &&
+		(m_Runner.m_ShortcutId.empty() || m_vShortcuts[m_Runner.m_ShortcutIndex].m_Id == m_Runner.m_ShortcutId))
+	{
+		return &m_vShortcuts[m_Runner.m_ShortcutIndex];
+	}
+	// The file was reloaded while running, so locate the shortcut by id again.
+	if(!m_Runner.m_ShortcutId.empty())
+	{
+		for(const SShortcut &Shortcut : m_vShortcuts)
+		{
+			if(Shortcut.m_Id == m_Runner.m_ShortcutId)
+				return &Shortcut;
+		}
+	}
+	return nullptr;
 }
 
 size_t CAutomation::FindMatchingEndIf(size_t IfIndex) const
@@ -937,43 +987,39 @@ size_t CAutomation::FindOtherwise(size_t IfIndex, size_t EndIfIndex) const
 	if(!pShortcut || EndIfIndex == SIZE_MAX)
 		return SIZE_MAX;
 	const SShortcut &Shortcut = *pShortcut;
+	// Only the "otherwise" of this very if counts, so nested ifs are skipped.
+	int Depth = 0;
 	for(size_t i = IfIndex + 1; i < EndIfIndex && i < Shortcut.m_vActions.size(); ++i)
 	{
-		if(Shortcut.m_vActions[i].m_Type == EActionType::OTHERWISE)
+		const EActionType Type = Shortcut.m_vActions[i].m_Type;
+		if(Type == EActionType::IF)
+			Depth++;
+		else if(Type == EActionType::END_IF)
+			Depth--;
+		else if(Type == EActionType::OTHERWISE && Depth == 0)
 			return i;
 	}
 	return SIZE_MAX;
 }
 
-static std::string NormalizeBoolLabel(const std::string &Value)
-{
-	if(Value == "예")
-		return "Yes";
-	if(Value == "아니오")
-		return "No";
-	return Value;
-}
-
 bool CAutomation::ValuesMatch(const std::string &Left, const std::string &Op, const std::string &Right) const
 {
-	const std::string NormLeft = NormalizeBoolLabel(Left);
-	const std::string NormRight = NormalizeBoolLabel(Right);
 	if(Op == "has_any")
-		return !NormLeft.empty();
+		return !Left.empty();
 	if(Op == "has_none")
-		return NormLeft.empty();
+		return Left.empty();
 	if(Op == "contains")
-		return str_find_nocase(NormLeft.c_str(), NormRight.c_str()) != nullptr;
+		return str_find_nocase(Left.c_str(), Right.c_str()) != nullptr;
 	if(Op == "not_contains")
-		return str_find_nocase(NormLeft.c_str(), NormRight.c_str()) == nullptr;
+		return str_find_nocase(Left.c_str(), Right.c_str()) == nullptr;
 	if(Op == "starts_with")
-		return str_startswith_nocase(NormLeft.c_str(), NormRight.c_str()) != nullptr;
+		return str_startswith_nocase(Left.c_str(), Right.c_str()) != nullptr;
 	if(Op == "ends_with")
-		return str_endswith_nocase(NormLeft.c_str(), NormRight.c_str()) != nullptr;
+		return str_endswith_nocase(Left.c_str(), Right.c_str()) != nullptr;
 	if(Op == "is" || str_comp_nocase(Op.c_str(), "equals") == 0)
-		return NormLeft == NormRight;
+		return Left == Right;
 	if(Op == "is_not" || str_comp_nocase(Op.c_str(), "is not") == 0)
-		return NormLeft != NormRight;
+		return Left != Right;
 	return false;
 }
 
@@ -981,10 +1027,9 @@ bool CAutomation::EvaluateIfCondition(const SAction &Action) const
 {
 	if(Action.m_IfLeft.empty())
 		return false;
-	std::string Left = Action.m_IfLeft;
-	const auto It = m_Runner.m_Variables.find(Action.m_IfLeft);
-	if(It != m_Runner.m_Variables.end())
-		Left = It->second;
+	// The left side is always a variable name, never a literal, so an unknown or
+	// unset variable has to compare as empty instead of as its own name.
+	const std::string Left = ResolveVariable(Action.m_IfLeft.c_str());
 	return ValuesMatch(Left, Action.m_IfOp, Action.m_IfRight);
 }
 
@@ -1402,9 +1447,13 @@ void CAutomation::ExecuteAction(const SAction &Action)
 		Client()->Disconnect();
 		break;
 	case EActionType::SET_SKIN:
-		str_format(aCmd, sizeof(aCmd), "%s_skin %s", TargetPrefix(Action.m_Target), Action.m_Skin.c_str());
+	{
+		char aEscapedSkin[256];
+		EscapeParamLocal(aEscapedSkin, Action.m_Skin.c_str(), sizeof(aEscapedSkin));
+		str_format(aCmd, sizeof(aCmd), "%s_skin %s", TargetPrefix(Action.m_Target), aEscapedSkin);
 		Console()->ExecuteLine(aCmd, IConsole::CLIENT_ID_UNSPECIFIED);
 		break;
+	}
 	case EActionType::SET_CUSTOM_COLOR:
 		str_format(aCmd, sizeof(aCmd), "%s_use_custom_color %d", TargetPrefix(Action.m_Target), Action.m_CustomColorEnabled ? 1 : 0);
 		Console()->ExecuteLine(aCmd, IConsole::CLIENT_ID_UNSPECIFIED);
@@ -1491,15 +1540,16 @@ void CAutomation::StepRunner()
 			StepRunner();
 			return;
 		}
-		m_Runner.m_IfEndIndex = EndIf;
+		SIfFrame Frame;
+		Frame.m_EndIfIndex = EndIf;
+		Frame.m_TrueBranch = Condition;
+		m_Runner.m_vIfFrames.push_back(Frame);
 		if(Condition)
 		{
-			m_Runner.m_IfTrueBranch = true;
 			++m_Runner.m_ActionIndex;
 		}
 		else
 		{
-			m_Runner.m_IfTrueBranch = false;
 			const size_t Otherwise = FindOtherwise(m_Runner.m_ActionIndex, EndIf);
 			m_Runner.m_ActionIndex = Otherwise != SIZE_MAX ? Otherwise + 1 : EndIf + 1;
 		}
@@ -1509,11 +1559,12 @@ void CAutomation::StepRunner()
 
 	if(Action.m_Type == EActionType::OTHERWISE)
 	{
-		if(m_Runner.m_IfTrueBranch && m_Runner.m_IfEndIndex != SIZE_MAX)
+		// Reaching "otherwise" from the then branch means the else part is skipped.
+		if(!m_Runner.m_vIfFrames.empty() && m_Runner.m_vIfFrames.back().m_TrueBranch)
 		{
-			m_Runner.m_ActionIndex = m_Runner.m_IfEndIndex + 1;
-			m_Runner.m_IfTrueBranch = false;
-			m_Runner.m_IfEndIndex = SIZE_MAX;
+			const size_t EndIf = m_Runner.m_vIfFrames.back().m_EndIfIndex;
+			m_Runner.m_vIfFrames.pop_back();
+			m_Runner.m_ActionIndex = EndIf != SIZE_MAX ? EndIf + 1 : m_Runner.m_ActionIndex + 1;
 		}
 		else
 		{
@@ -1525,8 +1576,8 @@ void CAutomation::StepRunner()
 
 	if(Action.m_Type == EActionType::END_IF)
 	{
-		m_Runner.m_IfTrueBranch = false;
-		m_Runner.m_IfEndIndex = SIZE_MAX;
+		if(!m_Runner.m_vIfFrames.empty())
+			m_Runner.m_vIfFrames.pop_back();
 		++m_Runner.m_ActionIndex;
 		StepRunner();
 		return;
@@ -1553,19 +1604,40 @@ void CAutomation::StepRunner()
 	if(Action.m_Type == EActionType::SWITCH_WEAPON_USE)
 	{
 		CNetObj_PlayerInput &Input = GameClient()->m_Controls.m_aInputData[g_Config.m_ClDummy];
+		const int WantedWeapon = Action.m_Weapon + 1;
 		if(m_Runner.m_WeaponUseStep == 0)
 		{
-			Input.m_WantedWeapon = Action.m_Weapon + 1;
+			Input.m_WantedWeapon = WantedWeapon;
+			m_Runner.m_WeaponUseTarget = Action.m_Weapon;
+			m_Runner.m_WeaponUseReadyTime = Now;
 			m_Runner.m_WeaponUseStep = 1;
 			return;
 		}
 		if(m_Runner.m_WeaponUseStep == 1)
 		{
-			Input.m_Fire++;
+			// Switch and fire in the same tick makes the shot use the old weapon; wait until
+			// the client shows the new one (or a short timeout) before pressing fire.
+			const int64_t MinWait = time_freq() / 25;
+			const int64_t MaxWait = time_freq() / 4;
+			const int64_t Elapsed = Now - m_Runner.m_WeaponUseReadyTime;
+			bool Equipped = false;
+			if(GameClient()->m_Snap.m_pLocalCharacter)
+				Equipped = GameClient()->m_Snap.m_pLocalCharacter->m_Weapon == Action.m_Weapon;
+			if(Elapsed < MinWait || (!Equipped && Elapsed < MaxWait))
+				return;
 			m_Runner.m_WeaponUseStep = 2;
 			return;
 		}
+		if(m_Runner.m_WeaponUseStep == 2)
+		{
+			Input.m_WantedWeapon = WantedWeapon;
+			Input.m_Fire++;
+			m_Runner.m_WeaponUseStep = 3;
+			return;
+		}
 		m_Runner.m_WeaponUseStep = 0;
+		m_Runner.m_WeaponUseTarget = 0;
+		m_Runner.m_WeaponUseReadyTime = 0;
 		++m_Runner.m_ActionIndex;
 		StepRunner();
 		return;
