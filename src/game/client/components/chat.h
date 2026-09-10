@@ -914,7 +914,7 @@ public:
 	void SendChat(int Team, const char *pLine);
 
 	// Same immediate, mode-independent send, but to UClient chat (the `say_uclient` command).
-	void SayUClient(const char *pLine);
+	void SayUClient(const char *pLine, const char *pRoomId = nullptr);
 
 	// Sends a chat message to the server.
 	//

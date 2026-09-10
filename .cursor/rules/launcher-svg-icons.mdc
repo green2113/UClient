@@ -1,0 +1,40 @@
+---
+description: UClient launcher inline SVG icons — soft rounded strokes, no sharp corners
+globs: src/tools/uclient_launcher_ui.h
+alwaysApply: false
+---
+
+# Launcher SVG icons (Shortcuts / Automation UI)
+
+All icons live as inline SVG inside `kLauncherHtml` in `src/tools/uclient_launcher_ui.h`. They should feel like iOS SF Symbols: **rounded caps and joins**, not miter-sharp corners.
+
+## Required on every stroked shape
+
+On each `<path>`, `<line>`, `<polyline>`, `<rect>`, and `<circle>` that uses `stroke`:
+
+- `stroke-linecap="round"`
+- `stroke-linejoin="round"`
+
+Prefer **outline icons** (`fill="none"` + stroke) over filled polygons when the shape would otherwise be a sharp triangle or chevron.
+
+## Filled shapes
+
+- **Play**: use a path with **arc-rounded corners** (see `SC_PLAY_PATH` / main `#play` button), not a plain `M… l… l… z` triangle.
+- **Stop / squares**: use `<rect … rx="3">` (or similar), not `rx="0"`.
+- Do not use filled triangles or diamonds without rounding.
+
+## Sizes
+
+- Toolbar (`sc-tb-btn`): 24×24 viewBox, stroke-width ~1.9–2
+- Editor chrome (`sc-ed-icon`): stroke-width ~1.9–2
+- Block / pill icons (`sc-block-icon-svg`, `sc-pill-icon-svg`): 16×16 viewBox, stroke-width ~1.25
+
+## CSS safety net
+
+Global rules under `#shortcuts-view` and `#sc-editor` set `stroke-linecap` and `stroke-linejoin` to `round` on SVG geometry. **Still set attributes on new icons** so exports and tests stay explicit.
+
+## Checklist for new icons
+
+1. Stroked? → round cap + round join on every element.
+2. Filled play/stop/square? → rounded path or `rx` on rect.
+3. Run `python scripts/check_launcher_ui_js.py` after JS/HTML edits.

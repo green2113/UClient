@@ -1523,7 +1523,7 @@ const char *CClientIndicator::UClientChatUnavailableReason()
 	return nullptr;
 }
 
-void CClientIndicator::SendUClientChat(const char *pMessage)
+void CClientIndicator::SendUClientChat(const char *pMessage, const char *pRoomIdOverride)
 {
 	if(!pMessage)
 		return;
@@ -1551,8 +1551,18 @@ void CClientIndicator::SendUClientChat(const char *pMessage)
 	const uint8_t Scope = g_Config.m_UcChatSendSameServerOnly ?
 				(uint8_t)UClientPresence::CHAT_SCOPE_SAME_SERVER :
 				(uint8_t)UClientPresence::CHAT_SCOPE_GLOBAL;
-	const char *pRoomId = GameClient()->m_UClientChatRooms.SelectedSendRoomId();
+	char aRoomId[64] = "";
+	if(pRoomIdOverride && pRoomIdOverride[0])
+		str_copy(aRoomId, pRoomIdOverride, sizeof(aRoomId));
+	else
+		str_copy(aRoomId, GameClient()->m_UClientChatRooms.SelectedSendRoomId(), sizeof(aRoomId));
+	const char *pRoomId = aRoomId;
 	const char *pRoomName = pRoomId[0] ? GameClient()->m_UClientChatRooms.RoomNameById(pRoomId) : nullptr;
+	if(pRoomId[0] && !pRoomName)
+	{
+		GameClient()->m_Chat.EchoUClientNotice(Localize("UClient chat is unavailable: the selected room no longer exists or you are no longer a member."));
+		return;
+	}
 
 	const char *pSkinName = g_Config.m_ClPlayerSkin;
 	uint8_t UseCustomColor = (uint8_t)g_Config.m_ClPlayerUseCustomColor;

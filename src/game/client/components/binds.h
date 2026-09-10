@@ -99,6 +99,7 @@ public:
 	// DDRace
 
 	void SetDDRaceBinds(bool FreeOnly);
+	bool FindNearestPlayerName(char *pName, size_t NameSize);
 
 private:
 	class CActiveBind
@@ -114,7 +115,6 @@ private:
 		}
 	};
 
-	bool FindNearestPlayerName(char *pName, size_t NameSize);
 	std::string ExecuteBind(int Stroke, const char *pBind, bool ReportPlaceholderError, const char *pNearestPlayerOverride = nullptr);
 
 	char *m_aapKeyBindings[KeyModifier::COMBINATION_COUNT][KEY_LAST];

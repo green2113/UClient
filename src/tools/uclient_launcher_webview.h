@@ -103,6 +103,19 @@ inline void PostState(const std::string &JsonUtf8)
 	detail::g_pWebView->ExecuteScript(Script.c_str(), nullptr);
 }
 
+// Pushes automation test-run progress into the page as
+// window.__setAutomationRun(<json>). Kept separate from PostState because it
+// ticks an order of magnitude faster while a run is in flight.
+inline void PostAutomationRun(const std::string &JsonUtf8)
+{
+	if(!detail::g_Ready || !detail::g_pWebView)
+		return;
+	std::wstring Script = L"if(window.__setAutomationRun)window.__setAutomationRun(";
+	Script += detail::Widen(JsonUtf8);
+	Script += L");";
+	detail::g_pWebView->ExecuteScript(Script.c_str(), nullptr);
+}
+
 inline void Shutdown()
 {
 	detail::g_Ready = false;

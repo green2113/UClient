@@ -81,7 +81,7 @@ public:
 	bool SendUClientServerAnnounce(uint8_t Kind, const char *pServerAddress);
 
 	// UClient chat channel (cross-server by default; optional same-server scope).
-	void SendUClientChat(const char *pMessage);
+	void SendUClientChat(const char *pMessage, const char *pRoomIdOverride = nullptr);
 	// Reason why SendUClientChat would drop a message right now, or nullptr when it can send.
 	const char *UClientChatUnavailableReason();
 	bool UcPeerAppliesToCurrentServer(const char *pServerAddress) const;

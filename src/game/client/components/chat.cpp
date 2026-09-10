@@ -7889,6 +7889,11 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 			Event.m_ClientId = ClientId;
 			Event.m_Name = CurrentLine.m_aName;
 			Event.m_Text = CurrentLine.m_aText;
+			if(Team == TEAM_UCLIENT)
+			{
+				Event.m_UClientRoomId = CurrentLine.m_aUClientRoomId;
+				Event.m_UClientRoomName = CurrentLine.m_aUClientRoomName;
+			}
 			GameClient()->m_Automation.OnChatReceived(Event);
 		}
 	}
@@ -10642,12 +10647,12 @@ void CChat::SendChat(int Team, const char *pLine)
 // `say` for UClient chat: sends without touching the chat input, so it works from a bind
 // regardless of the current chat mode. Like `say`, it skips what only the interactive path adds:
 // input history, auto-translation and reply threading.
-void CChat::SayUClient(const char *pLine)
+void CChat::SayUClient(const char *pLine, const char *pRoomId)
 {
 	if(!pLine || *str_utf8_skip_whitespaces(pLine) == '\0')
 		return;
 
-	GameClient()->m_ClientIndicator.SendUClientChat(pLine);
+	GameClient()->m_ClientIndicator.SendUClientChat(pLine, pRoomId);
 }
 
 void CChat::AddHistoryEntry(int Team, const char *pLine)

@@ -329,9 +329,11 @@ static constexpr ULONG_PTR COPYDATA_FORWARD_LAUNCH_ARG = 0x55434C46;
 #define NOTICES_TIMER_ID 3
 #define UPDATE_CHECK_TIMER_ID 4
 #define GAME_POLL_TIMER_ID 5
+#define AUTOMATION_RUN_TIMER_ID 6
 #define NOTICE_POLL_MS 20000
 #define UPDATE_CHECK_POLL_MS 60000
 #define GAME_POLL_MS 2500
+#define AUTOMATION_RUN_POLL_MS 100
 
 static void FinishLaunchKeepOpen();
 static void PushWebState(bool Force = false);
@@ -1904,6 +1906,35 @@ static void SaveShortcutsDocument(const std::string &ShortcutsArrayJson)
 		CreateDirectoryW(Path.substr(0, Slash).c_str(), nullptr);
 	if(WriteUtf8FileAtomic(Path, Document))
 		g_ShortcutsFileJson = Document;
+}
+
+static std::wstring GetAutomationRunPath()
+{
+	wchar_t aAppData[MAX_PATH] = {};
+	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
+		return {};
+	return std::wstring(aAppData) + L"\\DDNet\\uclient_automation_run.json";
+}
+
+static std::wstring GetAutomationStatePath()
+{
+	wchar_t aAppData[MAX_PATH] = {};
+	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
+		return {};
+	return std::wstring(aAppData) + L"\\DDNet\\uclient_automation_state.json";
+}
+
+static std::string g_AutomationRunId;
+static std::string g_AutomationStateSent;
+
+static bool WriteAutomationFile(const std::wstring &Path, const std::string &Content)
+{
+	if(Path.empty())
+		return false;
+	const size_t Slash = Path.find_last_of(L"\\/");
+	if(Slash != std::wstring::npos)
+		CreateDirectoryW(Path.substr(0, Slash).c_str(), nullptr);
+	return WriteUtf8FileAtomic(Path, Content);
 }
 
 static void ToggleShortcutEnabled(const std::string &Id, bool Enabled)
@@ -5148,6 +5179,8 @@ static bool AccountAllowsPlay()
 	return IsAccountReady();
 }
 
+static void StopAutomationRunPolling();
+
 static void OnWebMessage(const std::string &Json)
 {
 	std::string Cmd;
@@ -5317,6 +5350,69 @@ static void OnWebMessage(const std::string &Json)
 			PushWebState(true);
 		}
 	}
+	else if(Cmd == "automationRun")
+	{
+		std::string RunId;
+		std::string ActionsArray;
+		if(EffectiveGameRunning() && ExtractJsonString(Json, "runId", RunId) && !RunId.empty() &&
+			ExtractJsonRawValue(Json, "actions", ActionsArray))
+		{
+			std::string Document = "{\"version\":1,\"action\":\"run\",\"runId\":\"";
+			Document += RunId;
+			Document += "\",\"actions\":";
+			Document += ActionsArray;
+			Document += "}";
+			DeleteFileW(GetAutomationStatePath().c_str());
+			if(WriteAutomationFile(GetAutomationRunPath(), Document))
+			{
+				g_AutomationRunId = RunId;
+				g_AutomationStateSent.clear();
+				if(g_hWnd)
+					SetTimer(g_hWnd, AUTOMATION_RUN_TIMER_ID, AUTOMATION_RUN_POLL_MS, nullptr);
+			}
+		}
+	}
+	else if(Cmd == "automationRunStop")
+	{
+		std::string RunId = g_AutomationRunId;
+		if(RunId.empty())
+			ExtractJsonString(Json, "runId", RunId);
+		if(!RunId.empty())
+		{
+			std::string Document = "{\"version\":1,\"action\":\"stop\",\"runId\":\"";
+			Document += RunId;
+			Document += "\"}";
+			WriteAutomationFile(GetAutomationRunPath(), Document);
+		}
+		StopAutomationRunPolling();
+	}
+}
+
+static void StopAutomationRunPolling()
+{
+	if(g_hWnd)
+		KillTimer(g_hWnd, AUTOMATION_RUN_TIMER_ID);
+	g_AutomationRunId.clear();
+	g_AutomationStateSent.clear();
+}
+
+// The game client writes its progress into a file next to the shortcuts; mirror
+// every change into the page so the editor can highlight the running block.
+static void PollAutomationRunState()
+{
+	if(g_AutomationRunId.empty())
+		return;
+	std::string Content;
+	if(!ReadUtf8File(GetAutomationStatePath(), Content))
+		return;
+	if(Content.find(g_AutomationRunId) == std::string::npos)
+		return;
+	if(Content == g_AutomationStateSent)
+		return;
+	g_AutomationStateSent = Content;
+	WebUi::PostAutomationRun(Content);
+	if(Content.find("\"status\":\"done\"") != std::string::npos)
+		StopAutomationRunPolling();
 }
 
 // Asynchronous creation failure: hand the window back to the GDI renderer.
@@ -6147,6 +6243,12 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		{
 			RequestUpdateCheck();
 		}
+		else if(wParam == AUTOMATION_RUN_TIMER_ID)
+		{
+#ifdef UCLIENT_LAUNCHER_WEBVIEW
+			PollAutomationRunState();
+#endif
+		}
 		else if(wParam == GAME_POLL_TIMER_ID)
 		{
 			const bool WasRunning = g_GameRunning;
@@ -6274,6 +6376,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		KillTimer(hWnd, NOTICES_TIMER_ID);
 		KillTimer(hWnd, UPDATE_CHECK_TIMER_ID);
 		KillTimer(hWnd, GAME_POLL_TIMER_ID);
+		KillTimer(hWnd, AUTOMATION_RUN_TIMER_ID);
 		CloseLaunchedGameHandle();
 #ifdef UCLIENT_LAUNCHER_WEBVIEW
 		WebUi::Shutdown();

@@ -56,14 +56,22 @@ static const wchar_t *const kLauncherHtml = LR"HTMLDOC(<!DOCTYPE html>
   --play-radius-compact:28px;
   --sc-r-sheet:32px;
   --sc-r-block:26px;
+  --sc-r-drawer:40px;
   --sc-r-inset:16px;
+  --sc-r-icon:50%;
   --sc-r-control:12px;
+  --sc-r-pill:14px;
+  --sc-pill-fill:rgba(124,108,240,.32);
+  --sc-pill-fill-nested:rgba(124,108,240,.52);
+  --sc-pill-text:#ddd8ff;
+  --sc-pill-text-nested:#f2efff;
   --sc-surface:#181a22;
   --sc-surface-raised:#22242e;
   --sc-surface-inset:#14161c;
   --play-fg:#ffffff;
 }
 *{margin:0;padding:0;box-sizing:border-box}
+#shortcuts-view svg path,#shortcuts-view svg line,#shortcuts-view svg polyline,#shortcuts-view svg rect,#shortcuts-view svg circle,#sc-editor svg path,#sc-editor svg line,#sc-editor svg polyline,#sc-editor svg rect,#sc-editor svg circle{stroke-linecap:round;stroke-linejoin:round}
 html,body{
   height:100%;overflow:hidden;
   border-radius:var(--win-r);
@@ -136,7 +144,7 @@ body{
 .sc-row:active{background:rgba(255,255,255,.07);transition:background 0s}
 .sc-row.off{opacity:.48}
 .sc-flow{display:flex;align-items:center;gap:6px}
-.sc-ico{width:30px;height:30px;border-radius:var(--sc-r-inset);display:grid;place-items:center;font-size:14px;background:rgba(255,255,255,.08)}
+.sc-ico{width:32px;height:32px;border-radius:var(--sc-r-icon);display:grid;place-items:center;font-size:14px;background:rgba(255,255,255,.08)}
 .sc-ico.chat{background:rgba(52,199,89,.18);color:#34c759}
 .sc-ico.action{background:rgba(124,108,240,.22);color:#b8afff}
 .sc-arrow{color:var(--muted);font-size:11px;opacity:.7}
@@ -165,21 +173,21 @@ body{
   #sc-editor.on{opacity:1}
 }
 .sc-ed-head{display:flex;align-items:center;gap:10px;padding:12px 14px 12px 8px;background:var(--sc-surface);border-bottom:1px solid rgba(255,255,255,.06);flex:0 0 auto}
-.sc-ed-back{width:40px;height:40px;border:0;border-radius:var(--sc-r-control);background:transparent;cursor:pointer;color:var(--dim);font-size:26px;line-height:1;display:grid;place-items:center;transition:background .12s ease-out,color .12s ease-out,transform 80ms ease-out}
+.sc-ed-back,.sc-ed-icon{width:40px;height:40px;border:0;border-radius:50%;padding:0;display:grid;place-items:center;cursor:pointer;transition:transform 80ms ease-out,background .15s var(--ease),color .15s var(--ease)}
+.sc-ed-back{background:transparent;color:var(--dim)}
 .sc-ed-back:hover{background:rgba(255,255,255,.07);color:#fff}
-.sc-ed-back:active{transform:scale(.94);background:rgba(255,255,255,.1)}
+.sc-ed-back:active,.sc-ed-icon:active{transform:scale(.92)}
+.sc-ed-back svg,.sc-ed-icon svg{width:20px;height:20px;display:block;flex:0 0 auto;overflow:visible}
+.sc-ed-delete svg{width:18px;height:18px}
+.sc-ed-back svg{transform:scaleX(-1)}
 .sc-ed-title{flex:1;border:0;background:transparent;font:700 17px/1.2 inherit;letter-spacing:-.02em;color:var(--text);outline:none;min-width:0}
 .sc-ed-title::placeholder{color:var(--muted)}
-.sc-ed-icon{width:40px;height:40px;border:0;border-radius:var(--sc-r-control);display:grid;place-items:center;cursor:pointer;transition:transform 80ms ease-out,background .15s var(--ease),opacity .15s var(--ease)}
-.sc-ed-icon:active{transform:scale(.92)}
 .sc-ed-save{background:rgba(124,108,240,.24);color:var(--accent-hi);box-shadow:inset 0 0 0 1px rgba(124,108,240,.28)}
 .sc-ed-save:hover{background:rgba(124,108,240,.36)}
-.sc-ed-save svg{width:20px;height:20px}
 .sc-ed-delete{background:rgba(255,59,48,.14);color:#ff6b63;display:none}
 .sc-ed-delete:hover{background:rgba(255,59,48,.24)}
-.sc-ed-delete svg{width:18px;height:18px}
 .sc-ed-body{flex:1;position:relative;min-height:0;display:flex;flex-direction:column}
-.sc-ed-canvas{flex:1;overflow:auto;padding:18px 18px 200px;scroll-behavior:smooth;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.14) transparent}
+.sc-ed-canvas{flex:1;overflow:auto;padding:18px 18px 260px;scroll-behavior:smooth;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.14) transparent}
 .sc-ed-canvas::-webkit-scrollbar{width:8px}
 .sc-ed-canvas::-webkit-scrollbar-track{background:transparent}
 .sc-ed-canvas::-webkit-scrollbar-thumb{border:2px solid transparent;border-radius:999px;background:rgba(255,255,255,.14);background-clip:padding-box}
@@ -193,33 +201,116 @@ body{
 @keyframes scBlockIn{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
 .sc-block.dragging{opacity:.35;transform:scale(.98)}
 .sc-block.drop-target{box-shadow:0 0 0 2px var(--accent),0 8px 24px rgba(124,108,240,.25)}
+.sc-if-group{position:relative;margin-bottom:10px;padding-left:20px}
+.sc-if-group.sc-enter{animation:scIfGroupIn .36s var(--spring) both}
+.sc-if-group::before{content:"";position:absolute;left:8px;top:26px;bottom:26px;width:2px;background:linear-gradient(180deg,rgba(124,108,240,.58),rgba(90,164,240,.38));border-radius:99px;opacity:.82;transition:opacity .22s var(--ease),transform .22s var(--spring);transform-origin:top center}
+.sc-if-group:hover::before{opacity:1}
+.sc-if-group .sc-block{margin-bottom:8px}
+.sc-if-group .sc-block:last-child{margin-bottom:0}
+.sc-if-group .sc-block.sc-if-branch{margin-left:16px;position:relative}
+.sc-if-group .sc-block.sc-if-branch.sc-enter{animation:scIfBranchIn .32s var(--spring) both}
+.sc-if-group .sc-block.sc-if-branch.sc-enter::before{content:"";position:absolute;left:-16px;top:50%;width:12px;height:2px;background:rgba(124,108,240,.38);border-radius:99px;transform:translateY(-50%) scaleX(0);transform-origin:left center;animation:scIfBranchArm .28s var(--spring) .06s both}
+.sc-if-group .sc-block.sc-if-branch::before{content:"";position:absolute;left:-16px;top:50%;width:12px;height:2px;background:rgba(124,108,240,.38);border-radius:99px;transform:translateY(-50%) scaleX(1)}
+.sc-if-group .sc-block.sc-if-otherwise{border-color:rgba(90,164,240,.24);background:rgba(90,164,240,.06)}
+@keyframes scIfGroupIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes scIfBranchIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
+@keyframes scIfBranchArm{from{transform:translateY(-50%) scaleX(0)}to{transform:translateY(-50%) scaleX(1)}}
 .sc-block-grip{width:22px;height:28px;border:0;background:transparent;cursor:grab;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:0;margin-top:0;flex:0 0 auto;touch-action:none;align-self:center}
 .sc-block-grip span{display:block;width:14px;height:2px;border-radius:99px;background:rgba(255,255,255,.22)}
 .sc-block-grip.spacer{cursor:default;opacity:0}
 .sc-block-grip:active{cursor:grabbing}
 .sc-block-body{flex:1;min-width:0;padding-right:22px;display:flex;align-items:center;min-height:34px}
-.sc-block .sc-del{position:absolute;top:50%;right:10px;width:28px;height:28px;border:0;border-radius:50%;background:rgba(255,255,255,.06);color:var(--muted);cursor:pointer;font-size:15px;line-height:1;transform:translateY(-50%);transition:background .12s ease-out,color .12s ease-out,transform 80ms ease-out}
+.sc-block .sc-del{position:absolute;top:50%;right:10px;width:30px;height:30px;border:0;border-radius:50%;background:rgba(255,255,255,.06);color:var(--muted);cursor:pointer;padding:0;display:grid;place-items:center;transform:translateY(-50%);transition:background .12s ease-out,color .12s ease-out,transform 80ms ease-out}
+.sc-block .sc-del svg{width:16px;height:16px;display:block;flex:0 0 auto}
 .sc-block .sc-del:hover{background:rgba(255,59,48,.18);color:#ff6b63}
 .sc-block .sc-del:active{transform:translateY(-50%) scale(.92)}
 .sc-block-line,.sc-block-when{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;font-size:15px;line-height:1.35;color:var(--text)}
 .sc-block-line .sc-txt,.sc-block-when .sc-txt{display:inline-flex;align-items:center;height:30px;line-height:1.35;font-size:15px;font-weight:500;color:var(--dim)}
-.sc-pill{display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:999px;background:rgba(124,108,240,.26);color:#c4bcff;font:600 14px/1 inherit;height:30px;padding:0 11px;margin:0;cursor:pointer;letter-spacing:-.01em;transition:background .12s ease-out,transform 80ms ease-out,box-shadow .12s ease-out;flex:0 0 auto;box-sizing:border-box;box-shadow:inset 0 0 0 1px rgba(124,108,240,.18)}
-.sc-pill:hover{background:rgba(124,108,240,.36)}
+.sc-pill{display:inline-flex;align-items:center;justify-content:center;gap:0;border:0;border-radius:999px;background:var(--sc-pill-fill);color:var(--sc-pill-text);font:600 14px/1 inherit;height:30px;padding:0 12px;margin:0;cursor:pointer;letter-spacing:-.01em;transition:background .12s ease-out,transform 80ms ease-out;flex:0 0 auto;box-sizing:border-box;box-shadow:none}
+.sc-pill.var,.sc-pill.sc-pill-nested{background:var(--sc-pill-fill-nested);color:var(--sc-pill-text-nested);padding:0 12px 0 8px;gap:6px;height:30px}
+.sc-pill.var:hover,.sc-pill.sc-pill-nested:hover{background:rgba(124,108,240,.62)}
+.sc-pill:hover{background:rgba(124,108,240,.42)}
+.sc-pill-icon-svg{width:15px;height:15px;display:block;flex:0 0 auto;opacity:.95}
+.sc-pill-label{display:inline-block;line-height:1.2}
+.sc-smart-field{position:relative;display:inline-flex;flex-direction:column;align-items:flex-start;vertical-align:top;max-width:100%}
+.sc-smart-field.menu-open{z-index:120;isolation:isolate}
+.sc-block:has(.sc-smart-field.menu-open),.sc-block-trigger:has(.sc-smart-field.menu-open){position:relative;z-index:130}
+.sc-smart-menu.sc-smart-menu-fixed{transform:none!important;transform-origin:top left}
+.sc-smart-trigger.sc-smart-choice{cursor:pointer}
+.sc-smart-menu{position:absolute;left:0;top:calc(100% + 5px);min-width:100%;width:max-content;max-width:min(260px,72vw);z-index:121;opacity:0;transform:translateY(-8px) scale(.96);pointer-events:none;transition:opacity .2s var(--ease),transform .26s var(--spring);transform-origin:top left}
+.sc-smart-field.menu-open .sc-smart-menu{opacity:1;transform:translateY(0) scale(1);pointer-events:auto}
+.sc-smart-menu-inner{max-height:188px;overflow-y:auto;overflow-x:hidden;border-radius:22px;background:#1e2029;border:1px solid rgba(255,255,255,.12);box-shadow:0 0 0 1px rgba(255,255,255,.05),0 8px 24px rgba(255,255,255,.045),0 16px 40px rgba(0,0,0,.35);padding:6px;scrollbar-width:thin;scrollbar-color:rgba(124,108,240,.45) transparent}
+.sc-smart-menu-inner::-webkit-scrollbar{width:7px}
+.sc-smart-menu-inner::-webkit-scrollbar-track{background:transparent;margin:4px 0}
+.sc-smart-menu-inner::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(124,108,240,.55),rgba(90,164,240,.45));border-radius:99px;border:2px solid transparent;background-clip:padding-box}
+.sc-smart-menu-inner::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(140,124,255,.7),rgba(100,180,255,.55));background-clip:padding-box}
+.sc-smart-menu-inner::-webkit-scrollbar-button{display:none;width:0;height:0}
+.sc-smart-menu-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--text);font:600 13px/1.35 inherit;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background .14s ease-out,color .14s ease-out,transform .12s var(--spring)}
+.sc-smart-menu-item.is-var{color:var(--text)}
+.sc-smart-menu-head{padding:6px 10px 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);pointer-events:none;user-select:none}
+.sc-smart-menu-item.sc-smart-menu-text{color:var(--dim);font-weight:600}
+.sc-smart-menu-item.sc-smart-menu-clear{color:var(--muted);font-weight:600}
+.sc-smart-menu-item.sc-smart-menu-clear:hover{color:#ff8a84;background:rgba(255,69,58,.12)}
+.sc-smart-menu-item:hover,.sc-smart-menu-item:focus-visible{background:rgba(124,108,240,.2);outline:none;transform:translateX(1px)}
+.sc-smart-menu-sep{height:1px;margin:5px 8px;background:rgba(255,255,255,.09)}
+.sc-block.sc-block-text{align-items:flex-start;padding-top:12px;padding-bottom:12px}
+.sc-block.sc-block-text .sc-block-ico{align-self:flex-start;margin-top:1px}
+.sc-block.sc-block-text .sc-block-body{flex-direction:column;align-items:stretch;gap:8px;min-width:0;padding-right:4px}
+.sc-block.sc-block-text .sc-del{top:14px;transform:none}
+.sc-text-head{display:flex;align-items:center;min-height:24px}
+.sc-text-title{font-size:15px;font-weight:600;color:var(--text);letter-spacing:-.01em;line-height:1.35}
+.sc-text-composer{display:flex;flex-wrap:wrap;align-items:center;align-content:flex-start;gap:5px 4px;width:100%;min-height:54px;padding:11px 12px;border-radius:var(--sc-r-inset);background:rgba(0,0,0,.24);border:1px solid rgba(255,255,255,.07);box-shadow:inset 0 1px 0 rgba(255,255,255,.04);line-height:1.45;font-size:15px;transition:border-color .15s var(--ease),background .15s var(--ease),box-shadow .15s var(--ease)}
+.sc-text-composer:focus-within{border-color:rgba(124,108,240,.32);background:rgba(0,0,0,.3);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 0 2px rgba(124,108,240,.14)}
+.sc-text-parts{display:contents}
+.sc-text-composer .sc-smart-field{vertical-align:middle}
+.sc-text-composer .sc-pill.input{background:transparent;box-shadow:none;min-width:28px;width:auto;max-width:100%;height:auto;min-height:26px;line-height:1.45;padding:2px 2px;white-space:pre-wrap;overflow:visible;font-weight:500;color:var(--text)}
+.sc-text-composer .sc-pill.input::placeholder{color:var(--muted);opacity:.65;font-weight:500}
+.sc-text-composer .sc-pill.input:focus{background:rgba(124,108,240,.1);box-shadow:none;outline:none}
+.sc-text-composer .sc-pill.var,.sc-text-composer .sc-pill.sc-smart-choice{height:28px;font-size:14px;padding:0 10px}
+.sc-text-composer.sc-text-composer-single{padding:0;border:0;background:transparent;box-shadow:none;min-height:0}
+.sc-text-composer.sc-text-composer-single:focus-within{box-shadow:none;border:0;background:transparent}
+.sc-text-body-field{display:block;width:100%}
+.sc-text-body-input{display:block;width:100%;min-height:54px;max-height:160px;padding:11px 12px;border-radius:var(--sc-r-inset);border:1px solid rgba(255,255,255,.07);background:rgba(0,0,0,.24);box-shadow:inset 0 1px 0 rgba(255,255,255,.04);color:var(--text);font:500 15px/1.45 inherit;resize:vertical;outline:none;transition:border-color .15s var(--ease),background .15s var(--ease),box-shadow .15s var(--ease)}
+.sc-text-body-input::placeholder{color:var(--muted);opacity:.65}
+.sc-text-body-input:focus{border-color:rgba(124,108,240,.32);background:rgba(0,0,0,.3);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 0 2px rgba(124,108,240,.14)}
+.sc-block-action .sc-block-ico.text{background:rgba(255,214,10,.18);color:#ffd60a}
 .sc-pill:active{transform:scale(.97)}
-.sc-pill.input{min-width:44px;width:44px;max-width:240px;height:30px;padding:0 9px;text-align:left;cursor:text;box-sizing:border-box;-webkit-appearance:none;appearance:none;line-height:30px;overflow:hidden;white-space:nowrap;font-weight:600;color:var(--accent-hi)}
+.sc-pill.input{min-width:44px;width:44px;max-width:240px;height:30px;padding:0 10px;text-align:left;cursor:text;box-sizing:border-box;-webkit-appearance:none;appearance:none;line-height:30px;overflow:hidden;white-space:nowrap;font-weight:600;color:var(--sc-pill-text);background:var(--sc-pill-fill);box-shadow:none}
 .sc-pill.input.is-truncated{text-overflow:ellipsis}
-.sc-pill.input::placeholder{color:var(--muted);opacity:.72;font-weight:600}
-.sc-pill.input:focus{background:rgba(124,108,240,.34);box-shadow:inset 0 0 0 1px rgba(124,108,240,.45),0 0 0 3px rgba(124,108,240,.22);outline:none;transform:none;text-overflow:clip;overflow-x:auto}
+.sc-pill.input::placeholder{color:rgba(221,216,255,.55);opacity:1;font-weight:600}
+.sc-pill.input:focus{background:rgba(124,108,240,.44);box-shadow:none;outline:none;transform:none;text-overflow:clip;overflow-x:auto;color:var(--sc-pill-text-nested)}
 .sc-pill-measure{position:absolute;left:-9999px;top:0;visibility:hidden;white-space:pre;pointer-events:none;height:0;overflow:hidden}
 .sc-drop-gap{height:52px;border-radius:var(--sc-r-block);border:2px dashed rgba(124,108,240,.55);background:rgba(124,108,240,.08);margin-bottom:12px;animation:scGapPulse .8s var(--spring) infinite alternate}
 @keyframes scGapPulse{from{opacity:.55}to{opacity:1}}
-.sc-drawer{position:absolute;left:0;right:0;bottom:0;height:min(54%,360px);background:var(--sc-surface-inset);border-top:1px solid rgba(255,255,255,.08);border-radius:var(--sc-r-block) var(--sc-r-block) 0 0;box-shadow:none;display:flex;flex-direction:column;overflow:clip;transform:translateY(40%);transition:transform .38s var(--spring);will-change:transform;touch-action:none}
+.sc-block.sc-run-current{box-shadow:0 0 0 2px rgba(124,108,240,.9),0 10px 28px rgba(124,108,240,.26);background:rgba(124,108,240,.1)}
+.sc-run-wait{display:flex;align-items:center;gap:10px;margin-top:9px}
+.sc-run-wait-track{flex:1;min-width:0;height:4px;border-radius:99px;background:rgba(255,255,255,.12);overflow:hidden}
+.sc-run-wait-fill{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#7c6cf0,#5aa4f0);transition:width .12s linear}
+.sc-run-wait-left{flex:0 0 auto;font:600 12px/1 inherit;color:var(--dim);font-variant-numeric:tabular-nums}
+.sc-run-result{position:relative;margin:0 0 12px 31px;padding-top:12px;animation:scBlockIn .28s var(--spring) both}
+.sc-if-group .sc-run-result{margin-bottom:8px}
+.sc-run-result-line{position:absolute;left:0;top:0;width:2px;height:12px;border-radius:99px;background:rgba(124,108,240,.55)}
+.sc-run-result-box{display:inline-block;max-width:100%;padding:9px 13px;border-radius:var(--sc-r-control);background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.09);font:600 14px/1.35 inherit;color:var(--text);overflow-wrap:anywhere}
+.sc-run-result-box em{font-style:normal;color:var(--muted)}
+.sc-drawer{--sc-drawer-t:0;position:absolute;left:0;right:auto;bottom:0;width:100%;height:min(78%,520px);background:var(--sc-surface-inset);border-top:1px solid rgba(255,255,255,.08);border-radius:var(--sc-r-drawer) var(--sc-r-drawer) 0 0;box-shadow:none;display:flex;flex-direction:column;overflow:clip;transform:translateY(10%);transition:transform .38s var(--spring),height .38s var(--spring),width .38s var(--spring),left .38s var(--spring),bottom .38s var(--spring),border-radius .38s var(--spring),box-shadow .38s var(--spring);will-change:transform,width,height,left;touch-action:none}
 .sc-drawer.dragging{transition:none}
+.sc-drawer-chips,.sc-drawer-list{opacity:calc(1 - var(--sc-drawer-t));pointer-events:none;transition:opacity .28s var(--ease)}
+.sc-drawer:not(.sc-drawer-capsule) .sc-drawer-chips,.sc-drawer:not(.sc-drawer-capsule) .sc-drawer-list{pointer-events:auto}
+.sc-drawer.sc-drawer-capsule .sc-drawer-search{margin-left:12px;margin-right:12px}
+.sc-drawer.sc-drawer-capsule .sc-drawer-chips,.sc-drawer.sc-drawer-capsule .sc-drawer-list{display:none}
+.sc-drawer-toolbar{display:flex;align-items:center;justify-content:space-between;gap:6px;flex:0 0 auto;max-height:calc(var(--sc-drawer-t) * 54px);padding:calc(var(--sc-drawer-t) * 2px) calc(var(--sc-drawer-t) * 18px) calc(var(--sc-drawer-t) * 12px);overflow:hidden;opacity:var(--sc-drawer-t);pointer-events:none;transition:max-height .34s var(--spring),padding .34s var(--spring),opacity .28s var(--ease)}
+.sc-drawer.sc-drawer-capsule .sc-drawer-toolbar{max-height:54px;padding:2px 18px 12px;opacity:1;pointer-events:auto}
+.sc-tb-btn{width:40px;height:40px;border:0;border-radius:50%;background:transparent;color:var(--dim);cursor:pointer;padding:0;display:grid;place-items:center;transition:background .14s var(--ease),color .14s var(--ease),transform 80ms ease-out}
+.sc-tb-btn svg{width:21px;height:21px;display:block;flex:0 0 auto}
+.sc-tb-btn:hover:not(:disabled){background:rgba(255,255,255,.08);color:#fff}
+.sc-tb-btn:active:not(:disabled){transform:scale(.9)}
+.sc-tb-btn:disabled{opacity:.32;cursor:default}
+.sc-tb-btn.sc-tb-play{color:var(--text)}
 .sc-drawer-grab{padding:12px 0 8px;cursor:grab;touch-action:none;flex:0 0 auto}
 .sc-drawer-grab:active{cursor:grabbing}
 .sc-drawer-handle{width:36px;height:5px;border-radius:99px;background:rgba(255,255,255,.32);margin:0 auto;pointer-events:none;transition:background .18s var(--ease),width .18s var(--ease)}
 .sc-drawer-grab:hover .sc-drawer-handle{background:rgba(255,255,255,.45);width:42px}
-.sc-drawer-search{margin:0 16px 10px;padding:11px 14px;border-radius:var(--sc-r-control);border:0;background:rgba(255,255,255,.06);font:15px/1.35 inherit;color:var(--text);outline:none;transition:background .15s var(--ease),box-shadow .15s var(--ease);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+.sc-drawer-search{margin:0 16px 10px;padding:11px 14px;border-radius:22px;border:0;background:rgba(255,255,255,.06);font:15px/1.35 inherit;color:var(--text);outline:none;transition:background .15s var(--ease),box-shadow .15s var(--ease);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
 .sc-drawer-search::placeholder{color:var(--muted)}
 .sc-drawer-search:focus{background:rgba(255,255,255,.1);box-shadow:inset 0 0 0 1px rgba(124,108,240,.35),0 0 0 3px rgba(124,108,240,.12)}
 .sc-drawer-chips{display:flex;gap:8px;padding:0 16px 10px;overflow:auto;flex:0 0 auto}
@@ -234,20 +325,19 @@ body{
 .sc-drawer-list::-webkit-scrollbar-button{display:none;width:0;height:0}
 .sc-drawer-chips{scrollbar-width:none}
 .sc-drawer-chips::-webkit-scrollbar{display:none}
-.sc-catalog{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:var(--sc-r-control);cursor:grab;background:rgba(255,255,255,.04);border:0;margin-bottom:6px;transition:transform 80ms ease-out,background .12s ease-out;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);touch-action:none;user-select:none}
+.sc-catalog{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:var(--sc-r-control);cursor:pointer;background:rgba(255,255,255,.04);border:0;margin-bottom:6px;transition:transform 80ms ease-out,background .12s ease-out;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);user-select:none}
 .sc-catalog:hover{background:rgba(255,255,255,.08)}
-.sc-catalog:active{cursor:grabbing;transform:scale(.985);background:rgba(255,255,255,.1)}
-.sc-catalog.dragging{opacity:.45;transform:scale(.98)}
-.sc-catalog-ico{width:32px;height:32px;border-radius:var(--sc-r-inset);display:grid;place-items:center;background:rgba(124,108,240,.18);font-size:15px;flex:0 0 auto}
+.sc-catalog:active{transform:scale(.985);background:rgba(255,255,255,.1)}
+.sc-catalog-ico{width:34px;height:34px;border-radius:var(--sc-r-icon);display:grid;place-items:center;background:rgba(124,108,240,.18);font-size:15px;flex:0 0 auto}
 .sc-catalog-ico.chat{background:rgba(52,199,89,.18);color:#34c759}
 .sc-catalog-ico.action{background:rgba(124,108,240,.22);color:#b8afff}
 .sc-catalog-ico.wait{background:rgba(255,159,10,.18);color:#ff9f0a}
+.sc-catalog-ico.connect{background:rgba(90,164,240,.18);color:#5aa4f0}
 .sc-catalog-text{flex:1;min-width:0}
 .sc-catalog-text b{display:block;font-size:15px;font-weight:600;letter-spacing:-.01em;color:var(--text);margin-bottom:2px}
 .sc-catalog-text small{display:block;font-size:13px;line-height:1.35;color:var(--muted)}
 .sc-drawer-section{padding:10px 16px 6px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
-.sc-block-trigger{align-items:flex-start;padding:12px 14px 12px 10px}
-.sc-block-trigger .sc-block-grip.spacer{margin-top:6px}
+.sc-block-trigger{align-items:flex-start;padding:12px 14px}
 .sc-block-trigger-main{flex:1;min-width:0;display:flex;flex-direction:column;align-items:stretch}
 .sc-block-trigger-head{display:flex;align-items:center;gap:10px;padding:0;min-height:32px}
 .sc-block-trigger-head .sc-block-ico{margin:0;flex:0 0 auto;align-self:center}
@@ -265,31 +355,29 @@ body{
 .sc-filter-del:hover{background:rgba(255,59,48,.18);color:#ff6b63}
 .sc-filter-del:active{transform:scale(.92)}
 .sc-sender-names{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
-.sc-sender-chip{display:inline-flex;align-items:center;height:30px;border-radius:999px;background:rgba(124,108,240,.26);color:#c4bcff;font:600 14px/1 inherit;padding:0 4px 0 11px;box-shadow:inset 0 0 0 1px rgba(124,108,240,.18);flex:0 0 auto;max-width:240px}
+.sc-sender-chip{display:inline-flex;align-items:center;height:30px;border-radius:999px;background:var(--sc-pill-fill);color:var(--sc-pill-text);font:600 14px/1 inherit;padding:0 4px 0 11px;box-shadow:none;flex:0 0 auto;max-width:240px}
 .sc-sender-chip-label{display:block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sc-sender-chip-x{width:22px;height:22px;border:0;border-radius:50%;background:transparent;color:var(--dim);cursor:pointer;font-size:14px;line-height:1;padding:0;margin:0 2px 0 0;opacity:0;flex:0 0 auto;transition:opacity .12s ease-out,background .12s ease-out,color .12s ease-out}
-.sc-sender-chip:hover .sc-sender-chip-x{opacity:1}
-.sc-sender-chip-x:hover{background:rgba(255,59,48,.18);color:#ff6b63}
-.sc-sender-add{width:30px;height:30px;border:0;border-radius:999px;background:rgba(124,108,240,.2);color:var(--accent-hi);cursor:pointer;font:700 18px/1 inherit;padding:0;flex:0 0 auto;transition:background .12s ease-out,transform 80ms ease-out}
+.sc-sender-add{width:30px;height:30px;border:0;border-radius:var(--sc-r-pill);background:rgba(124,108,240,.2);color:var(--accent-hi);cursor:pointer;font:700 18px/1 inherit;padding:0;flex:0 0 auto;transition:background .12s ease-out,transform 80ms ease-out}
 .sc-sender-add:hover{background:rgba(124,108,240,.34);color:#fff}
 .sc-sender-add:active{transform:scale(.92)}
-.sc-block-action .sc-block-ico{width:32px;height:32px;border-radius:var(--sc-r-inset);display:grid;place-items:center;font-size:15px;flex:0 0 auto;margin-top:0;align-self:center}
+.sc-block-action .sc-block-ico{width:34px;height:34px;border-radius:var(--sc-r-icon);display:grid;place-items:center;font-size:15px;flex:0 0 auto;margin-top:0;align-self:center;line-height:0}
+.sc-block-icon-svg{width:18px;height:18px;display:block}
 .sc-block-action .sc-block-ico.chat,.sc-block-trigger .sc-block-ico.chat{background:rgba(52,199,89,.18);color:#34c759}
-.sc-block-trigger .sc-block-ico{width:32px;height:32px;border-radius:var(--sc-r-inset);display:grid;place-items:center;font-size:15px;flex:0 0 auto}
+.sc-block-action .sc-block-ico.connect,.sc-block-trigger .sc-block-ico.connect{background:rgba(90,164,240,.18);color:#5aa4f0}
+.sc-block-trigger .sc-block-ico{width:34px;height:34px;border-radius:var(--sc-r-icon);display:grid;place-items:center;font-size:15px;flex:0 0 auto}
 .sc-block-action .sc-block-ico.action{background:rgba(124,108,240,.22);color:#b8afff}
 .sc-block-action .sc-block-ico.wait{background:rgba(255,159,10,.18);color:#ff9f0a}
+.sc-block-action .sc-block-ico.flow{background:rgba(100,210,255,.18);color:#64d2ff}
+.sc-block-action .sc-block-ico.stop{background:rgba(255,69,58,.18);color:#ff453a}
 .sc-block-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px}
 .sc-block-when .sc-when-prefix{color:var(--dim);font-weight:600}
 .sc-drag-ghost{position:fixed;z-index:500;pointer-events:none;padding:12px 16px;border-radius:var(--sc-r-block);background:rgba(28,30,38,.94);color:var(--text);border:1px solid rgba(255,255,255,.12);box-shadow:0 16px 40px rgba(0,0,0,.48);font:600 14px/1.3 inherit;transform:translate(-50%,-50%);opacity:.95;max-width:min(320px,80vw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;backdrop-filter:blur(16px)}
-.sc-pop{position:fixed;z-index:400;background:rgba(24,26,34,.94);border:1px solid rgba(255,255,255,.12);border-radius:var(--sc-r-block);box-shadow:0 16px 48px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.08);padding:6px;min-width:180px;max-height:240px;overflow:auto;backdrop-filter:blur(24px) saturate(160%);animation:scPopIn .22s var(--spring) both;transform-origin:top center}
-@keyframes scPopIn{from{opacity:0;transform:translateY(-6px) scale(.96)}to{opacity:1;transform:none}}
-.sc-pop-title{padding:8px 12px 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
-.sc-pop button{display:block;width:100%;border:0;background:transparent;text-align:left;padding:10px 12px;border-radius:var(--sc-r-inset);font:15px/1.35 inherit;cursor:pointer;color:var(--text);transition:background .1s ease-out,transform 80ms ease-out}
-.sc-pop button.on{background:rgba(124,108,240,.2);color:var(--accent-hi);font-weight:600}
-.sc-pop button:hover{background:rgba(255,255,255,.07)}
-.sc-pop button:active{transform:scale(.98);background:rgba(255,255,255,.1)}
+.sc-pop{position:fixed;z-index:400;padding:0;background:transparent;border:0;box-shadow:none;overflow:visible;backdrop-filter:none;animation:scPopIn .22s var(--spring) both;transform-origin:top center}
+@keyframes scPopIn{from{opacity:0;transform:translateY(-8px) scale(.96)}to{opacity:1;transform:none}}
+.sc-pop .sc-smart-menu-inner{min-width:160px;max-width:min(260px,72vw)}
+.sc-pop .sc-smart-menu-item.on{background:rgba(124,108,240,.2);color:var(--accent-hi)}
 @supports (corner-shape:squircle){
-  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search,.sc-chip,.sc-catalog,.sc-pop,.sc-ed-back,.sc-ed-icon,.sc-ico,.sc-block-action .sc-block-ico,.sc-block-trigger .sc-block-ico,.sc-pop button,.sc-drag-ghost,.sc-drop-gap,.modal-box,.opt{corner-shape:squircle}
+  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search,.sc-chip,.sc-catalog,.sc-pop,.sc-ed-back,.sc-ed-icon,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result-box,.modal-box,.opt{corner-shape:squircle}
 }
 .sc-toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:rgba(0,0,0,.82);color:#fff;padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s var(--ease);z-index:360;backdrop-filter:blur(12px)}
 .sc-toast.on{opacity:1}
@@ -1006,19 +1094,21 @@ body.dev-build #dev-panel{display:block}
   </aside>
 
   <section id="shortcuts-view" aria-hidden="true">
-    <div class="sc-head"><h1>Automation</h1></div>
+    <div class="sc-head"><h1>Automation (Beta)</h1></div>
     <div class="sc-section">Personal</div>
     <div class="sc-card" id="sc-list"></div>
     <button class="sc-fab" id="sc-fab" type="button" title="Create automation">+</button>
     <div id="sc-editor" aria-hidden="true">
       <div class="sc-ed-head">
-        <button class="sc-ed-back" id="sc-ed-back" type="button" title="Back">&lsaquo;</button>
+        <button class="sc-ed-back" id="sc-ed-back" type="button" title="Back">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M10.5 7.5L16 12l-5.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
         <input class="sc-ed-title" id="sc-ed-title" type="text" placeholder="New Shortcut" maxlength="64">
         <button class="sc-ed-icon sc-ed-delete" id="sc-ed-delete" type="button" title="Delete">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 7h14M9 7V5h6v2m-9 0 1 14v11a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" preserveAspectRatio="xMidYMid meet"><path d="M9 4h6M10 4V3a1 1 0 011-1h2a1 1 0 011 1v1M6 7h12M7 7v12a2 2 0 002 2h6a2 2 0 002-2V7M10 11v5M14 11v5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <button class="sc-ed-icon sc-ed-save" id="sc-ed-save" type="button" title="Save">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12.5 10 17 19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7.5 12.5l3.5 3.5 8-8.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
       </div>
       <div class="sc-ed-body">
@@ -1026,6 +1116,23 @@ body.dev-build #dev-panel{display:block}
         <div class="sc-drawer" id="sc-drawer">
           <div class="sc-drawer-grab" id="sc-drawer-grab"><div class="sc-drawer-handle" id="sc-drawer-handle"></div></div>
           <input class="sc-drawer-search" id="sc-drawer-search" type="search" placeholder="Search actions">
+          <div class="sc-drawer-toolbar" id="sc-drawer-toolbar">
+            <button class="sc-tb-btn" id="sc-tb-undo" type="button" title="Undo" disabled>
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 7L5 11l4 4M5 11h8a5 5 0 0 1 5 5v1" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="sc-tb-btn" id="sc-tb-redo" type="button" title="Redo" disabled>
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 7l4 4-4 4M19 11h-8a5 5 0 0 0-5 5v1" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="sc-tb-btn" id="sc-tb-info" type="button" title="Info" disabled>
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.6" stroke="currentColor" stroke-width="1.8"/><path d="M12 11v5.2M12 8.1v.9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+            </button>
+            <button class="sc-tb-btn" id="sc-tb-share" type="button" title="Share" disabled>
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15.5V4.2M8.4 7.6L12 4l3.6 3.6M6 13v6.2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V13" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="sc-tb-btn sc-tb-play" id="sc-tb-play" type="button" title="Test run">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path fill="currentColor" d="M8.05 5.55a1.35 1.35 0 0 1 2.09-1.12l8.31 5.54a1.35 1.35 0 0 1 0 2.24l-8.31 5.54a1.35 1.35 0 0 1-2.09-1.12V5.55z"/></svg>
+            </button>
+          </div>
           <div class="sc-drawer-chips" id="sc-drawer-chips"></div>
           <div class="sc-drawer-list" id="sc-drawer-list"></div>
         </div>
@@ -1255,6 +1362,13 @@ document.addEventListener("keydown", function (e) {
   } else if (e.key === "Enter" && !e.target.closest("input,button,form") && !$("play").disabled) {
     send({cmd: "play"});
   }
+  if (!scEditing || !(e.ctrlKey || e.metaKey)) return;
+  var key = String(e.key || "").toLowerCase();
+  if (key !== "z" && key !== "y") return;
+  if (e.target.closest("input,textarea")) return;
+  e.preventDefault();
+  if (key === "y" || e.shiftKey) scRedo();
+  else scUndo();
 });
 
 /* -- tabs -------------------------------------------------------------- */
@@ -2108,19 +2222,31 @@ var SC_TRIGGERS = [{
   id: "chat_received", category: "communication", title: "Chat message",
   whenHint: "When a message matching conditions is received", icon: "\u2709", tone: "chat",
   defaults: {type: "chat_received", channel: "all", filters: [{kind: "message", match: "contains", text: ""}]}
+}, {
+  id: "server_connect", category: "connection", title: "Server connect",
+  whenHint: "When connecting to a specific server", icon: "\u25CE", tone: "connect",
+  defaults: {type: "server_connect", targets: []}
 }];
 var SC_ACTIONS = [
-  {id: "send_chat", title: "Send message", hint: "Send a chat message", icon: "\u2709", tone: "chat", defaults: {type: "send_chat", channel: "all", message: "hello"}},
-  {id: "wait", title: "Wait", hint: "Pause before the next step", icon: "\u23f1", tone: "wait", defaults: {type: "wait", seconds: 1}},
-  {id: "switch_weapon_use", title: "Use weapon", hint: "Switch weapon and use it", icon: "\u2692", tone: "action", defaults: {type: "switch_weapon_use", weapon: "hammer"}},
-  {id: "set_skin", title: "Set skin", hint: "Change player or dummy skin", icon: "\u2728", tone: "action", defaults: {type: "set_skin", target: "player", skin: "default"}},
-  {id: "set_custom_color", title: "Custom colors", hint: "Toggle custom colors on or off", icon: "\u25cf", tone: "action", defaults: {type: "set_custom_color", target: "player", enabled: true}},
-  {id: "set_body_color", title: "Body color", hint: "Set body color", icon: "\u25cf", tone: "action", defaults: {type: "set_body_color", target: "player", color: 0}},
-  {id: "set_feet_color", title: "Feet color", hint: "Set feet color", icon: "\u25cf", tone: "action", defaults: {type: "set_feet_color", target: "player", color: 0}},
-  {id: "set_name", title: "Set name", hint: "Change player or dummy name", icon: "\u270e", tone: "action", defaults: {type: "set_name", target: "player", name: "name"}}
+  {id: "get", category: "flow", title: "Get", hint: "Read a value into a variable", icon: "\u2193", tone: "flow", defaults: {type: "get", property: "window_active"}},
+  {id: "text", category: "flow", title: "Text", hint: "Combine variables and text into one value", icon: "\u270D", tone: "text", defaults: {type: "text", parts: [{mode: "text", text: ""}], as: "text"}},
+  {id: "if", category: "flow", title: "If", hint: "Continue only when a condition matches", icon: "\u2442", tone: "flow", defaults: {type: "if", left: "", op: "is", right: "No"}},
+  {id: "otherwise", category: "flow", title: "Otherwise", hint: "Run when the If condition did not match", icon: "\u2443", tone: "flow", defaults: {type: "otherwise"}},
+  {id: "end_if", category: "flow", title: "End If", hint: "End an If block", icon: "\u2444", tone: "flow", defaults: {type: "end_if"}},
+  {id: "stop", category: "flow", title: "Stop", hint: "Stop running this shortcut", icon: "\u25A0", tone: "stop", defaults: {type: "stop"}},
+  {id: "connect_server", category: "connection", title: "Connect to server", hint: "Connect to an IP or IP:port", icon: "\u25CE", tone: "connect", defaults: {type: "connect_server", address: "127.0.0.1:8303"}},
+  {id: "leave_server", category: "connection", title: "Leave server", hint: "Disconnect from the current server", icon: "\u21AA", tone: "connect", defaults: {type: "leave_server"}},
+  {id: "send_chat", category: "actions", title: "Send message", hint: "Send a variable or text to chat", icon: "\u2709", tone: "chat", defaults: {type: "send_chat", channelMode: "text", channel: "all", uclientRoomMode: "text", uclientRoomId: "", messageMode: "text", messageText: ""}},
+  {id: "wait", category: "actions", title: "Wait", hint: "Pause before the next step", icon: "\u23f1", tone: "wait", defaults: {type: "wait", seconds: 1}},
+  {id: "switch_weapon_use", category: "actions", title: "Use weapon", hint: "Switch weapon and use it", icon: "\u2692", tone: "action", defaults: {type: "switch_weapon_use", weapon: "hammer"}},
+  {id: "set_skin", category: "actions", title: "Set skin", hint: "Change player or dummy skin", icon: "\u2728", tone: "action", defaults: {type: "set_skin", target: "player", skin: "default"}},
+  {id: "set_custom_color", category: "actions", title: "Custom colors", hint: "Toggle custom colors on or off", icon: "\u25cf", tone: "action", defaults: {type: "set_custom_color", target: "player", enabled: true}},
+  {id: "set_body_color", category: "actions", title: "Body color", hint: "Set body color", icon: "\u25cf", tone: "action", defaults: {type: "set_body_color", target: "player", color: 0}},
+  {id: "set_feet_color", category: "actions", title: "Feet color", hint: "Set feet color", icon: "\u25cf", tone: "action", defaults: {type: "set_feet_color", target: "player", color: 0}},
+  {id: "set_name", category: "actions", title: "Set name", hint: "Change player or dummy name", icon: "\u270e", tone: "action", defaults: {type: "set_name", target: "player", name: "name"}}
 ];
-var SC_TRIGGER_SECTIONS = [{id: "communication", label: "Communication"}];
-var SC_ACTION_SECTIONS = [{id: "actions", label: "Actions"}];
+var SC_TRIGGER_SECTIONS = [{id: "communication", label: "Communication"}, {id: "connection", label: "Connection"}];
+var SC_ACTION_SECTIONS = [{id: "flow", label: "Flow"}, {id: "connection", label: "Connection"}, {id: "actions", label: "Actions"}];
 
 function scUuid() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -2158,7 +2284,16 @@ function scNormalizeSenderFilter(f) {
   return {kind: "sender", names: names};
 }
 function scPrepareTriggerForEdit(t) {
-  if (!t || t.type !== "chat_received") return t;
+  if (!t) return t;
+  if (t.type === "server_connect") {
+    t = scNormalizeTrigger(JSON.parse(JSON.stringify(t)));
+    var targets = Array.isArray(t.targets) ? t.targets.slice() : [];
+    targets = targets.map(function (n) { return n == null ? "" : String(n); });
+    while (targets.length > 1 && targets[targets.length - 1] === "" && targets[targets.length - 2] === "") targets.pop();
+    t.targets = targets;
+    return t;
+  }
+  if (t.type !== "chat_received") return t;
   t = scNormalizeTrigger(JSON.parse(JSON.stringify(t)));
   t.filters = (t.filters || []).map(function (f) {
     if (f.kind !== "sender") return f;
@@ -2171,17 +2306,35 @@ function scPrepareTriggerForEdit(t) {
 }
 function scCleanTriggerForSave(t) {
   t = scNormalizeTrigger(JSON.parse(JSON.stringify(t)));
+  if (t.type === "server_connect") {
+    t.targets = (t.targets || []).filter(function (n) { return n; });
+    return t;
+  }
   t.filters = t.filters.map(function (f) {
-    if (f.kind !== "sender") return f;
-    return {kind: "sender", names: (f.names || []).filter(function (n) { return n; })};
+    if (f.kind === "message") return {kind: "message", match: f.match || "contains", text: f.text || ""};
+    if (f.kind === "chat_channel") return {kind: "chat_channel", channel: f.channel || "all"};
+    if (f.kind === "uclient_room") return {kind: "uclient_room", room: f.room || ""};
+    if (f.kind === "sender") return {kind: "sender", names: (f.names || []).filter(function (n) { return n; })};
+    return f;
   });
   return t;
 }
 function scNormalizeTrigger(t) {
-  if (!t || t.type !== "chat_received") return t;
+  if (!t) return t;
+  if (t.type === "server_connect") {
+    var targets = [];
+    if (t.targets && Array.isArray(t.targets)) {
+      targets = t.targets.map(function (v) { return v == null ? "" : String(v); });
+      while (targets.length > 1 && targets[targets.length - 1] === "" && targets[targets.length - 2] === "") targets.pop();
+    }
+    return {type: "server_connect", targets: targets};
+  }
+  if (t.type !== "chat_received") return t;
   if (t.filters && t.filters.length) {
     t.filters = t.filters.map(function (f) {
       if (f.kind === "message") return {kind: "message", match: f.match || "contains", text: f.text == null ? "" : String(f.text)};
+      if (f.kind === "chat_channel") return {kind: "chat_channel", channel: f.channel || "all"};
+      if (f.kind === "uclient_room") return {kind: "uclient_room", room: f.room == null ? "" : String(f.room)};
       return scNormalizeSenderFilter(f);
     });
     return t;
@@ -2200,7 +2353,15 @@ function scNormalizeTrigger(t) {
   return out;
 }
 function scTriggerWhenPreview(t) {
-  if (!t || t.type !== "chat_received") return "When something happens";
+  if (!t) return "When something happens";
+  if (t.type === "server_connect") {
+    t = scNormalizeTrigger(JSON.parse(JSON.stringify(t)));
+    var targets = (t.targets || []).filter(function (n) { return n; });
+    if (!targets.length) return "When connecting to a server";
+    if (targets.length === 1) return "When connecting to " + targets[0];
+    return "When connecting to " + targets.join(" or ");
+  }
+  if (t.type !== "chat_received") return "When something happens";
   t = scNormalizeTrigger(JSON.parse(JSON.stringify(t)));
   var msg = "a chat message";
   if (t.channel === "team") msg = "a team chat message";
@@ -2211,6 +2372,11 @@ function scTriggerWhenPreview(t) {
       var names = (f.names || []).filter(function (n) { return n; });
       if (names.length === 1) parts.push("from " + names[0]);
       else if (names.length > 1) parts.push("from " + names.join(" or "));
+    } else if (f.kind === "chat_channel") {
+      parts.push("on " + scLabelChannel(f.channel || "all") + " chat");
+    } else if (f.kind === "uclient_room") {
+      if (f.room) parts.push('in UClient room "' + f.room + '"');
+      else parts.push("in any UClient room");
     } else if (f.text) {
       var match = f.match || "contains";
       if (match === "equals") parts.push('text equals "' + f.text + '"');
@@ -2230,6 +2396,9 @@ function scCatalogMatches(def, q, isTrigger) {
   ].join(" ").toLowerCase();
   return hay.indexOf(q) >= 0;
 }
+function scIconX() {
+  return '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true" preserveAspectRatio="xMidYMid meet"><path d="M7 7l10 10M17 7L7 17" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"/></svg>';
+}
 function scCatalogRow(kind, def) {
   var isTrigger = kind === "trigger";
   var title = def.title || def.label || def.id;
@@ -2244,7 +2413,22 @@ function scSummaryTrigger(t) {
 }
 function scSummaryAction(a) {
   if (!a) return "Action";
-  if (a.type === "send_chat") return "Send " + scLabelChannel(a.channel) + ' "' + (a.message || "") + '"';
+  if (a.type === "send_chat") {
+    scNormalizeAction(a);
+    var ch = a.channelMode === "variable"
+      ? scLabelVariable(a.channelVariable)
+      : scLabelChannel(a.channel);
+    var msg = a.messageMode === "variable"
+      ? scLabelVariable(a.messageVariable)
+      : ('"' + (a.messageText || "") + '"');
+    return "Send " + msg + " to " + ch + " chat";
+  }
+  if (a.type === "text") {
+    scNormalizeAction(a);
+    return "Text → " + (a.as || "text");
+  }
+  if (a.type === "connect_server") return "Connect to " + (a.address || "server");
+  if (a.type === "leave_server") return "Leave server";
   if (a.type === "wait") return "Wait " + (a.seconds || 0) + "s";
   if (a.type === "switch_weapon_use") return scLabelWeapon(a.weapon) + " and use";
   if (a.type === "set_skin") return "Set " + a.target + " skin to " + (a.skin || "");
@@ -2252,7 +2436,507 @@ function scSummaryAction(a) {
   if (a.type === "set_body_color") return "Set " + a.target + " body color " + (a.color || 0);
   if (a.type === "set_feet_color") return "Set " + a.target + " feet color " + (a.color || 0);
   if (a.type === "set_name") return "Set " + a.target + ' name "' + (a.name || "") + '"';
+  if (a.type === "get") return "Get " + scLabelGetProperty(a.property);
+  if (a.type === "if") {
+    var ifLeft = a.left ? (scLabelVariable(a.left) || scLabelGetProperty(a.left)) : "…";
+    return "If " + ifLeft + " " + scLabelIfOp(a.op) + " " + (a.right || "");
+  }
+  if (a.type === "otherwise") return "Otherwise";
+  if (a.type === "end_if") return "End If";
+  if (a.type === "stop") return "Stop";
   return a.type;
+}
+function scLabelGetProperty(prop) {
+  if (prop === "window_active") return "Window Active";
+  return prop || "Value";
+}
+function scLabelIfOp(op) {
+  if (op === "is_not") return "is not";
+  if (op === "has_any") return "has any value";
+  if (op === "has_none") return "does not have any value";
+  if (op === "contains") return "contains";
+  if (op === "not_contains") return "does not contain";
+  if (op === "starts_with") return "begins with";
+  if (op === "ends_with") return "ends with";
+  return "is";
+}
+function scIfOpsForVariable(varId) {
+  return [
+    {value: "has_any", label: "has any value"},
+    {value: "has_none", label: "does not have any value"},
+    {value: "contains", label: "contains"},
+    {value: "not_contains", label: "does not contain"},
+    {value: "starts_with", label: "begins with"},
+    {value: "ends_with", label: "ends with"},
+    {value: "is", label: "is"},
+    {value: "is_not", label: "is not"}
+  ];
+}
+function scIfOpNeedsRight(op) {
+  return op !== "has_any" && op !== "has_none";
+}
+function scNormalizeIfCondition(ifAction) {
+  if (!ifAction || ifAction.type !== "if") return;
+  var ops = scIfOpsForVariable(ifAction.left || "");
+  if (!ifAction.op || !ops.some(function (o) { return o.value === ifAction.op; })) {
+    ifAction.op = ops.length ? ops[0].value : "is";
+  }
+  if (!scIfOpNeedsRight(ifAction.op)) {
+    ifAction.right = "";
+    return;
+  }
+  if (ifAction.right == null) ifAction.right = "";
+}
+function scLabelVariable(id) {
+  var vars = scAvailableVariables(null);
+  for (var i = 0; i < vars.length; i++) {
+    if (vars[i].id === id) return vars[i].label;
+  }
+  if (id === "messageSender" || id === "senderName") return "Message Sender";
+  if (id === "messageText" || id === "message") return "Message Text";
+  if (id === "messageChannel") return "Message Channel";
+  if (id === "messageUClientRoom") return "Message UClient Room";
+  if (id === "messageUClientRoomId") return "Message UClient Room ID";
+  if (id === "window_active") return "Window Active";
+  if (id === "name") return "My Name";
+  if (id === "nearestPlayer") return "Nearest Player";
+  return id || "Variable";
+}
+function scAvailableVariables(beforeIdx) {
+  var vars = [];
+  var limit = beforeIdx == null
+    ? (scEditing && scEditing.actions ? scEditing.actions.length : 0)
+    : beforeIdx;
+  if (scEditing && scEditing.trigger && scEditing.trigger.type === "chat_received") {
+    vars.push({id: "messageSender", label: "Message Sender"});
+    vars.push({id: "messageText", label: "Message Text"});
+    vars.push({id: "messageChannel", label: "Message Channel"});
+    vars.push({id: "messageUClientRoom", label: "Message UClient Room"});
+    vars.push({id: "messageUClientRoomId", label: "Message UClient Room ID"});
+  }
+  if (scEditing && scEditing.actions) {
+    for (var i = 0; i < limit; i++) {
+      var a = scNormalizeAction(scEditing.actions[i], i);
+      if (a.type === "get" && a.property === "window_active")
+        vars.push({id: "window_active", label: "Window Active"});
+      if (a.type === "text" && a.as)
+        vars.push({id: a.as, label: a.as === "text" ? "Text" : a.as});
+    }
+  }
+  return vars;
+}
+function scSmartFieldVariables(slot, beforeIdx) {
+  var all = scAvailableVariables(beforeIdx);
+  if (slot === "channel") {
+    return all.filter(function (v) { return v.id === "messageChannel"; });
+  }
+  if (slot === "uclientRoom") {
+    return all.filter(function (v) { return v.id === "messageUClientRoomId"; });
+  }
+  if (slot === "message" || slot === "textPart") {
+    return all.filter(function (v) {
+      return v.id !== "messageChannel" && v.id !== "messageUClientRoom" &&
+        v.id !== "messageUClientRoomId";
+    });
+  }
+  return all;
+}
+function scNextTextVarName() {
+  if (!scEditing || !scEditing.actions) return "text";
+  var n = 0;
+  scEditing.actions.forEach(function (a) {
+    if (a.type === "text" && a.as && /^text_\d+$/.test(a.as)) {
+      var num = Number(a.as.slice(5)) || 0;
+      if (num >= n) n = num + 1;
+    }
+  });
+  return n ? ("text_" + n) : "text";
+}
+function scNormalizeAction(a, actionIdx) {
+  if (!a) return a;
+  if (a.type === "send_chat") {
+    if (a.channel != null && typeof a.channel === "string") {
+      a.channelMode = "text";
+    } else if (a.channel && typeof a.channel === "object") {
+      a.channelMode = a.channel.mode || "text";
+      if (a.channelMode === "variable") a.channelVariable = a.channel.variable || "messageChannel";
+      else a.channel = a.channel.text || "all";
+    }
+    if (!a.channelMode) { a.channelMode = "text"; a.channel = a.channel || "all"; }
+    if (a.uclientRoom != null && typeof a.uclientRoom === "string") {
+      a.uclientRoomMode = "text";
+      a.uclientRoomId = a.uclientRoom;
+      delete a.uclientRoom;
+    } else if (a.uclientRoom && typeof a.uclientRoom === "object") {
+      a.uclientRoomMode = a.uclientRoom.mode || "text";
+      if (a.uclientRoomMode === "variable") a.uclientRoomVariable = a.uclientRoom.variable || "messageUClientRoomId";
+      else a.uclientRoomId = a.uclientRoom.text != null ? String(a.uclientRoom.text) : "";
+      delete a.uclientRoom;
+    }
+    if (!a.uclientRoomMode) { a.uclientRoomMode = "text"; a.uclientRoomId = a.uclientRoomId || ""; }
+    if (a.message != null && typeof a.message === "string") {
+      a.messageMode = "text";
+      a.messageText = a.message;
+      delete a.message;
+    } else if (a.message && typeof a.message === "object") {
+      a.messageMode = a.message.mode || "text";
+      if (a.messageMode === "variable") a.messageVariable = a.message.variable || "messageText";
+      else a.messageText = a.message.text != null ? String(a.message.text) : "";
+      delete a.message;
+    }
+    if (!a.messageMode) {
+      a.messageMode = "text";
+      a.messageText = a.messageText == null ? "" : String(a.messageText);
+    }
+  }
+  if (a.type === "if") {
+    if (a.left == null) a.left = "";
+    if (a.left) {
+      var ifVars = scAvailableVariables(actionIdx != null ? actionIdx : 0);
+      if (!ifVars.some(function (v) { return v.id === a.left; })) a.left = "";
+    }
+    scNormalizeIfCondition(a);
+  }
+  if (a.type === "text") {
+    if (!a.parts || !a.parts.length) a.parts = [{mode: "text", text: ""}];
+    a.parts = scMergeTextParts(a.parts.map(function (p) {
+      if (p.mode === "variable") return {mode: "variable", variable: p.variable || "senderName"};
+      return {mode: "text", text: p.text == null ? "" : String(p.text)};
+    }));
+    if (!a.as) a.as = actionIdx != null ? ("text_" + actionIdx) : "text";
+  }
+  return a;
+}
+function scCleanActionForSave(a) {
+  a = JSON.parse(JSON.stringify(a));
+  if (a.type === "send_chat") {
+    if (a.channelMode === "variable")
+      a.channel = {mode: "variable", variable: a.channelVariable || "messageChannel"};
+    else
+      a.channel = {mode: "text", text: a.channel || "all"};
+    if (a.uclientRoomMode === "variable")
+      a.uclientRoom = {mode: "variable", variable: a.uclientRoomVariable || "messageUClientRoomId"};
+    else
+      a.uclientRoom = {mode: "text", text: a.uclientRoomId || ""};
+    if (a.messageMode === "variable")
+      a.message = {mode: "variable", variable: a.messageVariable || "messageText"};
+    else
+      a.message = {mode: "text", text: a.messageText || ""};
+    delete a.channelMode; delete a.channelVariable;
+    delete a.uclientRoomMode; delete a.uclientRoomId; delete a.uclientRoomVariable;
+    delete a.messageMode; delete a.messageText; delete a.messageVariable;
+  }
+  if (a.type === "text") {
+    a.parts = scMergeTextParts((a.parts || []).filter(function (p) {
+      if (p.mode === "variable") return !!p.variable;
+      return p.text != null && String(p.text).length > 0;
+    }));
+    if (!a.parts.length) a.parts = [{mode: "text", text: ""}];
+    if (!a.as) a.as = "text";
+  }
+  return a;
+}
+var scSmartBlurTimer = null;
+var SC_CHANNEL_CHOICES = [{value: "all", label: "All"}, {value: "team", label: "Team"}, {value: "uclient", label: "UClient"}];
+function scBlockToneIconSvg(tone) {
+  var sw = "1.25";
+  var rnd = ' stroke-linecap="round" stroke-linejoin="round"';
+  if (tone === "chat") {
+    return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M2.8 3.4h10.4a1.5 1.5 0 0 1 1.5 1.5v5.8a1.5 1.5 0 0 1-1.5 1.5H8.1L5.2 13.9v-2.7H2.8a1.5 1.5 0 0 1-1.5-1.5V4.9a1.5 1.5 0 0 1 1.5-1.5z"/></svg>';
+  }
+  if (tone === "text") {
+    return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M3.8 4.4h8.4M3.8 8h6.6M3.8 11.6h4.8"/></svg>';
+  }
+  if (tone === "flow") {
+    return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M3.2 4.2h9.6M3.2 8h5.8M3.2 11.8h7.6"/><circle fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' cx="12.2" cy="8" r="1.85"/></svg>';
+  }
+  if (tone === "connect") {
+    return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><circle fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' cx="8" cy="8" r="2.5"/><circle fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' cx="8" cy="8" r="5.2" stroke-dasharray="2.1 2.1"/></svg>';
+  }
+  if (tone === "wait") {
+    return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><circle fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' cx="8" cy="8.5" r="5"/><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M8 5.6V8.4l1.9 1.1"/></svg>';
+  }
+  if (tone === "stop") {
+    return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><rect fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' x="4.2" y="4.2" width="7.6" height="7.6" rx="3"/></svg>';
+  }
+  return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M4.2 8h7.6M8 4.2v7.6"/></svg>';
+}
+function scBlockIconInner(tone, fallback) {
+  return scBlockToneIconSvg(tone) || fallback;
+}
+function scVarPillIconSvg(varId) {
+  var id = varId || "";
+  var sw = "1.25";
+  var rnd = ' stroke-linecap="round" stroke-linejoin="round"';
+  if (id.indexOf("message") === 0 || id === "senderName" || id === "sender" || id === "message") {
+    return '<svg class="sc-pill-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M2.8 3.4h10.4a1.5 1.5 0 0 1 1.5 1.5v5.8a1.5 1.5 0 0 1-1.5 1.5H8.1L5.2 13.9v-2.7H2.8a1.5 1.5 0 0 1-1.5-1.5V4.9a1.5 1.5 0 0 1 1.5-1.5z"/></svg>';
+  }
+  if (id === "window_active") {
+    return '<svg class="sc-pill-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><rect fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' x="2.6" y="3.2" width="10.8" height="9.6" rx="2.6"/><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M5.2 3.2V2.5M10.8 3.2V2.5"/></svg>';
+  }
+  if (id === "text" || id.indexOf("text") === 0) {
+    return '<svg class="sc-pill-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M3.8 4.4h8.4M3.8 8h6.6M3.8 11.6h4.8"/></svg>';
+  }
+  return '<svg class="sc-pill-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><circle fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' cx="8" cy="8" r="2.1"/><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M8 2.6v1.2M8 12.2v1.2M2.6 8h1.2M12.2 8h1.2"/></svg>';
+}
+function scVarPillButton(extraClass, varId, label, attrs) {
+  return '<button type="button" class="sc-pill var sc-pill-nested' + (extraClass ? " " + extraClass : "") + '"' + (attrs || "") + ">" +
+    scVarPillIconSvg(varId) + '<span class="sc-pill-label">' + esc(label) + "</span></button>";
+}
+function scSmartMenuHtml(beforeIdx, fixedChoices, menuMode, slot) {
+  var vars = scSmartFieldVariables(slot, beforeIdx);
+  var html = '<div class="sc-smart-menu" aria-hidden="true"><div class="sc-smart-menu-inner">';
+  var showVarSection = vars.length > 0 && slot !== "channel";
+  if (menuMode === "variable") {
+    html += '<button type="button" class="sc-smart-menu-item sc-smart-menu-clear" data-pick-type="clear" data-pick-id="">Clear Variable</button>';
+    if (showVarSection) html += '<div class="sc-smart-menu-sep"></div>';
+  }
+  if (showVarSection) html += '<div class="sc-smart-menu-head">Variable</div>';
+  if (menuMode !== "variable" && fixedChoices && fixedChoices.length) {
+    fixedChoices.forEach(function (c) {
+      html += '<button type="button" class="sc-smart-menu-item" data-pick-type="fixed" data-pick-id="' + esc(c.value) + '">' + esc(c.label) + '</button>';
+    });
+    if (vars.length) html += '<div class="sc-smart-menu-sep"></div>';
+  }
+  vars.forEach(function (v) {
+    html += '<button type="button" class="sc-smart-menu-item is-var" data-pick-type="var" data-pick-id="' + esc(v.id) + '">' + esc(v.label) + '</button>';
+  });
+  html += '</div></div>';
+  return html;
+}
+function scSmartFieldHtml(opts) {
+  var isVar = opts.mode === "variable";
+  var html = '<span class="sc-smart-field" data-smart-slot="' + esc(opts.slot) + '" data-idx="' + opts.idx + '" data-kind="' + esc(opts.kind) + '"';
+  if (opts.partIdx != null) html += ' data-part-idx="' + opts.partIdx + '"';
+  html += '>';
+  if (isVar) {
+    html += scVarPillButton("sc-smart-trigger", opts.varValue || "", scLabelVariable(opts.varValue || ""), ' data-smart-trigger="var"');
+  } else if (opts.choice) {
+    html += '<button type="button" class="sc-pill sc-smart-trigger sc-smart-choice" data-smart-trigger="choice">' +
+      esc(opts.choiceLabel || scLabelChannel(opts.textValue) || "All") + '</button>';
+  } else {
+    html += scPillInput(opts.textInputField, opts.textValue, opts.idx, opts.kind, opts.partIdx, "sc-smart-trigger");
+  }
+  html += scSmartMenuHtml(opts.beforeIdx != null ? opts.beforeIdx : opts.idx, opts.fixedChoices, isVar ? "variable" : "input", opts.slot);
+  html += '</span>';
+  return html;
+}
+function scCloseAllSmartMenus(except) {
+  (document.querySelectorAll(".sc-smart-field.menu-open") || []).forEach(function (el) {
+    if (el !== except) scSmartFieldHideMenu(el);
+  });
+}
+function scCloseAllPickers(exceptSmartField) {
+  scClosePop();
+  scCloseAllSmartMenus(exceptSmartField || null);
+}
+function scResetSmartMenuPosition(menu) {
+  if (!menu) return;
+  menu.classList.remove("sc-smart-menu-fixed");
+  menu.style.position = "";
+  menu.style.left = "";
+  menu.style.top = "";
+  menu.style.width = "";
+  menu.style.minWidth = "";
+  menu.style.maxWidth = "";
+  menu.style.zIndex = "";
+}
+function scPositionSmartMenu(fieldEl) {
+  var menu = fieldEl && fieldEl.querySelector(".sc-smart-menu");
+  if (!menu || !fieldEl.classList.contains("menu-open")) return;
+  var trigger = fieldEl.querySelector(".sc-smart-trigger") || fieldEl;
+  var r = trigger.getBoundingClientRect();
+  menu.classList.add("sc-smart-menu-fixed");
+  menu.style.position = "fixed";
+  menu.style.top = (r.bottom + 5) + "px";
+  menu.style.minWidth = Math.max(r.width, 160) + "px";
+  menu.style.maxWidth = "min(260px, 72vw)";
+  menu.style.zIndex = "450";
+  menu.style.width = "max-content";
+  var left = r.left;
+  menu.style.left = left + "px";
+  requestAnimationFrame(function () {
+    if (!fieldEl.classList.contains("menu-open")) return;
+    var mw = menu.offsetWidth;
+    left = Math.max(8, Math.min(r.left, window.innerWidth - mw - 8));
+    menu.style.left = left + "px";
+  });
+}
+var scSmartMenuLayoutBound = false;
+function scEnsureSmartMenuLayoutListeners() {
+  if (scSmartMenuLayoutBound) return;
+  scSmartMenuLayoutBound = true;
+  var canvas = $("sc-ed-canvas");
+  if (canvas) {
+    canvas.addEventListener("scroll", function () {
+      (document.querySelectorAll(".sc-smart-field.menu-open") || []).forEach(scPositionSmartMenu);
+    }, {passive: true});
+  }
+  window.addEventListener("resize", function () {
+    (document.querySelectorAll(".sc-smart-field.menu-open") || []).forEach(scPositionSmartMenu);
+  }, {passive: true});
+}
+function scSmartFieldShowMenu(fieldEl, force) {
+  if (!fieldEl) return;
+  var menu = fieldEl.querySelector(".sc-smart-menu");
+  if (!menu) return;
+  var input = fieldEl.querySelector("input.sc-smart-trigger, textarea.sc-smart-trigger");
+  if (input && !force && String(input.value || "").length > 0) {
+    scSmartFieldHideMenu(fieldEl);
+    return;
+  }
+  scClosePop();
+  scCloseAllSmartMenus(fieldEl);
+  scEnsureSmartMenuLayoutListeners();
+  fieldEl.classList.add("menu-open");
+  menu.setAttribute("aria-hidden", "false");
+  requestAnimationFrame(function () { scPositionSmartMenu(fieldEl); });
+}
+function scSmartFieldHideMenu(fieldEl) {
+  if (!fieldEl) return;
+  fieldEl.classList.remove("menu-open");
+  var menu = fieldEl.querySelector(".sc-smart-menu");
+  if (menu) {
+    menu.setAttribute("aria-hidden", "true");
+    scResetSmartMenuPosition(menu);
+  }
+}
+function scApplySmartPick(fieldEl, pickType, pickId) {
+  if (!fieldEl) return;
+  var slot = fieldEl.dataset.smartSlot;
+  var idx = Number(fieldEl.dataset.idx || 0);
+  var kind = fieldEl.dataset.kind;
+  var partIdx = fieldEl.dataset.partIdx != null ? Number(fieldEl.dataset.partIdx) : null;
+  var ref = scGetBlockRef(kind, idx);
+  if (!ref) return;
+  scPushHistory();
+  scNormalizeAction(ref, idx);
+  if (pickType === "clear" || pickType === "text") {
+    if (slot === "message") { ref.messageMode = "text"; ref.messageText = ""; }
+    else if (slot === "channel") { ref.channelMode = "text"; ref.channel = ref.channel || "all"; }
+    else if (slot === "uclientRoom") { ref.uclientRoomMode = "text"; ref.uclientRoomId = ""; }
+    else if (slot === "textPart" && partIdx != null) ref.parts[partIdx] = {mode: "text", text: ""};
+    else if (slot === "textBody") ref.parts = [{mode: "text", text: ""}];
+    else if (slot === "ifLeft") ref.left = "";
+  } else if (pickType === "fixed") {
+    if (slot === "channel") {
+      ref.channelMode = "text";
+      ref.channel = pickId || "all";
+    }
+  } else if (pickType === "var") {
+    if (slot === "message") { ref.messageMode = "variable"; ref.messageVariable = pickId; }
+    else if (slot === "channel") { ref.channelMode = "variable"; ref.channelVariable = pickId; }
+    else if (slot === "uclientRoom") { ref.uclientRoomMode = "variable"; ref.uclientRoomVariable = pickId; }
+    else if (slot === "textPart" && partIdx != null) {
+      ref.parts[partIdx] = {mode: "variable", variable: pickId};
+      if (partIdx === ref.parts.length - 1) ref.parts.push({mode: "text", text: ""});
+    } else if (slot === "textBody") {
+      var bodyText = "";
+      if (ref.parts.length === 1 && ref.parts[0].mode === "text") bodyText = ref.parts[0].text || "";
+      ref.parts = [{mode: "text", text: bodyText}, {mode: "variable", variable: pickId}, {mode: "text", text: ""}];
+    } else if (slot === "ifLeft") {
+      ref.left = pickId || "";
+      scNormalizeIfCondition(ref);
+    }
+  }
+  scSmartFieldHideMenu(fieldEl);
+  scUpdateBlockElement(kind, idx);
+}
+function scIfLeftFieldHtml(data, idx, kind) {
+  var left = data.left || "";
+  var html = '<span class="sc-smart-field" data-smart-slot="ifLeft" data-idx="' + idx + '" data-kind="' + esc(kind) + '">';
+  if (left) {
+    html += scVarPillButton("sc-smart-trigger", left, scLabelVariable(left) || left, ' data-smart-trigger="var"');
+    html += scSmartMenuHtml(idx, null, "variable", "ifLeft");
+  } else {
+    html += '<button type="button" class="sc-pill sc-smart-trigger sc-smart-choice" data-smart-trigger="choice">Condition</button>';
+    html += scSmartMenuHtml(idx, null, "input", "ifLeft");
+  }
+  html += '</span>';
+  return html;
+}
+function scMergeTextParts(parts) {
+  if (!parts || !parts.length) return [{mode: "text", text: ""}];
+  var out = [];
+  parts.forEach(function (p) {
+    if (p.mode === "variable") {
+      out.push({mode: "variable", variable: p.variable || "messageSender"});
+      return;
+    }
+    var text = p.text == null ? "" : String(p.text);
+    if (out.length && out[out.length - 1].mode === "text") out[out.length - 1].text += text;
+    else out.push({mode: "text", text: text});
+  });
+  if (!out.length) out.push({mode: "text", text: ""});
+  if (out[out.length - 1].mode === "variable") out.push({mode: "text", text: ""});
+  return out;
+}
+function scTextBodyInputHtml(text, idx, kind) {
+  var val = esc(String(text == null ? "" : text));
+  return '<div class="sc-text-composer sc-text-composer-single">' +
+    '<span class="sc-smart-field sc-text-body-field" data-smart-slot="textBody" data-idx="' + idx + '" data-kind="' + kind + '">' +
+    '<textarea class="sc-text-body-input sc-smart-trigger" data-input="textBody" data-idx="' + idx + '" data-kind="' + kind + '" rows="2" placeholder="Text" spellcheck="false">' + val + '</textarea>' +
+    scSmartMenuHtml(idx, null, "input", "textPart") +
+    '</span></div>';
+}
+function scMessageValueHtml(data, idx, kind) {
+  scNormalizeAction(data, idx);
+  return scSmartFieldHtml({
+    slot: "message", idx: idx, kind: kind, beforeIdx: idx,
+    mode: data.messageMode === "variable" ? "variable" : "text",
+    textValue: data.messageText, varValue: data.messageVariable || "messageText",
+    textInputField: "messageText", placeholder: "Text"
+  });
+}
+function scChannelValueHtml(data, idx, kind) {
+  scNormalizeAction(data, idx);
+  if (data.channelMode === "variable") {
+    return scSmartFieldHtml({
+      slot: "channel", idx: idx, kind: kind, beforeIdx: idx, mode: "variable",
+      varValue: data.channelVariable || "messageChannel"
+    });
+  }
+  return scSmartFieldHtml({
+    slot: "channel", idx: idx, kind: kind, beforeIdx: idx, mode: "text",
+    textValue: data.channel || "all", choice: true,
+    choiceLabel: scLabelChannel(data.channel || "all"),
+    fixedChoices: SC_CHANNEL_CHOICES
+  });
+}
+function scSendChatShowsRoom(data) {
+  scNormalizeAction(data);
+  if (data.channelMode === "variable") return true;
+  return data.channelMode === "text" && data.channel === "uclient";
+}
+function scUClientRoomValueHtml(data, idx, kind) {
+  scNormalizeAction(data, idx);
+  return scSmartFieldHtml({
+    slot: "uclientRoom", idx: idx, kind: kind, beforeIdx: idx,
+    mode: data.uclientRoomMode === "variable" ? "variable" : "text",
+    textValue: data.uclientRoomId, varValue: data.uclientRoomVariable || "messageUClientRoomId",
+    textInputField: "uclientRoomId", placeholder: "Room ID"
+  });
+}
+function scTextBlockHtml(data, idx, kind) {
+  scNormalizeAction(data, idx);
+  data.parts = scMergeTextParts(data.parts);
+  var hasVar = data.parts.some(function (p) { return p.mode === "variable"; });
+  var bodyHtml;
+  if (!hasVar) {
+    bodyHtml = scTextBodyInputHtml((data.parts[0] && data.parts[0].text) || "", idx, kind);
+  } else {
+    var partsHtml = "";
+    data.parts.forEach(function (part, pi) {
+      partsHtml += scSmartFieldHtml({
+        slot: "textPart", idx: idx, kind: kind, partIdx: pi, beforeIdx: idx,
+        mode: part.mode === "variable" ? "variable" : "text",
+        textValue: part.text, varValue: part.variable || "messageSender",
+        textInputField: "textPart"
+      });
+    });
+    bodyHtml = '<div class="sc-text-composer"><span class="sc-text-parts">' + partsHtml + '</span></div>';
+  }
+  return '<div class="sc-text-head"><span class="sc-text-title">Text</span></div>' + bodyHtml;
 }
 function scFirstActionLabel(actions) {
   if (!actions || !actions.length) return "Actions";
@@ -2308,14 +2992,15 @@ function scClosePop() {
   if (scPopEl) { scPopEl.remove(); scPopEl = null; }
 }
 function scOpenPop(anchor, options, onPick, title, currentVal) {
-  scClosePop();
+  scCloseAllPickers(null);
   scPopEl = document.createElement("div");
   scPopEl.className = "sc-pop";
-  var html = title ? '<div class="sc-pop-title">' + esc(title) + '</div>' : "";
+  var html = '<div class="sc-smart-menu-inner">';
   html += options.map(function (opt) {
     var on = String(opt.value) === String(currentVal == null ? "" : currentVal);
-    return '<button type="button" class="' + (on ? "on" : "") + '" data-val="' + esc(String(opt.value)) + '">' + esc(opt.label) + '</button>';
+    return '<button type="button" class="sc-smart-menu-item' + (on ? " on" : "") + (opt.isVar ? " is-var" : "") + '" data-val="' + esc(String(opt.value)) + '">' + esc(opt.label) + '</button>';
   }).join("");
+  html += "</div>";
   scPopEl.innerHTML = html;
   document.body.appendChild(scPopEl);
   var r = anchor.getBoundingClientRect();
@@ -2338,12 +3023,245 @@ function scPopTitleForField(field) {
   if (field === "weapon") return "Weapon";
   if (field === "target") return "Target";
   if (field === "enabled") return "Custom colors";
+  if (field === "property" || field === "left") return "Value";
+  if (field === "op") return "Condition";
+  if (field === "right") return "Compare to";
   return "";
 }
 document.addEventListener("click", function (e) {
-  if (scPopEl && !e.target.closest(".sc-pop") && !e.target.closest(".sc-pill")) scClosePop();
+  if (e.target.closest(".sc-pop") || e.target.closest(".sc-smart-menu")) return;
+  if (e.target.closest(".sc-smart-trigger")) return;
+  if (e.target.closest(".sc-pill[data-field]")) return;
+  scCloseAllPickers(null);
 });
 
+function scFindMatchingEndIf(actions, ifIdx) {
+  if (!actions || ifIdx < 0 || ifIdx >= actions.length || actions[ifIdx].type !== "if") return -1;
+  var depth = 1;
+  for (var i = ifIdx + 1; i < actions.length; i++) {
+    if (actions[i].type === "if") depth++;
+    else if (actions[i].type === "end_if") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+function scFindOtherwiseInIf(actions, ifIdx, endIdx) {
+  if (endIdx < 0) return -1;
+  for (var i = ifIdx + 1; i < endIdx; i++) {
+    if (actions[i].type === "otherwise") return i;
+  }
+  return -1;
+}
+function scIfBlockMeta(actions, ifIdx, endIdx, idx) {
+  if (idx === ifIdx) return {role: "if"};
+  if (idx === endIdx) return {role: "end"};
+  if (actions[idx].type === "otherwise") return {role: "otherwise"};
+  var otherwiseIdx = scFindOtherwiseInIf(actions, ifIdx, endIdx);
+  if (otherwiseIdx < 0 || idx < otherwiseIdx) return {role: "branch", branch: "then"};
+  if (idx > otherwiseIdx) return {role: "branch", branch: "else"};
+  return {};
+}
+function scIsInsideIfGroup(idx) {
+  var actions = scEditing && scEditing.actions;
+  if (!actions) return false;
+  for (var i = 0; i < actions.length; i++) {
+    if (actions[i].type !== "if") continue;
+    var endIdx = scFindMatchingEndIf(actions, i);
+    if (endIdx >= 0 && idx > i && idx <= endIdx) return true;
+  }
+  return false;
+}
+function scRepairIfBlocks(actions) {
+  if (!actions || !actions.length) return actions;
+  for (var i = 0; i < actions.length; i++) {
+    if (actions[i].type !== "if") continue;
+    var endIdx = scFindMatchingEndIf(actions, i);
+    if (endIdx < 0) continue;
+    if (scFindOtherwiseInIf(actions, i, endIdx) < 0) {
+      actions.splice(endIdx, 0, {type: "otherwise"});
+      endIdx++;
+    }
+    i = endIdx;
+  }
+  return actions;
+}
+function scRenderActionBlocks(actions, enterIdx) {
+  var html = "";
+  var i = 0;
+  while (i < actions.length) {
+    var act = scNormalizeAction(actions[i], i);
+    if (act.type === "if") {
+      var endIdx = scFindMatchingEndIf(actions, i);
+      if (endIdx < 0) {
+        html += scBlockHtml("action", act, i, i === enterIdx);
+        i++;
+        continue;
+      }
+      var groupEnter = enterIdx >= i && enterIdx <= endIdx;
+      html += '<div class="sc-if-group' + (groupEnter ? " sc-enter" : "") + '">';
+      for (var j = i; j <= endIdx; j++) {
+        html += scBlockHtml("action", scNormalizeAction(actions[j], j), j, j === enterIdx,
+          scIfBlockMeta(actions, i, endIdx, j));
+      }
+      html += '</div>';
+      i = endIdx + 1;
+    } else {
+      html += scBlockHtml("action", act, i, i === enterIdx);
+      i++;
+    }
+  }
+  return html;
+}
+
+/* -- test run progress ------------------------------------------------- */
+var scRun = null;
+function scRunActive() {
+  return !!(scRun && scRun.status === "running");
+}
+var SC_PLAY_ICON = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path fill="currentColor" d="M8.05 5.55a1.35 1.35 0 0 1 2.09-1.12l8.31 5.54a1.35 1.35 0 0 1 0 2.24l-8.31 5.54a1.35 1.35 0 0 1-2.09-1.12V5.55z"/></svg>';
+function scUpdatePlayButton() {
+  var btn = $("sc-tb-play");
+  if (!btn) return;
+  var running = scRunActive();
+  if (btn.dataset.mode !== "play") {
+    btn.dataset.mode = "play";
+    btn.innerHTML = SC_PLAY_ICON;
+  }
+  btn.title = running ? "Stop test run" : "Test run";
+  btn.disabled = !running && !(lastState && lastState.gameRunning);
+}
+function scRunWaitTotal(idx) {
+  var act = scEditing && scEditing.actions ? scEditing.actions[idx] : null;
+  var seconds = act && act.type === "wait" ? Number(act.seconds) : 0;
+  return seconds > 0 ? seconds : 0;
+}
+function scApplyRunWait(block, idx, remaining) {
+  var el = block.querySelector(".sc-run-wait");
+  if (remaining == null) {
+    if (el) el.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "sc-run-wait";
+    el.innerHTML = '<span class="sc-run-wait-track"><span class="sc-run-wait-fill"></span></span>' +
+      '<span class="sc-run-wait-left"></span>';
+    (block.querySelector(".sc-block-body") || block).appendChild(el);
+  }
+  var total = scRunWaitTotal(idx);
+  var left = Math.max(0, Number(remaining) || 0);
+  var pct = total > 0 ? (1 - left / total) * 100 : 100;
+  pct = Math.max(0, Math.min(100, pct));
+  el.querySelector(".sc-run-wait-fill").style.width = pct.toFixed(1) + "%";
+  el.querySelector(".sc-run-wait-left").textContent = left.toFixed(1) + "s";
+}
+function scApplyRunResults(canvas) {
+  var results = scRun && scRun.results ? scRun.results : [];
+  var keep = Object.create(null);
+  results.forEach(function (r) {
+    if (!r || r.index == null) return;
+    var idx = Number(r.index);
+    var block = canvas.querySelector('.sc-block[data-block-kind="action"][data-block-idx="' + idx + '"]');
+    if (!block) return;
+    keep[idx] = true;
+    var el = canvas.querySelector('.sc-run-result[data-run-result="' + idx + '"]');
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "sc-run-result";
+      el.setAttribute("data-run-result", String(idx));
+      el.innerHTML = '<span class="sc-run-result-line"></span><div class="sc-run-result-box"></div>';
+      block.insertAdjacentElement("afterend", el);
+    }
+    var box = el.querySelector(".sc-run-result-box");
+    var val = r.value == null ? "" : String(r.value);
+    if (val) box.textContent = val;
+    else box.innerHTML = "<em>No value</em>";
+  });
+  canvas.querySelectorAll(".sc-run-result").forEach(function (el) {
+    if (!keep[Number(el.getAttribute("data-run-result"))]) el.remove();
+  });
+}
+function scApplyRunState() {
+  var canvas = $("sc-ed-canvas");
+  if (!canvas) return;
+  var step = scRun && scRun.step != null ? scRun.step : -1;
+  canvas.querySelectorAll('.sc-block[data-block-kind="action"]').forEach(function (block) {
+    var idx = Number(block.dataset.blockIdx);
+    var current = scRunActive() && idx === step;
+    block.classList.toggle("sc-run-current", current);
+    scApplyRunWait(block, idx, current && scRun.waitRemaining != null ? scRun.waitRemaining : null);
+  });
+  scApplyRunResults(canvas);
+}
+function scStopRun(notifyHost) {
+  if (notifyHost && scRun && scRun.runId) send({cmd: "automationRunStop", runId: scRun.runId});
+  scRun = null;
+  scApplyRunState();
+  scUpdatePlayButton();
+}
+window.__setAutomationRun = function (st) {
+  if (!st || !scRun || st.runId !== scRun.runId) return;
+  scRun.status = st.status === "done" ? "done" : "running";
+  scRun.step = st.status === "done" || st.step == null ? -1 : Number(st.step);
+  scRun.total = st.total == null ? scRun.total : Number(st.total);
+  scRun.waitRemaining = st.status === "done" || st.waitRemaining == null ? null : Number(st.waitRemaining);
+  scRun.results = st.results || [];
+  scApplyRunState();
+  scUpdatePlayButton();
+};
+
+var SC_HISTORY_LIMIT = 50;
+var scEditHistory = [];
+var scEditFuture = [];
+var scHistoryApplying = false;
+var scTitleDirty = false;
+function scEditingSnapshot() {
+  return scEditing ? JSON.stringify(scEditing) : null;
+}
+function scUpdateHistoryButtons() {
+  var undo = $("sc-tb-undo");
+  var redo = $("sc-tb-redo");
+  if (undo) undo.disabled = !scEditHistory.length;
+  if (redo) redo.disabled = !scEditFuture.length;
+}
+function scResetHistory() {
+  scEditHistory = [];
+  scEditFuture = [];
+  scTitleDirty = false;
+  scUpdateHistoryButtons();
+}
+function scPushHistory() {
+  if (scHistoryApplying || !scEditing) return;
+  var snap = scEditingSnapshot();
+  if (scEditHistory.length && scEditHistory[scEditHistory.length - 1] === snap) return;
+  scEditHistory.push(snap);
+  if (scEditHistory.length > SC_HISTORY_LIMIT) scEditHistory.shift();
+  scEditFuture = [];
+  scUpdateHistoryButtons();
+}
+function scApplyHistorySnapshot(snap) {
+  scHistoryApplying = true;
+  scEditing = JSON.parse(snap);
+  scCloseAllPickers(null);
+  scRenderEditor();
+  scHistoryApplying = false;
+  scTitleDirty = false;
+  scUpdateHistoryButtons();
+}
+function scUndo() {
+  if (!scEditing || !scEditHistory.length) return;
+  scEditFuture.push(scEditingSnapshot());
+  if (scEditFuture.length > SC_HISTORY_LIMIT) scEditFuture.shift();
+  scApplyHistorySnapshot(scEditHistory.pop());
+}
+function scRedo() {
+  if (!scEditing || !scEditFuture.length) return;
+  scEditHistory.push(scEditingSnapshot());
+  if (scEditHistory.length > SC_HISTORY_LIMIT) scEditHistory.shift();
+  scApplyHistorySnapshot(scEditFuture.pop());
+}
 function scRenderEditor(opts) {
   var canvas = $("sc-ed-canvas");
   if (!scEditing) { canvas.innerHTML = ""; return; }
@@ -2355,17 +3273,50 @@ function scRenderEditor(opts) {
   if (scEditing.trigger) {
     html += scBlockHtml("trigger", scEditing.trigger, 0, enterIdx === -2);
   }
-  (scEditing.actions || []).forEach(function (act, idx) {
-    html += scBlockHtml("action", act, idx, idx === enterIdx);
-  });
+  html += scRenderActionBlocks(scEditing.actions || [], enterIdx);
   canvas.innerHTML = html || '<div class="sc-ed-empty"><b>Start with When</b>Pick a When trigger below to detect chat events, then add actions.</div>';
   canvas.scrollTop = scroll;
   scSyncPillInputs(canvas);
   scBindCanvasDropGap(null);
+  scApplyRunState();
+}
+function scGetIfMetaForIndex(idx) {
+  var actions = scEditing && scEditing.actions;
+  if (!actions) return {};
+  for (var i = 0; i < actions.length; i++) {
+    if (actions[i].type !== "if") continue;
+    var endIdx = scFindMatchingEndIf(actions, i);
+    if (endIdx < 0) continue;
+    if (idx >= i && idx <= endIdx) return scIfBlockMeta(actions, i, endIdx, idx);
+  }
+  return {};
+}
+function scUpdateIfGroupBlock(idx) {
+  if (!scEditing) return;
+  var canvas = $("sc-ed-canvas");
+  var el = canvas.querySelector('.sc-block[data-block-kind="action"][data-block-idx="' + idx + '"]');
+  if (!el) {
+    scRenderEditor();
+    return;
+  }
+  var data = scNormalizeAction(scEditing.actions[idx], idx);
+  var wrap = document.createElement("div");
+  wrap.innerHTML = scBlockHtml("action", data, idx, false, scGetIfMetaForIndex(idx));
+  var fresh = wrap.firstElementChild;
+  if (fresh) el.replaceWith(fresh);
+  scSyncPillInputs(canvas);
+  scApplyRunState();
 }
 function scUpdateBlockElement(kind, idx) {
   if (!scEditing) return;
   if (kind === "trigger" && scEditing.trigger) scEditing.trigger = scPrepareTriggerForEdit(scEditing.trigger);
+  if (kind === "action") {
+    var act = scEditing.actions[idx];
+    if (act && (act.type === "if" || act.type === "otherwise" || act.type === "end_if" || scIsInsideIfGroup(idx))) {
+      scUpdateIfGroupBlock(idx);
+      return;
+    }
+  }
   var canvas = $("sc-ed-canvas");
   var sel = kind === "trigger"
     ? '.sc-block[data-block-kind="trigger"]'
@@ -2378,6 +3329,7 @@ function scUpdateBlockElement(kind, idx) {
   var fresh = wrap.firstElementChild;
   if (fresh) el.replaceWith(fresh);
   scSyncPillInputs(canvas);
+  scApplyRunState();
 }
 function scAppendBlockElement(kind, idx) {
   if (!scEditing) return;
@@ -2431,21 +3383,58 @@ function scInsertBlockElementAt(kind, idx, enter) {
 }
 function scRemoveActionBlock(idx) {
   if (!scEditing || !scEditing.actions) return;
-  scEditing.actions.splice(idx, 1);
-  var canvas = $("sc-ed-canvas");
-  var block = canvas.querySelector('.sc-block[data-block-kind="action"][data-block-idx="' + idx + '"]');
-  if (block) block.remove();
+  var act = scEditing.actions[idx];
+  if (!act) return;
+  if (act.type === "end_if") return;
+  scPushHistory();
+  if (act.type === "if") {
+    var endIdx = scFindMatchingEndIf(scEditing.actions, idx);
+    if (endIdx >= 0) scEditing.actions.splice(idx, endIdx - idx + 1);
+    else scEditing.actions.splice(idx, 1);
+  } else {
+    scEditing.actions.splice(idx, 1);
+  }
   if (!scEditing.actions.length && !scEditing.trigger) {
-    canvas.innerHTML = '<div class="sc-ed-empty"><b>Start with When</b>Pick a When trigger below to detect chat events, then add actions.</div>';
-  } else if (scEditing.actions.length) {
-    scReindexActionBlocks(0);
+    $("sc-ed-canvas").innerHTML = '<div class="sc-ed-empty"><b>Start with When</b>Pick a When trigger below to detect chat events, then add actions.</div>';
+  } else {
+    scRenderEditor();
   }
 }
-function scBlockGrip(kind, idx) {
+function scBlockGrip(kind, idx, actType) {
   if (kind === "action") {
+    if (actType === "otherwise" || actType === "end_if") {
+      return '<span class="sc-block-grip spacer" aria-hidden="true"></span>';
+    }
     return '<button type="button" class="sc-block-grip" data-drag-kind="action" data-drag-idx="' + idx + '" aria-label="Reorder"><span></span><span></span><span></span></button>';
   }
   return '<span class="sc-block-grip spacer" aria-hidden="true"></span>';
+}
+function scServerTargetsHtml(trigger) {
+  if (!trigger.targets || !Array.isArray(trigger.targets)) trigger.targets = [];
+  var targets = trigger.targets;
+  var hasDraft = targets.length > 0 && targets[targets.length - 1] === "";
+  var showInput = !targets.length || hasDraft;
+  var filled = targets.filter(function (n) { return n.length > 0; });
+  var html = '<div class="sc-block-filter sc-block-server-targets"><span class="sc-sender-names">';
+  for (var i = 0; i < targets.length; i++) {
+    var n = targets[i];
+    if (n) {
+      html += '<span class="sc-sender-chip">' +
+        '<span class="sc-sender-chip-label">' + esc(n) + '</span>' +
+        '</span>';
+    } else if (i === targets.length - 1) {
+      html += scPillInput("serverTarget", "", 0, "trigger", i);
+    }
+  }
+  if (!targets.length) {
+    html += scPillInput("serverTarget", "", 0, "trigger", 0);
+    showInput = true;
+  }
+  if (!showInput && filled.length > 0) {
+    html += '<button type="button" class="sc-sender-add" data-add-server-target aria-label="Add server">+</button>';
+  }
+  html += '</span></div>';
+  return html;
 }
 function scSenderNamesHtml(filter, filterIdx) {
   if (!filter.names || !Array.isArray(filter.names)) filter.names = [];
@@ -2459,7 +3448,6 @@ function scSenderNamesHtml(filter, filterIdx) {
     if (n) {
       html += '<span class="sc-sender-chip">' +
         '<span class="sc-sender-chip-label">' + esc(n) + '</span>' +
-        '<button type="button" class="sc-sender-chip-x" data-remove-sender-name="' + filterIdx + '" data-name-idx="' + i + '" aria-label="Remove">\u00d7</button>' +
         '</span>';
     } else if (i === names.length - 1) {
       html += scPillInput("senderName", "", filterIdx, "trigger-filter", i);
@@ -2480,6 +3468,10 @@ function scTriggerFilterRowHtml(filter, filterIdx) {
   var valueHtml = "";
   if (filter.kind === "sender") {
     valueHtml = scSenderNamesHtml(filter, filterIdx);
+  } else if (filter.kind === "chat_channel") {
+    valueHtml = scPill("channel", filter.channel || "all", filterIdx, "trigger-filter");
+  } else if (filter.kind === "uclient_room") {
+    valueHtml = scPillInput("room", filter.room, filterIdx, "trigger-filter");
   } else {
     valueHtml = scPillInput("text", filter.text, filterIdx, "trigger-filter");
   }
@@ -2497,14 +3489,13 @@ function scTriggerBlockHtml(data, enter) {
   var filtersHtml = data.filters.map(function (f, i) {
     return scTriggerFilterRowHtml(f, i);
   }).join("");
-  var addBtn = data.filters.length < 2
+  var addBtn = data.filters.length < 5
     ? '<button type="button" class="sc-filter-add" data-add-filter>+ Add filter</button>'
     : "";
   return '<div class="sc-block sc-block-trigger' + enterCls + '" data-block-kind="trigger" data-block-idx="0">' +
-    scBlockGrip("trigger", 0) +
     '<div class="sc-block-trigger-main">' +
     '<div class="sc-block-trigger-head">' +
-    '<span class="sc-block-ico ' + esc(tdef.tone || "chat") + '">' + tdef.icon + '</span>' +
+    '<span class="sc-block-ico ' + esc(tdef.tone || "chat") + '">' + scBlockIconInner(tdef.tone || "chat", tdef.icon) + '</span>' +
     '<span class="sc-block-trigger-title">When a message matching the following conditions is received</span>' +
     '</div>' +
     '<div class="sc-block-trigger-divider"></div>' +
@@ -2512,16 +3503,55 @@ function scTriggerBlockHtml(data, enter) {
     addBtn +
     '</div></div>';
 }
-function scBlockHtml(kind, data, idx, enter) {
-  var del = kind === "action" ? '<button class="sc-del" type="button" data-del-action="' + idx + '">\u00d7</button>' : "";
+function scServerConnectBlockHtml(data, enter) {
+  data = scNormalizeTrigger(JSON.parse(JSON.stringify(data)));
   var enterCls = enter ? " sc-enter" : "";
+  var tdef = scTriggerDef(data.type);
+  return '<div class="sc-block sc-block-trigger' + enterCls + '" data-block-kind="trigger" data-block-idx="0">' +
+    '<div class="sc-block-trigger-main">' +
+    '<div class="sc-block-trigger-head">' +
+    '<span class="sc-block-ico ' + esc(tdef.tone || "connect") + '">' + scBlockIconInner(tdef.tone || "connect", tdef.icon) + '</span>' +
+    '<span class="sc-block-trigger-title">When connecting to one of the following servers</span>' +
+    '</div>' +
+    '<div class="sc-block-trigger-divider"></div>' +
+    scServerTargetsHtml(data) +
+    '</div></div>';
+}
+function scBlockHtml(kind, data, idx, enter, ifMeta) {
+  ifMeta = ifMeta || {};
+  var canDel = kind === "action" && data.type !== "end_if";
+  var del = canDel ? '<button class="sc-del" type="button" data-del-action="' + idx + '" aria-label="Remove">' + scIconX() + '</button>' : "";
+  var enterCls = enter ? " sc-enter" : "";
+  var ifCls = "";
+  if (ifMeta.role === "branch") ifCls = " sc-if-branch sc-if-branch-" + ifMeta.branch;
+  else if (ifMeta.role === "if") ifCls = " sc-if-head";
+  else if (ifMeta.role === "otherwise") ifCls = " sc-if-otherwise";
+  else if (ifMeta.role === "end") ifCls = " sc-if-foot";
+  var roleAttr = ifMeta.role ? ' data-if-role="' + esc(ifMeta.role) + '"' : "";
+  var branchAttr = ifMeta.branch ? ' data-if-branch="' + esc(ifMeta.branch) + '"' : "";
   var inner = "";
+  if (kind === "trigger" && data.type === "server_connect") {
+    return scServerConnectBlockHtml(data, enter);
+  }
   if (kind === "trigger" && data.type === "chat_received") {
     return scTriggerBlockHtml(data, enter);
   }
   if (data.type === "send_chat") {
-    inner = scTxt("Send") + scPill("channel", data.channel, idx, kind) + scTxt("chat") +
-      scPillInput("message", data.message, idx, kind);
+    inner = scTxt("Send") + scMessageValueHtml(data, idx, kind) + scTxt("to") +
+      scChannelValueHtml(data, idx, kind) + scTxt("chat");
+    if (scSendChatShowsRoom(data)) {
+      inner += scTxt("in") + scUClientRoomValueHtml(data, idx, kind);
+    }
+  } else if (data.type === "text") {
+    var adefText = scActionDef(data.type);
+    return '<div class="sc-block sc-block-action sc-block-text' + enterCls + ifCls + '" data-block-kind="action" data-block-idx="' + idx + '"' + roleAttr + branchAttr + '>' +
+      scBlockGrip(kind, idx, data.type) +
+      '<span class="sc-block-ico ' + esc(adefText.tone || "text") + '">' + scBlockIconInner(adefText.tone || "text", adefText.icon) + '</span>' +
+      '<div class="sc-block-body">' + scTextBlockHtml(data, idx, kind) + '</div>' + del + '</div>';
+  } else if (data.type === "connect_server") {
+    inner = scTxt("Connect to") + scPillInput("address", data.address, idx, kind);
+  } else if (data.type === "leave_server") {
+    inner = scTxt("Leave server");
   } else if (data.type === "wait") {
     inner = scTxt("Wait") + scPillInput("seconds", data.seconds, idx, kind) + scTxt("seconds");
   } else if (data.type === "switch_weapon_use") {
@@ -2539,14 +3569,30 @@ function scBlockHtml(kind, data, idx, enter) {
   } else if (data.type === "set_name") {
     inner = scTxt("Set") + scPill("target", data.target, idx, kind) + scTxt("name") +
       scPillInput("name", data.name, idx, kind);
+  } else if (data.type === "get") {
+    inner = scTxt("Get") + scPill("property", data.property, idx, kind);
+  } else if (data.type === "if") {
+    scNormalizeIfCondition(data);
+    inner = scTxt("If") + scIfLeftFieldHtml(data, idx, kind) + scPill("op", data.op, idx, kind);
+    if (scIfOpNeedsRight(data.op)) {
+      inner += scPillInput("right", data.right, idx, kind);
+    } else {
+      inner += scTxt("value");
+    }
+  } else if (data.type === "otherwise") {
+    inner = scTxt("Otherwise");
+  } else if (data.type === "end_if") {
+    inner = scTxt("End If");
+  } else if (data.type === "stop") {
+    inner = scTxt("Stop");
   }
   if (kind === "trigger") {
     return scTriggerBlockHtml(data, enter);
   }
   var adef = scActionDef(data.type);
-  return '<div class="sc-block sc-block-action' + enterCls + '" data-block-kind="action" data-block-idx="' + idx + '">' +
-    scBlockGrip(kind, idx) +
-    '<span class="sc-block-ico ' + esc(adef.tone || "action") + '">' + adef.icon + '</span>' +
+  return '<div class="sc-block sc-block-action' + enterCls + ifCls + '" data-block-kind="action" data-block-idx="' + idx + '"' + roleAttr + branchAttr + '>' +
+    scBlockGrip(kind, idx, data.type) +
+    '<span class="sc-block-ico ' + esc(adef.tone || "action") + '">' + scBlockIconInner(adef.tone || "action", adef.icon) + '</span>' +
     '<div class="sc-block-body"><div class="sc-block-line">' + inner + '</div></div>' + del + '</div>';
 }
 function scTxt(text) {
@@ -2554,26 +3600,46 @@ function scTxt(text) {
 }
 function scPill(field, value, idx, kind) {
   var label = String(value || "");
-  if (field === "kind") label = value === "message" ? "Message" : "Sender";
+  if (field === "kind") {
+    if (value === "message") label = "Message";
+    else if (value === "chat_channel") label = "Chat channel";
+    else if (value === "uclient_room") label = "UClient room";
+    else label = "Sender";
+  }
   if (field === "channel") label = scLabelChannel(value);
   if (field === "match") label = value === "equals" ? "equals" : value === "starts_with" ? "starts with" : "contains";
   if (field === "weapon") label = scLabelWeapon(value);
   if (field === "target") label = value === "dummy" ? "Dummy" : "Player";
   if (field === "enabled") label = value === "on" || value === true ? "On" : "Off";
+  if (field === "property") label = scLabelGetProperty(value);
+  if (field === "left") label = value ? (scLabelVariable(value) || scLabelGetProperty(value)) : "Condition";
+  if (field === "op") label = scLabelIfOp(value);
+  if (field === "right") label = String(value || "");
+  var isVar = field === "messageVariable" || field === "textPartVar" ||
+    field === "channelVariable" || field === "uclientRoomVariable";
+  if (isVar) {
+    return scVarPillButton("", value, label, ' data-field="' + esc(field) + '" data-idx="' + idx + '" data-kind="' + kind + '"');
+  }
   return '<button type="button" class="sc-pill" data-field="' + esc(field) + '" data-idx="' + idx + '" data-kind="' + kind + '">' + esc(label) + '</button>';
 }
 function scPillInputPlaceholder(field) {
-  if (field === "text" || field === "message") return "Text";
+  if (field === "text" || field === "message" || field === "messageText" || field === "textPart") return "Text";
   if (field === "senderName") return "Sender";
+  if (field === "serverTarget") return "IP or IP:port";
+  if (field === "address") return "IP or IP:port";
+  if (field === "uclientRoomId") return "Room ID (empty = global)";
+  if (field === "room") return "Room ID or name";
+  if (field === "right") return "Text";
   return "";
 }
-function scPillInput(field, value, idx, kind, subIdx) {
+function scPillInput(field, value, idx, kind, subIdx, extraClass) {
   var val = esc(String(value == null ? "" : value));
   var mode = (field === "seconds" || field === "color") ? ' inputmode="decimal"' : "";
   var ph = scPillInputPlaceholder(field);
   var phAttr = ph ? ' placeholder="' + esc(ph) + '"' : "";
   var subAttr = subIdx != null ? ' data-name-idx="' + subIdx + '"' : "";
-  return '<input type="text" class="sc-pill input" data-input="' + esc(field) + '" data-idx="' + idx + '" data-kind="' + kind + '" value="' + val + '" spellcheck="false" size="1"' + mode + phAttr + subAttr + '>';
+  var cls = "sc-pill input" + (extraClass ? " " + extraClass : "");
+  return '<input type="text" class="' + cls + '" data-input="' + esc(field) + '" data-idx="' + idx + '" data-kind="' + kind + '" value="' + val + '" spellcheck="false" size="1"' + mode + phAttr + subAttr + ' data-smart-trigger="input">';
 }
 var scPillMeasureNode = null;
 var SC_PILL_INPUT_MIN = 44;
@@ -2626,7 +3692,11 @@ function scSyncPillInputs(root) {
   (root || $("sc-ed-canvas")).querySelectorAll("input.sc-pill.input").forEach(scFitPillInput);
 }
 function scCommitAllPillInputs(root) {
-  (root || $("sc-ed-canvas")).querySelectorAll("input.sc-pill.input").forEach(function (input) {
+  var el = root || $("sc-ed-canvas");
+  el.querySelectorAll("input.sc-pill.input").forEach(function (input) {
+    scCommitPillInput(input, false);
+  });
+  el.querySelectorAll("textarea.sc-text-body-input").forEach(function (input) {
     scCommitPillInput(input, false);
   });
 }
@@ -2645,6 +3715,10 @@ function scCommitPillInput(input, revert) {
     scCommitSenderNameInput(idx, Number(input.dataset.nameIdx || 0), input.value);
     return;
   }
+  if (field === "serverTarget" && kind === "trigger") {
+    scCommitServerTargetInput(Number(input.dataset.nameIdx || 0), input.value);
+    return;
+  }
   var ref = scGetBlockRef(kind, idx);
   if (!ref) return;
   var val = input.value;
@@ -2652,6 +3726,25 @@ function scCommitPillInput(input, revert) {
     var num = Number(val) || 0;
     ref[field] = num;
     input.value = String(num);
+  } else if (field === "messageText") {
+    scNormalizeAction(ref, idx);
+    ref.messageMode = "text";
+    ref.messageText = val;
+  } else if (field === "uclientRoomId") {
+    scNormalizeAction(ref, idx);
+    ref.uclientRoomMode = "text";
+    ref.uclientRoomId = val;
+  } else if (field === "room") {
+    ref.room = val;
+  } else if (field === "textPart") {
+    scNormalizeAction(ref, idx);
+    var pi = Number(input.dataset.nameIdx || 0);
+    if (!ref.parts[pi]) ref.parts[pi] = {mode: "text", text: ""};
+    ref.parts[pi] = {mode: "text", text: val};
+    ref.parts = scMergeTextParts(ref.parts);
+  } else if (field === "textBody") {
+    scNormalizeAction(ref, idx);
+    ref.parts = [{mode: "text", text: val}];
   } else {
     ref[field] = val;
   }
@@ -2664,14 +3757,12 @@ function scCommitSenderNameInput(filterIdx, nameIdx, rawVal) {
   if (!f.names) f.names = [];
   var val = String(rawVal == null ? "" : rawVal);
   if (!val) {
-    if (nameIdx > 0 || f.names.length > 1) {
+    if (nameIdx > 0) {
       f.names.splice(nameIdx, 1);
-    } else {
-      f.names = [];
+      while (f.names.length > 1 && f.names[f.names.length - 1] === "") f.names.pop();
+      scRememberFilterDraft(filterIdx);
+      scUpdateBlockElement("trigger", 0);
     }
-    while (f.names.length > 1 && f.names[f.names.length - 1] === "") f.names.pop();
-    scRememberFilterDraft(filterIdx);
-    scUpdateBlockElement("trigger", 0);
     return;
   }
   while (f.names.length <= nameIdx) f.names.push("");
@@ -2685,6 +3776,7 @@ function scAddSenderNameSlot(filterIdx) {
   if (!f || f.kind !== "sender") return;
   if (!f.names) f.names = [];
   if (f.names.length && f.names[f.names.length - 1] === "") return;
+  scPushHistory();
   f.names.push("");
   scUpdateBlockElement("trigger", 0);
   requestAnimationFrame(function () {
@@ -2695,13 +3787,69 @@ function scAddSenderNameSlot(filterIdx) {
     if (inp) inp.focus();
   });
 }
-function scRemoveSenderName(filterIdx, nameIdx) {
-  var f = scGetFilterRef(filterIdx);
-  if (!f || f.kind !== "sender" || !f.names) return;
-  f.names.splice(nameIdx, 1);
-  while (f.names.length > 1 && f.names[f.names.length - 1] === "") f.names.pop();
-  scRememberFilterDraft(filterIdx);
+function scHandleMultiValueBackspace(input) {
+  if (!input || input.value) return false;
+  var field = input.dataset.input;
+  if (field !== "senderName" && field !== "serverTarget") return false;
+  var nameIdx = Number(input.dataset.nameIdx || 0);
+  if (nameIdx <= 0) return false;
+  var list = null;
+  var filterIdx = 0;
+  if (field === "senderName") {
+    filterIdx = Number(input.dataset.idx || 0);
+    var f = scGetFilterRef(filterIdx);
+    if (!f || f.kind !== "sender" || !f.names) return false;
+    list = f.names;
+  } else {
+    if (!scEditing || !scEditing.trigger || scEditing.trigger.type !== "server_connect") return false;
+    scEditing.trigger = scPrepareTriggerForEdit(scEditing.trigger);
+    if (!scEditing.trigger.targets) return false;
+    list = scEditing.trigger.targets;
+  }
+  if (nameIdx >= list.length || list[nameIdx] !== "") return false;
+  if (nameIdx > 0 && list[nameIdx - 1] && nameIdx - 1 > 0) {
+    list.splice(nameIdx - 1, 1);
+  } else {
+    list.splice(nameIdx, 1);
+  }
+  while (list.length > 1 && list[list.length - 1] === "") list.pop();
+  if (field === "senderName") scRememberFilterDraft(filterIdx);
   scUpdateBlockElement("trigger", 0);
+  return true;
+}
+function scCommitServerTargetInput(nameIdx, rawVal) {
+  if (!scEditing || !scEditing.trigger || scEditing.trigger.type !== "server_connect") return;
+  scEditing.trigger = scPrepareTriggerForEdit(scEditing.trigger);
+  if (!scEditing.trigger.targets) scEditing.trigger.targets = [];
+  var val = String(rawVal == null ? "" : rawVal);
+  if (!val) {
+    if (nameIdx > 0) {
+      scEditing.trigger.targets.splice(nameIdx, 1);
+      while (scEditing.trigger.targets.length > 1 && scEditing.trigger.targets[scEditing.trigger.targets.length - 1] === "") scEditing.trigger.targets.pop();
+      scUpdateBlockElement("trigger", 0);
+    }
+    return;
+  }
+  while (scEditing.trigger.targets.length <= nameIdx) scEditing.trigger.targets.push("");
+  scEditing.trigger.targets[nameIdx] = val;
+  while (scEditing.trigger.targets.length > 1 && scEditing.trigger.targets[scEditing.trigger.targets.length - 1] === "") scEditing.trigger.targets.pop();
+  scUpdateBlockElement("trigger", 0);
+}
+function scAddServerTargetSlot() {
+  if (!scEditing || !scEditing.trigger || scEditing.trigger.type !== "server_connect") return;
+  scEditing.trigger = scPrepareTriggerForEdit(scEditing.trigger);
+  if (!scEditing.trigger.targets) scEditing.trigger.targets = [];
+  if (scEditing.trigger.targets.length && scEditing.trigger.targets[scEditing.trigger.targets.length - 1] === "") return;
+  scPushHistory();
+  scEditing.trigger.targets.push("");
+  scUpdateBlockElement("trigger", 0);
+  requestAnimationFrame(function () {
+    var row = $("sc-ed-canvas").querySelector(".sc-block-server-targets");
+    if (!row) return;
+    var inputs = row.querySelectorAll('input[data-input="serverTarget"]');
+    var inp = inputs[inputs.length - 1];
+    if (inp) inp.focus();
+  });
 }
 function scGetFilterRef(filterIdx) {
   if (!scEditing || !scEditing.trigger) return null;
@@ -2746,6 +3894,8 @@ function scReindexFilterDrafts(removedIdx) {
 }
 function scDefaultFilter(newKind) {
   if (newKind === "message") return {kind: "message", match: "contains", text: ""};
+  if (newKind === "chat_channel") return {kind: "chat_channel", channel: "all"};
+  if (newKind === "uclient_room") return {kind: "uclient_room", room: ""};
   return {kind: "sender", names: []};
 }
 function scSeedFilterDrafts() {
@@ -2765,6 +3915,8 @@ function scFilterFieldOptions(filterIdx) {
   var opts = [];
   if (!used.sender) opts.push({value: "sender", label: "Sender"});
   if (!used.message) opts.push({value: "message", label: "Message"});
+  if (!used.chat_channel) opts.push({value: "chat_channel", label: "Chat channel"});
+  if (!used.uclient_room) opts.push({value: "uclient_room", label: "UClient room"});
   return opts;
 }
 function scSetFilterKind(filterIdx, newKind) {
@@ -2772,6 +3924,7 @@ function scSetFilterKind(filterIdx, newKind) {
   scEditing.trigger = scPrepareTriggerForEdit(scEditing.trigger);
   var cur = scEditing.trigger.filters[filterIdx];
   if (cur && cur.kind === newKind) return;
+  scPushHistory();
   scCommitFilterRowInputs(filterIdx);
   if (cur) scRememberFilterDraft(filterIdx);
   scEnsureFilterDrafts();
@@ -2785,6 +3938,7 @@ function scSetFilterKind(filterIdx, newKind) {
 function scSetFilterField(filterIdx, field, value) {
   var f = scGetFilterRef(filterIdx);
   if (!f) return;
+  scPushHistory();
   if (field === "seconds" || field === "color") f[field] = Number(value) || 0;
   else f[field] = value;
   scRememberFilterDraft(filterIdx);
@@ -2793,17 +3947,23 @@ function scSetFilterField(filterIdx, field, value) {
 function scAddTriggerFilter() {
   if (!scEditing || !scEditing.trigger) return;
   scEditing.trigger = scPrepareTriggerForEdit(scEditing.trigger);
-  var hasSender = scEditing.trigger.filters.some(function (f) { return f.kind === "sender"; });
-  var hasMessage = scEditing.trigger.filters.some(function (f) { return f.kind === "message"; });
-  if (!hasSender) scEditing.trigger.filters.push({kind: "sender", names: []});
-  else if (!hasMessage) scEditing.trigger.filters.push({kind: "message", match: "contains", text: ""});
-  scUpdateBlockElement("trigger", 0);
+  var kinds = ["sender", "message", "chat_channel", "uclient_room"];
+  for (var i = 0; i < kinds.length; i++) {
+    var k = kinds[i];
+    if (!scEditing.trigger.filters.some(function (f) { return f.kind === k; })) {
+      scPushHistory();
+      scEditing.trigger.filters.push(scDefaultFilter(k));
+      scUpdateBlockElement("trigger", 0);
+      return;
+    }
+  }
 }
 function scRemoveTriggerFilter(filterIdx) {
   if (!scEditing || !scEditing.trigger) return;
   if (filterIdx <= 0) return;
   scEditing.trigger = scPrepareTriggerForEdit(scEditing.trigger);
   if (filterIdx >= scEditing.trigger.filters.length) return;
+  scPushHistory();
   scCommitFilterRowInputs(filterIdx);
   scEditing.trigger.filters.splice(filterIdx, 1);
   scReindexFilterDrafts(filterIdx);
@@ -2815,6 +3975,7 @@ function scGetBlockRef(kind, idx) {
   return kind === "trigger" ? scEditing.trigger : scEditing.actions[idx];
 }
 function scSetBlockField(kind, idx, field, value) {
+  scPushHistory();
   if (kind === "trigger-filter") {
     if (field === "kind") scSetFilterKind(idx, value);
     else scSetFilterField(idx, field, value);
@@ -2824,15 +3985,24 @@ function scSetBlockField(kind, idx, field, value) {
   if (!ref) return;
   if (field === "seconds" || field === "color") ref[field] = Number(value) || 0;
   else if (field === "enabled") ref[field] = value === "on" || value === "true" || value === true;
-  else ref[field] = value;
+  else if (field === "left" && ref.type === "if") {
+    ref.left = value;
+    scNormalizeIfCondition(ref);
+  } else if (field === "op" && ref.type === "if") {
+    ref.op = value;
+    scNormalizeIfCondition(ref);
+  } else ref[field] = value;
   scUpdateBlockElement(kind, idx);
 }
-function scOptionsForField(field) {
+function scOptionsForField(field, actionIdx) {
+  var ref = actionIdx != null && scEditing && scEditing.actions ? scEditing.actions[actionIdx] : null;
   if (field === "channel") return [{value: "all", label: "All"}, {value: "team", label: "Team"}, {value: "uclient", label: "UClient"}];
   if (field === "match") return [{value: "contains", label: "contains"}, {value: "equals", label: "equals"}, {value: "starts_with", label: "starts with"}];
   if (field === "weapon") return [{value: "hammer", label: "Hammer"}, {value: "gun", label: "Gun"}, {value: "shotgun", label: "Shotgun"}, {value: "grenade", label: "Grenade"}, {value: "laser", label: "Laser"}];
   if (field === "target") return [{value: "player", label: "Player"}, {value: "dummy", label: "Dummy"}];
   if (field === "enabled") return [{value: "on", label: "On"}, {value: "off", label: "Off"}];
+  if (field === "property") return [{value: "window_active", label: "Window Active"}];
+  if (field === "op" && ref && ref.type === "if") return scIfOpsForVariable(ref.left || "");
   return [];
 }
 function scOpenEditor(existing) {
@@ -2842,7 +4012,13 @@ function scOpenEditor(existing) {
     trigger: null, actions: []
   };
   if (scEditing.trigger) scEditing.trigger = scPrepareTriggerForEdit(scEditing.trigger);
+  if (scEditing.actions) {
+    scEditing.actions = scRepairIfBlocks(scEditing.actions.map(function (a, i) { return scNormalizeAction(a, i); }));
+  }
   scSeedFilterDrafts();
+  scResetHistory();
+  scRun = null;
+  scUpdatePlayButton();
   $("sc-ed-delete").style.display = existing ? "grid" : "none";
   var ed = $("sc-editor");
   var view = $("shortcuts-view");
@@ -2850,7 +4026,7 @@ function scOpenEditor(existing) {
   view.classList.add("editing");
   ed.style.display = "flex";
   ed.setAttribute("aria-hidden", "false");
-  scSetDrawerY(SC_DRAWER_PEEK, false);
+  scSetDrawerY(scDrawerStage2Ratio(), false);
   scRenderEditor();
   scRenderDrawer();
   requestAnimationFrame(function () {
@@ -2870,7 +4046,8 @@ function scFinishEditorClose() {
 }
 function scCloseEditor() {
   scEndDrag(true);
-  scClosePop();
+  scCloseAllPickers(null);
+  if (scRunActive()) scStopRun(true);
   var ed = $("sc-editor");
   if (ed.style.display !== "flex") {
     scFinishEditorClose();
@@ -2898,50 +4075,122 @@ function scCloseEditor() {
   setTimeout(done, 480);
 }
 var SC_DRAWER_FULL = 0;
-var SC_DRAWER_PEEK = 0.4;
-var SC_DRAWER_MAX = 0.72;
-var SC_DRAWER_RUBBER = 0.12;
+var SC_DRAWER_PEEK = 0;
+var SC_DRAWER_HEIGHT_FRAC = 0.78;
+var SC_DRAWER_HEIGHT_MAX = 520;
+var SC_DRAWER_STAGE2_VISIBLE = 148;
+var SC_DRAWER_CAP_W_MAX = 340;
+var SC_DRAWER_CAP_W_MARGIN = 72;
+var SC_DRAWER_CAP_H = 148;
+var SC_DRAWER_CAP_BOTTOM = 12;
+var SC_DRAWER_RUBBER = 0.16;
 var scDrawerY = SC_DRAWER_PEEK;
 var scDrawerRawY = SC_DRAWER_PEEK;
+var scDrawerFullHeight = 520;
+function scDrawerFullHeightPx(drawer) {
+  var parent = drawer && drawer.parentElement;
+  var parentH = parent && parent.clientHeight ? parent.clientHeight : 560;
+  return Math.min(Math.round(parentH * SC_DRAWER_HEIGHT_FRAC), SC_DRAWER_HEIGHT_MAX);
+}
+function scDrawerCapsuleWidth(parentW) {
+  return Math.min(SC_DRAWER_CAP_W_MAX, Math.max(260, parentW - SC_DRAWER_CAP_W_MARGIN));
+}
+function scDrawerMorphT(ratio, stage2) {
+  if (ratio <= SC_DRAWER_PEEK) return 0;
+  if (ratio >= stage2) return 1;
+  return (ratio - SC_DRAWER_PEEK) / (stage2 - SC_DRAWER_PEEK);
+}
+function scApplyDrawerChrome(drawer, ratio) {
+  if (!drawer) return;
+  var stage2 = scDrawerStage2Ratio();
+  var t = scDrawerMorphT(ratio, stage2);
+  var parent = drawer.parentElement;
+  var parentW = parent && parent.clientWidth ? parent.clientWidth : window.innerWidth;
+  var fullH = scDrawerFullHeightPx(drawer);
+  if (t < 0.02) scDrawerFullHeight = fullH;
+  else if (drawer.offsetHeight > SC_DRAWER_CAP_H + 48) scDrawerFullHeight = fullH;
+  var capW = scDrawerCapsuleWidth(parentW);
+  var leftPx = (parentW - capW) * 0.5 * t;
+  var wPx = parentW - (parentW - capW) * t;
+  var hPx = SC_DRAWER_CAP_H + (fullH - SC_DRAWER_CAP_H) * (1 - t);
+  var rTop = 40 - 12 * (1 - t);
+  var rBot = 28 * t;
+  drawer.style.left = leftPx.toFixed(2) + "px";
+  drawer.style.width = wPx.toFixed(2) + "px";
+  drawer.style.height = hPx.toFixed(2) + "px";
+  drawer.style.bottom = (SC_DRAWER_CAP_BOTTOM * t).toFixed(2) + "px";
+  drawer.style.borderRadius = rTop.toFixed(1) + "px " + rTop.toFixed(1) + "px " + rBot.toFixed(1) + "px " + rBot.toFixed(1) + "px";
+  drawer.style.boxShadow = t > 0.08
+    ? "0 0 0 1px rgba(255,255,255," + (0.07 * t).toFixed(3) + "),0 " + (6 * t).toFixed(1) + "px " + (20 * t).toFixed(1) + "px rgba(255,255,255," + (0.045 * t).toFixed(3) + "),0 " + (14 * t).toFixed(1) + "px " + (40 * t).toFixed(1) + "px rgba(255,255,255," + (0.025 * t).toFixed(3) + ")"
+    : "none";
+  // Full drawer slides on translateY; the capsule stays pinned to bottom (t=1 -> no slide).
+  var slide = ratio * (1 - t);
+  drawer.style.transform = "translateY(" + (slide * 100).toFixed(1) + "%)";
+  drawer.style.setProperty("--sc-drawer-t", t.toFixed(4));
+  drawer.classList.toggle("sc-drawer-capsule", t > 0.88);
+}
+function scDrawerStage2Ratio() {
+  var drawer = $("sc-drawer");
+  var h = scDrawerFullHeightPx(drawer) || scDrawerFullHeight || 520;
+  return Math.min(0.975, Math.max(0.12, 1 - SC_DRAWER_STAGE2_VISIBLE / h));
+}
 function scRubberDrawerRatio(raw) {
+  var stage2 = scDrawerStage2Ratio();
   if (raw < SC_DRAWER_FULL) {
     var pullUp = SC_DRAWER_FULL - raw;
     var giveUp = SC_DRAWER_RUBBER * (1 - 1 / (1 + pullUp * 4.5));
     return SC_DRAWER_FULL - giveUp;
   }
-  if (raw > SC_DRAWER_MAX) {
-    var pullDown = raw - SC_DRAWER_MAX;
+  if (raw > stage2) {
+    var pullDown = raw - stage2;
     var giveDown = SC_DRAWER_RUBBER * (1 - 1 / (1 + pullDown * 4.5));
-    return SC_DRAWER_MAX + giveDown;
+    return stage2 + giveDown;
   }
   return raw;
 }
 function scSetDrawerY(rawRatio, animate) {
   var drawer = $("sc-drawer");
+  var stage2 = scDrawerStage2Ratio();
   scDrawerRawY = rawRatio;
   var ratio = animate
-    ? Math.max(SC_DRAWER_FULL, Math.min(SC_DRAWER_MAX, rawRatio))
+    ? Math.max(SC_DRAWER_FULL, Math.min(stage2, rawRatio))
     : scRubberDrawerRatio(rawRatio);
   scDrawerY = ratio;
   drawer.classList.toggle("dragging", !animate);
-  drawer.style.transform = "translateY(" + (ratio * 100).toFixed(1) + "%)";
+  scApplyDrawerChrome(drawer, ratio);
   if (animate) drawer.classList.remove("dragging");
 }
 function scSnapDrawerY() {
   var raw = scDrawerRawY;
-  var mid = (SC_DRAWER_PEEK + SC_DRAWER_FULL) * 0.5;
-  scSetDrawerY(raw < mid ? SC_DRAWER_FULL : SC_DRAWER_PEEK, true);
+  var stage2 = scDrawerStage2Ratio();
+  var mid = (SC_DRAWER_FULL + stage2) * 0.5;
+  if (raw < mid) scSetDrawerY(SC_DRAWER_FULL, true);
+  else scSetDrawerY(stage2, true);
+}
+function scSnapDrawerToStage2() {
+  requestAnimationFrame(function () {
+    scSetDrawerY(scDrawerStage2Ratio(), true);
+  });
+}
+function scDrawerAtStage2() {
+  return scDrawerMorphT(scDrawerY, scDrawerStage2Ratio()) >= 0.99;
+}
+function scExpandDrawerToPeekFromSearch() {
+  if (!scDrawerAtStage2()) return;
+  scSetDrawerY(SC_DRAWER_FULL, true);
 }
 function scUpdateDrawerDrag(clientY) {
   if (!scDrag || scDrag.type !== "drawer") return;
   var drawer = $("sc-drawer");
-  var h = drawer.offsetHeight || 1;
+  var h = scDrawerFullHeightPx(drawer) || scDrawerFullHeight || 1;
   var delta = (clientY - scDrag.startY) / h;
   if (Math.abs(clientY - scDrag.startY) > 3) scDrag.moved = true;
   scSetDrawerY(scDrag.startRatio + delta, false);
 }
 function scAddCatalogBlock(kind, id) {
   if (!scEditing) return;
+  scPushHistory();
+  var added = false;
   if (kind === "trigger") {
     var trig = SC_TRIGGERS.find(function (t) { return t.id === id; });
     if (!trig) return;
@@ -2950,53 +4199,75 @@ function scAddCatalogBlock(kind, id) {
     var existing = $("sc-ed-canvas").querySelector('.sc-block[data-block-kind="trigger"]');
     if (existing) scUpdateBlockElement("trigger", 0);
     else scAppendBlockElement("trigger", 0);
-    return;
+    added = true;
+  } else {
+    var act = SC_ACTIONS.find(function (a) { return a.id === id; });
+    if (!act) return;
+    if (!scEditing.actions) scEditing.actions = [];
+    var copy = JSON.parse(JSON.stringify(act.defaults));
+    if (copy.type === "text") copy.as = scNextTextVarName();
+    if (copy.type === "if") {
+      var startIdx = scEditing.actions.length;
+      scEditing.actions.push(copy);
+      scEditing.actions.push({type: "otherwise"});
+      scEditing.actions.push({type: "end_if"});
+      scRenderEditor({enterActionIdx: startIdx});
+    } else {
+      scEditing.actions.push(copy);
+      scAppendBlockElement("action", scEditing.actions.length - 1);
+    }
+    added = true;
   }
-  var act = SC_ACTIONS.find(function (a) { return a.id === id; });
-  if (!act) return;
-  if (!scEditing.actions) scEditing.actions = [];
-  scEditing.actions.push(JSON.parse(JSON.stringify(act.defaults)));
-  scAppendBlockElement("action", scEditing.actions.length - 1);
+  if (added) scSnapDrawerToStage2();
 }
-function scInsertCatalogBlock(kind, id, insertIdx) {
-  if (!scEditing) return;
-  if (kind === "trigger") {
-    scAddCatalogBlock(kind, id);
-    return;
-  }
-  var act = SC_ACTIONS.find(function (a) { return a.id === id; });
-  if (!act) return;
-  if (!scEditing.actions) scEditing.actions = [];
-  var item = JSON.parse(JSON.stringify(act.defaults));
-  insertIdx = Math.max(0, Math.min(insertIdx, scEditing.actions.length));
-  scEditing.actions.splice(insertIdx, 0, item);
-  scInsertBlockElementAt("action", insertIdx, true);
+function scMoveIfGroup(fromIfIdx, toIdx) {
+  if (!scEditing || !scEditing.actions) return;
+  var endIdx = scFindMatchingEndIf(scEditing.actions, fromIfIdx);
+  if (endIdx < 0) return scMoveAction(fromIfIdx, toIdx);
+  scPushHistory();
+  var len = endIdx - fromIfIdx + 1;
+  var group = scEditing.actions.splice(fromIfIdx, len);
+  if (toIdx > fromIfIdx) toIdx -= len;
+  toIdx = Math.max(0, Math.min(toIdx, scEditing.actions.length));
+  Array.prototype.splice.apply(scEditing.actions, [toIdx, 0].concat(group));
+  scRenderEditor();
 }
 function scMoveAction(fromIdx, toIdx) {
   if (!scEditing || !scEditing.actions) return;
   if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0) return;
   if (fromIdx >= scEditing.actions.length) return;
+  var act = scEditing.actions[fromIdx];
+  if (act.type === "otherwise" || act.type === "end_if") return;
+  scPushHistory();
+  if (act.type === "if") {
+    scMoveIfGroup(fromIdx, toIdx);
+    return;
+  }
   toIdx = Math.max(0, Math.min(toIdx, scEditing.actions.length - 1));
-  var canvas = $("sc-ed-canvas");
-  var block = canvas.querySelector('.sc-block[data-block-kind="action"][data-block-idx="' + fromIdx + '"]');
-  if (!block) { scRenderEditor(); return; }
   var item = scEditing.actions.splice(fromIdx, 1)[0];
   scEditing.actions.splice(toIdx, 0, item);
-  block.remove();
-  var blocks = canvas.querySelectorAll('.sc-block[data-block-kind="action"]');
-  if (toIdx >= blocks.length) canvas.appendChild(block);
-  else canvas.insertBefore(block, blocks[toIdx]);
-  scReindexActionBlocks(0);
+  scRenderEditor();
 }
-function scCanvasInsertIndex(clientY) {
+function scCanvasInsertIndex(clientY, dragCtx) {
   var canvas = $("sc-ed-canvas");
   var blocks = canvas.querySelectorAll(".sc-block[data-block-kind='action']");
   if (!blocks.length) return 0;
+  var insertIdx = Number(blocks[blocks.length - 1].dataset.blockIdx) + 1;
   for (var i = 0; i < blocks.length; i++) {
     var r = blocks[i].getBoundingClientRect();
-    if (clientY < r.top + r.height * 0.5) return i;
+    if (clientY < r.top + r.height * 0.5) {
+      insertIdx = Number(blocks[i].dataset.blockIdx);
+      break;
+    }
   }
-  return blocks.length;
+  if (dragCtx && dragCtx.groupEnd != null && dragCtx.groupEnd >= 0) {
+    var from = dragCtx.idx;
+    var to = dragCtx.groupEnd;
+    if (insertIdx > from && insertIdx <= to) {
+      insertIdx = insertIdx <= Math.floor((from + to) / 2) ? from : to + 1;
+    }
+  }
+  return insertIdx;
 }
 function scBindCanvasDropGap(insertIdx) {
   var canvas = $("sc-ed-canvas");
@@ -3010,8 +4281,15 @@ function scBindCanvasDropGap(insertIdx) {
   var gap = document.createElement("div");
   gap.className = "sc-drop-gap";
   var blocks = canvas.querySelectorAll(".sc-block[data-block-kind='action']");
-  if (!blocks.length || insertIdx >= blocks.length) canvas.appendChild(gap);
-  else canvas.insertBefore(gap, blocks[insertIdx]);
+  var target = null;
+  for (var i = 0; i < blocks.length; i++) {
+    if (Number(blocks[i].dataset.blockIdx) >= insertIdx) {
+      target = blocks[i];
+      break;
+    }
+  }
+  if (!target) canvas.appendChild(gap);
+  else canvas.insertBefore(gap, target);
 }
 function scEnsureDragGhost(text) {
   if (!scDragGhost) {
@@ -3030,13 +4308,13 @@ function scEndDrag(cancel) {
     scDrag = null;
     return;
   }
-  if (scDrag.type === "block" && !cancel && scDrag.overIdx != null && scDrag.overIdx !== scDrag.idx) {
-    scMoveAction(scDrag.idx, scDrag.overIdx);
-  } else if (scDrag.type === "catalog" && !cancel) {
-    if (scDrag.moved && scDrag.overCanvas) {
-      scInsertCatalogBlock(scDrag.kind, scDrag.id, scDrag.insertIdx == null ? (scEditing.actions || []).length : scDrag.insertIdx);
-    } else if (!scDrag.moved) {
-      scAddCatalogBlock(scDrag.kind, scDrag.id);
+  if (scDrag.type === "block" && !cancel && scDrag.overIdx != null) {
+    var moved = scDrag.overIdx !== scDrag.idx;
+    if (scDrag.groupEnd != null && scDrag.groupEnd >= 0) {
+      moved = moved && !(scDrag.overIdx > scDrag.idx && scDrag.overIdx <= scDrag.groupEnd + 1);
+      if (moved) scMoveIfGroup(scDrag.idx, scDrag.overIdx);
+    } else if (moved) {
+      scMoveAction(scDrag.idx, scDrag.overIdx);
     }
   }
   if (scDrag.el) scDrag.el.classList.remove("dragging");
@@ -3055,18 +4333,9 @@ document.addEventListener("pointermove", function (e) {
   scEnsureDragGhost(scDrag.label || "");
   scDragGhost.style.left = e.clientX + "px";
   scDragGhost.style.top = e.clientY + "px";
-  var canvas = $("sc-ed-canvas");
-  var cr = canvas.getBoundingClientRect();
-  var overCanvas = e.clientX >= cr.left && e.clientX <= cr.right && e.clientY >= cr.top && e.clientY <= cr.bottom;
   if (scDrag.type === "block") {
-    scDrag.overIdx = scCanvasInsertIndex(e.clientY);
+    scDrag.overIdx = scCanvasInsertIndex(e.clientY, scDrag);
     scBindCanvasDropGap(scDrag.overIdx);
-    return;
-  }
-  if (scDrag.type === "catalog") {
-    scDrag.overCanvas = overCanvas;
-    scDrag.insertIdx = overCanvas ? scCanvasInsertIndex(e.clientY) : null;
-    scBindCanvasDropGap(scDrag.insertIdx);
   }
 });
 document.addEventListener("pointerup", function () { scEndDrag(false); });
@@ -3091,7 +4360,8 @@ function scRenderDrawer() {
   if (scDrawerFilter === "all" || scDrawerFilter === "actions") {
     SC_ACTION_SECTIONS.forEach(function (sec) {
       var rows = SC_ACTIONS.filter(function (a) {
-        return scCatalogMatches(a, q, false);
+        if (a.id === "otherwise" || a.id === "end_if") return false;
+        return (a.category || "actions") === sec.id && scCatalogMatches(a, q, false);
       });
       if (!rows.length) return;
       html += '<div class="sc-drawer-section">' + esc(sec.label) + '</div>';
@@ -3108,6 +4378,7 @@ $("sc-ed-save").addEventListener("click", function () {
   if (!scEditing.actions || !scEditing.actions.length) { scToast("Add at least one action"); return; }
   scCommitAllPillInputs($("sc-ed-canvas"));
   scEditing.trigger = scCleanTriggerForSave(scEditing.trigger);
+  scEditing.actions = (scEditing.actions || []).map(scCleanActionForSave);
   scEditing.name = $("sc-ed-title").value.trim() || scSummaryTrigger(scEditing.trigger);
   var idx = shortcutsLocal.findIndex(function (s) { return s.id === scEditing.id; });
   if (idx >= 0) shortcutsLocal[idx] = JSON.parse(JSON.stringify(scEditing));
@@ -3135,53 +4406,55 @@ $("sc-drawer-grab").addEventListener("pointerdown", function (e) {
 $("sc-drawer-grab").addEventListener("pointermove", function (e) {
   scUpdateDrawerDrag(e.clientY);
 });
-$("sc-drawer-search").addEventListener("input", scRenderDrawer);
+$("sc-ed-title").addEventListener("focusin", function () { scTitleDirty = false; });
+$("sc-ed-title").addEventListener("input", function (e) {
+  if (!scEditing) return;
+  if (!scTitleDirty) {
+    scTitleDirty = true;
+    scPushHistory();
+  }
+  scEditing.name = e.target.value;
+});
+$("sc-tb-undo").addEventListener("click", scUndo);
+$("sc-tb-redo").addEventListener("click", scRedo);
+$("sc-tb-play").addEventListener("click", function () {
+  if (!scEditing) return;
+  if (scRunActive()) {
+    scStopRun(true);
+    return;
+  }
+  if (!lastState || !lastState.gameRunning) { scToast("Start the game first"); return; }
+  scCommitAllPillInputs($("sc-ed-canvas"));
+  var actions = (scEditing.actions || []).map(scCleanActionForSave);
+  if (!actions.length) { scToast("Add at least one action"); return; }
+  scRun = {runId: scUuid(), status: "running", step: -1, total: actions.length, waitRemaining: null, results: []};
+  scApplyRunState();
+  scUpdatePlayButton();
+  send({cmd: "automationRun", runId: scRun.runId, actions: actions});
+});
+$("sc-drawer-search").addEventListener("input", function (e) {
+  if ((e.target.value || "").length > 0) scExpandDrawerToPeekFromSearch();
+  scRenderDrawer();
+});
 $("sc-drawer-chips").addEventListener("click", function (e) {
   var chip = e.target.closest("[data-chip]");
   if (!chip) return;
   scDrawerFilter = chip.dataset.chip;
   scRenderDrawer();
 });
-$("sc-drawer-list").addEventListener("pointerdown", function (e) {
+$("sc-drawer-list").addEventListener("click", function (e) {
   var row = e.target.closest(".sc-catalog");
-  if (!row || !scEditing || e.button !== 0) return;
-  scDrag = {
-    type: "catalog", kind: row.dataset.addKind, id: row.dataset.addId,
-    label: (function () {
-      var kind = row.dataset.addKind;
-      var id = row.dataset.addId;
-      if (kind === "trigger") {
-        var t = SC_TRIGGERS.find(function (x) { return x.id === id; });
-        return t ? (t.whenHint || t.title) : "When";
-      }
-      var a = SC_ACTIONS.find(function (x) { return x.id === id; });
-      return a ? (a.title || a.hint) : "Action";
-    })(),
-    el: row, moved: false, startX: e.clientX, startY: e.clientY,
-    overCanvas: false, insertIdx: null
-  };
-  row.setPointerCapture(e.pointerId);
-  e.preventDefault();
-});
-$("sc-drawer-list").addEventListener("pointermove", function (e) {
-  if (!scDrag || scDrag.type !== "catalog") return;
-  if (!scDrag.moved && (Math.abs(e.clientX - scDrag.startX) > 4 || Math.abs(e.clientY - scDrag.startY) > 4)) {
-    scDrag.moved = true;
-    if (scDrag.el) scDrag.el.classList.add("dragging");
-    scEnsureDragGhost(scDrag.label);
-  }
-});
-$("sc-drawer-list").addEventListener("pointerup", function (e) {
-  var row = e.target.closest(".sc-catalog");
-  if (!row) return;
-  try { row.releasePointerCapture(e.pointerId); } catch (err) {}
+  if (!row || !scEditing) return;
+  scAddCatalogBlock(row.dataset.addKind, row.dataset.addId);
 });
 $("sc-ed-canvas").addEventListener("pointerdown", function (e) {
   var grip = e.target.closest(".sc-block-grip[data-drag-kind='action']");
   if (!grip || !scEditing || e.button !== 0) return;
   var idx = Number(grip.dataset.dragIdx);
   var block = grip.closest(".sc-block");
-  scDrag = {type: "block", idx: idx, label: block ? block.textContent.trim().slice(0, 48) : "Action", el: block, overIdx: idx};
+  var act = scEditing.actions[idx];
+  var groupEnd = act && act.type === "if" ? scFindMatchingEndIf(scEditing.actions, idx) : -1;
+  scDrag = {type: "block", idx: idx, groupEnd: groupEnd, label: block ? block.textContent.trim().slice(0, 48) : "Action", el: block, overIdx: idx};
   if (block) block.classList.add("dragging");
   scEnsureDragGhost(scDrag.label);
   grip.setPointerCapture(e.pointerId);
@@ -3189,47 +4462,99 @@ $("sc-ed-canvas").addEventListener("pointerdown", function (e) {
 });
 $("sc-ed-canvas").addEventListener("focusin", function (e) {
   var input = e.target.closest("input.sc-pill.input");
-  if (!input) return;
-  input.dataset.scOrig = input.value;
-  scFitPillInput(input);
-  requestAnimationFrame(function () {
-    var len = input.value.length;
-    try { input.setSelectionRange(len, len); } catch (err) {}
-  });
+  var textarea = e.target.closest("textarea.sc-text-body-input");
+  if (textarea) {
+    textarea.dataset.scOrig = textarea.value;
+  } else if (input) {
+    input.dataset.scOrig = input.value;
+    scFitPillInput(input);
+    requestAnimationFrame(function () {
+      var len = input.value.length;
+      try { input.setSelectionRange(len, len); } catch (err) {}
+    });
+  }
+  var smartField = e.target.closest(".sc-smart-field");
+  if (smartField && e.target.closest(".sc-smart-trigger")) {
+    var trig = e.target.closest(".sc-smart-trigger");
+    if (trig && (trig.tagName === "INPUT" || trig.tagName === "TEXTAREA")) {
+      if (String(trig.value || "").length === 0) scSmartFieldShowMenu(smartField, true);
+      else scCloseAllPickers(null);
+      return;
+    }
+    scSmartFieldShowMenu(smartField);
+  }
 });
 $("sc-ed-canvas").addEventListener("input", function (e) {
+  var textarea = e.target.closest("textarea.sc-text-body-input");
   var input = e.target.closest("input.sc-pill.input");
-  if (input) scFitPillInput(input);
+  if (!input && !textarea) return;
+  if (textarea) input = textarea;
+  if (!input.dataset.scDirty) {
+    input.dataset.scDirty = "1";
+    scPushHistory();
+  }
+  if (input.dataset.input === "messageText") {
+    var ref = scGetBlockRef(input.dataset.kind, Number(input.dataset.idx || 0));
+    if (ref) {
+      scNormalizeAction(ref, Number(input.dataset.idx || 0));
+      ref.messageMode = "text";
+      ref.messageText = input.value;
+    }
+  }
+  if (input.dataset.input === "textBody") {
+    var tRef = scGetBlockRef(input.dataset.kind, Number(input.dataset.idx || 0));
+    if (tRef) {
+      scNormalizeAction(tRef, Number(input.dataset.idx || 0));
+      tRef.parts = [{mode: "text", text: input.value}];
+    }
+  }
+  if (input.classList.contains("sc-smart-trigger")) {
+    var field = input.closest(".sc-smart-field");
+    if (String(input.value || "").length === 0) scSmartFieldShowMenu(field, true);
+    else scSmartFieldHideMenu(field);
+  }
+  scFitPillInput(input);
 });
 $("sc-ed-canvas").addEventListener("focusout", function (e) {
   var input = e.target.closest("input.sc-pill.input");
-  if (!input) return;
-  scCommitPillInput(input, false);
-  scFitPillInput(input);
+  var textarea = e.target.closest("textarea.sc-text-body-input");
+  if (textarea) {
+    scCommitPillInput(textarea, false);
+  } else if (input) {
+    scCommitPillInput(input, false);
+    scFitPillInput(input);
+  }
+  var smartField = e.target.closest(".sc-smart-field");
+  if (!smartField) return;
+  clearTimeout(scSmartBlurTimer);
+  scSmartBlurTimer = setTimeout(function () {
+    var active = document.activeElement;
+    if (smartField.contains(active)) return;
+    scSmartFieldHideMenu(smartField);
+  }, 130);
 });
 $("sc-ed-canvas").addEventListener("keydown", function (e) {
   var input = e.target.closest("input.sc-pill.input");
   if (!input) return;
-  if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+  if (e.key === "Enter" && input.tagName !== "TEXTAREA") { e.preventDefault(); input.blur(); }
   if (e.key === "Escape") {
     e.preventDefault();
     scCommitPillInput(input, true);
     input.blur();
   }
-  if (e.key === "Backspace" && input.dataset.input === "senderName" && !input.value) {
-    var nameIdx = Number(input.dataset.nameIdx || 0);
-    if (nameIdx > 0) {
-      e.preventDefault();
-      var f = scGetFilterRef(Number(input.dataset.idx || 0));
-      if (f && f.names) {
-        f.names.splice(nameIdx, 1);
-        while (f.names.length > 1 && f.names[f.names.length - 1] === "") f.names.pop();
-        scUpdateBlockElement("trigger", 0);
-      }
-    }
+  if (e.key === "Backspace" && scHandleMultiValueBackspace(input)) {
+    e.preventDefault();
   }
 });
 $("sc-ed-canvas").addEventListener("mousedown", function (e) {
+  if (e.target.closest(".sc-smart-menu-item")) e.preventDefault();
+  var textTrig = e.target.closest("input.sc-smart-trigger, textarea.sc-smart-trigger");
+  if (textTrig) {
+    var sf = textTrig.closest(".sc-smart-field");
+    if (sf && String(textTrig.value || "").length === 0) scSmartFieldShowMenu(sf, true);
+    else scCloseAllPickers(null);
+    return;
+  }
   if (e.target.closest("input.sc-pill.input")) e.stopPropagation();
 });
 $("sc-ed-canvas").addEventListener("click", function (e) {
@@ -3244,9 +4569,9 @@ $("sc-ed-canvas").addEventListener("click", function (e) {
     scAddSenderNameSlot(Number(addSenderName.dataset.addSenderName));
     return;
   }
-  var remSenderName = e.target.closest("[data-remove-sender-name]");
-  if (remSenderName) {
-    scRemoveSenderName(Number(remSenderName.dataset.removeSenderName), Number(remSenderName.dataset.nameIdx));
+  var addServerTarget = e.target.closest("[data-add-server-target]");
+  if (addServerTarget) {
+    scAddServerTargetSlot();
     return;
   }
   var remFilter = e.target.closest("[data-remove-filter]");
@@ -3259,15 +4584,41 @@ $("sc-ed-canvas").addEventListener("click", function (e) {
     scRemoveActionBlock(Number(del.dataset.delAction));
     return;
   }
+  var menuItem = e.target.closest(".sc-smart-menu-item");
+  if (menuItem) {
+    var field = menuItem.closest(".sc-smart-field");
+    scApplySmartPick(field, menuItem.dataset.pickType, menuItem.dataset.pickId);
+    return;
+  }
+  var smartTrigger = e.target.closest(".sc-smart-trigger");
+  if (smartTrigger) {
+    var smartField = smartTrigger.closest(".sc-smart-field");
+    if (!smartField) return;
+    if (smartTrigger.tagName === "BUTTON") {
+      scSmartFieldShowMenu(smartField, true);
+      return;
+    }
+    if ((smartTrigger.tagName === "INPUT" || smartTrigger.tagName === "TEXTAREA") &&
+        String(smartTrigger.value || "").length === 0) {
+      scSmartFieldShowMenu(smartField, true);
+      return;
+    }
+  }
+  if (!e.target.closest(".sc-smart-field") && !e.target.closest(".sc-pop") &&
+      !e.target.closest(".sc-pill[data-field]") && !e.target.closest(".sc-smart-menu-item")) {
+    scCloseAllPickers(null);
+  }
   var pill = e.target.closest(".sc-pill");
-  if (!pill || pill.tagName === "INPUT") return;
+  if (!pill || pill.tagName === "INPUT" || pill.classList.contains("sc-smart-trigger")) return;
   var kind = pill.dataset.kind;
   var idx = Number(pill.dataset.idx || 0);
   var field = pill.dataset.field;
   var cur = scGetBlockRef(kind, idx);
   var curVal = cur ? cur[field] : null;
   if (field === "enabled") curVal = cur && cur.enabled ? "on" : "off";
-  var opts = field === "kind" ? scFilterFieldOptions(idx) : scOptionsForField(field);
+  if (field === "op" && cur && cur.type === "if") curVal = cur.op;
+  var opts = field === "kind" ? scFilterFieldOptions(idx) : scOptionsForField(field, idx);
+  if (!opts.length) return;
   scOpenPop(pill, opts, function (val) { scSetBlockField(kind, idx, field, val); }, scPopTitleForField(field), curVal);
 });
 $("sc-list").addEventListener("click", function (e) {
@@ -3445,6 +4796,9 @@ window.__setState = function (st) {
   for (var i = 0; i < all.length; i++) if (all[i].online) online++;
   $("fr-count").textContent = online + " online";
   renderFriends(st);
+  // Nothing will report progress once the game is gone, so drop the run.
+  if (scRunActive() && !st.gameRunning) scStopRun(true);
+  scUpdatePlayButton();
 };
 
 window.addEventListener("resize", moveIndicator);
