@@ -2822,6 +2822,13 @@ function scSmartFieldHideMenu(fieldEl) {
     scSmartMenuPortalDetach(fieldEl, menu);
   }
 }
+function scHandleSmartMenuPick(menuItem) {
+  if (!menuItem) return;
+  var pickMenu = menuItem.closest(".sc-smart-menu");
+  var field = (pickMenu && pickMenu._scPortalField) || menuItem.closest(".sc-smart-field");
+  if (!field) return;
+  scApplySmartPick(field, menuItem.dataset.pickType, menuItem.dataset.pickId);
+}
 function scApplySmartPick(fieldEl, pickType, pickId) {
   if (!fieldEl) return;
   var slot = fieldEl.dataset.smartSlot;
@@ -3033,7 +3040,14 @@ function scOpenPop(anchor, options, onPick, currentVal) {
     scClosePop();
   });
 }
+document.addEventListener("mousedown", function (e) {
+  var menuItem = e.target.closest(".sc-smart-menu-item");
+  if (!menuItem) return;
+  e.preventDefault();
+  scHandleSmartMenuPick(menuItem);
+}, true);
 document.addEventListener("click", function (e) {
+  if (e.target.closest(".sc-smart-menu-item")) return;
   if (e.target.closest(".sc-pop") || e.target.closest(".sc-smart-menu")) return;
   if (e.target.closest(".sc-smart-trigger")) return;
   if (e.target.closest(".sc-pill[data-field]")) return;
@@ -4606,6 +4620,8 @@ $("sc-ed-canvas").addEventListener("focusout", function (e) {
   scSmartBlurTimer = setTimeout(function () {
     var active = document.activeElement;
     if (smartField.contains(active)) return;
+    var portaled = smartField._scMenuPortaled;
+    if (portaled && (portaled.contains(active) || portaled.matches(":hover"))) return;
     scSmartFieldHideMenu(smartField);
   }, 130);
 });
@@ -4662,9 +4678,7 @@ $("sc-ed-canvas").addEventListener("click", function (e) {
   }
   var menuItem = e.target.closest(".sc-smart-menu-item");
   if (menuItem) {
-    var pickMenu = menuItem.closest(".sc-smart-menu");
-    var field = (pickMenu && pickMenu._scPortalField) || menuItem.closest(".sc-smart-field");
-    scApplySmartPick(field, menuItem.dataset.pickType, menuItem.dataset.pickId);
+    scHandleSmartMenuPick(menuItem);
     return;
   }
   var smartTrigger = e.target.closest(".sc-smart-trigger");
