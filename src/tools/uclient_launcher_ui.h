@@ -172,18 +172,18 @@ body{
   #sc-editor{transition:opacity .22s ease;transform:none!important;opacity:0}
   #sc-editor.on{opacity:1}
 }
-.sc-ed-head{display:flex;align-items:center;gap:10px;padding:12px 14px 12px 8px;background:var(--sc-surface);border-bottom:1px solid rgba(255,255,255,.06);flex:0 0 auto}
-.sc-ed-back,.sc-ed-icon{width:40px;height:40px;border:0;border-radius:50%;padding:0;display:grid;place-items:center;cursor:pointer;transition:transform 80ms ease-out,background .15s var(--ease),color .15s var(--ease)}
+.sc-ed-head{display:flex;align-items:center;gap:8px;padding:10px 12px 10px 10px;background:var(--sc-surface);border-bottom:1px solid rgba(255,255,255,.06);flex:0 0 auto}
+.sc-ed-back,.sc-ed-icon{width:40px;height:40px;min-width:40px;min-height:40px;aspect-ratio:1;border:0;border-radius:50%;padding:0;display:grid;place-items:center;cursor:pointer;flex:0 0 auto;transition:transform 80ms ease-out,background .15s var(--ease),color .15s var(--ease),opacity .15s var(--ease)}
 .sc-ed-back{background:transparent;color:var(--dim)}
 .sc-ed-back:hover{background:rgba(255,255,255,.07);color:#fff}
 .sc-ed-back:active,.sc-ed-icon:active{transform:scale(.92)}
 .sc-ed-back svg,.sc-ed-icon svg{width:20px;height:20px;display:block;flex:0 0 auto;overflow:visible}
 .sc-ed-delete svg{width:18px;height:18px}
-.sc-ed-back svg{transform:scaleX(-1)}
 .sc-ed-title{flex:1;border:0;background:transparent;font:700 17px/1.2 inherit;letter-spacing:-.02em;color:var(--text);outline:none;min-width:0}
 .sc-ed-title::placeholder{color:var(--muted)}
-.sc-ed-save{background:rgba(124,108,240,.24);color:var(--accent-hi);box-shadow:inset 0 0 0 1px rgba(124,108,240,.28)}
-.sc-ed-save:hover{background:rgba(124,108,240,.36)}
+.sc-ed-trailing{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.sc-ed-save{background:rgba(124,108,240,.24);color:var(--accent-hi);box-shadow:none}
+.sc-ed-save:hover{background:rgba(124,108,240,.36);box-shadow:none}
 .sc-ed-delete{background:rgba(255,59,48,.14);color:#ff6b63;display:none}
 .sc-ed-delete:hover{background:rgba(255,59,48,.24)}
 .sc-ed-body{flex:1;position:relative;min-height:0;display:flex;flex-direction:column}
@@ -201,16 +201,13 @@ body{
 @keyframes scBlockIn{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
 .sc-block.dragging{opacity:.35;transform:scale(.98)}
 .sc-block.drop-target{box-shadow:0 0 0 2px var(--accent),0 8px 24px rgba(124,108,240,.25)}
-.sc-if-group{position:relative;margin-bottom:10px;padding-left:20px}
+.sc-if-group{position:relative;margin-bottom:10px;padding-left:0}
 .sc-if-group.sc-enter{animation:scIfGroupIn .36s var(--spring) both}
-.sc-if-group::before{content:"";position:absolute;left:8px;top:26px;bottom:26px;width:2px;background:linear-gradient(180deg,rgba(124,108,240,.58),rgba(90,164,240,.38));border-radius:99px;opacity:.82;transition:opacity .22s var(--ease),transform .22s var(--spring);transform-origin:top center}
-.sc-if-group:hover::before{opacity:1}
+.sc-if-group .sc-if-group{margin-left:16px;width:calc(100% - 16px)}
 .sc-if-group .sc-block{margin-bottom:8px}
 .sc-if-group .sc-block:last-child{margin-bottom:0}
 .sc-if-group .sc-block.sc-if-branch{margin-left:16px;position:relative}
 .sc-if-group .sc-block.sc-if-branch.sc-enter{animation:scIfBranchIn .32s var(--spring) both}
-.sc-if-group .sc-block.sc-if-branch.sc-enter::before{content:"";position:absolute;left:-16px;top:50%;width:12px;height:2px;background:rgba(124,108,240,.38);border-radius:99px;transform:translateY(-50%) scaleX(0);transform-origin:left center;animation:scIfBranchArm .28s var(--spring) .06s both}
-.sc-if-group .sc-block.sc-if-branch::before{content:"";position:absolute;left:-16px;top:50%;width:12px;height:2px;background:rgba(124,108,240,.38);border-radius:99px;transform:translateY(-50%) scaleX(1)}
 .sc-if-group .sc-block.sc-if-otherwise{border-color:rgba(90,164,240,.24);background:rgba(90,164,240,.06)}
 @keyframes scIfGroupIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @keyframes scIfBranchIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
@@ -282,6 +279,8 @@ body{
 .sc-pill.input:focus{background:rgba(124,108,240,.44);box-shadow:none;outline:none;transform:none;text-overflow:clip;overflow-x:auto;color:var(--sc-pill-text-nested)}
 .sc-pill-measure{position:absolute;left:-9999px;top:0;visibility:hidden;white-space:pre;pointer-events:none;height:0;overflow:hidden}
 .sc-drop-gap{height:52px;border-radius:var(--sc-r-block);border:2px dashed rgba(124,108,240,.55);background:rgba(124,108,240,.08);margin-bottom:12px;animation:scGapPulse .8s var(--spring) infinite alternate}
+.sc-if-group .sc-drop-gap{margin-bottom:8px}
+.sc-if-group .sc-drop-gap.sc-drop-gap-in-if{margin-left:16px;width:calc(100% - 16px)}
 @keyframes scGapPulse{from{opacity:.55}to{opacity:1}}
 .sc-block.sc-run-current{box-shadow:0 0 0 2px rgba(124,108,240,.9),0 10px 28px rgba(124,108,240,.26);background:rgba(124,108,240,.1)}
 .sc-block.sc-run-waiting{isolation:isolate;overflow:hidden}
@@ -300,10 +299,11 @@ body{
 .sc-drawer.dragging{transition:none}
 .sc-drawer-chips,.sc-drawer-list{opacity:calc(1 - var(--sc-drawer-t));pointer-events:none;transition:opacity .28s var(--ease)}
 .sc-drawer:not(.sc-drawer-capsule) .sc-drawer-chips,.sc-drawer:not(.sc-drawer-capsule) .sc-drawer-list{pointer-events:auto}
-.sc-drawer.sc-drawer-capsule .sc-drawer-search{margin-left:12px;margin-right:12px}
+.sc-drawer.sc-drawer-capsule .sc-drawer-grab{padding:6px 0 2px}
+.sc-drawer.sc-drawer-capsule .sc-drawer-search{margin:0 12px 4px;padding:9px 12px}
 .sc-drawer.sc-drawer-capsule .sc-drawer-chips,.sc-drawer.sc-drawer-capsule .sc-drawer-list{display:none}
 .sc-drawer-toolbar{display:flex;align-items:center;justify-content:space-between;gap:6px;flex:0 0 auto;max-height:calc(var(--sc-drawer-t) * 54px);padding:calc(var(--sc-drawer-t) * 2px) calc(var(--sc-drawer-t) * 18px) calc(var(--sc-drawer-t) * 12px);overflow:hidden;opacity:var(--sc-drawer-t);pointer-events:none;transition:max-height .34s var(--spring),padding .34s var(--spring),opacity .28s var(--ease)}
-.sc-drawer.sc-drawer-capsule .sc-drawer-toolbar{max-height:54px;padding:2px 18px 12px;opacity:1;pointer-events:auto}
+.sc-drawer.sc-drawer-capsule .sc-drawer-toolbar{max-height:40px;padding:0 14px 4px;opacity:1;pointer-events:auto}
 .sc-tb-btn{width:40px;height:40px;border:0;border-radius:50%;background:transparent;color:var(--dim);cursor:pointer;padding:0;display:grid;place-items:center;transition:background .14s var(--ease),color .14s var(--ease),transform 80ms ease-out}
 .sc-tb-btn svg{width:21px;height:21px;display:block;flex:0 0 auto}
 .sc-tb-btn:hover:not(:disabled){background:rgba(255,255,255,.08);color:#fff}
@@ -381,7 +381,8 @@ body{
 .sc-pop .sc-smart-menu-inner{min-width:160px;max-width:min(260px,72vw)}
 .sc-pop .sc-smart-menu-item.on{background:rgba(124,108,240,.2);color:var(--accent-hi)}
 @supports (corner-shape:squircle){
-  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search,.sc-chip,.sc-catalog,.sc-pop,.sc-ed-back,.sc-ed-icon,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.modal-box,.opt{corner-shape:squircle}
+  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search,.sc-chip,.sc-catalog,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.modal-box,.opt{corner-shape:squircle}
+  .sc-ed-back,.sc-ed-icon,.sc-ed-delete,.sc-ed-save{corner-shape:round;border-radius:50%}
 }
 .sc-toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:rgba(0,0,0,.82);color:#fff;padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s var(--ease);z-index:360;backdrop-filter:blur(12px)}
 .sc-toast.on{opacity:1}
@@ -1105,15 +1106,17 @@ body.dev-build #dev-panel{display:block}
     <div id="sc-editor" aria-hidden="true">
       <div class="sc-ed-head">
         <button class="sc-ed-back" id="sc-ed-back" type="button" title="Back">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M10.5 7.5L16 12l-5.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14.5 7.5L9 12l5.5 4.5" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <input class="sc-ed-title" id="sc-ed-title" type="text" placeholder="New Shortcut" maxlength="64">
-        <button class="sc-ed-icon sc-ed-delete" id="sc-ed-delete" type="button" title="Delete">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" preserveAspectRatio="xMidYMid meet"><path d="M9 4h6M10 4V3a1 1 0 011-1h2a1 1 0 011 1v1M6 7h12M7 7v12a2 2 0 002 2h6a2 2 0 002-2V7M10 11v5M14 11v5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-        <button class="sc-ed-icon sc-ed-save" id="sc-ed-save" type="button" title="Save">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7.5 12.5l3.5 3.5 8-8.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
+        <div class="sc-ed-trailing">
+          <button class="sc-ed-icon sc-ed-delete" id="sc-ed-delete" type="button" title="Delete">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 4h6M10 4V3a1 1 0 011-1h2a1 1 0 011 1v1M6 7h12M7 7v12a2 2 0 002 2h6a2 2 0 002-2V7M10 11v5M14 11v5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button class="sc-ed-icon sc-ed-save" id="sc-ed-save" type="button" title="Save">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7.5 12.5l3.5 3.5 8-8.5" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
       </div>
       <div class="sc-ed-body">
         <div class="sc-ed-canvas" id="sc-ed-canvas"></div>
@@ -4124,10 +4127,10 @@ var SC_DRAWER_FULL = 0;
 var SC_DRAWER_PEEK = 0;
 var SC_DRAWER_HEIGHT_FRAC = 0.78;
 var SC_DRAWER_HEIGHT_MAX = 520;
-var SC_DRAWER_STAGE2_VISIBLE = 148;
+var SC_DRAWER_STAGE2_VISIBLE = 100;
 var SC_DRAWER_CAP_W_MAX = 340;
 var SC_DRAWER_CAP_W_MARGIN = 72;
-var SC_DRAWER_CAP_H = 148;
+var SC_DRAWER_CAP_H = 100;
 var SC_DRAWER_CAP_BOTTOM = 12;
 var SC_DRAWER_RUBBER = 0.16;
 var SC_DRAWER_FLICK_PX_S = 520;
@@ -4349,6 +4352,32 @@ function scCanvasInsertIndex(clientY, dragCtx) {
   }
   return insertIdx;
 }
+function scCanvasDropWouldMove(drag, insertIdx) {
+  if (!drag || insertIdx == null) return false;
+  var from = drag.idx;
+  if (drag.groupEnd != null && drag.groupEnd >= 0) {
+    if (insertIdx === from) return false;
+    if (insertIdx > from && insertIdx <= drag.groupEnd + 1) return false;
+    return true;
+  }
+  return insertIdx !== from && insertIdx !== from + 1;
+}
+function scDropGapInIfBranch(insertIdx, targetBlock) {
+  if (insertIdx != null && scIsInsideIfGroup(insertIdx)) return true;
+  if (!targetBlock) return false;
+  if (targetBlock.classList.contains("sc-if-branch")) return true;
+  if (targetBlock.classList.contains("sc-if-otherwise")) return true;
+  if (targetBlock.classList.contains("sc-if-foot")) return true;
+  if (!scEditing || !scEditing.actions) return false;
+  var act = scEditing.actions[insertIdx];
+  if (!act) return false;
+  if (act.type === "otherwise" || act.type === "end_if") return true;
+  if (insertIdx > 0) {
+    var prev = scEditing.actions[insertIdx - 1];
+    if (prev && prev.type === "if") return true;
+  }
+  return false;
+}
 function scBindCanvasDropGap(insertIdx) {
   var canvas = $("sc-ed-canvas");
   var old = canvas.querySelector(".sc-drop-gap");
@@ -4368,8 +4397,13 @@ function scBindCanvasDropGap(insertIdx) {
       break;
     }
   }
-  if (!target) canvas.appendChild(gap);
-  else canvas.insertBefore(gap, target);
+  if (scDropGapInIfBranch(insertIdx, target)) gap.classList.add("sc-drop-gap-in-if");
+  if (!target) {
+    canvas.appendChild(gap);
+    return;
+  }
+  var parent = target.parentElement || canvas;
+  parent.insertBefore(gap, target);
 }
 function scEnsureDragGhost(text) {
   if (!scDragGhost) {
@@ -4415,7 +4449,7 @@ document.addEventListener("pointermove", function (e) {
   scDragGhost.style.top = e.clientY + "px";
   if (scDrag.type === "block") {
     scDrag.overIdx = scCanvasInsertIndex(e.clientY, scDrag);
-    scBindCanvasDropGap(scDrag.overIdx);
+    scBindCanvasDropGap(scCanvasDropWouldMove(scDrag, scDrag.overIdx) ? scDrag.overIdx : null);
   }
 });
 document.addEventListener("pointerup", function () { scEndDrag(false); });
