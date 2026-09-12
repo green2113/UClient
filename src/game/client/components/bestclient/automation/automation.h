@@ -62,12 +62,16 @@ public:
 		SET_FEET_COLOR,
 		SET_NAME,
 		GET,
+		GET_CLIPBOARD,
+		REPEAT,
+		END_REPEAT,
 		IF,
 		OTHERWISE,
 		END_IF,
 		STOP,
 		CONNECT_SERVER,
 		LEAVE_SERVER,
+		RUN_SHORTCUT,
 	};
 
 	struct STextPart
@@ -109,6 +113,13 @@ public:
 		std::vector<std::string> m_ServerTargets;
 	};
 
+	struct SIfCondition
+	{
+		std::string m_Left;
+		std::string m_Op;
+		std::string m_Right;
+	};
+
 	struct SAction
 	{
 		EActionType m_Type = EActionType::WAIT;
@@ -132,9 +143,13 @@ public:
 		int m_Color = 0;
 		std::string m_Name;
 		std::string m_GetProperty;
+		int m_RepeatCount = 1;
 		std::string m_IfLeft;
 		std::string m_IfOp;
 		std::string m_IfRight;
+		std::string m_IfMatch;
+		std::vector<SIfCondition> m_IfConditions;
+		std::string m_RunShortcutId;
 	};
 
 	struct SShortcut
@@ -142,6 +157,7 @@ public:
 		std::string m_Id;
 		std::string m_Name;
 		bool m_Enabled = true;
+		bool m_Manual = false;
 		STrigger m_Trigger;
 		std::vector<SAction> m_vActions;
 	};
@@ -172,6 +188,26 @@ private:
 		bool m_TrueBranch = false;
 	};
 
+	struct SRepeatFrame
+	{
+		size_t m_EndRepeatIndex = SIZE_MAX;
+		size_t m_BodyStartIndex = SIZE_MAX;
+		int m_Remaining = 0;
+	};
+
+	struct SRunnerCallFrame
+	{
+		size_t m_ShortcutIndex = 0;
+		std::string m_ShortcutId;
+		size_t m_ActionIndex = 0;
+		int64_t m_WaitUntil = 0;
+		int m_WeaponUseStep = 0;
+		int m_WeaponUseTarget = 0;
+		int64_t m_WeaponUseReadyTime = 0;
+		std::vector<SIfFrame> m_vIfFrames;
+		std::vector<SRepeatFrame> m_vRepeatFrames;
+	};
+
 	struct SRunner
 	{
 		size_t m_ShortcutIndex = 0;
@@ -184,10 +220,12 @@ private:
 		int m_WeaponUseTarget = 0;
 		int64_t m_WeaponUseReadyTime = 0;
 		std::vector<SIfFrame> m_vIfFrames;
+		std::vector<SRepeatFrame> m_vRepeatFrames;
 		bool m_HadChatEvent = false;
 		bool m_TestRun = false;
 		SChatEvent m_ChatEvent;
 		std::unordered_map<std::string, std::string> m_Variables;
+		std::vector<SRunnerCallFrame> m_vCallStack;
 	};
 
 	std::vector<SShortcut> m_vShortcuts;
@@ -217,7 +255,12 @@ private:
 	bool MatchesChatFilter(const SChatFilter &Filter, const SChatEvent &Event, bool IsMe) const;
 	bool MatchText(ETextMatch Match, const char *pNeedle, const char *pHaystack) const;
 	void StartRunner(size_t ShortcutIndex, const SChatEvent *pChatEvent = nullptr);
+	size_t FindShortcutIndexById(const std::string &Id) const;
+	bool WouldRecurseRunShortcut(const std::string &TargetId) const;
+	void PushRunnerCallFrame(size_t ReturnActionIndex);
+	void PopRunnerCallFrame();
 	size_t FindMatchingEndIf(size_t IfIndex) const;
+	size_t FindMatchingEndRepeat(size_t RepeatIndex) const;
 	size_t FindOtherwise(size_t IfIndex, size_t EndIfIndex) const;
 	std::string ActiveWindowValue() const;
 	void SetRunnerVariable(const char *pName, const std::string &Value);
@@ -227,8 +270,11 @@ private:
 	void WriteTestRunState(const char *pStatus);
 	void ClearTestRun();
 	bool EvaluateIfCondition(const SAction &Action) const;
+	bool EvaluateOneIfCondition(const std::string &IfLeft, const std::string &IfOp, const std::string &IfRight) const;
 	bool ValuesMatch(const std::string &Left, const std::string &Op, const std::string &Right) const;
 	void ExecuteGetAction(const SAction &Action);
+	void ExecuteGetClipboardAction(const SAction &Action);
+	std::string ClipboardTextValue() const;
 	void ExecuteTextAction(const SAction &Action);
 	std::string ResolveMessageValue(const SAction &Action) const;
 	bool ResolveSendChannel(const SAction &Action, EChatChannel &OutChannel) const;

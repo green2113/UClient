@@ -10,7 +10,7 @@
 //               playBlocked, updateAvailable, gameRunning, buttonHint,
 //               devBuild, devForceUpdate, devForcePlayBlocked, devForceGameRunning, devInjectNotice,
 //               notices[] {id, title, body, severity, blocksPlay, expiresAt?},
-//               shortcuts[] {id, name, enabled, trigger, actions[]},
+//               shortcuts[] {id, name, kind, enabled, trigger?, actions[]},
 //               updateStage, downloadDone, downloadTotal, downloadSpeed, etaSeconds,
 //               friends[] {name, clan, online, afk, server, map, address}
 //
@@ -31,6 +31,45 @@ static const wchar_t *const kLauncherHtml = LR"HTMLDOC(<!DOCTYPE html>
   font-style:normal;
   font-display:swap;
   src:url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/public/static/Pretendard-ExtraBold.woff2') format('woff2');
+}
+@font-face{
+  font-family:'Nunito';
+  font-weight:400 800;
+  font-style:normal;
+  font-display:swap;
+  src:url('https://cdn.jsdelivr.net/npm/@fontsource/nunito@5.2.5/files/nunito-latin-400-normal.woff2') format('woff2');
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face{
+  font-family:'Nunito';
+  font-weight:600;
+  font-style:normal;
+  font-display:swap;
+  src:url('https://cdn.jsdelivr.net/npm/@fontsource/nunito@5.2.5/files/nunito-latin-600-normal.woff2') format('woff2');
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face{
+  font-family:'Nunito';
+  font-weight:700;
+  font-style:normal;
+  font-display:swap;
+  src:url('https://cdn.jsdelivr.net/npm/@fontsource/nunito@5.2.5/files/nunito-latin-700-normal.woff2') format('woff2');
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face{
+  font-family:'Nunito';
+  font-weight:800;
+  font-style:normal;
+  font-display:swap;
+  src:url('https://cdn.jsdelivr.net/npm/@fontsource/nunito@5.2.5/files/nunito-latin-800-normal.woff2') format('woff2');
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face{
+  font-family:'Pretendard Variable';
+  font-weight:45 920;
+  font-style:normal;
+  font-display:swap;
+  src:url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/public/static/PretendardVariable.woff2') format('woff2');
 }
 :root{
   --accent:#7c6cf0;
@@ -59,8 +98,10 @@ static const wchar_t *const kLauncherHtml = LR"HTMLDOC(<!DOCTYPE html>
   --sc-r-drawer:40px;
   --sc-r-inset:16px;
   --sc-r-icon:50%;
-  --sc-r-control:12px;
+  --sc-r-control:16px;
   --sc-r-pill:14px;
+  --sc-r-tile:clamp(22px,22%,30px);
+  --sc-r-tile-ico:12px;
   --sc-pill-fill:rgba(124,108,240,.32);
   --sc-pill-fill-nested:rgba(124,108,240,.52);
   --sc-pill-text:#ddd8ff;
@@ -69,6 +110,7 @@ static const wchar_t *const kLauncherHtml = LR"HTMLDOC(<!DOCTYPE html>
   --sc-surface-raised:#22242e;
   --sc-surface-inset:#14161c;
   --play-fg:#ffffff;
+  --font-apple-round:"SF Pro Rounded","SF Pro Display",ui-rounded,"Nunito","Pretendard Variable","Pretendard",-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI",system-ui,sans-serif;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 #shortcuts-view svg path,#shortcuts-view svg line,#shortcuts-view svg polyline,#shortcuts-view svg rect,#shortcuts-view svg circle,#sc-editor svg path,#sc-editor svg line,#sc-editor svg polyline,#sc-editor svg rect,#sc-editor svg circle{stroke-linecap:round;stroke-linejoin:round}
@@ -132,8 +174,10 @@ body{
 #btn-gear:hover svg{transform:rotate(60deg)}
 #rail-nav{display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:18px}
 #shell.shortcuts-mode #main,#shell.shortcuts-mode #friends{display:none}
-#shortcuts-view{display:none;grid-column:2/4;min-width:0;padding:56px 34px 34px 44px;flex-direction:column;background:linear-gradient(160deg,#12141c 0%,#08090d 100%);position:relative;overflow:hidden}
+#shortcuts-view{display:none;grid-column:2/4;min-width:0;padding:56px 34px 34px 44px;flex-direction:column;background:linear-gradient(160deg,#12141c 0%,#08090d 100%);position:relative;overflow:hidden;font-family:var(--font-apple-round);letter-spacing:-.01em}
 #shell.shortcuts-mode #shortcuts-view{display:flex}
+#sc-editor{font-family:var(--font-apple-round);letter-spacing:-.01em}
+.sc-toast{font-family:var(--font-apple-round)}
 .sc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
 .sc-head h1{font:800 32px/1.05 inherit;letter-spacing:-.03em}
 .sc-section{color:var(--muted);font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin:4px 0 10px 4px}
@@ -158,30 +202,96 @@ body{
 .sc-sw.on:active::after{transform:translateX(17px)}
 .sc-empty{padding:40px 20px;text-align:center;color:var(--muted)}
 .sc-empty b{display:block;color:var(--text);font-size:17px;font-weight:600;letter-spacing:-.02em;margin-bottom:8px}
-.sc-fab{position:absolute;left:50%;bottom:34px;width:56px;height:56px;border:0;border-radius:50%;background:var(--accent);color:#fff;font-size:28px;line-height:1;cursor:pointer;box-shadow:0 10px 32px rgba(124,108,240,.42),inset 0 1px 0 rgba(255,255,255,.18);z-index:25;transform:translateX(-50%);transition:transform .12s ease-out,background .18s var(--ease);display:none}
-.sc-fab:hover{transform:translateX(-50%) scale(1.04);background:var(--accent-hi)}
-.sc-fab:active{transform:translateX(-50%) scale(.96);transition:transform 80ms ease-out}
-#shortcuts-view.empty .sc-fab{top:58%;bottom:auto;transform:translate(-50%,-50%)}
-#shortcuts-view.empty .sc-fab:hover{transform:translate(-50%,-50%) scale(1.04)}
-#shortcuts-view.empty .sc-fab:active{transform:translate(-50%,-50%) scale(.96)}
-#shell.shortcuts-mode .sc-fab{display:block}
+.sc-lib-tabs{position:relative;display:flex;align-items:center;gap:2px;padding:3px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.04);flex:0 1 auto;min-width:0}
+.sc-lib-tabs-indicator{position:absolute;top:3px;left:0;height:calc(100% - 6px);border-radius:999px;background:rgba(124,108,240,.32);box-shadow:0 2px 10px rgba(124,108,240,.22);transition:transform .36s var(--spring),width .36s var(--spring);pointer-events:none;z-index:0}
+.sc-lib-tab{position:relative;z-index:1;border:0;border-radius:999px;padding:10px 18px;font:inherit;font-size:14px;font-weight:600;color:var(--dim);background:transparent;cursor:pointer;white-space:nowrap;transition:color .22s var(--ease)}
+.sc-lib-tab.on{color:#fff}
+.sc-lib-panels{flex:1;min-height:0;display:grid;grid-template-columns:1fr;grid-template-rows:1fr;overflow:hidden}
+.sc-bottom-dock{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);display:none;z-index:26;pointer-events:none}
+.sc-bottom-dock-inner{display:flex;align-items:center;gap:10px;pointer-events:auto}
+#shell.shortcuts-mode .sc-bottom-dock{display:block}
+#shortcuts-view[data-sc-lib="shortcuts"] #sc-fab-auto,#shortcuts-view[data-sc-lib="automation"] #sc-fab-manual{display:none}
+.sc-lib-panel{grid-area:1/1;display:flex;flex-direction:column;min-height:0;padding-bottom:88px;opacity:0;transform:translateX(16px);pointer-events:none;transition:opacity .38s var(--spring),transform .38s var(--spring);will-change:opacity,transform}
+.sc-lib-panel.on{opacity:1;transform:translateX(0);pointer-events:auto;z-index:1}
+#sc-panel-shortcuts:not(.on){transform:translateX(-16px)}
+#sc-panel-automation:not(.on){transform:translateX(16px)}
+.sc-page-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.sc-page-head h1{font:800 28px/1.05 inherit;letter-spacing:-.03em;margin:0}
+.sc-panel-body{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.sc-shortcuts-card .sc-gallery-search-wrap{margin:0 0 12px}
+.sc-shortcuts-card .sc-gallery-grid{flex:1;min-height:0;padding:0}
+.sc-list-body{flex:1;min-height:0;overflow-y:auto}
+.sc-list-body .sc-empty{padding:48px 16px}
+.sc-gallery-search-wrap{display:flex;align-items:center;gap:10px;flex:0 0 auto;padding:0 14px;border-radius:14px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.06);margin-bottom:16px}
+.sc-gallery-search-icon{display:flex;align-items:center;justify-content:center;flex:0 0 auto;width:20px;height:20px;color:var(--muted);opacity:.85}
+.sc-gallery-search-icon svg{width:18px;height:18px;display:block}
+.sc-gallery-search{flex:1;min-width:0;border:0;border-radius:0;padding:12px 0;font:inherit;font-size:15px;color:var(--text);background:transparent;margin:0;outline:none}
+.sc-gallery-search::-webkit-search-cancel-button{-webkit-appearance:none}
+.sc-gallery-grid{overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(156px,1fr));gap:11px;align-content:start;max-width:780px}
+.sc-gallery-grid::-webkit-scrollbar{width:8px}
+.sc-gallery-grid::-webkit-scrollbar-thumb{border-radius:999px;background:rgba(255,255,255,.14)}
+.sc-tile{position:relative;display:flex;flex-direction:column;border:0;border-radius:var(--sc-r-tile);min-height:104px;padding:13px 14px 12px;text-align:left;color:#fff;cursor:pointer;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.28);transition:filter .18s var(--ease),box-shadow .18s var(--ease)}
+.sc-tile::after{content:"";position:absolute;inset:0;border-radius:inherit;background:rgba(255,255,255,0);pointer-events:none;transition:background .18s var(--ease)}
+.sc-tile:hover{filter:brightness(1.07);box-shadow:0 10px 26px rgba(0,0,0,.32)}
+.sc-tile:hover::after{background:rgba(255,255,255,.07)}
+.sc-tile:active{filter:brightness(.93)}
+.sc-tile:active::after{background:rgba(0,0,0,.06)}
+.sc-tile-top{display:flex;align-items:flex-start;justify-content:space-between;gap:6px;flex:0 0 auto}
+.sc-tile-ico{width:34px;height:34px;border-radius:var(--sc-r-tile-ico);display:grid;place-items:center;font-size:15px;background:rgba(0,0,0,.18)}
+.sc-tile-play{width:28px;height:28px;border:0;border-radius:50%;background:rgba(255,255,255,.22);color:#fff;display:grid;place-items:center;cursor:pointer;flex:0 0 auto;padding:0}
+.sc-tile-play:hover{background:rgba(255,255,255,.32)}
+.sc-tile-play svg{width:15px;height:15px;display:block}
+.sc-tile-name{font:700 14px/1.25 inherit;letter-spacing:-.02em;margin-top:auto;padding-top:10px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sc-tile.tone-brown{background:linear-gradient(145deg,#8b6914,#6b4f0f)}
+.sc-tile.tone-slate{background:linear-gradient(145deg,#4a5568,#2d3748)}
+.sc-tile.tone-green{background:linear-gradient(145deg,#2d6a4f,#1b4332)}
+.sc-tile.tone-blue{background:linear-gradient(145deg,#1d4e89,#1a365d)}
+.sc-tile.tone-purple{background:linear-gradient(145deg,#5b21b6,#4c1d95)}
+.sc-tile.tone-rose{background:linear-gradient(145deg,#9f1239,#881337)}
+.sc-fab{width:44px;height:44px;border:0;border-radius:50%;background:var(--accent);color:#fff;font-size:22px;line-height:1;cursor:pointer;box-shadow:0 6px 20px rgba(124,108,240,.38),inset 0 1px 0 rgba(255,255,255,.16);flex:0 0 auto;display:grid;place-items:center;transition:transform .12s ease-out,background .18s var(--ease)}
+.sc-fab:hover{transform:scale(1.05);background:var(--accent-hi)}
+.sc-fab:active{transform:scale(.94);transition:transform 80ms ease-out}
+#shortcuts-view.editing .sc-bottom-dock{opacity:0;pointer-events:none;transition:opacity .2s var(--ease)}
 #sc-editor{position:absolute;top:56px;right:16px;bottom:16px;left:16px;z-index:25;display:none;flex-direction:column;border-radius:var(--sc-r-sheet);border:1px solid rgba(255,255,255,.10);background:var(--sc-surface);color:var(--text);box-shadow:0 12px 40px rgba(0,0,0,.38);overflow:clip;transform:translateY(calc(100% + 24px));transition:transform .4s var(--spring);pointer-events:none;will-change:transform}
 #sc-editor.on{display:flex;transform:translateY(0);pointer-events:auto}
-#shortcuts-view.editing .sc-card,#shortcuts-view.editing .sc-fab{pointer-events:none}
+#shortcuts-view.editing .sc-panel-body{pointer-events:none}
 @media (prefers-reduced-motion:reduce){
   #sc-editor{transition:opacity .22s ease;transform:none!important;opacity:0}
   #sc-editor.on{opacity:1}
+  .sc-lib-panel,.sc-lib-tabs-indicator{transition-duration:.01ms!important}
+  .sc-lib-panel{transform:none!important}
 }
-.sc-ed-head{display:flex;align-items:center;gap:8px;padding:10px 12px 10px 10px;background:var(--sc-surface);border-bottom:1px solid rgba(255,255,255,.06);flex:0 0 auto}
+.sc-ed-head{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;padding:10px 12px 10px 10px;background:var(--sc-surface);border-bottom:1px solid rgba(255,255,255,.06);flex:0 0 auto}
+.sc-ed-back{justify-self:start;grid-column:1}
+.sc-ed-head-center{grid-column:2;justify-self:center;min-width:0;max-width:min(68vw,440px)}
+.sc-ed-trailing{justify-self:end;grid-column:3}
+.sc-ed-title-trigger{display:inline-flex;align-items:center;gap:6px;max-width:100%;border:0;border-radius:999px;background:transparent;color:var(--text);font:inherit;cursor:pointer;padding:6px 10px 6px 6px;transition:background .14s var(--ease),color .14s var(--ease)}
+.sc-ed-title-trigger:hover{background:rgba(255,255,255,.07)}
+.sc-ed-title-trigger:active{background:rgba(255,255,255,.1)}
+.sc-ed-title-trigger[aria-expanded="true"]{background:rgba(255,255,255,.08)}
+.sc-ed-title-tile{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:0 0 auto;background:rgba(124,108,240,.22);color:var(--accent-hi);overflow:hidden}
+.sc-ed-title-tile .sc-block-icon-svg{width:16px;height:16px}
+.sc-ed-title-text{font:700 17px/1.2 inherit;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:min(46vw,280px)}
+.sc-ed-title-chev{display:grid;place-items:center;flex:0 0 auto;width:22px;height:22px;border-radius:50%;color:var(--dim);opacity:.92}
+.sc-ed-title-chev .sc-ed-chev-svg{width:18px;height:18px;display:block}
+.sc-ed-head-center.is-renaming .sc-ed-title-trigger{display:none}
+.sc-ed-head-center.is-renaming .sc-ed-title-input{display:block}
+.sc-ed-title-input{display:none;width:100%;min-width:180px;max-width:min(68vw,440px);margin:0 auto;text-align:center}
 .sc-ed-back,.sc-ed-icon{width:40px;height:40px;min-width:40px;min-height:40px;aspect-ratio:1;border:0;border-radius:50%;padding:0;display:grid;place-items:center;cursor:pointer;flex:0 0 auto;transition:transform 80ms ease-out,background .15s var(--ease),color .15s var(--ease),opacity .15s var(--ease)}
 .sc-ed-back{background:transparent;color:var(--dim)}
 .sc-ed-back:hover{background:rgba(255,255,255,.07);color:#fff}
 .sc-ed-back:active,.sc-ed-icon:active{transform:scale(.92)}
 .sc-ed-back svg,.sc-ed-icon svg{width:20px;height:20px;display:block;flex:0 0 auto;overflow:visible}
 .sc-ed-delete svg{width:18px;height:18px}
-.sc-ed-title{flex:1;border:0;background:transparent;font:700 17px/1.2 inherit;letter-spacing:-.02em;color:var(--text);outline:none;min-width:0}
-.sc-ed-title::placeholder{color:var(--muted)}
+.sc-ed-title-input{border:0;background:transparent;font:700 17px/1.2 inherit;letter-spacing:-.02em;color:var(--text);outline:none;min-width:0}
+.sc-ed-title-input::placeholder{color:var(--muted)}
 .sc-ed-trailing{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.sc-pop.sc-ed-title-pop .sc-smart-menu-inner{min-width:220px;padding:6px}
+.sc-ed-title-menu-item{display:flex!important;align-items:center;gap:10px;width:100%}
+.sc-ed-title-menu-item .sc-ed-menu-ico{width:20px;height:20px;display:grid;place-items:center;flex:0 0 auto;color:var(--dim)}
+.sc-ed-title-menu-item .sc-ed-menu-ico svg{width:18px;height:18px;display:block}
+.sc-ed-title-menu-item .sc-ed-menu-label{flex:1;min-width:0;text-align:left}
+.sc-ed-title-menu-item.danger,.sc-ed-title-menu-item.danger .sc-ed-menu-ico{color:#ff6b63}
 .sc-ed-save{background:rgba(124,108,240,.24);color:var(--accent-hi);box-shadow:none}
 .sc-ed-save:hover{background:rgba(124,108,240,.36);box-shadow:none}
 .sc-ed-delete{background:rgba(255,59,48,.14);color:#ff6b63;display:none}
@@ -243,13 +353,13 @@ body{
 .sc-smart-menu-inner::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(124,108,240,.55),rgba(90,164,240,.45));border-radius:99px;border:2px solid transparent;background-clip:padding-box}
 .sc-smart-menu-inner::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(140,124,255,.7),rgba(100,180,255,.55));background-clip:padding-box}
 .sc-smart-menu-inner::-webkit-scrollbar-button{display:none;width:0;height:0}
-.sc-smart-menu-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--text);font:600 13px/1.35 inherit;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background .14s ease-out,color .14s ease-out,transform .12s var(--spring)}
+.sc-smart-menu-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--text);font:600 13px/1.35 inherit;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background .14s ease-out,color .14s ease-out}
 .sc-smart-menu-item.is-var{color:var(--text)}
 .sc-smart-menu-head{padding:6px 10px 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);pointer-events:none;user-select:none}
 .sc-smart-menu-item.sc-smart-menu-text{color:var(--dim);font-weight:600}
 .sc-smart-menu-item.sc-smart-menu-clear{color:var(--muted);font-weight:600}
 .sc-smart-menu-item.sc-smart-menu-clear:hover{color:#ff8a84;background:rgba(255,69,58,.12)}
-.sc-smart-menu-item:hover,.sc-smart-menu-item:focus-visible{background:rgba(124,108,240,.2);outline:none;transform:translateX(1px)}
+.sc-smart-menu-item:hover,.sc-smart-menu-item:focus-visible{background:rgba(124,108,240,.2);outline:none}
 .sc-smart-menu-sep{height:1px;margin:5px 8px;background:rgba(255,255,255,.09)}
 .sc-block.sc-block-text{align-items:flex-start;padding-top:12px;padding-bottom:12px}
 .sc-block.sc-block-text .sc-block-ico{align-self:flex-start;margin-top:1px}
@@ -300,24 +410,42 @@ body{
 .sc-drawer-chips,.sc-drawer-list{opacity:calc(1 - var(--sc-drawer-t));pointer-events:none;transition:opacity .28s var(--ease)}
 .sc-drawer:not(.sc-drawer-capsule) .sc-drawer-chips,.sc-drawer:not(.sc-drawer-capsule) .sc-drawer-list{pointer-events:auto}
 .sc-drawer.sc-drawer-capsule .sc-drawer-grab{padding:6px 0 2px}
-.sc-drawer.sc-drawer-capsule .sc-drawer-search{margin:0 12px 4px;padding:9px 12px}
+.sc-drawer.sc-drawer-capsule .sc-drawer-search-wrap{margin:0 12px 4px;padding:0 10px;gap:6px}
+.sc-drawer.sc-drawer-capsule .sc-drawer-search-wrap .sc-drawer-search{padding:9px 0}
+.sc-drawer.sc-drawer-capsule .sc-drawer-search-chip.is-on{padding:2px 8px;font-size:11px;line-height:1.2;gap:4px}
+.sc-drawer.sc-drawer-capsule .sc-drawer-search-chip .sc-drawer-filter-ico{width:11px;height:11px}
 .sc-drawer.sc-drawer-capsule .sc-drawer-chips,.sc-drawer.sc-drawer-capsule .sc-drawer-list{display:none}
 .sc-drawer-toolbar{display:flex;align-items:center;justify-content:space-between;gap:6px;flex:0 0 auto;max-height:calc(var(--sc-drawer-t) * 54px);padding:calc(var(--sc-drawer-t) * 2px) calc(var(--sc-drawer-t) * 18px) calc(var(--sc-drawer-t) * 12px);overflow:hidden;opacity:var(--sc-drawer-t);pointer-events:none;transition:max-height .34s var(--spring),padding .34s var(--spring),opacity .28s var(--ease)}
 .sc-drawer.sc-drawer-capsule .sc-drawer-toolbar{max-height:40px;padding:0 14px 4px;opacity:1;pointer-events:auto}
-.sc-tb-btn{width:40px;height:40px;border:0;border-radius:50%;background:transparent;color:var(--dim);cursor:pointer;padding:0;display:grid;place-items:center;transition:background .14s var(--ease),color .14s var(--ease),transform 80ms ease-out}
-.sc-tb-btn svg{width:21px;height:21px;display:block;flex:0 0 auto}
+.sc-tb-btn{width:40px;height:40px;border:0;border-radius:50%;background:transparent;color:var(--dim);padding:0;display:grid;place-items:center;transition:background .14s var(--ease),color .14s var(--ease),transform 80ms ease-out}
+.sc-tb-btn:not(:disabled){cursor:pointer}
+.sc-tb-btn svg{width:21px;height:21px;display:block;flex:0 0 auto;pointer-events:none}
 .sc-tb-btn:hover:not(:disabled){background:rgba(255,255,255,.08);color:#fff}
 .sc-tb-btn:active:not(:disabled){transform:scale(.9)}
-.sc-tb-btn:disabled{opacity:.32;cursor:default}
+.sc-tb-btn:disabled,.sc-tb-btn:disabled:hover,.sc-tb-btn:disabled:active{opacity:.32;cursor:default;background:transparent;transform:none}
 .sc-tb-btn.sc-tb-play{color:var(--text)}
 .sc-drawer-grab{padding:12px 0 8px;cursor:grab;touch-action:none;flex:0 0 auto}
 .sc-drawer-grab:active{cursor:grabbing}
 .sc-drawer-handle{width:36px;height:5px;border-radius:99px;background:rgba(255,255,255,.32);margin:0 auto;pointer-events:none;transition:background .18s var(--ease),width .18s var(--ease)}
 .sc-drawer-grab:hover .sc-drawer-handle{background:rgba(255,255,255,.45);width:42px}
-.sc-drawer-search{margin:0 16px 10px;padding:11px 14px;border-radius:22px;border:0;background:rgba(255,255,255,.06);font:15px/1.35 inherit;color:var(--text);outline:none;transition:background .15s var(--ease),box-shadow .15s var(--ease);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+.sc-drawer-search-wrap{display:flex;align-items:center;gap:8px;margin:0 16px 10px;padding:0 14px;border-radius:999px;background:rgba(255,255,255,.06);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);flex:0 0 auto;transition:background .15s var(--ease),box-shadow .15s var(--ease)}
+.sc-drawer-search-wrap:focus-within{background:rgba(255,255,255,.1);box-shadow:inset 0 0 0 1px rgba(124,108,240,.35),0 0 0 3px rgba(124,108,240,.12)}
+.sc-drawer-search-icon{width:18px;height:18px;flex:0 0 auto;color:var(--muted);display:grid;place-items:center;pointer-events:none}
+.sc-drawer-search-icon svg{width:16px;height:16px;display:block;opacity:.85}
+.sc-drawer-search-chip{display:none;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;background:rgba(48,48,52,.92);color:#fff;font:700 13px/1 inherit;flex-shrink:0;white-space:nowrap}
+.sc-drawer-search-chip.is-on{display:inline-flex}
+.sc-drawer-search-wrap .sc-drawer-search{flex:1;min-width:0;margin:0;padding:11px 0;border:0;border-radius:0;background:transparent;font:15px/1.35 inherit;color:var(--text);outline:none;box-shadow:none;-webkit-appearance:none;appearance:none}
+.sc-drawer-search-wrap .sc-drawer-search:focus{background:transparent;box-shadow:none}
+.sc-drawer-search-wrap .sc-drawer-search::-webkit-search-decoration,.sc-drawer-search-wrap .sc-drawer-search::-webkit-search-cancel-button{display:none;-webkit-appearance:none}
 .sc-drawer-search::placeholder{color:var(--muted)}
-.sc-drawer-search:focus{background:rgba(255,255,255,.1);box-shadow:inset 0 0 0 1px rgba(124,108,240,.35),0 0 0 3px rgba(124,108,240,.12)}
 .sc-drawer-chips{display:flex;gap:8px;padding:0 16px 10px;overflow:auto;flex:0 0 auto}
+.sc-drawer-filter-pick{display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(124,108,240,.38);border-radius:999px;background:rgba(124,108,240,.1);color:var(--accent-hi);font:600 13px/1 inherit;padding:7px 14px;cursor:pointer;white-space:nowrap;transition:background .12s ease-out,border-color .12s ease-out,transform 80ms ease-out}
+.sc-drawer-filter-pick .ico{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;flex-shrink:0;color:currentColor}
+.sc-drawer-filter-ico{width:16px;height:16px;display:block}
+.sc-drawer-search-chip .ico{display:inline-flex;align-items:center;justify-content:center;color:#fff}
+.sc-drawer-search-chip .sc-drawer-filter-ico{width:13px;height:13px}
+.sc-drawer-filter-pick:hover{background:rgba(124,108,240,.18);border-color:rgba(124,108,240,.52)}
+.sc-drawer-filter-pick:active{transform:scale(.96)}
 .sc-chip{border:0;border-radius:999px;background:rgba(255,255,255,.06);color:var(--dim);font:600 13px/1 inherit;padding:8px 14px;cursor:pointer;white-space:nowrap;transition:background .12s ease-out,color .12s ease-out,transform 80ms ease-out}
 .sc-chip.on{background:rgba(124,108,240,.24);color:#fff;box-shadow:inset 0 0 0 1px rgba(124,108,240,.22)}
 .sc-chip:active{transform:scale(.96)}
@@ -332,11 +460,19 @@ body{
 .sc-catalog{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:var(--sc-r-control);cursor:pointer;background:rgba(255,255,255,.04);border:0;margin-bottom:6px;transition:transform 80ms ease-out,background .12s ease-out;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);user-select:none}
 .sc-catalog:hover{background:rgba(255,255,255,.08)}
 .sc-catalog:active{transform:scale(.985);background:rgba(255,255,255,.1)}
-.sc-catalog-ico{width:34px;height:34px;border-radius:var(--sc-r-icon);display:grid;place-items:center;background:rgba(124,108,240,.18);font-size:15px;flex:0 0 auto}
+.sc-catalog-ico{width:34px;height:34px;border-radius:var(--sc-r-icon);display:grid;place-items:center;background:rgba(124,108,240,.18);font-size:15px;flex:0 0 auto;color:inherit}
+.sc-catalog-ico .sc-block-icon-svg{width:18px;height:18px}
 .sc-catalog-ico.chat{background:rgba(52,199,89,.18);color:#34c759}
 .sc-catalog-ico.action{background:rgba(124,108,240,.22);color:#b8afff}
 .sc-catalog-ico.wait{background:rgba(255,159,10,.18);color:#ff9f0a}
 .sc-catalog-ico.connect{background:rgba(90,164,240,.18);color:#5aa4f0}
+.sc-catalog-ico.flow,.sc-catalog-ico.text{background:rgba(100,210,255,.16);color:#64d2ff}
+.sc-catalog-ico.clip{background:rgba(255,186,120,.16);color:#ffb86c}
+.sc-block-action .sc-block-ico.clip{background:rgba(255,186,120,.18);color:#ffb86c}
+.sc-block-action .sc-block-ico.loop,.sc-catalog-ico.loop{background:rgba(160,170,255,.16);color:#aeb8ff}
+.sc-block-action .sc-block-ico.play,.sc-catalog-ico.play{background:rgba(255,120,180,.16);color:#ff8cc8}
+.sc-block.sc-repeat-foot .sc-block-body,.sc-block.sc-if-foot .sc-block-body{padding-right:22px}
+.sc-catalog-ico.stop{background:rgba(255,69,58,.16);color:#ff453a}
 .sc-catalog-text{flex:1;min-width:0}
 .sc-catalog-text b{display:block;font-size:15px;font-weight:600;letter-spacing:-.01em;color:var(--text);margin-bottom:2px}
 .sc-catalog-text small{display:block;font-size:13px;line-height:1.35;color:var(--muted)}
@@ -358,6 +494,12 @@ body{
 .sc-filter-del{width:30px;height:30px;border:0;border-radius:50%;background:rgba(255,255,255,.06);color:var(--dim);cursor:pointer;font-size:17px;line-height:1;margin-left:auto;flex:0 0 auto;transition:background .12s ease-out,color .12s ease-out,transform 80ms ease-out}
 .sc-filter-del:hover{background:rgba(255,59,48,.18);color:#ff6b63}
 .sc-filter-del:active{transform:scale(.92)}
+.sc-if-cond-add{width:30px;height:30px;border:0;border-radius:50%;background:rgba(10,132,255,.22);color:#409cff;font:700 20px/1 inherit;cursor:pointer;padding:0;flex:0 0 auto;align-self:center;transition:background .12s ease-out,transform 80ms ease-out}
+.sc-if-cond-add:hover{background:rgba(10,132,255,.38);color:#fff}
+.sc-if-cond-add:active{transform:scale(.92)}
+.sc-if-multi-wrap{display:flex;flex-direction:column;align-items:stretch;width:100%;min-width:0}
+.sc-if-multi-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
+.sc-block.sc-if-head .sc-block-body{align-items:stretch}
 .sc-sender-names{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
 .sc-sender-chip{display:inline-flex;align-items:center;height:30px;border-radius:999px;background:var(--sc-pill-fill);color:var(--sc-pill-text);font:600 14px/1 inherit;padding:0 4px 0 11px;box-shadow:none;flex:0 0 auto;max-width:240px}
 .sc-sender-chip-label{display:block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -380,8 +522,14 @@ body{
 @keyframes scPopIn{from{opacity:0;transform:translateY(-8px) scale(.96)}to{opacity:1;transform:none}}
 .sc-pop .sc-smart-menu-inner{min-width:160px;max-width:min(260px,72vw)}
 .sc-pop .sc-smart-menu-item.on{background:rgba(124,108,240,.2);color:var(--accent-hi)}
+.sc-pop.sc-stepper-pop .sc-smart-menu-inner{display:flex;align-items:stretch;padding:4px;min-width:112px}
+.sc-stepper-btn{flex:1;min-width:48px;padding:10px 14px;border:0;border-radius:12px;background:transparent;color:var(--text);font:700 20px/1 inherit;cursor:pointer;transition:background .12s ease-out,transform 80ms ease-out}
+.sc-stepper-btn:hover{background:rgba(124,108,240,.2)}
+.sc-stepper-btn:active{transform:scale(.94);background:rgba(124,108,240,.28)}
+.sc-stepper-sep{width:1px;margin:6px 0;background:rgba(255,255,255,.1);flex:0 0 auto}
+.sc-repeat-times-pill{cursor:pointer}
 @supports (corner-shape:squircle){
-  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search,.sc-chip,.sc-catalog,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.modal-box,.opt{corner-shape:squircle}
+  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search-wrap,.sc-drawer-search-chip,.sc-drawer-filter-pick,.sc-chip,.sc-catalog,.sc-tile,.sc-tile-ico,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.modal-box,.opt{corner-shape:squircle}
   .sc-ed-back,.sc-ed-icon,.sc-ed-delete,.sc-ed-save{corner-shape:round;border-radius:50%}
 }
 .sc-toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:rgba(0,0,0,.82);color:#fff;padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s var(--ease);z-index:360;backdrop-filter:blur(12px)}
@@ -920,25 +1068,24 @@ body.dev-build #dev-panel{display:block}
 .confirm-layer.on .confirm-box{transform:none}
 .confirm-box h3{font:700 18px/1.25 inherit;color:#fff}
 .confirm-box p{margin-top:9px;color:var(--dim);font-size:14px;line-height:1.5}
-.confirm-files{display:flex;flex-direction:column;gap:5px;margin-top:13px;max-height:132px;overflow-y:auto;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:rgba(0,0,0,.18)}
+.confirm-files{display:flex;flex-direction:column;gap:5px;margin-top:13px;max-height:min(240px,45vh);overflow-y:auto;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:rgba(0,0,0,.18)}
 .confirm-file{color:var(--dim);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.confirm-file.more{color:var(--muted);font-style:italic}
 .confirm-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:22px}
 
-:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list){
+:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,.confirm-files){
   scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent;
 }
-:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list)::-webkit-scrollbar{
+:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,.confirm-files)::-webkit-scrollbar{
   width:10px;height:10px;
 }
-:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list)::-webkit-scrollbar-track{
+:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,.confirm-files)::-webkit-scrollbar-track{
   background:transparent;
 }
-:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list)::-webkit-scrollbar-thumb{
+:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,.confirm-files)::-webkit-scrollbar-thumb{
   min-height:36px;border:3px solid transparent;border-radius:999px;
   background:rgba(255,255,255,.18);background-clip:padding-box;
 }
-:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list)::-webkit-scrollbar-thumb:hover{
+:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,.confirm-files)::-webkit-scrollbar-thumb:hover{
   background:rgba(124,108,240,.62);background-clip:padding-box;
 }
 :is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list)::-webkit-scrollbar-button{
@@ -1098,17 +1245,53 @@ body.dev-build #dev-panel{display:block}
     <div id="fr-list"></div>
   </aside>
 
-  <section id="shortcuts-view" aria-hidden="true">
-    <div class="sc-head"><h1>Automation (Beta)</h1></div>
-    <div class="sc-section">Personal</div>
-    <div class="sc-card" id="sc-list"></div>
-    <button class="sc-fab" id="sc-fab" type="button" title="Create automation">+</button>
+  <section id="shortcuts-view" aria-hidden="true" data-sc-lib="shortcuts">
+    <div class="sc-lib-panels">
+    <div class="sc-lib-panel on" id="sc-panel-shortcuts" role="tabpanel">
+      <div class="sc-page-head">
+        <h1>Shortcuts (Beta)</h1>
+      </div>
+      <div class="sc-section">Personal</div>
+      <div class="sc-panel-body sc-shortcuts-card">
+        <div class="sc-gallery-search-wrap">
+          <span class="sc-gallery-search-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </span>
+          <input class="sc-gallery-search" id="sc-gallery-search" type="search" placeholder="Search" autocomplete="off">
+        </div>
+        <div class="sc-gallery-grid" id="sc-gallery-grid"></div>
+      </div>
+    </div>
+    <div class="sc-lib-panel" id="sc-panel-automation" role="tabpanel">
+      <div class="sc-page-head"><h1>Automation (Beta)</h1></div>
+      <div class="sc-section">Personal</div>
+      <div class="sc-panel-body sc-list-body" id="sc-list"></div>
+    </div>
+    </div>
+    <div class="sc-bottom-dock">
+      <div class="sc-bottom-dock-inner">
+        <div class="sc-lib-tabs" role="tablist">
+          <span class="sc-lib-tabs-indicator" aria-hidden="true"></span>
+          <button class="sc-lib-tab on" type="button" data-sc-lib="shortcuts" role="tab" aria-selected="true">Shortcuts</button>
+          <button class="sc-lib-tab" type="button" data-sc-lib="automation" role="tab" aria-selected="false">Automation</button>
+        </div>
+        <button class="sc-fab" id="sc-fab-manual" type="button" title="Create shortcut">+</button>
+        <button class="sc-fab" id="sc-fab-auto" type="button" title="Create automation">+</button>
+      </div>
+    </div>
     <div id="sc-editor" aria-hidden="true">
       <div class="sc-ed-head">
         <button class="sc-ed-back" id="sc-ed-back" type="button" title="Back">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14.5 7.5L9 12l5.5 4.5" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
-        <input class="sc-ed-title" id="sc-ed-title" type="text" placeholder="New Shortcut" maxlength="64">
+        <div class="sc-ed-head-center" id="sc-ed-head-center">
+          <button type="button" class="sc-ed-title-trigger" id="sc-ed-title-trigger" aria-haspopup="menu" aria-expanded="false" aria-controls="sc-ed-title-menu">
+            <span class="sc-ed-title-tile" id="sc-ed-title-tile" aria-hidden="true"></span>
+            <span class="sc-ed-title-text" id="sc-ed-title-label">New Shortcut</span>
+            <span class="sc-ed-title-chev" aria-hidden="true"><span class="sc-ed-chev-svg"></span></span>
+          </button>
+          <input class="sc-ed-title-input" id="sc-ed-title" type="text" placeholder="New Shortcut" maxlength="64" autocomplete="off" spellcheck="false">
+        </div>
         <div class="sc-ed-trailing">
           <button class="sc-ed-icon sc-ed-delete" id="sc-ed-delete" type="button" title="Delete">
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 4h6M10 4V3a1 1 0 011-1h2a1 1 0 011 1v1M6 7h12M7 7v12a2 2 0 002 2h6a2 2 0 002-2V7M10 11v5M14 11v5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1122,7 +1305,11 @@ body.dev-build #dev-panel{display:block}
         <div class="sc-ed-canvas" id="sc-ed-canvas"></div>
         <div class="sc-drawer" id="sc-drawer">
           <div class="sc-drawer-grab" id="sc-drawer-grab"><div class="sc-drawer-handle" id="sc-drawer-handle"></div></div>
-          <input class="sc-drawer-search" id="sc-drawer-search" type="search" placeholder="Search actions">
+          <div class="sc-drawer-search-wrap" id="sc-drawer-search-wrap">
+            <span class="sc-drawer-search-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6.2" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+            <span class="sc-drawer-search-chip" id="sc-drawer-search-chip"></span>
+            <input class="sc-drawer-search" id="sc-drawer-search" type="text" autocomplete="off" placeholder="Search actions" enterkeyhint="search">
+          </div>
           <div class="sc-drawer-toolbar" id="sc-drawer-toolbar">
             <button class="sc-tb-btn" id="sc-tb-undo" type="button" title="Undo" disabled>
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 7L5 11l4 4M5 11h8a5 5 0 0 1 5 5v1" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1286,7 +1473,10 @@ body.dev-build #dev-panel{display:block}
                 <div class="backup-filter-menu" id="backup-filter-menu"></div>
               </div>
               <div class="backup-list" id="backup-local"></div>
-              <div class="row-actions"><button class="primary" id="backup-upload" type="button">Upload</button></div>
+              <div class="row-actions">
+                <button class="secondary" id="backup-select-all" type="button">Select all</button>
+                <button class="primary" id="backup-upload" type="button">Upload</button>
+              </div>
             </div>
           </div>
           <div class="backup-view" id="backup-view-restore">
@@ -1302,7 +1492,10 @@ body.dev-build #dev-panel{display:block}
                 <div class="backup-filter-menu" id="restore-filter-menu"></div>
               </div>
               <div class="backup-list" id="backup-server"></div>
-              <div class="row-actions"><button class="primary" id="backup-restore-selected" type="button">Restore</button></div>
+              <div class="row-actions">
+                <button class="secondary" id="backup-restore-select-all" type="button">Select all</button>
+                <button class="primary" id="backup-restore-selected" type="button">Restore</button>
+              </div>
             </div>
           </div>
         </div>
@@ -1589,18 +1782,12 @@ function openConfirmDialog(title, message, acceptLabel, danger, action, details)
   var files = $("confirm-files");
   files.innerHTML = "";
   var detailItems = Array.isArray(details) ? details : [];
-  detailItems.slice(0, 5).forEach(function (detail) {
+  detailItems.forEach(function (detail) {
     var row = document.createElement("div");
     row.className = "confirm-file";
     row.textContent = detail;
     files.appendChild(row);
   });
-  if (detailItems.length > 5) {
-    var more = document.createElement("div");
-    more.className = "confirm-file more";
-    more.textContent = "... and " + (detailItems.length - 5) + " more";
-    files.appendChild(more);
-  }
   files.hidden = !detailItems.length;
   $("confirm-accept").textContent = acceptLabel || "Confirm";
   $("confirm-accept").className = danger ? "danger" : "primary";
@@ -1804,6 +1991,13 @@ $("backup-main").addEventListener("click", function (e) {
     setRestoreFilterOpen(!restoreFilterOpen);
     return;
   }
+  var statusOption = e.target.closest("[data-filter-status]");
+  if (statusOption) {
+    var status = statusOption.dataset.filterStatus;
+    if (status === "all") backupFilterUnsavedOnly = false;
+    else if (status === "unsaved") backupFilterUnsavedOnly = !backupFilterUnsavedOnly;
+    renderBackupLocal();
+  }
   var typeOption = e.target.closest("[data-filter-type]");
   if (typeOption) {
     var type = typeOption.dataset.filterType;
@@ -1819,6 +2013,13 @@ $("backup-main").addEventListener("click", function (e) {
     else if (backupFolderFilters[folder]) delete backupFolderFilters[folder];
     else backupFolderFilters[folder] = true;
     renderBackupLocal();
+  }
+  var restoreStatusOption = e.target.closest("[data-restore-filter-status]");
+  if (restoreStatusOption) {
+    var restoreStatus = restoreStatusOption.dataset.restoreFilterStatus;
+    if (restoreStatus === "all") restoreFilterMissingLocalOnly = false;
+    else if (restoreStatus === "missing_local") restoreFilterMissingLocalOnly = !restoreFilterMissingLocalOnly;
+    renderBackupServer();
   }
   var restoreTypeOption = e.target.closest("[data-restore-filter-type]");
   if (restoreTypeOption) {
@@ -1850,9 +2051,15 @@ $("backup-local").addEventListener("change", function (e) {
   else delete backupSelectedUploads[input.dataset.path];
   updateBackupButtons();
 });
+$("backup-select-all").addEventListener("click", function () {
+  selectAllFilteredBackupUploads();
+});
 $("backup-upload").addEventListener("click", function () {
   var paths = Object.keys(backupSelectedUploads);
   if (paths.length) send({cmd: "backupUpload", paths: paths});
+});
+$("backup-restore-select-all").addEventListener("click", function () {
+  selectAllFilteredRestores();
 });
 $("backup-server").addEventListener("change", function (e) {
   var input = e.target.closest("input[data-id]");
@@ -1913,6 +2120,8 @@ var backupFilterOpen = false;
 var restoreTypeFilters = {};
 var restoreFolderFilters = Object.create(null);
 var restoreFilterOpen = false;
+var backupFilterUnsavedOnly = false;
+var restoreFilterMissingLocalOnly = false;
 var backupCollapsedDates = {};
 var backupSelectedUploads = {};
 var backupSelectedRestores = {};
@@ -1976,6 +2185,77 @@ function backupFolderExcluded(folder) {
   return lower === "dumps" || lower === "downloadedskins" ||
     lower === "communityicons" || lower === "communityicsons";
 }
+function backupSavedPathSet() {
+  var set = Object.create(null);
+  if (!backupRenderState) return set;
+  (backupRenderState.backupVersions || []).forEach(function (version) {
+    set[backupPathKey(version.path)] = true;
+  });
+  return set;
+}
+function backupLocalPathSet() {
+  var set = Object.create(null);
+  if (!backupRenderState) return set;
+  (backupRenderState.backupFiles || []).forEach(function (file) {
+    set[backupPathKey(file.path)] = true;
+  });
+  return set;
+}
+function filterBackupLocalFiles(files) {
+  var savedPaths = backupSavedPathSet();
+  return files.filter(function (file) {
+    var hasTypeFilters = Object.keys(backupTypeFilters).length > 0;
+    var typeMatches = !hasTypeFilters || !!backupTypeFilters[backupExtension(file.path)];
+    var folder = backupTopFolder(file.path).toLowerCase();
+    var hasFolderFilters = Object.keys(backupFolderFilters).length > 0;
+    var folderMatches = !hasFolderFilters || !!backupFolderFilters[folder];
+    if (backupFolderExcluded(folder) || !typeMatches || !folderMatches)
+      return false;
+    if (backupFilterUnsavedOnly && savedPaths[backupPathKey(file.path)])
+      return false;
+    return true;
+  });
+}
+function filterRestoreVersions(versions) {
+  var localPaths = backupLocalPathSet();
+  return versions.filter(function (version) {
+    var folder = backupTopFolder(version.path).toLowerCase();
+    var hasTypeFilters = Object.keys(restoreTypeFilters).length > 0;
+    var typeMatches = !hasTypeFilters || !!restoreTypeFilters[backupExtension(version.path)];
+    var hasFolderFilters = Object.keys(restoreFolderFilters).length > 0;
+    var folderMatches = !hasFolderFilters || !!restoreFolderFilters[folder];
+    if (!typeMatches || !folderMatches)
+      return false;
+    if (restoreFilterMissingLocalOnly && localPaths[backupPathKey(version.path)])
+      return false;
+    return true;
+  });
+}
+function selectAllFilteredBackupUploads() {
+  if (backupDisabled()) return;
+  filterBackupLocalFiles(backupRenderState.backupFiles || []).forEach(function (file) {
+    backupSelectedUploads[file.path] = true;
+  });
+  renderBackupLocal();
+}
+function selectAllFilteredRestores() {
+  if (backupDisabled()) return;
+  var allVersions = (backupRenderState.backupVersions || []).filter(function (version) {
+    return !backupFolderExcluded(backupTopFolder(version.path));
+  });
+  var taken = Object.create(null);
+  allVersions.forEach(function (version) {
+    if (backupSelectedRestores[version.id])
+      taken[backupPathKey(version.path)] = true;
+  });
+  filterRestoreVersions(allVersions).forEach(function (version) {
+    var key = backupPathKey(version.path);
+    if (taken[key]) return;
+    backupSelectedRestores[version.id] = true;
+    taken[key] = true;
+  });
+  renderBackupServer();
+}
 function setBackupFilterOpen(open) {
   backupFilterOpen = !!open;
   $("backup-filter-menu").classList.toggle("on", backupFilterOpen);
@@ -2004,6 +2284,11 @@ function renderBackupFilterMenu() {
   var extensions = [".cfg", ".txt", ".png", ".jpg", ".jpeg", ".log"];
   var hasTypeFilters = Object.keys(backupTypeFilters).length > 0;
   var hasFolderFilters = Object.keys(backupFolderFilters).length > 0;
+  var statusHtml = '<div class="backup-filter-title">Status</div>' +
+    '<button class="backup-filter-option' + (!backupFilterUnsavedOnly ? " on" : "") +
+    '" type="button" data-filter-status="all">All files</button>' +
+    '<button class="backup-filter-option' + (backupFilterUnsavedOnly ? " on" : "") +
+    '" type="button" data-filter-status="unsaved">Files not saved</button>';
   var typeHtml = '<div class="backup-filter-title">File type</div>' +
     '<button class="backup-filter-option' + (!hasTypeFilters ? " on" : "") +
     '" type="button" data-filter-type="all">All types</button>' +
@@ -2020,8 +2305,8 @@ function renderBackupFilterMenu() {
       return '<button class="backup-filter-option' + (backupFolderFilters[key] ? " on" : "") +
         '" type="button" data-filter-folder="' + esc(key) + '">' + esc(folderNames[key]) + '/</button>';
     }).join("");
-  $("backup-filter-menu").innerHTML = typeHtml + folderHtml;
-  $("backup-filter-button").classList.toggle("filtered", hasTypeFilters || hasFolderFilters);
+  $("backup-filter-menu").innerHTML = statusHtml + typeHtml + folderHtml;
+  $("backup-filter-button").classList.toggle("filtered", backupFilterUnsavedOnly || hasTypeFilters || hasFolderFilters);
 }
 function renderRestoreFilterMenu() {
   if (!backupRenderState) return;
@@ -2039,6 +2324,11 @@ function renderRestoreFilterMenu() {
   var extensions = [".cfg", ".txt", ".png", ".jpg", ".jpeg", ".log"];
   var hasTypeFilters = Object.keys(restoreTypeFilters).length > 0;
   var hasFolderFilters = Object.keys(restoreFolderFilters).length > 0;
+  var statusHtml = '<div class="backup-filter-title">Status</div>' +
+    '<button class="backup-filter-option' + (!restoreFilterMissingLocalOnly ? " on" : "") +
+    '" type="button" data-restore-filter-status="all">All versions</button>' +
+    '<button class="backup-filter-option' + (restoreFilterMissingLocalOnly ? " on" : "") +
+    '" type="button" data-restore-filter-status="missing_local">Files not on this computer</button>';
   var typeHtml = '<div class="backup-filter-title">File type</div>' +
     '<button class="backup-filter-option' + (!hasTypeFilters ? " on" : "") +
     '" type="button" data-restore-filter-type="all">All types</button>' +
@@ -2055,8 +2345,8 @@ function renderRestoreFilterMenu() {
       return '<button class="backup-filter-option' + (restoreFolderFilters[key] ? " on" : "") +
         '" type="button" data-restore-filter-folder="' + esc(key) + '">' + esc(folderNames[key]) + '/</button>';
     }).join("");
-  $("restore-filter-menu").innerHTML = typeHtml + folderHtml;
-  $("restore-filter-button").classList.toggle("filtered", hasTypeFilters || hasFolderFilters);
+  $("restore-filter-menu").innerHTML = statusHtml + typeHtml + folderHtml;
+  $("restore-filter-button").classList.toggle("filtered", restoreFilterMissingLocalOnly || hasTypeFilters || hasFolderFilters);
 }
 function backupDisabled() {
   return !backupRenderState || backupRenderState.backupBusy || backupRenderState.gameRunning;
@@ -2067,6 +2357,8 @@ function updateBackupButtons() {
   var restoreCount = Object.keys(backupSelectedRestores).length;
   $("backup-upload").disabled = disabled || !uploadCount;
   $("backup-restore-selected").disabled = disabled || !restoreCount;
+  $("backup-select-all").disabled = disabled;
+  $("backup-restore-select-all").disabled = disabled;
   $("backup-refresh").disabled = disabled;
   $("backup-restore-count").textContent = "";
   $("backup-upload").textContent = uploadCount ? "Upload (" + uploadCount + ")" : "Upload";
@@ -2076,14 +2368,7 @@ function renderBackupLocal() {
   if (!backupRenderState) return;
   var disabled = backupDisabled();
   renderBackupFilterMenu();
-  var files = (backupRenderState.backupFiles || []).filter(function (file) {
-    var hasTypeFilters = Object.keys(backupTypeFilters).length > 0;
-    var typeMatches = !hasTypeFilters || !!backupTypeFilters[backupExtension(file.path)];
-    var folder = backupTopFolder(file.path).toLowerCase();
-    var hasFolderFilters = Object.keys(backupFolderFilters).length > 0;
-    var folderMatches = !hasFolderFilters || !!backupFolderFilters[folder];
-    return !backupFolderExcluded(folder) && typeMatches && folderMatches;
-  });
+  var files = filterBackupLocalFiles(backupRenderState.backupFiles || []);
   $("backup-local").innerHTML = files.length ? files.map(function (file) {
     return '<label class="backup-row"><input type="checkbox" data-path="' + esc(file.path) + '" ' +
       (backupSelectedUploads[file.path] ? "checked " : "") + (disabled ? "disabled" : "") +
@@ -2098,14 +2383,7 @@ function renderBackupServer() {
   var allVersions = (backupRenderState.backupVersions || []).filter(function (version) {
     return !backupFolderExcluded(backupTopFolder(version.path));
   });
-  var versions = allVersions.filter(function (version) {
-    var folder = backupTopFolder(version.path).toLowerCase();
-    var hasTypeFilters = Object.keys(restoreTypeFilters).length > 0;
-    var typeMatches = !hasTypeFilters || !!restoreTypeFilters[backupExtension(version.path)];
-    var hasFolderFilters = Object.keys(restoreFolderFilters).length > 0;
-    var folderMatches = !hasFolderFilters || !!restoreFolderFilters[folder];
-    return typeMatches && folderMatches;
-  });
+  var versions = filterRestoreVersions(allVersions);
   var validIds = {};
   allVersions.forEach(function (version) { validIds[version.id] = true; });
   Object.keys(backupSelectedRestores).forEach(function (id) {
@@ -2221,14 +2499,19 @@ function setArt(st) {
 var activeRailView = "home";
 var shortcutsLocal = [];
 var shortcutsSig = "";
+var scLibraryTab = "shortcuts";
+var scEditKind = "automation";
+var scGallerySearch = "";
 var scEditing = null;
-var scDrawerFilter = "all";
+var scDrawerFilter = null;
 var scPopEl = null;
+var SC_TILE_TONES = ["tone-brown", "tone-slate", "tone-green", "tone-blue", "tone-purple", "tone-rose"];
+var SC_PLAY_ICON = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path fill="currentColor" d="M8.05 5.55a1.35 1.35 0 0 1 2.09-1.12l8.31 5.54a1.35 1.35 0 0 1 0 2.24l-8.31 5.54a1.35 1.35 0 0 1-2.09-1.12V5.55z"/></svg>';
 
 var SC_TRIGGERS = [{
   id: "chat_received", category: "communication", title: "Chat message",
-  whenHint: "When a message matching conditions is received", icon: "\u2709", tone: "chat",
-  defaults: {type: "chat_received", channel: "all", filters: [{kind: "message", match: "contains", text: ""}]}
+  whenHint: "When a chat message is received from others", icon: "\u2709", tone: "chat",
+  defaults: {type: "chat_received", channel: "all", filters: []}
 }, {
   id: "server_connect", category: "connection", title: "Server connect",
   whenHint: "When connecting to a specific server", icon: "\u25CE", tone: "connect",
@@ -2236,11 +2519,15 @@ var SC_TRIGGERS = [{
 }];
 var SC_ACTIONS = [
   {id: "get", category: "flow", title: "Get", hint: "Read a value into a variable", icon: "\u2193", tone: "flow", defaults: {type: "get", property: "window_active"}},
+  {id: "get_clipboard", category: "flow", title: "Get Clipboard", hint: "Read plain text from the system clipboard", icon: "\u2193", tone: "clip", defaults: {type: "get_clipboard", as: "clipboard"}},
   {id: "text", category: "flow", title: "Text", hint: "Combine variables and text into one value", icon: "\u270D", tone: "text", defaults: {type: "text", parts: [{mode: "text", text: ""}], as: "text"}},
+  {id: "repeat", category: "flow", title: "Repeat", hint: "Run actions inside the loop several times", icon: "\u21bb", tone: "loop", defaults: {type: "repeat", count: 1}},
+  {id: "end_repeat", category: "flow", title: "End Repeat", hint: "End a Repeat block", icon: "\u21bb", tone: "loop", defaults: {type: "end_repeat"}},
   {id: "if", category: "flow", title: "If", hint: "Continue only when a condition matches", icon: "\u2442", tone: "flow", defaults: {type: "if", left: "", op: "contains", right: ""}},
   {id: "otherwise", category: "flow", title: "Otherwise", hint: "Run when the If condition did not match", icon: "\u2443", tone: "flow", defaults: {type: "otherwise"}},
   {id: "end_if", category: "flow", title: "End If", hint: "End an If block", icon: "\u2444", tone: "flow", defaults: {type: "end_if"}},
   {id: "stop", category: "flow", title: "Stop", hint: "Stop running this shortcut", icon: "\u25A0", tone: "stop", defaults: {type: "stop"}},
+  {id: "run_shortcut", category: "flow", title: "Run Shortcut", hint: "Run another shortcut from your library", icon: "\u25b6", tone: "play", defaults: {type: "run_shortcut", shortcutId: ""}},
   {id: "connect_server", category: "connection", title: "Connect to server", hint: "Connect to an IP or IP:port", icon: "\u25CE", tone: "connect", defaults: {type: "connect_server", address: "127.0.0.1:8303"}},
   {id: "leave_server", category: "connection", title: "Leave server", hint: "Disconnect from the current server", icon: "\u21AA", tone: "connect", defaults: {type: "leave_server"}},
   {id: "send_chat", category: "actions", title: "Send message", hint: "Send a variable or text to chat", icon: "\u2709", tone: "chat", defaults: {type: "send_chat", channelMode: "text", channel: "all", uclientRoomMode: "text", uclientRoomId: "", messageMode: "text", messageText: ""}},
@@ -2254,6 +2541,12 @@ var SC_ACTIONS = [
 ];
 var SC_TRIGGER_SECTIONS = [{id: "communication", label: "Communication"}, {id: "connection", label: "Connection"}];
 var SC_ACTION_SECTIONS = [{id: "flow", label: "Flow"}, {id: "connection", label: "Connection"}, {id: "actions", label: "Actions"}];
+var SC_DRAWER_FILTERS = [
+  {id: "automation", label: "Automation", automationOnly: true},
+  {id: "scripting", label: "Scripting"},
+  {id: "connection", label: "Connection"},
+  {id: "actions", label: "Actions"}
+];
 
 function scUuid() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -2301,15 +2594,7 @@ function scPrepareTriggerForEdit(t) {
     return t;
   }
   if (t.type !== "chat_received") return t;
-  t = scNormalizeTrigger(JSON.parse(JSON.stringify(t)));
-  t.filters = (t.filters || []).map(function (f) {
-    if (f.kind !== "sender") return f;
-    var names = Array.isArray(f.names) ? f.names.slice() : [];
-    names = names.map(function (n) { return n == null ? "" : String(n); });
-    while (names.length > 1 && names[names.length - 1] === "" && names[names.length - 2] === "") names.pop();
-    return {kind: "sender", names: names};
-  });
-  return t;
+  return scNormalizeTrigger(JSON.parse(JSON.stringify(t)));
 }
 function scCleanTriggerForSave(t) {
   t = scNormalizeTrigger(JSON.parse(JSON.stringify(t)));
@@ -2317,19 +2602,9 @@ function scCleanTriggerForSave(t) {
     t.targets = (t.targets || []).filter(function (n) { return n; });
     return t;
   }
-  t.filters = t.filters.map(function (f) {
-    if (f.kind === "message") return {kind: "message", match: f.match || "contains", text: f.text || ""};
-    if (f.kind === "chat_channel") return {kind: "chat_channel", channel: f.channel || "all"};
-    if (f.kind === "uclient_room") return {kind: "uclient_room", room: f.room || ""};
-    if (f.kind === "sender") return {kind: "sender", names: (f.names || []).filter(function (n) { return n; })};
-    return f;
-  }).filter(function (f) {
-    // The client treats an empty message filter as "never match", so a blank one
-    // would silently disable the whole shortcut.
-    if (f.kind === "message") return String(f.text || "").length > 0;
-    if (f.kind === "sender") return (f.names || []).length > 0;
-    return true;
-  });
+  if (t.type === "chat_received") {
+    return {type: "chat_received", channel: "all", filters: []};
+  }
   return t;
 }
 function scNormalizeTrigger(t) {
@@ -2342,28 +2617,10 @@ function scNormalizeTrigger(t) {
     }
     return {type: "server_connect", targets: targets};
   }
-  if (t.type !== "chat_received") return t;
-  if (t.filters && t.filters.length) {
-    t.filters = t.filters.map(function (f) {
-      if (f.kind === "message") return {kind: "message", match: f.match || "contains", text: f.text == null ? "" : String(f.text)};
-      if (f.kind === "chat_channel") return {kind: "chat_channel", channel: f.channel || "all"};
-      if (f.kind === "uclient_room") return {kind: "uclient_room", room: f.room == null ? "" : String(f.room)};
-      return scNormalizeSenderFilter(f);
-    });
-    return t;
+  if (t.type === "chat_received") {
+    return {type: "chat_received", channel: "all", filters: []};
   }
-  var filters = [];
-  if (t.sender === "specific" && t.senderName) {
-    filters.push({kind: "sender", names: [String(t.senderName)]});
-  }
-  // Legacy sender:"me" has no equivalent in the filter UI, and an empty sender
-  // filter would silently widen the trigger to everyone, so it is dropped.
-  if (t.text != null && String(t.text).length) {
-    filters.push({kind: "message", match: t.match || "contains", text: String(t.text)});
-  }
-  if (!filters.length) filters.push({kind: "message", match: "contains", text: ""});
-  var out = {type: "chat_received", channel: t.channel || "all", filters: filters};
-  return out;
+  return t;
 }
 function scTriggerWhenPreview(t) {
   if (!t) return "When something happens";
@@ -2374,31 +2631,8 @@ function scTriggerWhenPreview(t) {
     if (targets.length === 1) return "When connecting to " + targets[0];
     return "When connecting to " + targets.join(" or ");
   }
-  if (t.type !== "chat_received") return "When something happens";
-  t = scNormalizeTrigger(JSON.parse(JSON.stringify(t)));
-  var msg = "a chat message";
-  if (t.channel === "team") msg = "a team chat message";
-  else if (t.channel === "uclient") msg = "a UClient chat message";
-  var parts = [];
-  t.filters.forEach(function (f) {
-    if (f.kind === "sender") {
-      var names = (f.names || []).filter(function (n) { return n; });
-      if (names.length === 1) parts.push("from " + names[0]);
-      else if (names.length > 1) parts.push("from " + names.join(" or "));
-    } else if (f.kind === "chat_channel") {
-      parts.push("on " + scLabelChannel(f.channel || "all") + " chat");
-    } else if (f.kind === "uclient_room") {
-      if (f.room) parts.push('in UClient room "' + f.room + '"');
-      else parts.push("in any UClient room");
-    } else if (f.text) {
-      var match = f.match || "contains";
-      if (match === "equals") parts.push('text equals "' + f.text + '"');
-      else if (match === "starts_with") parts.push('text starts with "' + f.text + '"');
-      else parts.push('text contains "' + f.text + '"');
-    }
-  });
-  if (!parts.length) return "When " + msg + " is received";
-  return "When " + msg + " " + parts.join(" and ");
+  if (t.type === "chat_received") return "When a chat message is received from others";
+  return "When something happens";
 }
 function scCatalogMatches(def, q, isTrigger) {
   if (!q) return true;
@@ -2412,13 +2646,50 @@ function scCatalogMatches(def, q, isTrigger) {
 function scIconX() {
   return '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true" preserveAspectRatio="xMidYMid meet"><path d="M7 7l10 10M17 7L7 17" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"/></svg>';
 }
+function scDrawerFilterSvg(filterId) {
+  var sw = "1.85";
+  var rnd = ' stroke-linecap="round" stroke-linejoin="round"';
+  function wrap(inner) {
+    return '<svg class="sc-drawer-filter-ico" viewBox="0 0 24 24" fill="none" aria-hidden="true">' + inner + '</svg>';
+  }
+  if (filterId === "automation") {
+    return wrap('<circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="' + sw + '"/><path d="M12 7.6V12l3.1 2.3" stroke="currentColor" stroke-width="' + sw + '"' + rnd + '/>');
+  }
+  if (filterId === "scripting") {
+    return wrap('<path d="M8 7.2c-2.1 0-3.4 1.35-3.4 3.1v3.4c0 1.75 1.3 3.1 3.4 3.1M16 7.2c2.1 0 3.4 1.35 3.4 3.1v3.4c0 1.75-1.3 3.1-3.4 3.1" stroke="currentColor" stroke-width="' + sw + '"' + rnd + '/><path d="M10.4 10.2l-1.1 1.8 1.1 1.8M13.6 10.2l1.1 1.8-1.1 1.8" stroke="currentColor" stroke-width="' + sw + '"' + rnd + '/>');
+  }
+  if (filterId === "connection") {
+    return wrap('<circle cx="12" cy="12" r="3.1" stroke="currentColor" stroke-width="' + sw + '"/><circle cx="12" cy="12" r="7.1" stroke="currentColor" stroke-width="' + sw + '" stroke-dasharray="3.2 3.2"/>');
+  }
+  return wrap('<rect x="5.4" y="5.4" width="5.6" height="5.6" rx="1.3" stroke="currentColor" stroke-width="' + sw + '"/><rect x="13" y="13" width="5.6" height="5.6" rx="1.3" stroke="currentColor" stroke-width="' + sw + '"/><path d="M10.9 8.2h2.6v5.1M8.2 10.9h5.1v2.6" stroke="currentColor" stroke-width="' + sw + '"' + rnd + '/>');
+}
+function scDrawerFilterDef(id) {
+  for (var i = 0; i < SC_DRAWER_FILTERS.length; i++) {
+    if (SC_DRAWER_FILTERS[i].id === id) return SC_DRAWER_FILTERS[i];
+  }
+  return null;
+}
+function scDrawerTriggerSections() {
+  if (scIsManualEdit()) return [];
+  if (scDrawerFilter !== "automation") return [];
+  return SC_TRIGGER_SECTIONS;
+}
+function scDrawerActionSections() {
+  var f = scDrawerFilter;
+  if (!f) return SC_ACTION_SECTIONS;
+  if (f === "automation") return [];
+  if (f === "scripting") return SC_ACTION_SECTIONS.filter(function (s) { return s.id === "flow"; });
+  if (f === "connection") return SC_ACTION_SECTIONS.filter(function (s) { return s.id === "connection"; });
+  if (f === "actions") return SC_ACTION_SECTIONS.filter(function (s) { return s.id === "actions"; });
+  return [];
+}
 function scCatalogRow(kind, def) {
   var isTrigger = kind === "trigger";
   var title = def.title || def.label || def.id;
   var sub = isTrigger ? (def.whenHint || scTriggerWhenPreview(def.defaults)) : (def.hint || def.label || title);
   var tone = def.tone || (isTrigger ? "chat" : "action");
   return '<div class="sc-catalog" data-add-kind="' + kind + '" data-add-id="' + esc(def.id) + '">' +
-    '<span class="sc-catalog-ico ' + tone + '">' + def.icon + '</span>' +
+    '<span class="sc-catalog-ico ' + tone + '">' + scCatalogBlockIcon(def, kind) + '</span>' +
     '<div class="sc-catalog-text"><b>' + esc(title) + '</b><small>' + esc(sub) + '</small></div></div>';
 }
 function scSummaryTrigger(t) {
@@ -2461,23 +2732,117 @@ function scIfOpsForVariable(varId) {
 function scIfOpNeedsRight(op) {
   return op !== "has_any" && op !== "has_none";
 }
+function scIfIsMulti(ifAction) {
+  return !!(ifAction && ifAction.type === "if" && ifAction.conditions && ifAction.conditions.length);
+}
+function scNormalizeIfConditionObj(obj) {
+  if (!obj) return;
+  if (!obj.left) {
+    obj.op = "contains";
+    obj.right = "";
+    return;
+  }
+  var ops = scIfOpsForVariable(obj.left);
+  if (!obj.op || !ops.some(function (o) { return o.value === obj.op; })) {
+    obj.op = ops.length ? ops[0].value : "contains";
+  }
+  if (!scIfOpNeedsRight(obj.op)) {
+    obj.right = "";
+    return;
+  }
+  if (obj.right == null) obj.right = "";
+  if (scIfLeftValueKind(obj.left) === "channel" && !obj.right) obj.right = "all";
+}
 function scNormalizeIfCondition(ifAction) {
   if (!ifAction || ifAction.type !== "if") return;
-  if (!ifAction.left) {
-    ifAction.op = "contains";
-    ifAction.right = "";
+  if (scIfIsMulti(ifAction)) {
+    ifAction.match = ifAction.match === "any" ? "any" : "all";
+    ifAction.conditions.forEach(scNormalizeIfConditionObj);
     return;
   }
-  var ops = scIfOpsForVariable(ifAction.left);
-  if (!ifAction.op || !ops.some(function (o) { return o.value === ifAction.op; })) {
-    ifAction.op = ops.length ? ops[0].value : "contains";
+  scNormalizeIfConditionObj(ifAction);
+}
+function scIfDefaultCondition() {
+  return {left: "", op: "contains", right: ""};
+}
+function scIfExpandToMulti(ifIdx) {
+  if (!scEditing || !scEditing.actions) return;
+  var act = scEditing.actions[ifIdx];
+  if (!act || act.type !== "if" || scIfIsMulti(act)) return;
+  scPushHistory();
+  act.match = "all";
+  act.conditions = [
+    {left: act.left || "", op: act.op || "contains", right: act.right == null ? "" : String(act.right)},
+    scIfDefaultCondition()
+  ];
+  delete act.left;
+  delete act.op;
+  delete act.right;
+  scUpdateIfGroupBlock(ifIdx);
+}
+function scIfAddCondition(ifIdx) {
+  if (!scEditing || !scEditing.actions) return;
+  var act = scEditing.actions[ifIdx];
+  if (!act || act.type !== "if" || !scIfIsMulti(act)) return;
+  scPushHistory();
+  act.conditions.push(scIfDefaultCondition());
+  scUpdateIfGroupBlock(ifIdx);
+}
+function scIfRemoveCondition(ifIdx, condIdx) {
+  if (!scEditing || !scEditing.actions) return;
+  var act = scEditing.actions[ifIdx];
+  if (!act || act.type !== "if" || !scIfIsMulti(act)) return;
+  if (condIdx < 0 || condIdx >= act.conditions.length) return;
+  scPushHistory();
+  act.conditions.splice(condIdx, 1);
+  if (!act.conditions.length) {
+    act.left = "";
+    act.op = "contains";
+    act.right = "";
+    delete act.conditions;
+    delete act.match;
+  } else if (act.conditions.length === 1) {
+    var c = act.conditions[0];
+    act.left = c.left || "";
+    act.op = c.op || "contains";
+    act.right = c.right == null ? "" : String(c.right);
+    delete act.conditions;
+    delete act.match;
+    scNormalizeIfCondition(act);
   }
-  if (!scIfOpNeedsRight(ifAction.op)) {
-    ifAction.right = "";
-    return;
+  scUpdateIfGroupBlock(ifIdx);
+}
+function scIfConditionLineHtml(cond, ifIdx, condIdx) {
+  scNormalizeIfConditionObj(cond);
+  var html = scIfLeftFieldHtml(cond, ifIdx, "if-cond", condIdx);
+  if (cond.left) {
+    html += scPill("op", cond.op, ifIdx, "if-cond", condIdx);
+    if (scIfOpNeedsRight(cond.op)) {
+      if (scIfLeftValueKind(cond.left) === "channel") {
+        html += scPill("right", cond.right || "all", ifIdx, "if-cond", condIdx);
+      } else {
+        html += scPillInput("right", cond.right, ifIdx, "if-cond", condIdx);
+      }
+    } else {
+      html += scTxt("value");
+    }
   }
-  if (ifAction.right == null) ifAction.right = "";
-  if (scIfLeftValueKind(ifAction.left) === "channel" && !ifAction.right) ifAction.right = "all";
+  html += '<button type="button" class="sc-filter-del" data-remove-if-condition="' + ifIdx + '" data-if-cond-idx="' + condIdx + '" aria-label="Remove condition">\u2212</button>';
+  return '<div class="sc-block-filter sc-if-condition" data-if-cond-idx="' + condIdx + '">' + html + '</div>';
+}
+function scIfMultiBlockHtml(data, idx, kind) {
+  scNormalizeIfCondition(data);
+  var match = data.match === "any" ? "any" : "all";
+  var rows = (data.conditions || []).map(function (c, i) {
+    return scIfConditionLineHtml(c, idx, i);
+  }).join("");
+  return '<div class="sc-if-multi-wrap">' +
+    '<div class="sc-if-multi-head sc-block-line">' + scTxt("If") +
+    scPill("match", match, idx, kind) + scTxt("are true") + '</div>' +
+    '<div class="sc-block-trigger-divider"></div>' +
+    '<div class="sc-block-filters sc-if-conditions">' + rows + '</div>' +
+    '<button type="button" class="sc-filter-add" data-add-if-condition="' + idx + '">+ Add Condition</button>' +
+    '</div>';
 }
 function scLabelVariable(id) {
   var vars = scAvailableVariables(null);
@@ -2492,6 +2857,7 @@ function scLabelVariable(id) {
   if (id === "window_active") return "Window Active";
   if (id === "name") return "My Name";
   if (id === "nearestPlayer") return "Nearest Player";
+  if (id === "clipboard") return "Clipboard";
   return id || "Variable";
 }
 function scAvailableVariables(beforeIdx) {
@@ -2514,6 +2880,10 @@ function scAvailableVariables(beforeIdx) {
       if (!a) continue;
       if (a.type === "get" && a.property === "window_active")
         vars.push({id: "window_active", label: "Window Active"});
+      if (a.type === "get_clipboard") {
+        var clipAs = a.as || "clipboard";
+        vars.push({id: clipAs, label: clipAs === "clipboard" ? "Clipboard" : clipAs});
+      }
       if (a.type === "text") {
         var as = a.as || ("text_" + i);
         vars.push({id: as, label: as === "text" ? "Text" : as});
@@ -2590,13 +2960,42 @@ function scNormalizeAction(a, actionIdx) {
   if (a.type === "wait") {
     a.seconds = scClampWaitSeconds(a.seconds);
   }
-  if (a.type === "if") {
-    if (a.left == null) a.left = "";
-    if (a.left) {
-      var ifVars = scAvailableVariables(actionIdx != null ? actionIdx : 0);
-      if (!ifVars.some(function (v) { return v.id === a.left; })) a.left = "";
+  if (a.type === "repeat") {
+    a.count = scClampRepeatCount(a.count);
+  }
+  if (a.type === "run_shortcut") {
+    if (a.shortcutId == null) a.shortcutId = "";
+    a.shortcutId = String(a.shortcutId || "");
+    var runnable = scRunnableManualShortcuts(scEditing && scEditing.id);
+    if (a.shortcutId && !runnable.some(function (s) { return s.id === a.shortcutId; })) {
+      if (runnable.length) a.shortcutId = runnable[0].id;
+      else a.shortcutId = "";
     }
-    scNormalizeIfCondition(a);
+  }
+  if (a.type === "if") {
+    if (scIfIsMulti(a)) {
+      if (!a.match) a.match = "all";
+      a.conditions = (a.conditions || []).map(function (c) {
+        return {left: c.left == null ? "" : String(c.left), op: c.op || "contains", right: c.right == null ? "" : String(c.right)};
+      });
+      a.conditions.forEach(function (c, i) {
+        if (c.left) {
+          var ifVars = scAvailableVariables(actionIdx != null ? actionIdx : 0);
+          if (!ifVars.some(function (v) { return v.id === c.left; })) c.left = "";
+        }
+      });
+      scNormalizeIfCondition(a);
+    } else {
+      if (a.left == null) a.left = "";
+      if (a.left) {
+        var ifVars2 = scAvailableVariables(actionIdx != null ? actionIdx : 0);
+        if (!ifVars2.some(function (v) { return v.id === a.left; })) a.left = "";
+      }
+      scNormalizeIfCondition(a);
+    }
+  }
+  if (a.type === "get_clipboard") {
+    if (!a.as) a.as = "clipboard";
   }
   if (a.type === "text") {
     if (!a.parts || !a.parts.length) a.parts = [{mode: "text", text: ""}];
@@ -2627,6 +3026,16 @@ function scCleanActionForSave(a) {
     delete a.uclientRoomMode; delete a.uclientRoomId; delete a.uclientRoomVariable;
     delete a.messageMode; delete a.messageText; delete a.messageVariable;
   }
+  if (a.type === "get_clipboard") {
+    if (!a.as) a.as = "clipboard";
+  }
+  if (a.type === "repeat") {
+    a.count = scClampRepeatCount(a.count);
+  }
+  if (a.type === "run_shortcut") {
+    a.shortcutId = String(a.shortcutId || "");
+    delete a.shortcutName;
+  }
   if (a.type === "text") {
     a.parts = scMergeTextParts((a.parts || []).filter(function (p) {
       if (p.mode === "variable") return !!p.variable;
@@ -2635,62 +3044,253 @@ function scCleanActionForSave(a) {
     if (!a.parts.length) a.parts = [{mode: "text", text: ""}];
     if (!a.as) a.as = "text";
   }
+  if (a.type === "if") {
+    if (scIfIsMulti(a)) {
+      a.match = a.match === "any" ? "any" : "all";
+      a.conditions = (a.conditions || []).map(function (c) {
+        var row = {left: c.left || "", op: c.op || "contains", right: c.right == null ? "" : String(c.right)};
+        scNormalizeIfConditionObj(row);
+        return row;
+      }).filter(function (c) { return c.left; });
+      delete a.left;
+      delete a.op;
+      delete a.right;
+      if (!a.conditions.length) {
+        delete a.conditions;
+        delete a.match;
+        a.left = "";
+        a.op = "contains";
+        a.right = "";
+      }
+    } else {
+      delete a.conditions;
+      delete a.match;
+      scNormalizeIfConditionObj(a);
+    }
+  }
   return a;
 }
 var scSmartBlurTimer = null;
 var SC_CHANNEL_CHOICES = [{value: "all", label: "All"}, {value: "team", label: "Team"}, {value: "uclient", label: "UClient"}];
-function scBlockToneIconSvg(tone) {
-  var sw = "1.25";
-  var rnd = ' stroke-linecap="round" stroke-linejoin="round"';
-  if (tone === "chat") {
-    return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M2.8 3.4h10.4a1.5 1.5 0 0 1 1.5 1.5v5.8a1.5 1.5 0 0 1-1.5 1.5H8.1L5.2 13.9v-2.7H2.8a1.5 1.5 0 0 1-1.5-1.5V4.9a1.5 1.5 0 0 1 1.5-1.5z"/></svg>';
-  }
-  if (tone === "text") {
-    return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M3.8 4.4h8.4M3.8 8h6.6M3.8 11.6h4.8"/></svg>';
-  }
-  if (tone === "flow") {
-    return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M3.2 4.2h9.6M3.2 8h5.8M3.2 11.8h7.6"/><circle fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' cx="12.2" cy="8" r="1.85"/></svg>';
-  }
-  if (tone === "connect") {
-    return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><circle fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' cx="8" cy="8" r="2.5"/><circle fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' cx="8" cy="8" r="5.2" stroke-dasharray="2.1 2.1"/></svg>';
-  }
-  if (tone === "wait") {
-    return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><circle fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' cx="8" cy="8.5" r="5"/><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M8 5.6V8.4l1.9 1.1"/></svg>';
-  }
-  if (tone === "stop") {
-    return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><rect fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' x="4.2" y="4.2" width="7.6" height="7.6" rx="3"/></svg>';
-  }
-  return '<svg class="sc-block-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M4.2 8h7.6M8 4.2v7.6"/></svg>';
+/* Lucide Icons (ISC) — https://lucide.dev — embedded paths from lucide-static */
+var SC_LUCIDE_PATHS = {
+  "messages-square": '<path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/>',
+  server: '<rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>',
+  variable: '<path d="M8 21s-4-3-4-9 4-9 4-9"/><path d="M16 3s4 3 4 9-4 9-4 9"/><line x1="15" x2="9" y1="9" y2="15"/><line x1="9" x2="15" y1="9" y2="15"/>',
+  clipboard: '<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
+  "whole-word": '<circle cx="7" cy="12" r="3"/><path d="M10 9v6"/><circle cx="17" cy="12" r="3"/><path d="M14 7v8"/><path d="M22 17v1c0 .5-.5 1-1 1H3c-.5 0-1-.5-1-1v-1"/>',
+  repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+  "list-end": '<path d="M16 12H3"/><path d="M16 6H3"/><path d="M10 18H3"/><path d="M21 6v10a2 2 0 0 1-2 2h-5"/><path d="m16 16-2 2 2 2"/>',
+  "git-branch": '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  "between-horizontal-start": '<rect width="13" height="7" x="8" y="3" rx="1"/><path d="m2 9 3 3-3 3"/><rect width="13" height="7" x="8" y="14" rx="1"/>',
+  "git-merge": '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>',
+  "circle-stop": '<circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6" rx="1"/>',
+  plug: '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+  "log-out": '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>',
+  "message-square-text": '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M13 8H7"/><path d="M17 12H7"/>',
+  timer: '<line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/>',
+  hammer: '<path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5"/>',
+  shirt: '<path d="M20.38 3.46 16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/>',
+  palette: '<circle cx="13.5" cy="6.5" r=".5" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>',
+  "user-round": '<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>',
+  footprints: '<path d="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3.11-2 5.66-2 8.68V16a2 2 0 1 1-4 0Z"/><path d="M20 20v-2.38c0-2.12 1.03-3.12 1-5.62-.03-2.72-1.49-6-4.5-6C14.63 6 14 7.8 14 9.5c0 3.11 2 5.66 2 8.68V20a2 2 0 1 0 4 0Z"/><path d="M16 17h4"/><path d="M4 13h4"/>',
+  signature: '<path d="m21 17-2.156-1.868A.5.5 0 0 0 18 15.5v.5a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1c0-2.545-3.991-3.97-8.5-4a1 1 0 0 0 0 5c4.153 0 4.745-11.295 5.708-13.5a2.5 2.5 0 1 1 3.31 3.284"/><path d="M3 21h18"/>',
+  workflow: '<rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/>',
+  "app-window": '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>',
+  play: '<polygon points="6 3 20 12 6 21 6 3" fill="currentColor" stroke="none"/>',
+  "chevron-down": '<path d="m6 9 6 6 6-6"/>',
+  pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  "trash-2": '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>'
+};
+var SC_TRIGGER_LUCIDE = {chat_received: "messages-square", server_connect: "server"};
+var SC_ACTION_LUCIDE = {
+  get: "variable", get_clipboard: "clipboard", text: "whole-word", repeat: "repeat", end_repeat: "list-end",
+  if: "git-branch", otherwise: "between-horizontal-start", end_if: "git-merge", stop: "circle-stop",
+  connect_server: "plug", leave_server: "log-out", send_chat: "message-square-text", wait: "timer",
+  switch_weapon_use: "hammer", set_skin: "shirt", set_custom_color: "palette", set_body_color: "user-round",
+  set_feet_color: "footprints", set_name: "signature", run_shortcut: "play"
+};
+function scLucideSvg(name, cssClass) {
+  var inner = SC_LUCIDE_PATHS[name];
+  if (!inner) return "";
+  cssClass = cssClass || "sc-block-icon-svg";
+  return '<svg class="' + cssClass + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + inner + "</svg>";
 }
-function scBlockIconInner(tone, fallback) {
-  return scBlockToneIconSvg(tone) || fallback;
+function scInlineLucide(name, cssClass) {
+  return scLucideSvg(name, cssClass || "sc-block-icon-svg");
+}
+function scEdTitleMenuRow(iconName, label, act, danger) {
+  return '<button type="button" class="sc-smart-menu-item sc-ed-title-menu-item' + (danger ? " danger" : "") +
+    '" data-ed-title-act="' + esc(act) + '"><span class="sc-ed-menu-ico">' + scInlineLucide(iconName) +
+    '</span><span class="sc-ed-menu-label">' + esc(label) + "</span></button>";
+}
+function scEditorDisplayName() {
+  if (!scEditing) return "New Shortcut";
+  if (scEditing.name && String(scEditing.name).trim()) return String(scEditing.name).trim();
+  if (scIsManualEdit()) return "New Shortcut";
+  if (scEditing.trigger) return scSummaryTrigger(scEditing.trigger);
+  return "New Automation";
+}
+function scEditorTitleTileHtml() {
+  var first = scEditing && scEditing.actions && scEditing.actions[0];
+  if (first && first.type) {
+    return scBlockIconInner(scActionDef(first.type).tone, scActionDef(first.type).icon, "action", first.type);
+  }
+  return scInlineLucide("workflow");
+}
+function scSyncEditorTitleUI() {
+  var label = $("sc-ed-title-label");
+  var input = $("sc-ed-title");
+  var tile = $("sc-ed-title-tile");
+  var chev = document.querySelector(".sc-ed-chev-svg");
+  if (!scEditing || !label || !input) return;
+  var name = scEditorDisplayName();
+  input.value = scEditing.name != null ? scEditing.name : "";
+  if (!input.value && name) input.placeholder = name;
+  label.textContent = name;
+  if (tile) tile.innerHTML = scEditorTitleTileHtml();
+  if (chev) chev.innerHTML = scInlineLucide("chevron-down", "sc-ed-chev-svg-inner");
+}
+function scSetEditorTitleMenuOpen(open) {
+  var trigger = $("sc-ed-title-trigger");
+  if (trigger) trigger.setAttribute("aria-expanded", open ? "true" : "false");
+}
+function scOpenEditorTitleMenu() {
+  if (!scEditing) return;
+  var trigger = $("sc-ed-title-trigger");
+  if (!trigger) return;
+  if (scPopEl && scPopEl.classList.contains("sc-ed-title-pop")) {
+    scCloseAllPickers(null);
+    return;
+  }
+  scCloseAllPickers(null);
+  scPopEl = document.createElement("div");
+  scPopEl.className = "sc-pop sc-ed-title-pop";
+  scPopEl.id = "sc-ed-title-menu";
+  scPopEl.setAttribute("role", "menu");
+  var html = '<div class="sc-smart-menu-inner sc-ed-title-menu">';
+  html += scEdTitleMenuRow("pencil", "Rename", "rename");
+  html += scEdTitleMenuRow("copy", "Duplicate", "duplicate");
+  html += '<div class="sc-smart-menu-sep"></div>';
+  html += scEdTitleMenuRow("trash-2", "Delete Shortcut", "delete", true);
+  html += "</div>";
+  scPopEl.innerHTML = html;
+  scPopEl.addEventListener("click", function (e) {
+    var row = e.target.closest("[data-ed-title-act]");
+    if (!row) return;
+    e.stopPropagation();
+    scHandleEditorTitleMenu(row.dataset.edTitleAct);
+  });
+  document.body.appendChild(scPopEl);
+  scSetEditorTitleMenuOpen(true);
+  var r = trigger.getBoundingClientRect();
+  var left = Math.min(Math.max(8, r.left + r.width * 0.5 - scPopEl.offsetWidth * 0.5), window.innerWidth - scPopEl.offsetWidth - 8);
+  scPopEl.style.left = left + "px";
+  scPopEl.style.top = (r.bottom + 8) + "px";
+  scPopEl.style.transformOrigin = Math.max(12, r.left + r.width * 0.5 - left) + "px 0";
+}
+function scBeginEditorRename() {
+  scCloseAllPickers(null);
+  var center = $("sc-ed-head-center");
+  var input = $("sc-ed-title");
+  if (!center || !input) return;
+  center.classList.add("is-renaming");
+  if (!input.value) input.value = scEditorDisplayName();
+  input.focus();
+  try { input.setSelectionRange(0, input.value.length); } catch (err) {}
+}
+function scEndEditorRename() {
+  var center = $("sc-ed-head-center");
+  var input = $("sc-ed-title");
+  if (scEditing && input) scEditing.name = input.value;
+  if (center) center.classList.remove("is-renaming");
+  scSyncEditorTitleUI();
+}
+function scDuplicateEditingShortcut() {
+  if (!scEditing) return;
+  scCloseAllPickers(null);
+  scCommitAllPillInputs($("sc-ed-canvas"));
+  var copy = JSON.parse(JSON.stringify(scEditing));
+  copy.id = scUuid();
+  var base = (scEditorDisplayName() || "Shortcut").replace(/\s+Copy(\s+\d+)?$/i, "");
+  copy.name = base + " Copy";
+  shortcutsLocal.push(JSON.parse(JSON.stringify(copy)));
+  shortcutsSig = JSON.stringify(shortcutsLocal);
+  scOpenEditor(copy, scEditKind);
+  scToast("Duplicated");
+}
+function scDeleteEditingShortcut() {
+  if (!scEditing) return;
+  scCloseAllPickers(null);
+  send({cmd: "shortcutsDelete", id: scEditing.id});
+  shortcutsLocal = shortcutsLocal.filter(function (s) { return s.id !== scEditing.id; });
+  shortcutsSig = JSON.stringify(shortcutsLocal);
+  renderShortcutsGallery();
+  renderShortcutsList();
+  scCloseEditor();
+}
+function scHandleEditorTitleMenu(act) {
+  if (act === "rename") scBeginEditorRename();
+  else if (act === "duplicate") scDuplicateEditingShortcut();
+  else if (act === "delete") scDeleteEditingShortcut();
+}
+function scBlockIconSvgByType(blockKind, type) {
+  if (!type) return "";
+  var name = blockKind === "trigger" ? SC_TRIGGER_LUCIDE[type] : SC_ACTION_LUCIDE[type];
+  return name ? scLucideSvg(name) : "";
+}
+function scBlockToneIconSvg(tone) {
+  if (tone === "chat") return scLucideSvg("message-square-text");
+  if (tone === "text") return scBlockIconSvgByType("action", "text");
+  if (tone === "flow") return scBlockIconSvgByType("action", "if");
+  if (tone === "clip") return scBlockIconSvgByType("action", "get_clipboard");
+  if (tone === "loop") return scBlockIconSvgByType("action", "repeat");
+  if (tone === "connect") return scBlockIconSvgByType("trigger", "server_connect");
+  if (tone === "wait") return scBlockIconSvgByType("action", "wait");
+  if (tone === "stop") return scBlockIconSvgByType("action", "stop");
+  return scLucideSvg("workflow");
+}
+function scBlockIconInner(tone, fallback, blockKind, blockType) {
+  var byType = scBlockIconSvgByType(blockKind, blockType);
+  if (byType) return byType;
+  var byTone = scBlockToneIconSvg(tone);
+  if (byTone) return byTone;
+  return fallback;
+}
+function scCatalogBlockIcon(def, kind) {
+  var tone = def.tone || (kind === "trigger" ? "chat" : "action");
+  var type = (def.defaults && def.defaults.type) || def.id;
+  var bk = kind === "trigger" ? "trigger" : "action";
+  return scBlockIconInner(tone, def.icon, bk, type);
 }
 function scVarPillIconSvg(varId) {
   var id = varId || "";
-  var sw = "1.25";
-  var rnd = ' stroke-linecap="round" stroke-linejoin="round"';
+  if (id === "clipboard") return scLucideSvg("clipboard", "sc-pill-icon-svg");
   if (id.indexOf("message") === 0 || id === "senderName" || id === "sender" || id === "message") {
-    return '<svg class="sc-pill-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M2.8 3.4h10.4a1.5 1.5 0 0 1 1.5 1.5v5.8a1.5 1.5 0 0 1-1.5 1.5H8.1L5.2 13.9v-2.7H2.8a1.5 1.5 0 0 1-1.5-1.5V4.9a1.5 1.5 0 0 1 1.5-1.5z"/></svg>';
+    return scLucideSvg("message-square-text", "sc-pill-icon-svg");
   }
-  if (id === "window_active") {
-    return '<svg class="sc-pill-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><rect fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' x="2.6" y="3.2" width="10.8" height="9.6" rx="2.6"/><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M5.2 3.2V2.5M10.8 3.2V2.5"/></svg>';
-  }
-  if (id === "text" || id.indexOf("text") === 0) {
-    return '<svg class="sc-pill-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M3.8 4.4h8.4M3.8 8h6.6M3.8 11.6h4.8"/></svg>';
-  }
-  return '<svg class="sc-pill-icon-svg" viewBox="0 0 16 16" aria-hidden="true"><circle fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' cx="8" cy="8" r="2.1"/><path fill="none" stroke="currentColor" stroke-width="' + sw + '"' + rnd + ' d="M8 2.6v1.2M8 12.2v1.2M2.6 8h1.2M12.2 8h1.2"/></svg>';
+  if (id === "window_active") return scLucideSvg("app-window", "sc-pill-icon-svg");
+  if (id === "text" || id.indexOf("text") === 0) return scLucideSvg("whole-word", "sc-pill-icon-svg");
+  return scLucideSvg("variable", "sc-pill-icon-svg");
 }
 function scVarPillButton(extraClass, varId, label, attrs) {
   return '<button type="button" class="sc-pill var sc-pill-nested' + (extraClass ? " " + extraClass : "") + '"' + (attrs || "") + ">" +
     scVarPillIconSvg(varId) + '<span class="sc-pill-label">' + esc(label) + "</span></button>";
 }
+function scSmartMenuWouldBeEmpty(beforeIdx, fixedChoices, menuMode, slot) {
+  var vars = scSmartFieldVariables(slot, beforeIdx);
+  if (menuMode === "variable") return vars.length === 0;
+  return vars.length === 0 && !(fixedChoices && fixedChoices.length);
+}
 function scSmartMenuHtml(beforeIdx, fixedChoices, menuMode, slot) {
+  if (scSmartMenuWouldBeEmpty(beforeIdx, fixedChoices, menuMode, slot)) return "";
   var vars = scSmartFieldVariables(slot, beforeIdx);
   var html = '<div class="sc-smart-menu" aria-hidden="true"><div class="sc-smart-menu-inner">';
   var showVars = vars.length > 0;
-  if (menuMode === "variable") {
+  if (menuMode === "variable" && showVars) {
     html += '<button type="button" class="sc-smart-menu-item sc-smart-menu-clear" data-pick-type="clear" data-pick-id="">Clear Variable</button>';
-    if (showVars) html += '<div class="sc-smart-menu-sep"></div>';
+    html += '<div class="sc-smart-menu-sep"></div>';
   }
   if (menuMode !== "variable" && fixedChoices && fixedChoices.length) {
     fixedChoices.forEach(function (c) {
@@ -2798,7 +3398,7 @@ function scEnsureSmartMenuLayoutListeners() {
 function scSmartFieldShowMenu(fieldEl, force) {
   if (!fieldEl) return;
   var menu = fieldEl.querySelector(".sc-smart-menu");
-  if (!menu) return;
+  if (!menu || !menu.querySelector(".sc-smart-menu-item")) return;
   var input = fieldEl.querySelector("input.sc-smart-trigger, textarea.sc-smart-trigger");
   if (input && !force && String(input.value || "").length > 0) {
     scSmartFieldHideMenu(fieldEl);
@@ -2837,8 +3437,9 @@ function scApplySmartPick(fieldEl, pickType, pickId) {
   var slot = fieldEl.dataset.smartSlot;
   var idx = Number(fieldEl.dataset.idx || 0);
   var kind = fieldEl.dataset.kind;
+  var condIdx = fieldEl.dataset.condIdx != null ? Number(fieldEl.dataset.condIdx) : null;
   var partIdx = fieldEl.dataset.partIdx != null ? Number(fieldEl.dataset.partIdx) : null;
-  var ref = scGetBlockRef(kind, idx);
+  var ref = scGetBlockRef(kind, idx, condIdx);
   if (!ref) return;
   scPushHistory();
   scNormalizeAction(ref, idx);
@@ -2865,17 +3466,19 @@ function scApplySmartPick(fieldEl, pickType, pickId) {
       var bodyText = "";
       if (ref.parts.length === 1 && ref.parts[0].mode === "text") bodyText = ref.parts[0].text || "";
       ref.parts = [{mode: "text", text: bodyText}, {mode: "variable", variable: pickId}, {mode: "text", text: ""}];
-    } else if (slot === "ifLeft") {
+    }     else if (slot === "ifLeft") {
       ref.left = pickId || "";
-      scNormalizeIfCondition(ref);
+      scNormalizeIfConditionObj(ref);
     }
   }
   scSmartFieldHideMenu(fieldEl);
-  scUpdateBlockElement(kind, idx);
+  if (kind === "if-cond") scUpdateIfGroupBlock(idx);
+  else scUpdateBlockElement(kind, idx);
 }
-function scIfLeftFieldHtml(data, idx, kind) {
+function scIfLeftFieldHtml(data, idx, kind, condIdx) {
   var left = data.left || "";
-  var html = '<span class="sc-smart-field" data-smart-slot="ifLeft" data-idx="' + idx + '" data-kind="' + esc(kind) + '">';
+  var condAttr = condIdx != null ? ' data-cond-idx="' + condIdx + '"' : "";
+  var html = '<span class="sc-smart-field" data-smart-slot="ifLeft" data-idx="' + idx + '" data-kind="' + esc(kind) + '"' + condAttr + '">';
   if (left) {
     html += scVarPillButton("sc-smart-trigger", left, scLabelVariable(left) || left, ' data-smart-trigger="var"');
     html += scSmartMenuHtml(idx, null, "variable", "ifLeft");
@@ -2975,19 +3578,114 @@ function setRailView(view) {
   $("btn-home").classList.toggle("on", view === "home");
   $("btn-shortcuts").classList.toggle("on", view === "shortcuts");
   $("shortcuts-view").setAttribute("aria-hidden", view === "shortcuts" ? "false" : "true");
+  if (view === "shortcuts") requestAnimationFrame(scLayoutLibTabIndicator);
   if (settingsOpen) toggleSettings(false);
 }
 $("btn-home").addEventListener("click", function () { setRailView("home"); });
 $("btn-shortcuts").addEventListener("click", function () { setRailView("shortcuts"); });
 
+function scEntryKind(sc) {
+  if (sc && sc.kind === "manual") return "manual";
+  if (sc && sc.kind === "automation") return "automation";
+  return sc && sc.trigger ? "automation" : "manual";
+}
+function scManualShortcuts() {
+  return shortcutsLocal.filter(function (sc) { return scEntryKind(sc) === "manual"; });
+}
+function scRunnableManualShortcuts(excludeId) {
+  return shortcutsLocal.filter(function (sc) {
+    if (scEntryKind(sc) !== "manual") return false;
+    if (!sc.actions || !sc.actions.length) return false;
+    if (excludeId && sc.id === excludeId) return false;
+    return true;
+  });
+}
+function scRunShortcutLabel(shortcutId) {
+  if (!shortcutId) return "Choose Shortcut";
+  var sc = shortcutsLocal.find(function (s) { return s.id === shortcutId; });
+  if (!sc) return "Missing Shortcut";
+  return (sc.name || "Shortcut").trim() || "Shortcut";
+}
+function scAutomationShortcuts() {
+  return shortcutsLocal.filter(function (sc) { return scEntryKind(sc) === "automation"; });
+}
+function scTileTone(id) {
+  var hash = 0;
+  for (var i = 0; i < id.length; i++) hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0;
+  return SC_TILE_TONES[Math.abs(hash) % SC_TILE_TONES.length];
+}
+function scTileIcon(sc) {
+  var first = sc.actions && sc.actions[0];
+  if (first && first.type) return scActionDef(first.type).icon;
+  return "\u2699";
+}
+function scRunShortcutActions(sc) {
+  if (!sc || !sc.actions || !sc.actions.length) { scToast("Add at least one action"); return; }
+  if (!lastState || !lastState.gameRunning) { scToast("Start the game first"); return; }
+  var actions = sc.actions.map(scCleanActionForSave);
+  send({cmd: "automationRun", runId: scUuid(), actions: actions});
+}
+function scLayoutLibTabIndicator() {
+  var tabs = document.querySelector(".sc-lib-tabs");
+  if (!tabs) return;
+  var indicator = tabs.querySelector(".sc-lib-tabs-indicator");
+  var active = tabs.querySelector(".sc-lib-tab.on");
+  if (!indicator || !active) return;
+  indicator.style.width = active.offsetWidth + "px";
+  indicator.style.transform = "translateX(" + active.offsetLeft + "px)";
+}
+function setScLibraryTab(tab) {
+  var next = tab === "automation" ? "automation" : "shortcuts";
+  if (next === scLibraryTab && $("sc-panel-shortcuts").classList.contains("on") === (next === "shortcuts")) {
+    scLayoutLibTabIndicator();
+    return;
+  }
+  scLibraryTab = next;
+  $("shortcuts-view").setAttribute("data-sc-lib", scLibraryTab);
+  document.querySelectorAll(".sc-lib-tab").forEach(function (btn) {
+    var on = btn.dataset.scLib === scLibraryTab;
+    btn.classList.toggle("on", on);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  $("sc-panel-shortcuts").classList.toggle("on", scLibraryTab === "shortcuts");
+  $("sc-panel-automation").classList.toggle("on", scLibraryTab === "automation");
+  $("shortcuts-view").classList.toggle("empty-shortcuts", scLibraryTab === "shortcuts" && !scManualShortcuts().length);
+  $("shortcuts-view").classList.toggle("empty-automation", scLibraryTab === "automation" && !scAutomationShortcuts().length);
+  requestAnimationFrame(scLayoutLibTabIndicator);
+}
+function renderShortcutsGallery() {
+  var grid = $("sc-gallery-grid");
+  var q = (scGallerySearch || "").trim().toLowerCase();
+  var items = scManualShortcuts().filter(function (sc) {
+    if (!q) return true;
+    return String(sc.name || "").toLowerCase().indexOf(q) >= 0;
+  });
+  $("shortcuts-view").classList.toggle("empty-shortcuts", !scManualShortcuts().length);
+  if (!items.length) {
+    grid.innerHTML = '<div class="sc-empty" style="grid-column:1/-1"><b>' +
+      (q ? "No matches" : "No shortcuts yet") + '</b>' +
+      (q ? "Try another search." : "Tap + to build a shortcut with Do actions only.") + '</div>';
+    return;
+  }
+  grid.innerHTML = items.map(function (sc) {
+    return '<div class="sc-tile ' + scTileTone(sc.id) +
+      '" role="button" tabindex="0" data-id="' + esc(sc.id) + '">' +
+      '<span class="sc-tile-top">' +
+      '<span class="sc-tile-ico">' + esc(scTileIcon(sc)) + '</span>' +
+      '<button type="button" class="sc-tile-play" data-play="' + esc(sc.id) + '" title="Run shortcut" aria-label="Run shortcut">' +
+      SC_PLAY_ICON + '</button></span>' +
+      '<span class="sc-tile-name">' + esc(sc.name || "Shortcut") + '</span></div>';
+  }).join("");
+}
 function renderShortcutsList() {
   var list = $("sc-list");
-  $("shortcuts-view").classList.toggle("empty", !shortcutsLocal.length);
-  if (!shortcutsLocal.length) {
+  var automations = scAutomationShortcuts();
+  $("shortcuts-view").classList.toggle("empty-automation", !automations.length);
+  if (!automations.length) {
     list.innerHTML = '<div class="sc-empty"><b>No automations yet</b>Create a When trigger to detect chat, then chain actions.</div>';
     return;
   }
-  list.innerHTML = shortcutsLocal.map(function (sc) {
+  list.innerHTML = automations.map(function (sc) {
     var on = sc.enabled !== false;
     var trigTitle = sc.trigger ? scTriggerDef(sc.trigger.type).title : "Automation";
     var trigWhen = sc.trigger ? scTriggerWhenPreview(sc.trigger) : "";
@@ -3002,7 +3700,9 @@ function syncShortcutsFromState(st) {
   if (sig === shortcutsSig) return;
   shortcutsSig = sig;
   shortcutsLocal = JSON.parse(sig);
+  renderShortcutsGallery();
   renderShortcutsList();
+  setScLibraryTab(scLibraryTab);
 }
 function scToast(msg) {
   var t = $("sc-toast");
@@ -3016,6 +3716,8 @@ function scSaveAll() {
   scToast("Saved");
 }
 function scClosePop() {
+  scClearStepperHold();
+  scSetEditorTitleMenuOpen(false);
   if (scPopEl) { scPopEl.remove(); scPopEl = null; }
 }
 function scOpenPop(anchor, options, onPick, currentVal) {
@@ -3054,9 +3756,115 @@ document.addEventListener("click", function (e) {
   if (e.target.closest(".sc-pop") || e.target.closest(".sc-smart-menu")) return;
   if (e.target.closest(".sc-smart-trigger")) return;
   if (e.target.closest(".sc-pill[data-field]")) return;
+  if (e.target.closest(".sc-repeat-times-pill") || e.target.closest(".sc-stepper-pop")) return;
+  if (e.target.closest("#sc-ed-title-trigger") || e.target.closest(".sc-ed-title-pop")) return;
   scCloseAllPickers(null);
 });
 
+function scClampRepeatCount(raw) {
+  var n = parseInt(String(raw == null ? "" : raw).replace(/[^0-9]/g, ""), 10);
+  if (!isFinite(n) || n < 1) n = 1;
+  if (n > 99) n = 99;
+  return n;
+}
+function scRepeatTimesLabel(count) {
+  var n = scClampRepeatCount(count);
+  return n + (n === 1 ? " time" : " times");
+}
+function scRepeatTimesControl(count, idx, kind) {
+  return '<button type="button" class="sc-pill sc-repeat-times-pill" data-repeat-times="' + idx + '" data-kind="' + esc(kind) + '">' +
+    esc(scRepeatTimesLabel(count)) + '</button>';
+}
+var scStepperHoldTimer = null;
+var scStepperHoldState = null;
+function scClearStepperHold() {
+  if (scStepperHoldTimer) {
+    clearTimeout(scStepperHoldTimer);
+    scStepperHoldTimer = null;
+  }
+  scStepperHoldState = null;
+}
+function scAdjustRepeatCount(idx, kind, delta, skipHistory) {
+  if (!scEditing || !scEditing.actions) return;
+  var ref = scGetBlockRef(kind, idx);
+  if (!ref || ref.type !== "repeat") return;
+  if (!skipHistory) scPushHistory();
+  ref.count = scClampRepeatCount(scClampRepeatCount(ref.count) + delta);
+  scUpdateRepeatGroupBlock(idx);
+  if (scPopEl && scPopEl._scRepeatAnchor) {
+    scPopEl._scRepeatAnchor.textContent = scRepeatTimesLabel(ref.count);
+  }
+}
+function scOpenRepeatStepperPop(anchor, idx, kind) {
+  scCloseAllPickers(null);
+  scPopEl = document.createElement("div");
+  scPopEl.className = "sc-pop sc-stepper-pop";
+  scPopEl.innerHTML = '<div class="sc-smart-menu-inner">' +
+    '<button type="button" class="sc-stepper-btn" data-step-delta="-1" aria-label="Decrease">−</button>' +
+    '<span class="sc-stepper-sep" aria-hidden="true"></span>' +
+    '<button type="button" class="sc-stepper-btn" data-step-delta="1" aria-label="Increase">+</button></div>';
+  scPopEl._scRepeatAnchor = anchor;
+  document.body.appendChild(scPopEl);
+  var r = anchor.getBoundingClientRect();
+  var left = Math.min(r.left, window.innerWidth - scPopEl.offsetWidth - 8);
+  scPopEl.style.left = left + "px";
+  scPopEl.style.top = (r.bottom + 6) + "px";
+  scPopEl.style.transformOrigin = Math.max(12, r.left + r.width * 0.5 - left) + "px 0";
+  function onStep(btn) {
+    var delta = Number(btn.dataset.stepDelta || 0);
+    if (!delta) return;
+    scBeginStepperHold(idx, kind, delta);
+  }
+  scPopEl.querySelectorAll(".sc-stepper-btn").forEach(function (btn) {
+    btn.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onStep(btn);
+    });
+  });
+}
+function scBeginStepperHold(idx, kind, delta) {
+  scClearStepperHold();
+  scAdjustRepeatCount(idx, kind, delta, false);
+  var start = performance.now();
+  scStepperHoldState = {idx: idx, kind: kind, delta: delta, start: start};
+  function tick() {
+    if (!scStepperHoldState || scStepperHoldState.idx !== idx) return;
+    var elapsed = performance.now() - scStepperHoldState.start;
+    if (elapsed >= 400) scAdjustRepeatCount(idx, kind, delta, true);
+    var delay = elapsed >= 1200 ? 50 : (elapsed >= 400 ? 110 : 350);
+    scStepperHoldTimer = setTimeout(tick, delay);
+  }
+  scStepperHoldTimer = setTimeout(tick, 400);
+}
+function scFindMatchingEndRepeat(actions, repeatIdx) {
+  if (!actions || repeatIdx < 0 || repeatIdx >= actions.length || actions[repeatIdx].type !== "repeat") return -1;
+  var depth = 1;
+  for (var i = repeatIdx + 1; i < actions.length; i++) {
+    if (actions[i].type === "repeat") depth++;
+    else if (actions[i].type === "end_repeat") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+function scRepeatBlockMeta(actions, repeatIdx, endIdx, idx) {
+  if (idx === repeatIdx) return {role: "repeat"};
+  if (idx === endIdx) return {role: "end"};
+  return {role: "branch"};
+}
+function scIsInsideRepeatGroup(idx) {
+  var actions = scEditing && scEditing.actions;
+  if (!actions) return false;
+  for (var i = 0; i < actions.length; i++) {
+    if (actions[i].type !== "repeat") continue;
+    var endIdx = scFindMatchingEndRepeat(actions, i);
+    if (endIdx >= 0 && idx > i && idx <= endIdx) return true;
+  }
+  return false;
+}
 function scFindMatchingEndIf(actions, ifIdx) {
   if (!actions || ifIdx < 0 || ifIdx >= actions.length || actions[ifIdx].type !== "if") return -1;
   var depth = 1;
@@ -3112,6 +3920,16 @@ function scRepairIfBlocks(actions) {
   }
   return actions;
 }
+function scRepairRepeatBlocks(actions) {
+  if (!actions || !actions.length) return actions;
+  for (var i = 0; i < actions.length; i++) {
+    if (actions[i].type !== "repeat") continue;
+    if (scFindMatchingEndRepeat(actions, i) < 0) {
+      actions.splice(i + 1, 0, {type: "end_repeat"});
+    }
+  }
+  return actions;
+}
 function scRenderActionBlocks(actions, enterIdx) {
   var html = "";
   var i = 0;
@@ -3132,6 +3950,21 @@ function scRenderActionBlocks(actions, enterIdx) {
       }
       html += '</div>';
       i = endIdx + 1;
+    } else if (act.type === "repeat") {
+      var endRep = scFindMatchingEndRepeat(actions, i);
+      if (endRep < 0) {
+        html += scBlockHtml("action", act, i, i === enterIdx);
+        i++;
+        continue;
+      }
+      var repEnter = enterIdx >= i && enterIdx <= endRep;
+      html += '<div class="sc-if-group' + (repEnter ? " sc-enter" : "") + '">';
+      for (var k = i; k <= endRep; k++) {
+        html += scBlockHtml("action", scNormalizeAction(actions[k], k), k, k === enterIdx,
+          scRepeatBlockMeta(actions, i, endRep, k));
+      }
+      html += '</div>';
+      i = endRep + 1;
     } else {
       html += scBlockHtml("action", act, i, i === enterIdx);
       i++;
@@ -3145,7 +3978,6 @@ var scRun = null;
 function scRunActive() {
   return !!(scRun && scRun.status === "running");
 }
-var SC_PLAY_ICON = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path fill="currentColor" d="M8.05 5.55a1.35 1.35 0 0 1 2.09-1.12l8.31 5.54a1.35 1.35 0 0 1 0 2.24l-8.31 5.54a1.35 1.35 0 0 1-2.09-1.12V5.55z"/></svg>';
 function scUpdatePlayButton() {
   var btn = $("sc-tb-play");
   if (!btn) return;
@@ -3330,19 +4162,28 @@ function scRedo() {
   if (scEditHistory.length > SC_HISTORY_LIMIT) scEditHistory.shift();
   scApplyHistorySnapshot(scEditFuture.pop());
 }
+function scIsManualEdit() {
+  return scEditKind === "manual" || !!(scEditing && scEntryKind(scEditing) === "manual");
+}
+function scEditorEmptyHtml() {
+  if (scIsManualEdit()) {
+    return '<div class="sc-ed-empty"><b>Add actions</b>Pick Do actions below to build this shortcut.</div>';
+  }
+  return '<div class="sc-ed-empty"><b>Start with When</b>Pick a When trigger below to detect chat events, then add actions.</div>';
+}
 function scRenderEditor(opts) {
   var canvas = $("sc-ed-canvas");
   if (!scEditing) { canvas.innerHTML = ""; return; }
   if (scEditing.trigger) scEditing.trigger = scPrepareTriggerForEdit(scEditing.trigger);
   var scroll = canvas.scrollTop;
   var enterIdx = opts && opts.enterActionIdx != null ? opts.enterActionIdx : -1;
-  $("sc-ed-title").value = scEditing.name || "New Shortcut";
+  scSyncEditorTitleUI();
   var html = "";
-  if (scEditing.trigger) {
+  if (!scIsManualEdit() && scEditing.trigger) {
     html += scBlockHtml("trigger", scEditing.trigger, 0, enterIdx === -2);
   }
   html += scRenderActionBlocks(scEditing.actions || [], enterIdx);
-  canvas.innerHTML = html || '<div class="sc-ed-empty"><b>Start with When</b>Pick a When trigger below to detect chat events, then add actions.</div>';
+  canvas.innerHTML = html || scEditorEmptyHtml();
   canvas.scrollTop = scroll;
   scSyncPillInputs(canvas);
   scBindCanvasDropGap(null);
@@ -3358,6 +4199,38 @@ function scGetIfMetaForIndex(idx) {
     if (idx >= i && idx <= endIdx) return scIfBlockMeta(actions, i, endIdx, idx);
   }
   return {};
+}
+function scGetRepeatMetaForIndex(idx) {
+  var actions = scEditing && scEditing.actions;
+  if (!actions) return {};
+  for (var i = 0; i < actions.length; i++) {
+    if (actions[i].type !== "repeat") continue;
+    var endIdx = scFindMatchingEndRepeat(actions, i);
+    if (endIdx < 0) continue;
+    if (idx >= i && idx <= endIdx) return scRepeatBlockMeta(actions, i, endIdx, idx);
+  }
+  return {};
+}
+function scGetFlowMetaForIndex(idx) {
+  var rep = scGetRepeatMetaForIndex(idx);
+  if (rep && rep.role) return rep;
+  return scGetIfMetaForIndex(idx);
+}
+function scUpdateRepeatGroupBlock(idx) {
+  if (!scEditing) return;
+  var canvas = $("sc-ed-canvas");
+  var el = canvas.querySelector('.sc-block[data-block-kind="action"][data-block-idx="' + idx + '"]');
+  if (!el) {
+    scRenderEditor();
+    return;
+  }
+  var data = scNormalizeAction(scEditing.actions[idx], idx);
+  var wrap = document.createElement("div");
+  wrap.innerHTML = scBlockHtml("action", data, idx, false, scGetRepeatMetaForIndex(idx));
+  var fresh = wrap.firstElementChild;
+  if (fresh) el.replaceWith(fresh);
+  scSyncPillInputs(canvas);
+  scApplyRunState();
 }
 function scUpdateIfGroupBlock(idx) {
   if (!scEditing) return;
@@ -3382,6 +4255,10 @@ function scUpdateBlockElement(kind, idx) {
     var act = scEditing.actions[idx];
     if (act && (act.type === "if" || act.type === "otherwise" || act.type === "end_if" || scIsInsideIfGroup(idx))) {
       scUpdateIfGroupBlock(idx);
+      return;
+    }
+    if (act && (act.type === "repeat" || act.type === "end_repeat" || scIsInsideRepeatGroup(idx))) {
+      scUpdateRepeatGroupBlock(idx);
       return;
     }
   }
@@ -3417,24 +4294,28 @@ function scRemoveActionBlock(idx) {
   if (!scEditing || !scEditing.actions) return;
   var act = scEditing.actions[idx];
   if (!act) return;
-  if (act.type === "end_if") return;
+  if (act.type === "end_if" || act.type === "end_repeat") return;
   scPushHistory();
   if (act.type === "if") {
     var endIdx = scFindMatchingEndIf(scEditing.actions, idx);
     if (endIdx >= 0) scEditing.actions.splice(idx, endIdx - idx + 1);
     else scEditing.actions.splice(idx, 1);
+  } else if (act.type === "repeat") {
+    var endRep = scFindMatchingEndRepeat(scEditing.actions, idx);
+    if (endRep >= 0) scEditing.actions.splice(idx, endRep - idx + 1);
+    else scEditing.actions.splice(idx, 1);
   } else {
     scEditing.actions.splice(idx, 1);
   }
-  if (!scEditing.actions.length && !scEditing.trigger) {
-    $("sc-ed-canvas").innerHTML = '<div class="sc-ed-empty"><b>Start with When</b>Pick a When trigger below to detect chat events, then add actions.</div>';
+  if (!scEditing.actions.length && (!scEditing.trigger || scIsManualEdit())) {
+    $("sc-ed-canvas").innerHTML = scEditorEmptyHtml();
   } else {
     scRenderEditor();
   }
 }
 function scBlockGrip(kind, idx, actType) {
   if (kind === "action") {
-    if (actType === "otherwise" || actType === "end_if") {
+    if (actType === "otherwise" || actType === "end_if" || actType === "end_repeat") {
       return '<span class="sc-block-grip spacer" aria-hidden="true"></span>';
     }
     return '<button type="button" class="sc-block-grip" data-drag-kind="action" data-drag-idx="' + idx + '" aria-label="Reorder"><span></span><span></span><span></span></button>';
@@ -3507,9 +4388,7 @@ function scTriggerFilterRowHtml(filter, filterIdx) {
   } else {
     valueHtml = scPillInput("text", filter.text, filterIdx, "trigger-filter");
   }
-  var removeBtn = filterIdx > 0
-    ? '<button type="button" class="sc-filter-del" data-remove-filter="' + filterIdx + '" aria-label="Remove filter">\u2212</button>'
-    : "";
+  var removeBtn = '<button type="button" class="sc-filter-del" data-remove-filter="' + filterIdx + '" aria-label="Remove filter">\u2212</button>';
   return '<div class="sc-block-filter" data-filter-idx="' + filterIdx + '">' +
     scPill("kind", filter.kind, filterIdx, "trigger-filter") +
     scTxt(opTxt) + valueHtml + removeBtn + '</div>';
@@ -3518,22 +4397,12 @@ function scTriggerBlockHtml(data, enter) {
   data = scNormalizeTrigger(JSON.parse(JSON.stringify(data)));
   var enterCls = enter ? " sc-enter" : "";
   var tdef = scTriggerDef(data.type);
-  var filtersHtml = data.filters.map(function (f, i) {
-    return scTriggerFilterRowHtml(f, i);
-  }).join("");
-  var addBtn = data.filters.length < 5
-    ? '<button type="button" class="sc-filter-add" data-add-filter>+ Add filter</button>'
-    : "";
   return '<div class="sc-block sc-block-trigger' + enterCls + '" data-block-kind="trigger" data-block-idx="0">' +
     '<div class="sc-block-trigger-main">' +
     '<div class="sc-block-trigger-head">' +
-    '<span class="sc-block-ico ' + esc(tdef.tone || "chat") + '">' + scBlockIconInner(tdef.tone || "chat", tdef.icon) + '</span>' +
-    '<span class="sc-block-trigger-title">When a message matching the following conditions is received</span>' +
-    '</div>' +
-    '<div class="sc-block-trigger-divider"></div>' +
-    '<div class="sc-block-filters">' + filtersHtml + '</div>' +
-    addBtn +
-    '</div></div>';
+    '<span class="sc-block-ico ' + esc(tdef.tone || "chat") + '">' + scBlockIconInner(tdef.tone || "chat", tdef.icon, "trigger", data.type) + '</span>' +
+    '<span class="sc-block-trigger-title">When a chat message is received from others</span>' +
+    '</div></div></div>';
 }
 function scServerConnectBlockHtml(data, enter) {
   data = scNormalizeTrigger(JSON.parse(JSON.stringify(data)));
@@ -3542,7 +4411,7 @@ function scServerConnectBlockHtml(data, enter) {
   return '<div class="sc-block sc-block-trigger' + enterCls + '" data-block-kind="trigger" data-block-idx="0">' +
     '<div class="sc-block-trigger-main">' +
     '<div class="sc-block-trigger-head">' +
-    '<span class="sc-block-ico ' + esc(tdef.tone || "connect") + '">' + scBlockIconInner(tdef.tone || "connect", tdef.icon) + '</span>' +
+    '<span class="sc-block-ico ' + esc(tdef.tone || "connect") + '">' + scBlockIconInner(tdef.tone || "connect", tdef.icon, "trigger", data.type) + '</span>' +
     '<span class="sc-block-trigger-title">When connecting to one of the following servers</span>' +
     '</div>' +
     '<div class="sc-block-trigger-divider"></div>' +
@@ -3551,14 +4420,19 @@ function scServerConnectBlockHtml(data, enter) {
 }
 function scBlockHtml(kind, data, idx, enter, ifMeta) {
   ifMeta = ifMeta || {};
-  var canDel = kind === "action" && data.type !== "end_if";
+  var canDel = kind === "action" && data.type !== "end_if" && data.type !== "end_repeat";
   var del = canDel ? '<button class="sc-del" type="button" data-del-action="' + idx + '" aria-label="Remove">' + scIconX() + '</button>' : "";
   var enterCls = enter ? " sc-enter" : "";
   var ifCls = "";
-  if (ifMeta.role === "branch") ifCls = " sc-if-branch sc-if-branch-" + ifMeta.branch;
-  else if (ifMeta.role === "if") ifCls = " sc-if-head";
+  if (ifMeta.role === "repeat") ifCls = " sc-repeat-head";
+  else if (ifMeta.role === "branch") {
+    ifCls = " sc-if-branch";
+    if (ifMeta.branch) ifCls += " sc-if-branch-" + ifMeta.branch;
+  } else if (ifMeta.role === "if") ifCls = " sc-if-head";
   else if (ifMeta.role === "otherwise") ifCls = " sc-if-otherwise";
-  else if (ifMeta.role === "end") ifCls = " sc-if-foot";
+  else if (ifMeta.role === "end") {
+    ifCls = data.type === "end_repeat" ? " sc-repeat-foot" : " sc-if-foot";
+  }
   var roleAttr = ifMeta.role ? ' data-if-role="' + esc(ifMeta.role) + '"' : "";
   var branchAttr = ifMeta.branch ? ' data-if-branch="' + esc(ifMeta.branch) + '"' : "";
   var inner = "";
@@ -3578,7 +4452,7 @@ function scBlockHtml(kind, data, idx, enter, ifMeta) {
     var adefText = scActionDef(data.type);
     return '<div class="sc-block sc-block-action sc-block-text' + enterCls + ifCls + '" data-block-kind="action" data-block-idx="' + idx + '"' + roleAttr + branchAttr + '>' +
       scBlockGrip(kind, idx, data.type) +
-      '<span class="sc-block-ico ' + esc(adefText.tone || "text") + '">' + scBlockIconInner(adefText.tone || "text", adefText.icon) + '</span>' +
+      '<span class="sc-block-ico ' + esc(adefText.tone || "text") + '">' + scBlockIconInner(adefText.tone || "text", adefText.icon, "action", data.type) + '</span>' +
       '<div class="sc-block-body">' + scTextBlockHtml(data, idx, kind) + '</div>' + del + '</div>';
   } else if (data.type === "connect_server") {
     inner = scTxt("Connect to") + scPillInput("address", data.address, idx, kind);
@@ -3603,25 +4477,38 @@ function scBlockHtml(kind, data, idx, enter, ifMeta) {
       scPillInput("name", data.name, idx, kind);
   } else if (data.type === "get") {
     inner = scTxt("Get") + scPill("property", data.property, idx, kind);
+  } else if (data.type === "get_clipboard") {
+    inner = scTxt("Get Clipboard");
   } else if (data.type === "if") {
     scNormalizeIfCondition(data);
-    inner = scTxt("If") + scIfLeftFieldHtml(data, idx, kind);
-    if (data.left) {
-      inner += scPill("op", data.op, idx, kind);
-      if (scIfOpNeedsRight(data.op)) {
-        if (scIfLeftValueKind(data.left) === "channel") {
-          inner += scPill("right", data.right || "all", idx, kind);
+    if (scIfIsMulti(data)) {
+      inner = scIfMultiBlockHtml(data, idx, kind);
+    } else {
+      inner = scTxt("If") + scIfLeftFieldHtml(data, idx, kind);
+      if (data.left) {
+        inner += scPill("op", data.op, idx, kind);
+        if (scIfOpNeedsRight(data.op)) {
+          if (scIfLeftValueKind(data.left) === "channel") {
+            inner += scPill("right", data.right || "all", idx, kind);
+          } else {
+            inner += scPillInput("right", data.right, idx, kind);
+          }
         } else {
-          inner += scPillInput("right", data.right, idx, kind);
+          inner += scTxt("value");
         }
-      } else {
-        inner += scTxt("value");
+        inner += '<button type="button" class="sc-if-cond-add" data-if-expand="' + idx + '" aria-label="Add condition">+</button>';
       }
     }
   } else if (data.type === "otherwise") {
     inner = scTxt("Otherwise");
   } else if (data.type === "end_if") {
     inner = scTxt("End If");
+  } else if (data.type === "repeat") {
+    inner = scTxt("Repeat") + scRepeatTimesControl(data.count, idx, kind);
+  } else if (data.type === "end_repeat") {
+    inner = scTxt("End Repeat");
+  } else if (data.type === "run_shortcut") {
+    inner = scTxt("Run") + scPill("shortcutId", data.shortcutId, idx, kind);
   } else if (data.type === "stop") {
     inner = scTxt("Stop");
   }
@@ -3629,15 +4516,17 @@ function scBlockHtml(kind, data, idx, enter, ifMeta) {
     return scTriggerBlockHtml(data, enter);
   }
   var adef = scActionDef(data.type);
+  var bodyCls = data.type === "if" && scIfIsMulti(data) ? " sc-if-multi-body" : "";
+  var bodyInner = data.type === "if" && scIfIsMulti(data) ? inner : '<div class="sc-block-line">' + inner + '</div>';
   return '<div class="sc-block sc-block-action' + enterCls + ifCls + '" data-block-kind="action" data-block-idx="' + idx + '"' + roleAttr + branchAttr + '>' +
     scBlockGrip(kind, idx, data.type) +
-    '<span class="sc-block-ico ' + esc(adef.tone || "action") + '">' + scBlockIconInner(adef.tone || "action", adef.icon) + '</span>' +
-    '<div class="sc-block-body"><div class="sc-block-line">' + inner + '</div></div>' + del + '</div>';
+    '<span class="sc-block-ico ' + esc(adef.tone || "action") + '">' + scBlockIconInner(adef.tone || "action", adef.icon, "action", data.type) + '</span>' +
+    '<div class="sc-block-body' + bodyCls + '">' + bodyInner + '</div>' + del + '</div>';
 }
 function scTxt(text) {
   return '<span class="sc-txt">' + esc(text) + '</span>';
 }
-function scPill(field, value, idx, kind) {
+function scPill(field, value, idx, kind, condIdx) {
   var label = String(value || "");
   if (field === "kind") {
     if (value === "message") label = "Message";
@@ -3646,20 +4535,29 @@ function scPill(field, value, idx, kind) {
     else label = "Sender";
   }
   if (field === "channel") label = scLabelChannel(value);
-  if (field === "match") label = value === "equals" ? "equals" : value === "starts_with" ? "starts with" : "contains";
+  if (field === "match") {
+    label = kind === "action" ? (value === "any" ? "Any" : "All")
+      : (value === "equals" ? "equals" : value === "starts_with" ? "starts with" : "contains");
+  }
   if (field === "weapon") label = scLabelWeapon(value);
   if (field === "target") label = value === "dummy" ? "Dummy" : "Player";
   if (field === "enabled") label = value === "on" || value === true ? "On" : "Off";
   if (field === "property") label = scLabelGetProperty(value);
+  if (field === "shortcutId") label = scRunShortcutLabel(value);
   if (field === "left") label = value ? (scLabelVariable(value) || scLabelGetProperty(value)) : "Condition";
   if (field === "op") label = scLabelIfOp(value);
   if (field === "right") label = String(value || "");
   var isVar = field === "messageVariable" || field === "textPartVar" ||
     field === "channelVariable" || field === "uclientRoomVariable";
   if (isVar) {
-    return scVarPillButton("", value, label, ' data-field="' + esc(field) + '" data-idx="' + idx + '" data-kind="' + kind + '"');
+    return scVarPillButton("", value, label, scPillDataAttrs(field, idx, kind, condIdx));
   }
-  return '<button type="button" class="sc-pill" data-field="' + esc(field) + '" data-idx="' + idx + '" data-kind="' + kind + '">' + esc(label) + '</button>';
+  return '<button type="button" class="sc-pill"' + scPillDataAttrs(field, idx, kind, condIdx) + '>' + esc(label) + '</button>';
+}
+function scPillDataAttrs(field, idx, kind, condIdx) {
+  var a = ' data-field="' + esc(field) + '" data-idx="' + idx + '" data-kind="' + esc(kind) + '"';
+  if (condIdx != null && condIdx >= 0) a += ' data-cond-idx="' + condIdx + '"';
+  return a;
 }
 function scPillInputPlaceholder(field) {
   if (field === "text" || field === "message" || field === "messageText" || field === "textPart") return "Text";
@@ -3671,12 +4569,13 @@ function scPillInputPlaceholder(field) {
   if (field === "right") return "Text";
   return "";
 }
-function scPillInput(field, value, idx, kind, subIdx, extraClass) {
+function scPillInput(field, value, idx, kind, subIdx, extraClass, condIdx) {
   var val = esc(String(value == null ? "" : value));
   var mode = field === "seconds" ? ' inputmode="numeric"' : (field === "color" ? ' inputmode="decimal"' : "");
   var ph = scPillInputPlaceholder(field);
   var phAttr = ph ? ' placeholder="' + esc(ph) + '"' : "";
   var subAttr = subIdx != null ? ' data-name-idx="' + subIdx + '"' : "";
+  if (condIdx != null && condIdx >= 0) subAttr += ' data-cond-idx="' + condIdx + '"';
   var cls = "sc-pill input" + (extraClass ? " " + extraClass : "");
   return '<input type="text" class="' + cls + '" data-input="' + esc(field) + '" data-idx="' + idx + '" data-kind="' + kind + '" value="' + val + '" spellcheck="false" size="1"' + mode + phAttr + subAttr + ' data-smart-trigger="input">';
 }
@@ -3758,7 +4657,8 @@ function scCommitPillInput(input, revert) {
     scCommitServerTargetInput(Number(input.dataset.nameIdx || 0), input.value);
     return;
   }
-  var ref = scGetBlockRef(kind, idx);
+  var condIdx = input.dataset.condIdx != null ? Number(input.dataset.condIdx) : null;
+  var ref = scGetBlockRef(kind, idx, condIdx);
   if (!ref) return;
   var val = input.value;
   if (field === "seconds") {
@@ -3791,9 +4691,11 @@ function scCommitPillInput(input, revert) {
     ref.parts = [{mode: "text", text: val}];
   } else {
     ref[field] = val;
+    if (field === "right" || field === "left") scNormalizeIfConditionObj(ref);
   }
   scFitPillInput(input);
   if (kind === "trigger-filter") scRememberFilterDraft(idx);
+  else if (kind === "if-cond") scUpdateIfGroupBlock(idx);
 }
 function scCommitSenderNameInput(filterIdx, nameIdx, rawVal) {
   var f = scGetFilterRef(filterIdx);
@@ -4005,7 +4907,7 @@ function scAddTriggerFilter() {
 }
 function scRemoveTriggerFilter(filterIdx) {
   if (!scEditing || !scEditing.trigger) return;
-  if (filterIdx <= 0) return;
+  if (filterIdx < 0) return;
   scEditing.trigger = scPrepareTriggerForEdit(scEditing.trigger);
   if (filterIdx >= scEditing.trigger.filters.length) return;
   scPushHistory();
@@ -4014,55 +4916,82 @@ function scRemoveTriggerFilter(filterIdx) {
   scReindexFilterDrafts(filterIdx);
   scUpdateBlockElement("trigger", 0);
 }
-function scGetBlockRef(kind, idx) {
+function scGetIfConditionRef(ifIdx, condIdx) {
+  var act = scEditing && scEditing.actions ? scEditing.actions[ifIdx] : null;
+  if (!act || act.type !== "if" || !act.conditions) return null;
+  return act.conditions[condIdx] || null;
+}
+function scGetBlockRef(kind, idx, condIdx) {
   if (!scEditing) return null;
   if (kind === "trigger-filter") return scGetFilterRef(idx);
+  if (kind === "if-cond") return scGetIfConditionRef(idx, condIdx != null ? condIdx : 0);
   return kind === "trigger" ? scEditing.trigger : scEditing.actions[idx];
 }
-function scSetBlockField(kind, idx, field, value) {
+function scSetBlockField(kind, idx, field, value, condIdx) {
   scPushHistory();
   if (kind === "trigger-filter") {
     if (field === "kind") scSetFilterKind(idx, value);
     else scSetFilterField(idx, field, value);
     return;
   }
-  var ref = scGetBlockRef(kind, idx);
+  var ref = scGetBlockRef(kind, idx, condIdx);
   if (!ref) return;
   if (field === "seconds") ref.seconds = scClampWaitSeconds(value);
   else if (field === "color") ref.color = Number(value) || 0;
   else if (field === "enabled") ref[field] = value === "on" || value === "true" || value === true;
-  else if (field === "left" && ref.type === "if") {
+  else if (field === "match") {
+    var ifAct = scEditing.actions[idx];
+    if (ifAct && ifAct.type === "if") ifAct.match = value === "any" ? "any" : "all";
+  } else if (field === "left") {
     ref.left = value;
-    scNormalizeIfCondition(ref);
-  } else if (field === "op" && ref.type === "if") {
+    scNormalizeIfConditionObj(ref);
+  } else if (field === "op") {
     ref.op = value;
-    scNormalizeIfCondition(ref);
+    scNormalizeIfConditionObj(ref);
   } else ref[field] = value;
-  scUpdateBlockElement(kind, idx);
+  if (kind === "if-cond") scUpdateIfGroupBlock(idx);
+  else scUpdateBlockElement(kind, idx);
 }
-function scOptionsForField(field, actionIdx) {
-  var ref = actionIdx != null && scEditing && scEditing.actions ? scEditing.actions[actionIdx] : null;
+function scOptionsForField(field, actionIdx, condIdx) {
+  var ref = null;
+  if (condIdx != null && condIdx >= 0) ref = scGetIfConditionRef(actionIdx, condIdx);
+  else ref = actionIdx != null && scEditing && scEditing.actions ? scEditing.actions[actionIdx] : null;
   if (field === "channel") return [{value: "all", label: "All"}, {value: "team", label: "Team"}, {value: "uclient", label: "UClient"}];
   if (field === "match") return [{value: "contains", label: "contains"}, {value: "equals", label: "equals"}, {value: "starts_with", label: "starts with"}];
   if (field === "weapon") return [{value: "hammer", label: "Hammer"}, {value: "gun", label: "Gun"}, {value: "shotgun", label: "Shotgun"}, {value: "grenade", label: "Grenade"}, {value: "laser", label: "Laser"}];
   if (field === "target") return [{value: "player", label: "Player"}, {value: "dummy", label: "Dummy"}];
   if (field === "enabled") return [{value: "on", label: "On"}, {value: "off", label: "Off"}];
   if (field === "property") return [{value: "window_active", label: "Window Active"}];
-  if (field === "op" && ref && ref.type === "if") return scIfOpsForVariable(ref.left || "");
-  if (field === "right" && ref && ref.type === "if" && scIfLeftValueKind(ref.left || "") === "channel") {
+  if (field === "match" && ref == null && actionIdx != null && scEditing && scEditing.actions) {
+    var ifAct = scEditing.actions[actionIdx];
+    if (ifAct && ifAct.type === "if" && scIfIsMulti(ifAct)) {
+      return [{value: "all", label: "All"}, {value: "any", label: "Any"}];
+    }
+  }
+  if (field === "op" && ref && ref.left) return scIfOpsForVariable(ref.left || "");
+  if (field === "right" && ref && ref.left && scIfLeftValueKind(ref.left || "") === "channel") {
     return [{value: "all", label: "All"}, {value: "team", label: "Team"}, {value: "uclient", label: "UClient"}];
+  }
+  if (field === "shortcutId") {
+    return scRunnableManualShortcuts(scEditing && scEditing.id).map(function (sc) {
+      return {value: sc.id, label: scRunShortcutLabel(sc.id)};
+    });
   }
   return [];
 }
-function scOpenEditor(existing) {
+function scOpenEditor(existing, editKind) {
   scEditorAnimGen++;
+  scEditKind = editKind || (existing ? scEntryKind(existing) : (scLibraryTab === "shortcuts" ? "manual" : "automation"));
   scEditing = existing ? JSON.parse(JSON.stringify(existing)) : {
     id: scUuid(), name: "New Shortcut", enabled: true,
+    kind: scEditKind === "manual" ? "manual" : "automation",
     trigger: null, actions: []
   };
+  if (scEditing && !scEditing.kind) scEditing.kind = scEntryKind(scEditing);
+  if (scIsManualEdit()) scEditing.trigger = null;
   if (scEditing.trigger) scEditing.trigger = scPrepareTriggerForEdit(scEditing.trigger);
   if (scEditing.actions) {
-    scEditing.actions = scRepairIfBlocks(scEditing.actions.map(function (a, i) { return scNormalizeAction(a, i); }));
+    scEditing.actions = scRepairRepeatBlocks(scRepairIfBlocks(scEditing.actions.map(function (a, i) { return scNormalizeAction(a, i); })));
   }
   scSeedFilterDrafts();
   scResetHistory();
@@ -4075,8 +5004,12 @@ function scOpenEditor(existing) {
   view.classList.add("editing");
   ed.style.display = "flex";
   ed.setAttribute("aria-hidden", "false");
+  scDrawerFilter = null;
+  var drawerSearch = $("sc-drawer-search");
+  if (drawerSearch) drawerSearch.value = "";
   scSetDrawerY(scDrawerStage2Ratio(), false);
   scRenderEditor();
+  scSyncDrawerSearchUI();
   scRenderDrawer();
   requestAnimationFrame(function () {
     requestAnimationFrame(function () {
@@ -4173,7 +5106,7 @@ function scApplyDrawerChrome(drawer, ratio) {
   drawer.style.bottom = (SC_DRAWER_CAP_BOTTOM * t).toFixed(2) + "px";
   drawer.style.borderRadius = rTop.toFixed(1) + "px " + rTop.toFixed(1) + "px " + rBot.toFixed(1) + "px " + rBot.toFixed(1) + "px";
   drawer.style.boxShadow = t > 0.08
-    ? "0 0 0 1px rgba(255,255,255," + (0.07 * t).toFixed(3) + "),0 " + (6 * t).toFixed(1) + "px " + (20 * t).toFixed(1) + "px rgba(255,255,255," + (0.045 * t).toFixed(3) + "),0 " + (14 * t).toFixed(1) + "px " + (40 * t).toFixed(1) + "px rgba(255,255,255," + (0.025 * t).toFixed(3) + ")"
+    ? "0 0 0 0.5px rgba(255,255,255," + (0.028 * t).toFixed(3) + "),0 0 " + (36 * t).toFixed(0) + "px rgba(255,255,255," + (0.038 * t).toFixed(3) + "),0 0 " + (72 * t).toFixed(0) + "px rgba(255,255,255," + (0.022 * t).toFixed(3) + "),0 " + (10 * t).toFixed(0) + "px " + (36 * t).toFixed(0) + "px rgba(255,255,255," + (0.012 * t).toFixed(3) + ")"
     : "none";
   // Full drawer slides on translateY; the capsule stays pinned to bottom (t=1 -> no slide).
   var slide = ratio * (1 - t);
@@ -4268,6 +5201,7 @@ function scUpdateDrawerDrag(clientY) {
 }
 function scAddCatalogBlock(kind, id) {
   if (!scEditing) return;
+  if (kind === "trigger" && scIsManualEdit()) return;
   scPushHistory();
   var added = false;
   if (kind === "trigger") {
@@ -4285,12 +5219,22 @@ function scAddCatalogBlock(kind, id) {
     if (!scEditing.actions) scEditing.actions = [];
     var copy = JSON.parse(JSON.stringify(act.defaults));
     if (copy.type === "text") copy.as = scNextTextVarName();
+    if (copy.type === "run_shortcut") {
+      var runList = scRunnableManualShortcuts(scEditing.id);
+      copy.shortcutId = runList.length ? runList[0].id : "";
+      if (!runList.length) scToast("Create a Shortcut with actions first");
+    }
     if (copy.type === "if") {
       var startIdx = scEditing.actions.length;
       scEditing.actions.push(copy);
       scEditing.actions.push({type: "otherwise"});
       scEditing.actions.push({type: "end_if"});
       scRenderEditor({enterActionIdx: startIdx});
+    } else if (copy.type === "repeat") {
+      var repStart = scEditing.actions.length;
+      scEditing.actions.push(copy);
+      scEditing.actions.push({type: "end_repeat"});
+      scRenderEditor({enterActionIdx: repStart});
     } else {
       scEditing.actions.push(copy);
       scAppendBlockElement("action", scEditing.actions.length - 1);
@@ -4312,14 +5256,31 @@ function scMoveIfGroup(fromIfIdx, toIdx) {
   Array.prototype.splice.apply(scEditing.actions, [toIdx, 0].concat(group));
   scRenderEditor();
 }
+function scMoveRepeatGroup(fromRepeatIdx, toIdx) {
+  if (!scEditing || !scEditing.actions) return;
+  var endIdx = scFindMatchingEndRepeat(scEditing.actions, fromRepeatIdx);
+  if (endIdx < 0) return;
+  if (toIdx === fromRepeatIdx || toIdx === endIdx + 1) return;
+  scPushHistory();
+  var len = endIdx - fromRepeatIdx + 1;
+  var group = scEditing.actions.splice(fromRepeatIdx, len);
+  if (toIdx > fromRepeatIdx) toIdx -= len;
+  toIdx = Math.max(0, Math.min(toIdx, scEditing.actions.length));
+  Array.prototype.splice.apply(scEditing.actions, [toIdx, 0].concat(group));
+  scRenderEditor();
+}
 function scMoveAction(fromIdx, toIdx) {
   if (!scEditing || !scEditing.actions) return;
   if (fromIdx < 0 || toIdx < 0) return;
   if (fromIdx >= scEditing.actions.length) return;
   var act = scEditing.actions[fromIdx];
-  if (act.type === "otherwise" || act.type === "end_if") return;
+  if (act.type === "otherwise" || act.type === "end_if" || act.type === "end_repeat") return;
   if (act.type === "if") {
     scMoveIfGroup(fromIdx, toIdx);
+    return;
+  }
+  if (act.type === "repeat") {
+    scMoveRepeatGroup(fromIdx, toIdx);
     return;
   }
   // toIdx is an insert position in the list before the block is taken out.
@@ -4364,17 +5325,19 @@ function scCanvasDropWouldMove(drag, insertIdx) {
 }
 function scDropGapInIfBranch(insertIdx, targetBlock) {
   if (insertIdx != null && scIsInsideIfGroup(insertIdx)) return true;
+  if (insertIdx != null && scIsInsideRepeatGroup(insertIdx)) return true;
   if (!targetBlock) return false;
   if (targetBlock.classList.contains("sc-if-branch")) return true;
   if (targetBlock.classList.contains("sc-if-otherwise")) return true;
   if (targetBlock.classList.contains("sc-if-foot")) return true;
+  if (targetBlock.classList.contains("sc-repeat-foot")) return true;
   if (!scEditing || !scEditing.actions) return false;
   var act = scEditing.actions[insertIdx];
   if (!act) return false;
-  if (act.type === "otherwise" || act.type === "end_if") return true;
+  if (act.type === "otherwise" || act.type === "end_if" || act.type === "end_repeat") return true;
   if (insertIdx > 0) {
     var prev = scEditing.actions[insertIdx - 1];
-    if (prev && prev.type === "if") return true;
+    if (prev && (prev.type === "if" || prev.type === "repeat")) return true;
   }
   return false;
 }
@@ -4426,7 +5389,10 @@ function scEndDrag(cancel) {
     var moved = scDrag.overIdx !== scDrag.idx;
     if (scDrag.groupEnd != null && scDrag.groupEnd >= 0) {
       moved = moved && !(scDrag.overIdx > scDrag.idx && scDrag.overIdx <= scDrag.groupEnd + 1);
-      if (moved) scMoveIfGroup(scDrag.idx, scDrag.overIdx);
+      if (moved) {
+        if (scDrag.groupKind === "repeat") scMoveRepeatGroup(scDrag.idx, scDrag.overIdx);
+        else scMoveIfGroup(scDrag.idx, scDrag.overIdx);
+      }
     } else if (moved) {
       scMoveAction(scDrag.idx, scDrag.overIdx);
     }
@@ -4452,63 +5418,136 @@ document.addEventListener("pointermove", function (e) {
     scBindCanvasDropGap(scCanvasDropWouldMove(scDrag, scDrag.overIdx) ? scDrag.overIdx : null);
   }
 });
-document.addEventListener("pointerup", function () { scEndDrag(false); });
+document.addEventListener("pointerup", function () { scClearStepperHold(); scEndDrag(false); });
 document.addEventListener("pointercancel", function () { scEndDrag(true); });
+function scDrawerFilterMeta() {
+  var def = scDrawerFilter ? scDrawerFilterDef(scDrawerFilter) : null;
+  if (!def) return null;
+  return {label: def.label, svg: scDrawerFilterSvg(def.id)};
+}
+function scSyncDrawerSearchUI() {
+  var chip = $("sc-drawer-search-chip");
+  var input = $("sc-drawer-search");
+  if (!chip || !input) return;
+  var meta = scDrawerFilterMeta();
+  if (meta) {
+    chip.classList.add("is-on");
+    chip.innerHTML = '<span class="ico" aria-hidden="true">' + meta.svg + '</span>' + esc(meta.label);
+    input.placeholder = "Search";
+  } else {
+    chip.classList.remove("is-on");
+    chip.textContent = "";
+    input.placeholder = "Search actions";
+  }
+}
+function scSetDrawerFilter(id) {
+  if (!scDrawerFilterDef(id)) return;
+  if (scIsManualEdit() && id === "automation") return;
+  scDrawerFilter = id;
+  scSyncDrawerSearchUI();
+  scExpandDrawerToPeekFromSearch();
+  scRenderDrawer();
+  var input = $("sc-drawer-search");
+  if (input) input.focus();
+}
+function scClearDrawerFilter() {
+  if (!scDrawerFilter) return;
+  scDrawerFilter = null;
+  scSyncDrawerSearchUI();
+  scRenderDrawer();
+}
 function scRenderDrawer() {
-  var chips = [{id: "all", label: "All"}, {id: "triggers", label: "When"}, {id: "actions", label: "Do"}];
-  $("sc-drawer-chips").innerHTML = chips.map(function (c) {
-    return '<button type="button" class="sc-chip' + (scDrawerFilter === c.id ? " on" : "") + '" data-chip="' + c.id + '">' + c.label + '</button>';
-  }).join("");
+  if (scIsManualEdit() && scDrawerFilter === "automation") scDrawerFilter = null;
+  scSyncDrawerSearchUI();
+  var chipsEl = $("sc-drawer-chips");
+  if (scDrawerFilter) {
+    chipsEl.innerHTML = "";
+    chipsEl.style.display = "none";
+  } else {
+    chipsEl.style.display = "";
+    var picks = SC_DRAWER_FILTERS.filter(function (p) {
+      return !p.automationOnly || !scIsManualEdit();
+    });
+    chipsEl.innerHTML = picks.map(function (p) {
+      return '<button type="button" class="sc-drawer-filter-pick" data-drawer-filter="' + p.id + '"><span class="ico" aria-hidden="true">' + scDrawerFilterSvg(p.id) + '</span>' + esc(p.label) + '</button>';
+    }).join("");
+  }
   var q = ($("sc-drawer-search").value || "").toLowerCase();
   var html = "";
-  if (scDrawerFilter === "all" || scDrawerFilter === "triggers") {
-    SC_TRIGGER_SECTIONS.forEach(function (sec) {
-      var rows = SC_TRIGGERS.filter(function (t) {
-        return t.category === sec.id && scCatalogMatches(t, q, true);
-      });
-      if (!rows.length) return;
-      html += '<div class="sc-drawer-section">' + esc(sec.label) + '</div>';
-      rows.forEach(function (t) { html += scCatalogRow("trigger", t); });
+  scDrawerTriggerSections().forEach(function (sec) {
+    var rows = SC_TRIGGERS.filter(function (t) {
+      return t.category === sec.id && scCatalogMatches(t, q, true);
     });
-  }
-  if (scDrawerFilter === "all" || scDrawerFilter === "actions") {
-    SC_ACTION_SECTIONS.forEach(function (sec) {
-      var rows = SC_ACTIONS.filter(function (a) {
-        if (a.id === "otherwise" || a.id === "end_if") return false;
-        return (a.category || "actions") === sec.id && scCatalogMatches(a, q, false);
-      });
-      if (!rows.length) return;
-      html += '<div class="sc-drawer-section">' + esc(sec.label) + '</div>';
-      rows.forEach(function (a) { html += scCatalogRow("action", a); });
+    if (!rows.length) return;
+    html += '<div class="sc-drawer-section">' + esc(sec.label) + '</div>';
+    rows.forEach(function (t) { html += scCatalogRow("trigger", t); });
+  });
+  scDrawerActionSections().forEach(function (sec) {
+    var rows = SC_ACTIONS.filter(function (a) {
+      if (a.id === "otherwise" || a.id === "end_if" || a.id === "end_repeat") return false;
+      return (a.category || "actions") === sec.id && scCatalogMatches(a, q, false);
     });
-  }
+    if (!rows.length) return;
+    html += '<div class="sc-drawer-section">' + esc(sec.label) + '</div>';
+    rows.forEach(function (a) { html += scCatalogRow("action", a); });
+  });
   $("sc-drawer-list").innerHTML = html || '<div class="sc-ed-empty" style="margin-top:24px"><b>No matches</b>Try another search or filter.</div>';
 }
-$("sc-fab").addEventListener("click", function () { scOpenEditor(null); });
+$("sc-fab-manual").addEventListener("click", function () { scOpenEditor(null, "manual"); });
+$("sc-fab-auto").addEventListener("click", function () { scOpenEditor(null, "automation"); });
+document.querySelectorAll(".sc-lib-tab").forEach(function (btn) {
+  btn.addEventListener("click", function () { setScLibraryTab(btn.dataset.scLib); });
+});
+window.addEventListener("resize", function () { scLayoutLibTabIndicator(); });
+requestAnimationFrame(scLayoutLibTabIndicator);
+$("sc-gallery-search").addEventListener("input", function (e) {
+  scGallerySearch = e.target.value || "";
+  renderShortcutsGallery();
+});
+$("sc-gallery-grid").addEventListener("click", function (e) {
+  var play = e.target.closest("[data-play]");
+  if (play) {
+    e.stopPropagation();
+    e.preventDefault();
+    var runSc = shortcutsLocal.find(function (s) { return s.id === play.dataset.play; });
+    scRunShortcutActions(runSc);
+    return;
+  }
+  var tile = e.target.closest(".sc-tile[data-id]");
+  if (!tile) return;
+  var sc = shortcutsLocal.find(function (s) { return s.id === tile.dataset.id; });
+  if (!sc) return;
+  scOpenEditor(sc, "manual");
+});
 $("sc-ed-back").addEventListener("click", function () { scCloseEditor(); });
 $("sc-ed-save").addEventListener("click", function () {
   if (!scEditing) return;
-  if (!scEditing.trigger) { scToast("Add a When trigger"); return; }
   if (!scEditing.actions || !scEditing.actions.length) { scToast("Add at least one action"); return; }
   scCommitAllPillInputs($("sc-ed-canvas"));
-  scEditing.trigger = scCleanTriggerForSave(scEditing.trigger);
+  if (scIsManualEdit()) {
+    scEditing.kind = "manual";
+    scEditing.trigger = null;
+  } else {
+    if (!scEditing.trigger) { scToast("Add a When trigger"); return; }
+    scEditing.kind = "automation";
+    scEditing.trigger = scCleanTriggerForSave(scEditing.trigger);
+  }
   scEditing.actions = (scEditing.actions || []).map(scCleanActionForSave);
-  scEditing.name = $("sc-ed-title").value.trim() || scSummaryTrigger(scEditing.trigger);
+  scEditing.name = $("sc-ed-title").value.trim() ||
+    (scIsManualEdit() ? "Shortcut" : scSummaryTrigger(scEditing.trigger));
   var idx = shortcutsLocal.findIndex(function (s) { return s.id === scEditing.id; });
   if (idx >= 0) shortcutsLocal[idx] = JSON.parse(JSON.stringify(scEditing));
   else shortcutsLocal.push(JSON.parse(JSON.stringify(scEditing)));
   shortcutsSig = JSON.stringify(shortcutsLocal);
   scSaveAll();
+  renderShortcutsGallery();
   renderShortcutsList();
   scCloseEditor();
 });
-$("sc-ed-delete").addEventListener("click", function () {
-  if (!scEditing) return;
-  send({cmd: "shortcutsDelete", id: scEditing.id});
-  shortcutsLocal = shortcutsLocal.filter(function (s) { return s.id !== scEditing.id; });
-  shortcutsSig = JSON.stringify(shortcutsLocal);
-  renderShortcutsList();
-  scCloseEditor();
+$("sc-ed-delete").addEventListener("click", scDeleteEditingShortcut);
+$("sc-ed-title-trigger").addEventListener("click", function (e) {
+  e.stopPropagation();
+  scOpenEditorTitleMenu();
 });
 $("sc-drawer-grab").addEventListener("pointerdown", function (e) {
   if (e.button !== 0) return;
@@ -4522,6 +5561,20 @@ $("sc-drawer-grab").addEventListener("pointermove", function (e) {
   scUpdateDrawerDrag(e.clientY);
 });
 $("sc-ed-title").addEventListener("focusin", function () { scTitleDirty = false; });
+$("sc-ed-title").addEventListener("focusout", function () {
+  scEndEditorRename();
+});
+$("sc-ed-title").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    this.blur();
+  }
+  if (e.key === "Escape") {
+    e.preventDefault();
+    if (scEditing) this.value = scEditing.name || "";
+    this.blur();
+  }
+});
 $("sc-ed-title").addEventListener("input", function (e) {
   if (!scEditing) return;
   if (!scTitleDirty) {
@@ -4529,6 +5582,8 @@ $("sc-ed-title").addEventListener("input", function (e) {
     scPushHistory();
   }
   scEditing.name = e.target.value;
+  var label = $("sc-ed-title-label");
+  if (label) label.textContent = e.target.value || scEditorDisplayName();
 });
 $("sc-tb-undo").addEventListener("click", scUndo);
 $("sc-tb-redo").addEventListener("click", scRedo);
@@ -4547,15 +5602,32 @@ $("sc-tb-play").addEventListener("click", function () {
   scUpdatePlayButton();
   send({cmd: "automationRun", runId: scRun.runId, actions: actions});
 });
-$("sc-drawer-search").addEventListener("input", function (e) {
-  if ((e.target.value || "").length > 0) scExpandDrawerToPeekFromSearch();
+function scExpandDrawerForSearchInteraction() {
+  scExpandDrawerToPeekFromSearch();
+}
+var scDrawerSearchWrap = $("sc-drawer-search-wrap");
+if (scDrawerSearchWrap) {
+  scDrawerSearchWrap.addEventListener("pointerdown", function (e) {
+    if (e.button !== 0) return;
+    scExpandDrawerForSearchInteraction();
+  });
+}
+$("sc-drawer-search").addEventListener("focusin", scExpandDrawerForSearchInteraction);
+$("sc-drawer-search").addEventListener("input", function () {
+  scExpandDrawerForSearchInteraction();
   scRenderDrawer();
 });
+$("sc-drawer-search").addEventListener("keydown", function (e) {
+  if (e.key !== "Backspace" && e.keyCode !== 8) return;
+  if ((this.value || "").length) return;
+  if (!scDrawerFilter) return;
+  e.preventDefault();
+  scClearDrawerFilter();
+});
 $("sc-drawer-chips").addEventListener("click", function (e) {
-  var chip = e.target.closest("[data-chip]");
-  if (!chip) return;
-  scDrawerFilter = chip.dataset.chip;
-  scRenderDrawer();
+  var pick = e.target.closest("[data-drawer-filter]");
+  if (!pick) return;
+  scSetDrawerFilter(pick.dataset.drawerFilter);
 });
 $("sc-drawer-list").addEventListener("click", function (e) {
   var row = e.target.closest(".sc-catalog");
@@ -4568,8 +5640,16 @@ $("sc-ed-canvas").addEventListener("pointerdown", function (e) {
   var idx = Number(grip.dataset.dragIdx);
   var block = grip.closest(".sc-block");
   var act = scEditing.actions[idx];
-  var groupEnd = act && act.type === "if" ? scFindMatchingEndIf(scEditing.actions, idx) : -1;
-  scDrag = {type: "block", idx: idx, groupEnd: groupEnd, label: block ? block.textContent.trim().slice(0, 48) : "Action", el: block, overIdx: idx};
+  var groupEnd = -1;
+  var groupKind = null;
+  if (act && act.type === "if") {
+    groupEnd = scFindMatchingEndIf(scEditing.actions, idx);
+    groupKind = "if";
+  } else if (act && act.type === "repeat") {
+    groupEnd = scFindMatchingEndRepeat(scEditing.actions, idx);
+    groupKind = "repeat";
+  }
+  scDrag = {type: "block", idx: idx, groupEnd: groupEnd, groupKind: groupKind, label: block ? block.textContent.trim().slice(0, 48) : "Action", el: block, overIdx: idx};
   if (block) block.classList.add("dragging");
   scEnsureDragGhost(scDrag.label);
   grip.setPointerCapture(e.pointerId);
@@ -4685,11 +5765,6 @@ $("sc-ed-canvas").addEventListener("mousedown", function (e) {
 });
 $("sc-ed-canvas").addEventListener("click", function (e) {
   if (!scEditing) return;
-  var addFilter = e.target.closest("[data-add-filter]");
-  if (addFilter) {
-    scAddTriggerFilter();
-    return;
-  }
   var addSenderName = e.target.closest("[data-add-sender-name]");
   if (addSenderName) {
     scAddSenderNameSlot(Number(addSenderName.dataset.addSenderName));
@@ -4700,9 +5775,25 @@ $("sc-ed-canvas").addEventListener("click", function (e) {
     scAddServerTargetSlot();
     return;
   }
-  var remFilter = e.target.closest("[data-remove-filter]");
-  if (remFilter) {
-    scRemoveTriggerFilter(Number(remFilter.dataset.removeFilter));
+  var ifExpand = e.target.closest("[data-if-expand]");
+  if (ifExpand) {
+    scIfExpandToMulti(Number(ifExpand.dataset.ifExpand));
+    return;
+  }
+  var addIfCond = e.target.closest("[data-add-if-condition]");
+  if (addIfCond) {
+    scIfAddCondition(Number(addIfCond.dataset.addIfCondition));
+    return;
+  }
+  var remIfCond = e.target.closest("[data-remove-if-condition]");
+  if (remIfCond) {
+    scIfRemoveCondition(Number(remIfCond.dataset.removeIfCondition), Number(remIfCond.dataset.ifCondIdx));
+    return;
+  }
+  var repeatTimes = e.target.closest(".sc-repeat-times-pill");
+  if (repeatTimes) {
+    e.stopPropagation();
+    scOpenRepeatStepperPop(repeatTimes, Number(repeatTimes.dataset.repeatTimes), repeatTimes.dataset.kind || "action");
     return;
   }
   var del = e.target.closest("[data-del-action]");
@@ -4730,21 +5821,27 @@ $("sc-ed-canvas").addEventListener("click", function (e) {
     }
   }
   if (!e.target.closest(".sc-smart-field") && !e.target.closest(".sc-pop") &&
-      !e.target.closest(".sc-pill[data-field]") && !e.target.closest(".sc-smart-menu-item")) {
+      !e.target.closest(".sc-pill[data-field]") && !e.target.closest(".sc-repeat-times-pill") &&
+      !e.target.closest(".sc-smart-menu-item")) {
     scCloseAllPickers(null);
   }
   var pill = e.target.closest(".sc-pill");
   if (!pill || pill.tagName === "INPUT" || pill.classList.contains("sc-smart-trigger")) return;
   var kind = pill.dataset.kind;
   var idx = Number(pill.dataset.idx || 0);
+  var condIdx = pill.dataset.condIdx != null ? Number(pill.dataset.condIdx) : null;
   var field = pill.dataset.field;
-  var cur = scGetBlockRef(kind, idx);
+  var cur = scGetBlockRef(kind, idx, condIdx);
   var curVal = cur ? cur[field] : null;
   if (field === "enabled") curVal = cur && cur.enabled ? "on" : "off";
-  if (field === "op" && cur && cur.type === "if") curVal = cur.op;
-  var opts = field === "kind" ? scFilterFieldOptions(idx) : scOptionsForField(field, idx);
+  if (field === "op" && cur) curVal = cur.op;
+  if (field === "match" && kind === "action") {
+    var ifAct = scEditing.actions[idx];
+    curVal = ifAct && ifAct.match === "any" ? "any" : "all";
+  }
+  var opts = field === "kind" ? scFilterFieldOptions(idx) : scOptionsForField(field, idx, condIdx);
   if (!opts.length) return;
-  scOpenPop(pill, opts, function (val) { scSetBlockField(kind, idx, field, val); }, curVal);
+  scOpenPop(pill, opts, function (val) { scSetBlockField(kind, idx, field, val, condIdx); }, curVal);
 });
 $("sc-list").addEventListener("click", function (e) {
   var toggle = e.target.closest("[data-toggle]");
@@ -4765,7 +5862,7 @@ $("sc-list").addEventListener("click", function (e) {
   var row = e.target.closest(".sc-row");
   if (!row) return;
   var sc = shortcutsLocal.find(function (s) { return s.id === row.dataset.id; });
-  if (sc) scOpenEditor(sc);
+  if (sc) scOpenEditor(sc, "automation");
 });
 
 /* -- state ------------------------------------------------------------- */

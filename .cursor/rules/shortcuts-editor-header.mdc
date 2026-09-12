@@ -1,0 +1,44 @@
+---
+description: Shortcuts/Automation editor header — centered title menu (iOS Shortcuts pattern)
+globs: src/tools/uclient_launcher_ui.h
+alwaysApply: false
+---
+
+# Editor header title (edit mode)
+
+Match **Apple Shortcuts** edit chrome: back on the left, **title centered**, trailing actions on the right.
+
+## Layout
+
+- Use a **3-column grid** on `.sc-ed-head`: `1fr auto 1fr`.
+- Back: column 1, `justify-self: start`.
+- Title control: column 2, `justify-self: center`.
+- Trailing (save/delete): column 3, `justify-self: end`.
+
+## Title control (required structure)
+
+Center cluster is one **button** (`.sc-ed-title-trigger`), not a bare full-width input:
+
+1. **Tile** (`.sc-ed-title-tile`) — 28×28, rounded; first action icon or Lucide `workflow`.
+2. **Label** (`.sc-ed-title-text`) — bold 17px, ellipsis.
+3. **Chevron** (`.sc-ed-title-chev`) — Lucide `chevron-down` in a subtle circular hit area.
+
+`aria-haspopup="menu"`, `aria-expanded`, `aria-controls` on the trigger.
+
+## Menu
+
+- Clicking the **title or chevron** (whole trigger) toggles a **popover below** (`.sc-pop.sc-ed-title-pop`).
+- Menu rows: Lucide icon (`.sc-ed-menu-ico`) + label; use existing `sc-smart-menu-inner` styling.
+- Default actions: **Rename**, **Duplicate**, separator, **Delete Shortcut** (destructive).
+- **Rename**: hide trigger, show centered `#sc-ed-title` input (`.is-renaming` on `.sc-ed-head-center`); blur/Enter commits.
+- Close menu on outside click; no hover **transform** on menu rows (background only).
+
+## Icons
+
+- Prefer **embedded Lucide paths** via `SC_LUCIDE_PATHS` / `scInlineLucide()` (same as block icons).
+- Do not use emoji or one-off SVG doodles for this header.
+
+## Sync
+
+- `scSyncEditorTitleUI()` updates label, tile, and input from `scEditing` on `scRenderEditor()` and after rename.
+- Display name fallback: manual → "New Shortcut"; automation → trigger summary when name empty.
