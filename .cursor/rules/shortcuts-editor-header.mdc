@@ -30,6 +30,8 @@ Center cluster is one **button** (`.sc-ed-title-trigger`), not a bare full-width
 - Clicking the **title or chevron** (whole trigger) toggles a **popover below** (`.sc-pop.sc-ed-title-pop`).
 - Menu rows: Lucide icon (`.sc-ed-menu-ico`) + label; use existing `sc-smart-menu-inner` styling.
 - Default actions: **Rename**, **Duplicate**, separator, **Delete Shortcut** (destructive).
+- Destructive row: class **`is-destructive`** only — never `danger` (conflicts with global `.danger` button styles in the launcher).
+- Menu icons: **14px** SVG in a **16px** box; same row style as other smart-menu items (transparent background; red text + light red hover wash for delete).
 - **Rename**: hide trigger, show centered `#sc-ed-title` input (`.is-renaming` on `.sc-ed-head-center`); blur/Enter commits.
 - Close menu on outside click; no hover **transform** on menu rows (background only).
 

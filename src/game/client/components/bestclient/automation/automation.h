@@ -3,6 +3,8 @@
 
 #include <base/net.h>
 
+#include <engine/console.h>
+
 #include <game/client/component.h>
 
 #include <cstddef>
@@ -56,6 +58,10 @@ public:
 		TEXT,
 		WAIT,
 		SWITCH_WEAPON_USE,
+		SWITCH_WEAPON,
+		EMOTE,
+		KILL,
+		VOTE,
 		SET_SKIN,
 		SET_CUSTOM_COLOR,
 		SET_BODY_COLOR,
@@ -137,6 +143,8 @@ public:
 		std::string m_ServerAddress;
 		double m_Seconds = 0.0;
 		int m_Weapon = 0;
+		std::string m_Emote;
+		std::string m_VoteChoice;
 		ETarget m_Target = ETarget::PLAYER;
 		std::string m_Skin;
 		bool m_CustomColorEnabled = false;
@@ -178,6 +186,8 @@ public:
 	void OnStateChange(int NewState, int OldState) override;
 
 	void OnChatReceived(const SChatEvent &Event);
+
+	static void ConShortcut(IConsole::IResult *pResult, void *pUserData);
 
 private:
 	// One entry per if block the runner is currently inside, so nested ifs keep
@@ -256,13 +266,17 @@ private:
 	bool MatchText(ETextMatch Match, const char *pNeedle, const char *pHaystack) const;
 	void StartRunner(size_t ShortcutIndex, const SChatEvent *pChatEvent = nullptr);
 	size_t FindShortcutIndexById(const std::string &Id) const;
+	size_t FindManualShortcutIndexByName(const char *pName) const;
 	bool WouldRecurseRunShortcut(const std::string &TargetId) const;
 	void PushRunnerCallFrame(size_t ReturnActionIndex);
 	void PopRunnerCallFrame();
 	size_t FindMatchingEndIf(size_t IfIndex) const;
 	size_t FindMatchingEndRepeat(size_t RepeatIndex) const;
 	size_t FindOtherwise(size_t IfIndex, size_t EndIfIndex) const;
-	std::string ActiveWindowValue() const;
+	std::string ForegroundWindowTitleValue() const;
+	std::string GameWindowFocusedValue() const;
+	std::string GetGamePropertyValue(const char *pProperty) const;
+	std::string GetPropertyVariableName(const char *pProperty) const;
 	void SetRunnerVariable(const char *pName, const std::string &Value);
 	const SShortcut *RunnerShortcut() const;
 	void PollTestRunRequest();

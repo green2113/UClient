@@ -4,10 +4,12 @@
 #include <base/system.h>
 
 #include <engine/client.h>
+#include <engine/console.h>
 #include <engine/graphics.h>
 #include <engine/input.h>
 #include <engine/shared/config.h>
 #include <engine/shared/json.h>
+#include <engine/shared/serverinfo.h>
 #include <engine/storage.h>
 
 #include <game/client/components/binds.h>
@@ -439,6 +441,36 @@ static bool ParseAction(const json_value *pAction, CAutomation::SAction &Out)
 		Out.m_Weapon = ParseWeapon(pWeapon && pWeapon->type == json_string ? pWeapon->u.string.ptr : nullptr);
 		return true;
 	}
+	if(str_comp(pTypeStr, "switch_weapon") == 0)
+	{
+		Out.m_Type = CAutomation::EActionType::SWITCH_WEAPON;
+		const json_value *pWeapon = json_object_get(pAction, "weapon");
+		Out.m_Weapon = ParseWeapon(pWeapon && pWeapon->type == json_string ? pWeapon->u.string.ptr : nullptr);
+		return true;
+	}
+	if(str_comp(pTypeStr, "emote") == 0)
+	{
+		Out.m_Type = CAutomation::EActionType::EMOTE;
+		const json_value *pEmote = json_object_get(pAction, "emote");
+		if(!pEmote || pEmote->type != json_string || !pEmote->u.string.ptr)
+			return false;
+		Out.m_Emote = pEmote->u.string.ptr;
+		return true;
+	}
+	if(str_comp(pTypeStr, "kill") == 0)
+	{
+		Out.m_Type = CAutomation::EActionType::KILL;
+		return true;
+	}
+	if(str_comp(pTypeStr, "vote") == 0)
+	{
+		Out.m_Type = CAutomation::EActionType::VOTE;
+		const json_value *pChoice = json_object_get(pAction, "choice");
+		if(!pChoice || pChoice->type != json_string || !pChoice->u.string.ptr)
+			return false;
+		Out.m_VoteChoice = pChoice->u.string.ptr;
+		return true;
+	}
 	if(str_comp(pTypeStr, "set_skin") == 0)
 	{
 		Out.m_Type = CAutomation::EActionType::SET_SKIN;
@@ -616,8 +648,89 @@ static bool ParseAction(const json_value *pAction, CAutomation::SAction &Out)
 	return false;
 }
 
+static void TrimInPlace(std::string &Str)
+{
+	while(!Str.empty() && (unsigned char)Str.front() <= ' ')
+		Str.erase(Str.begin());
+	while(!Str.empty() && (unsigned char)Str.back() <= ' ')
+		Str.pop_back();
+}
+
+static bool ManualShortcutNamesConflict(const std::string &A, const std::string &B)
+{
+	std::string Left = A;
+	std::string Right = B;
+	TrimInPlace(Left);
+	TrimInPlace(Right);
+	if(Left.empty() || Right.empty())
+		return false;
+	return str_comp_nocase(Left.c_str(), Right.c_str()) == 0;
+}
+
+static bool ManualShortcutNameTaken(const std::string &Name, const std::string &ExcludeId, const std::vector<CAutomation::SShortcut> &Existing)
+{
+	for(const CAutomation::SShortcut &Shortcut : Existing)
+	{
+		if(!Shortcut.m_Manual || Shortcut.m_Id == ExcludeId)
+			continue;
+		if(ManualShortcutNamesConflict(Name, Shortcut.m_Name))
+			return true;
+	}
+	return false;
+}
+
+static std::string UniqueManualShortcutName(std::string Name, const std::string &Id, const std::vector<CAutomation::SShortcut> &Existing)
+{
+	TrimInPlace(Name);
+	if(Name.empty())
+		Name = "New Shortcut";
+	if(!ManualShortcutNameTaken(Name, Id, Existing))
+		return Name;
+	for(int i = 1; i < 1000; ++i)
+	{
+		char aCandidate[256];
+		str_format(aCandidate, sizeof(aCandidate), "%s (%d)", Name.c_str(), i);
+		if(!ManualShortcutNameTaken(aCandidate, Id, Existing))
+			return aCandidate;
+	}
+	char aFallback[256];
+	str_format(aFallback, sizeof(aFallback), "%s (%d)", Name.c_str(), (int)time(nullptr));
+	return aFallback;
+}
+
+void CAutomation::ConShortcut(IConsole::IResult *pResult, void *pUserData)
+{
+	CAutomation *pSelf = (CAutomation *)pUserData;
+	if(pResult->NumArguments() < 1)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "shortcut", "Usage: shortcut \"name\" — run a manual shortcut");
+		return;
+	}
+	const size_t Index = pSelf->FindManualShortcutIndexByName(pResult->GetString(0));
+	if(Index == SIZE_MAX)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "shortcut", "Manual shortcut not found (Shortcuts library only, not Automation)");
+		return;
+	}
+	const SShortcut &Shortcut = pSelf->m_vShortcuts[Index];
+	if(!Shortcut.m_Enabled)
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "shortcut", "That shortcut is disabled");
+		return;
+	}
+	if(Shortcut.m_vActions.empty())
+	{
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "shortcut", "That shortcut has no actions");
+		return;
+	}
+	if(pSelf->m_RunnerActive)
+		pSelf->StopRunner();
+	pSelf->StartRunner(Index, nullptr);
+}
+
 void CAutomation::OnInit()
 {
+	Console()->Register("shortcut", "r[name]", CFGFLAG_CLIENT, ConShortcut, this, "Run a manual shortcut by name (Shortcuts library)");
 	TryReloadRules();
 	// Adopt whatever run request is already on disk without executing it, so a
 	// leftover file from a previous session cannot fire on startup.
@@ -764,7 +877,11 @@ bool CAutomation::ParseRulesFile(const char *pJson, size_t Length)
 						Shortcut.m_vActions.push_back(std::move(Action));
 				}
 				if(!Shortcut.m_vActions.empty())
+				{
+					if(Shortcut.m_Manual)
+						Shortcut.m_Name = UniqueManualShortcutName(Shortcut.m_Name, Shortcut.m_Id, vShortcuts);
 					vShortcuts.push_back(std::move(Shortcut));
+				}
 			}
 		}
 	}
@@ -1028,6 +1145,29 @@ size_t CAutomation::FindShortcutIndexById(const std::string &Id) const
 	return SIZE_MAX;
 }
 
+size_t CAutomation::FindManualShortcutIndexByName(const char *pName) const
+{
+	if(!pName || !pName[0])
+		return SIZE_MAX;
+	std::string Needle = pName;
+	TrimInPlace(Needle);
+	if(Needle.empty())
+		return SIZE_MAX;
+	for(size_t i = 0; i < m_vShortcuts.size(); ++i)
+	{
+		const SShortcut &Shortcut = m_vShortcuts[i];
+		if(!Shortcut.m_Manual)
+			continue;
+		std::string Label = Shortcut.m_Name;
+		TrimInPlace(Label);
+		if(Label.empty())
+			continue;
+		if(str_comp_nocase(Label.c_str(), Needle.c_str()) == 0)
+			return i;
+	}
+	return SIZE_MAX;
+}
+
 bool CAutomation::WouldRecurseRunShortcut(const std::string &TargetId) const
 {
 	if(TargetId.empty())
@@ -1227,9 +1367,8 @@ bool CAutomation::EvaluateIfCondition(const SAction &Action) const
 	return EvaluateOneIfCondition(Action.m_IfLeft, Action.m_IfOp, Action.m_IfRight);
 }
 
-// Title of the window the user is currently looking at. Windows only; other
-// platforms fall back to whether our own window holds input focus.
-std::string CAutomation::ActiveWindowValue() const
+// Title of the window the user is currently looking at (Windows). Empty when unknown.
+std::string CAutomation::ForegroundWindowTitleValue() const
 {
 #if defined(CONF_FAMILY_WINDOWS)
 	const HWND hForeground = GetForegroundWindow();
@@ -1246,16 +1385,77 @@ std::string CAutomation::ActiveWindowValue() const
 	}
 	return std::string();
 #else
+	return std::string();
+#endif
+}
+
+std::string CAutomation::GameWindowFocusedValue() const
+{
 	IEngineGraphics *pEngineGraphics = Kernel()->RequestInterface<IEngineGraphics>();
 	const bool Active = pEngineGraphics && pEngineGraphics->WindowActive();
 	return Active ? "Yes" : "No";
-#endif
+}
+
+std::string CAutomation::GetGamePropertyValue(const char *pProperty) const
+{
+	if(!pProperty || !pProperty[0])
+		return std::string();
+	if(str_comp(pProperty, "connected") == 0)
+		return IsActive() ? "Yes" : "No";
+	if(str_comp(pProperty, "my_name") == 0)
+		return g_Config.m_PlayerName[0] ? g_Config.m_PlayerName : std::string();
+	if(str_comp(pProperty, "nearest_player") == 0)
+	{
+		char aNearestPlayer[MAX_NAME_LENGTH];
+		if(GameClient()->m_Binds.FindNearestPlayerName(aNearestPlayer, sizeof(aNearestPlayer)))
+			return aNearestPlayer;
+		return std::string();
+	}
+	if(!IsActive())
+		return std::string();
+	if(str_comp(pProperty, "server_name") == 0)
+	{
+		CServerInfo ServerInfo;
+		Client()->GetServerInfo(&ServerInfo);
+		return ServerInfo.m_aName[0] ? ServerInfo.m_aName : std::string();
+	}
+	if(str_comp(pProperty, "map") == 0)
+	{
+		if(GameClient()->Map())
+			return GameClient()->Map()->BaseName();
+		return std::string();
+	}
+	if(str_comp(pProperty, "server_address") == 0)
+	{
+		char aAddr[NETADDR_MAXSTRSIZE];
+		net_addr_str(&Client()->ServerAddress(), aAddr, sizeof(aAddr), true);
+		return aAddr;
+	}
+	return std::string();
+}
+
+std::string CAutomation::GetPropertyVariableName(const char *pProperty) const
+{
+	if(!pProperty)
+		return std::string();
+	if(str_comp(pProperty, "window_active") == 0)
+		return "foreground_window_title";
+	return pProperty;
 }
 
 void CAutomation::ExecuteGetAction(const SAction &Action)
 {
-	if(Action.m_GetProperty == "window_active")
-		SetRunnerVariable("window_active", ActiveWindowValue());
+	const std::string &Prop = Action.m_GetProperty;
+	std::string Value;
+	if(Prop == "foreground_window_title" || Prop == "window_active")
+		Value = ForegroundWindowTitleValue();
+	else if(Prop == "game_window_focused")
+		Value = GameWindowFocusedValue();
+	else
+		Value = GetGamePropertyValue(Prop.c_str());
+	const std::string VarName = GetPropertyVariableName(Prop.c_str());
+	if(!VarName.empty())
+		SetRunnerVariable(VarName.c_str(), Value);
 }
 
 std::string CAutomation::ClipboardTextValue() const
@@ -1360,8 +1560,22 @@ std::string CAutomation::ResolveVariable(const char *pKey) const
 	}
 	if(str_comp(pKey, "name") == 0 && g_Config.m_PlayerName[0])
 		return g_Config.m_PlayerName;
+	if(str_comp(pKey, "my_name") == 0)
+		return GetGamePropertyValue("my_name");
+	if(str_comp(pKey, "connected") == 0)
+		return GetGamePropertyValue("connected");
+	if(str_comp(pKey, "server_name") == 0)
+		return GetGamePropertyValue("server_name");
+	if(str_comp(pKey, "map") == 0)
+		return GetGamePropertyValue("map");
+	if(str_comp(pKey, "server_address") == 0)
+		return GetGamePropertyValue("server_address");
+	if(str_comp(pKey, "foreground_window_title") == 0 || str_comp(pKey, "window_active") == 0)
+		return ForegroundWindowTitleValue();
+	if(str_comp(pKey, "game_window_focused") == 0)
+		return GameWindowFocusedValue();
 	char aNearestPlayer[MAX_NAME_LENGTH];
-	if(str_comp(pKey, "nearestPlayer") == 0 &&
+	if((str_comp(pKey, "nearestPlayer") == 0 || str_comp(pKey, "nearest_player") == 0) &&
 		GameClient()->m_Binds.FindNearestPlayerName(aNearestPlayer, sizeof(aNearestPlayer)))
 	{
 		return aNearestPlayer;
@@ -1506,7 +1720,21 @@ void CAutomation::WriteTestRunState(const char *pStatus)
 	Json += aNum;
 	if(m_RunnerActive)
 	{
-		str_format(aNum, sizeof(aNum), ",\"step\":%d", (int)m_Runner.m_ActionIndex);
+		int DisplayStep = (int)m_Runner.m_ActionIndex;
+		if(m_Runner.m_TestRun && !m_Runner.m_vCallStack.empty())
+		{
+			const SRunnerCallFrame &RootFrame = m_Runner.m_vCallStack.front();
+			DisplayStep = (int)RootFrame.m_ActionIndex - 1;
+			if(DisplayStep < 0)
+				DisplayStep = 0;
+			const SShortcut *pNested = RunnerShortcut();
+			if(pNested && !pNested->m_vActions.empty())
+			{
+				str_format(aNum, sizeof(aNum), ",\"nestedStep\":%d,\"nestedTotal\":%d", (int)m_Runner.m_ActionIndex, (int)pNested->m_vActions.size());
+				Json += aNum;
+			}
+		}
+		str_format(aNum, sizeof(aNum), ",\"step\":%d", DisplayStep);
 		Json += aNum;
 	}
 	if(m_RunnerActive && m_Runner.m_WaitUntil != 0)
@@ -1681,6 +1909,22 @@ void CAutomation::ExecuteAction(const SAction &Action)
 		Console()->ExecuteLine(aCmd, IConsole::CLIENT_ID_UNSPECIFIED);
 		break;
 	}
+	case EActionType::EMOTE:
+	{
+		char aChat[128];
+		str_format(aChat, sizeof(aChat), "/emote %s %d", Action.m_Emote.c_str(), g_Config.m_ClEyeDuration);
+		GameClient()->m_Chat.SendChat(0, aChat);
+		break;
+	}
+	case EActionType::KILL:
+		Console()->ExecuteLine("kill", IConsole::CLIENT_ID_UNSPECIFIED);
+		break;
+	case EActionType::VOTE:
+		if(str_comp_nocase(Action.m_VoteChoice.c_str(), "no") == 0)
+			Console()->ExecuteLine("vote no", IConsole::CLIENT_ID_UNSPECIFIED);
+		else
+			Console()->ExecuteLine("vote yes", IConsole::CLIENT_ID_UNSPECIFIED);
+		break;
 	default:
 		break;
 	}
@@ -1720,7 +1964,9 @@ void CAutomation::StepRunner()
 	// A test run can be started while sitting in the menus, so actions that need
 	// a live server connection are skipped instead of silently misbehaving.
 	if(m_Runner.m_TestRun && !IsActive() &&
-		(Action.m_Type == EActionType::SEND_CHAT || Action.m_Type == EActionType::SWITCH_WEAPON_USE))
+		(Action.m_Type == EActionType::SEND_CHAT || Action.m_Type == EActionType::SWITCH_WEAPON_USE ||
+			Action.m_Type == EActionType::SWITCH_WEAPON || Action.m_Type == EActionType::EMOTE ||
+			Action.m_Type == EActionType::KILL || Action.m_Type == EActionType::VOTE))
 	{
 		++m_Runner.m_ActionIndex;
 		StepRunner();
@@ -1891,6 +2137,15 @@ void CAutomation::StepRunner()
 		if(Now < m_Runner.m_WaitUntil)
 			return;
 		m_Runner.m_WaitUntil = 0;
+		++m_Runner.m_ActionIndex;
+		StepRunner();
+		return;
+	}
+
+	if(Action.m_Type == EActionType::SWITCH_WEAPON)
+	{
+		CNetObj_PlayerInput &Input = GameClient()->m_Controls.m_aInputData[g_Config.m_ClDummy];
+		Input.m_WantedWeapon = Action.m_Weapon + 1;
 		++m_Runner.m_ActionIndex;
 		StepRunner();
 		return;

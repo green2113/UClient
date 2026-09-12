@@ -112,9 +112,9 @@ SAMPLE = {
 
             "actions": [
 
-                {"type": "get", "property": "window_active"},
+                {"type": "get", "property": "foreground_window_title"},
 
-                {"type": "if", "left": "window_active", "op": "contains", "right": "Chrome"},
+                {"type": "if", "left": "foreground_window_title", "op": "contains", "right": "Chrome"},
 
                 {"type": "send_chat", "channel": "all", "message": {"mode": "text", "text": "I am browsing"}},
 

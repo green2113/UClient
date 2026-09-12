@@ -287,11 +287,13 @@ body{
 .sc-ed-title-input::placeholder{color:var(--muted)}
 .sc-ed-trailing{display:flex;align-items:center;gap:8px;flex:0 0 auto}
 .sc-pop.sc-ed-title-pop .sc-smart-menu-inner{min-width:220px;padding:6px}
-.sc-ed-title-menu-item{display:flex!important;align-items:center;gap:10px;width:100%}
-.sc-ed-title-menu-item .sc-ed-menu-ico{width:20px;height:20px;display:grid;place-items:center;flex:0 0 auto;color:var(--dim)}
-.sc-ed-title-menu-item .sc-ed-menu-ico svg{width:18px;height:18px;display:block}
-.sc-ed-title-menu-item .sc-ed-menu-label{flex:1;min-width:0;text-align:left}
-.sc-ed-title-menu-item.danger,.sc-ed-title-menu-item.danger .sc-ed-menu-ico{color:#ff6b63}
+.sc-ed-title-menu-item{display:flex!important;align-items:center;gap:8px;width:100%;font:600 13px/1.35 inherit;padding:8px 10px;border-radius:10px;background:transparent;border:0;color:var(--text)}
+.sc-ed-title-menu-item .sc-ed-menu-ico{width:16px;height:16px;display:grid;place-items:center;flex:0 0 auto;color:var(--dim)}
+.sc-ed-title-menu-item .sc-ed-menu-ico svg{width:14px;height:14px;display:block;stroke-width:1.75}
+.sc-ed-title-menu-item .sc-ed-menu-label{flex:1;min-width:0;text-align:left;font:inherit}
+.sc-ed-title-menu-item.is-destructive,.sc-ed-title-menu-item.is-destructive .sc-ed-menu-ico{color:#ff6b63}
+.sc-ed-title-menu-item.is-destructive:hover,.sc-ed-title-menu-item.is-destructive:focus-visible{background:rgba(255,69,58,.12);color:#ff8a84;outline:none}
+.sc-ed-title-menu-item.is-destructive:hover .sc-ed-menu-ico,.sc-ed-title-menu-item.is-destructive:focus-visible .sc-ed-menu-ico{color:#ff8a84}
 .sc-ed-save{background:rgba(124,108,240,.24);color:var(--accent-hi);box-shadow:none}
 .sc-ed-save:hover{background:rgba(124,108,240,.36);box-shadow:none}
 .sc-ed-delete{background:rgba(255,59,48,.14);color:#ff6b63;display:none}
@@ -363,24 +365,37 @@ body{
 .sc-smart-menu-sep{height:1px;margin:5px 8px;background:rgba(255,255,255,.09)}
 .sc-block.sc-block-text{align-items:flex-start;padding-top:12px;padding-bottom:12px}
 .sc-block.sc-block-text .sc-block-ico{align-self:flex-start;margin-top:1px}
-.sc-block.sc-block-text .sc-block-body{flex-direction:column;align-items:stretch;gap:8px;min-width:0;padding-right:4px}
+.sc-block.sc-block-text .sc-block-body{flex-direction:column;align-items:stretch;gap:6px;min-width:0;padding-right:36px;padding-left:0}
 .sc-block.sc-block-text .sc-del{top:14px;transform:none}
-.sc-text-head{display:flex;align-items:center;min-height:24px}
+.sc-text-head{display:flex;align-items:center;min-height:24px;margin:0}
 .sc-text-title{font-size:15px;font-weight:600;color:var(--text);letter-spacing:-.01em;line-height:1.35}
-.sc-text-composer{display:flex;flex-wrap:wrap;align-items:center;align-content:flex-start;gap:5px 4px;width:100%;min-height:54px;padding:11px 12px;border-radius:var(--sc-r-inset);background:rgba(0,0,0,.24);border:1px solid rgba(255,255,255,.07);box-shadow:inset 0 1px 0 rgba(255,255,255,.04);line-height:1.45;font-size:15px;transition:border-color .15s var(--ease),background .15s var(--ease),box-shadow .15s var(--ease)}
-.sc-text-composer:focus-within{border-color:rgba(124,108,240,.32);background:rgba(0,0,0,.3);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 0 2px rgba(124,108,240,.14)}
+.sc-text-composer-wrap{width:100%;min-width:0;position:relative}
+.sc-text-var-pop{position:fixed;z-index:160;display:none;flex-direction:row;flex-wrap:nowrap;align-items:center;gap:4px;padding:4px 6px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(22,22,28,.96);box-shadow:0 8px 28px rgba(0,0,0,.45);max-height:36px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;pointer-events:auto}
+.sc-text-var-pop::-webkit-scrollbar{height:4px}
+.sc-text-var-pop::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px}
+.sc-text-var-bar{display:flex;flex-wrap:wrap;align-items:center;gap:5px;width:100%;flex:0 0 100%;padding:0 0 8px;margin:0 0 2px;border-bottom:1px solid rgba(255,255,255,.06)}
+.sc-text-composer.sc-text-var-open{align-content:flex-start}
+.sc-text-var-chip{display:inline-flex;align-items:center;gap:3px;border:0;border-radius:var(--sc-r-pill);padding:1px 6px 1px 5px;background:rgba(124,108,240,.2);color:var(--accent-hi);font:500 12px/1.3 inherit;cursor:pointer;white-space:nowrap;flex:0 0 auto;transition:background .12s ease-out,transform 80ms ease-out}
+.sc-text-var-chip .sc-pill-icon-svg{width:12px;height:12px}
+.sc-text-var-chip:hover{background:rgba(124,108,240,.32)}
+.sc-text-var-chip:active{transform:scale(.96)}
+.sc-text-composer{display:flex;flex-wrap:wrap;align-items:baseline;align-content:flex-start;gap:3px 0;width:100%;min-height:54px;padding:11px 12px;border-radius:var(--sc-r-inset);background:rgba(0,0,0,.24);border:1px solid rgba(255,255,255,.07);box-shadow:inset 0 1px 0 rgba(255,255,255,.04);line-height:1.5;font-size:18px;cursor:text;transition:border-color .15s var(--ease),background .15s var(--ease),box-shadow .15s var(--ease)}
+.sc-text-composer:focus-within{border-color:rgba(124,108,240,.28);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
 .sc-text-parts{display:contents}
 .sc-text-composer .sc-smart-field{vertical-align:middle}
 .sc-text-composer .sc-pill.input{background:transparent;box-shadow:none;min-width:28px;width:auto;max-width:100%;height:auto;min-height:26px;line-height:1.45;padding:2px 2px;white-space:pre-wrap;overflow:visible;font-weight:500;color:var(--text)}
 .sc-text-composer .sc-pill.input::placeholder{color:var(--muted);opacity:.65;font-weight:500}
 .sc-text-composer .sc-pill.input:focus{background:rgba(124,108,240,.1);box-shadow:none;outline:none}
-.sc-text-composer .sc-pill.var,.sc-text-composer .sc-pill.sc-smart-choice{height:28px;font-size:14px;padding:0 10px}
+.sc-text-composer .sc-pill.var,.sc-text-composer .sc-pill.sc-smart-choice{min-height:26px;height:auto;font-size:15px;line-height:1.45;padding:2px 10px}
 .sc-text-composer.sc-text-composer-single{padding:0;border:0;background:transparent;box-shadow:none;min-height:0}
 .sc-text-composer.sc-text-composer-single:focus-within{box-shadow:none;border:0;background:transparent}
-.sc-text-body-field{display:block;width:100%}
-.sc-text-body-input{display:block;width:100%;min-height:54px;max-height:160px;padding:11px 12px;border-radius:var(--sc-r-inset);border:1px solid rgba(255,255,255,.07);background:rgba(0,0,0,.24);box-shadow:inset 0 1px 0 rgba(255,255,255,.04);color:var(--text);font:500 15px/1.45 inherit;resize:vertical;outline:none;transition:border-color .15s var(--ease),background .15s var(--ease),box-shadow .15s var(--ease)}
-.sc-text-body-input::placeholder{color:var(--muted);opacity:.65}
-.sc-text-body-input:focus{border-color:rgba(124,108,240,.32);background:rgba(0,0,0,.3);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 0 2px rgba(124,108,240,.14)}
+.sc-text-composer textarea.sc-text-segment-input{flex:0 1 auto;align-self:baseline;min-width:12px;max-width:100%;min-height:24px;max-height:240px;margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;color:var(--text);font:500 18px/1.5 inherit;resize:none;overflow-x:hidden;overflow-y:hidden;overflow-wrap:break-word;white-space:pre-wrap;outline:none;vertical-align:baseline;box-sizing:border-box}
+.sc-text-composer textarea.sc-text-segment-input::placeholder{color:var(--muted);opacity:.65}
+.sc-text-composer textarea.sc-text-segment-input:focus{background:transparent;outline:none}
+.sc-text-composer .sc-text-var-inline{flex:0 0 auto;display:inline-flex;align-items:center;gap:3px;height:auto;margin:0;padding:0 5px 0 4px;border-radius:var(--sc-r-pill);background:var(--sc-pill-fill);color:var(--sc-pill-text);font:500 13px/1.35 inherit;vertical-align:baseline;user-select:none;box-sizing:border-box;cursor:pointer;position:relative;top:2px}
+.sc-text-composer .sc-text-var-inline .sc-pill-icon-svg{width:13px;height:13px;flex:0 0 auto;opacity:.88}
+.sc-text-composer .sc-text-var-inline .sc-pill-label{font-size:13px;line-height:1.35;font-weight:500}
+.sc-text-composer .sc-text-var-inline .sc-pill-label{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sc-block-action .sc-block-ico.text{background:rgba(255,214,10,.18);color:#ffd60a}
 .sc-pill:active{transform:scale(.97)}
 .sc-pill.input{min-width:26px;width:26px;max-width:240px;height:30px;padding:0 12px;text-align:left;cursor:text;box-sizing:border-box;-webkit-appearance:none;appearance:none;line-height:30px;overflow:hidden;white-space:nowrap;font-weight:600;color:var(--sc-pill-text);background:var(--sc-pill-fill);box-shadow:none}
@@ -400,12 +415,13 @@ body{
 .sc-ed-canvas.sc-run-reflow .sc-block,.sc-ed-canvas.sc-run-reflow .sc-if-group,.sc-ed-canvas.sc-run-reflow .sc-run-result{transition:transform .4s var(--spring)}
 .sc-run-result{position:relative;width:100%;margin:-2px 0 12px;padding:10px 18px 0;display:flex;flex-direction:column;align-items:center;box-sizing:border-box}
 .sc-if-group .sc-run-result{margin-bottom:8px}
-.sc-run-result::before{content:"";position:absolute;left:50%;transform:translateX(-50%);top:-10px;bottom:0;width:2px;border-radius:99px;background:linear-gradient(180deg,rgba(124,108,240,.58),rgba(90,164,240,.42));pointer-events:none;z-index:0}
+.sc-if-group .sc-block.sc-if-branch + .sc-run-result{margin-left:16px;width:calc(100% - 16px)}
+.sc-run-result::before{content:"";position:absolute;left:50%;transform:translateX(-50%);top:-10px;height:20px;width:2px;border-radius:99px;background:linear-gradient(180deg,rgba(124,108,240,.58),rgba(90,164,240,.42));pointer-events:none;z-index:0}
 .sc-run-result.sc-enter{animation:scRunResultIn .42s var(--spring) both}
 @keyframes scRunResultIn{from{opacity:0;transform:translateY(-14px) scale(.97)}to{opacity:1;transform:none}}
 .sc-run-result-box{position:relative;z-index:1;display:inline-block;max-width:min(100%,420px);padding:9px 13px;border-radius:var(--sc-r-control);background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.09);font:600 14px/1.35 inherit;color:var(--text);overflow-wrap:anywhere}
 .sc-run-result-box em{font-style:normal;color:var(--muted)}
-.sc-drawer{--sc-drawer-t:0;position:absolute;left:0;right:auto;bottom:0;width:100%;height:min(78%,520px);background:var(--sc-surface-inset);border-top:1px solid rgba(255,255,255,.08);border-radius:var(--sc-r-drawer) var(--sc-r-drawer) 0 0;box-shadow:none;display:flex;flex-direction:column;overflow:clip;transform:translateY(10%);transition:transform .38s var(--spring),height .38s var(--spring),width .38s var(--spring),left .38s var(--spring),bottom .38s var(--spring),border-radius .38s var(--spring),box-shadow .38s var(--spring);will-change:transform,width,height,left;touch-action:none}
+.sc-drawer{--sc-drawer-t:0;position:absolute;z-index:3;left:0;right:auto;bottom:0;width:100%;height:min(78%,520px);background:var(--sc-surface-inset);border-top:1px solid rgba(255,255,255,.08);border-radius:var(--sc-r-drawer) var(--sc-r-drawer) 0 0;box-shadow:none;display:flex;flex-direction:column;overflow:clip;transform:translateY(10%);transition:transform .38s var(--spring),height .38s var(--spring),width .38s var(--spring),left .38s var(--spring),bottom .38s var(--spring),border-radius .38s var(--spring),box-shadow .38s var(--spring);will-change:transform,width,height,left;touch-action:none}
 .sc-drawer.dragging{transition:none}
 .sc-drawer-chips,.sc-drawer-list{opacity:calc(1 - var(--sc-drawer-t));pointer-events:none;transition:opacity .28s var(--ease)}
 .sc-drawer:not(.sc-drawer-capsule) .sc-drawer-chips,.sc-drawer:not(.sc-drawer-capsule) .sc-drawer-list{pointer-events:auto}
@@ -499,7 +515,10 @@ body{
 .sc-if-cond-add:active{transform:scale(.92)}
 .sc-if-multi-wrap{display:flex;flex-direction:column;align-items:stretch;width:100%;min-width:0}
 .sc-if-multi-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
+.sc-block-body.sc-if-multi-body{flex-direction:column;align-items:stretch;padding-right:36px;min-height:0}
 .sc-block.sc-if-head .sc-block-body{align-items:stretch}
+.sc-block.sc-if-head .sc-del{top:14px;transform:none}
+.sc-block.sc-if-head .sc-del:active{transform:scale(.92)}
 .sc-sender-names{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
 .sc-sender-chip{display:inline-flex;align-items:center;height:30px;border-radius:999px;background:var(--sc-pill-fill);color:var(--sc-pill-text);font:600 14px/1 inherit;padding:0 4px 0 11px;box-shadow:none;flex:0 0 auto;max-width:240px}
 .sc-sender-chip-label{display:block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -527,9 +546,9 @@ body{
 .sc-stepper-btn:hover{background:rgba(124,108,240,.2)}
 .sc-stepper-btn:active{transform:scale(.94);background:rgba(124,108,240,.28)}
 .sc-stepper-sep{width:1px;margin:6px 0;background:rgba(255,255,255,.1);flex:0 0 auto}
-.sc-repeat-times-pill{cursor:pointer}
+.sc-stepper-pill{cursor:pointer}
 @supports (corner-shape:squircle){
-  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search-wrap,.sc-drawer-search-chip,.sc-drawer-filter-pick,.sc-chip,.sc-catalog,.sc-tile,.sc-tile-ico,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.modal-box,.opt{corner-shape:squircle}
+  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search-wrap,.sc-drawer-search-chip,.sc-drawer-filter-pick,.sc-chip,.sc-catalog,.sc-tile,.sc-tile-ico,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.sc-text-var-chip,.sc-text-composer .sc-text-var-inline,.modal-box,.opt{corner-shape:squircle}
   .sc-ed-back,.sc-ed-icon,.sc-ed-delete,.sc-ed-save{corner-shape:round;border-radius:50%}
 }
 .sc-toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:rgba(0,0,0,.82);color:#fff;padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s var(--ease);z-index:360;backdrop-filter:blur(12px)}
@@ -1303,6 +1322,7 @@ body.dev-build #dev-panel{display:block}
       </div>
       <div class="sc-ed-body">
         <div class="sc-ed-canvas" id="sc-ed-canvas"></div>
+        <div id="sc-text-var-pop" class="sc-text-var-pop" role="toolbar" aria-label="Insert variable" aria-hidden="true"></div>
         <div class="sc-drawer" id="sc-drawer">
           <div class="sc-drawer-grab" id="sc-drawer-grab"><div class="sc-drawer-handle" id="sc-drawer-handle"></div></div>
           <div class="sc-drawer-search-wrap" id="sc-drawer-search-wrap">
@@ -1559,7 +1579,11 @@ document.addEventListener("keydown", function (e) {
       setRestoreFilterOpen(false);
     }
     else if (settingsOpen) toggleSettings(false);
-  } else if (e.key === "Enter" && !e.target.closest("input,button,form") && !$("play").disabled) {
+  } else if (e.key === "Enter" && !$("play").disabled) {
+    var ed = $("sc-editor");
+    var inEditor = ed && ed.style.display === "flex" && ed.classList.contains("on");
+    if (inEditor) return;
+    if (e.target.closest("input,textarea,button,form,[contenteditable='true']")) return;
     send({cmd: "play"});
   }
   if (!scEditing || !(e.ctrlKey || e.metaKey)) return;
@@ -2517,8 +2541,21 @@ var SC_TRIGGERS = [{
   whenHint: "When connecting to a specific server", icon: "\u25CE", tone: "connect",
   defaults: {type: "server_connect", targets: []}
 }];
+var SC_GET_OS_PROPERTIES = [
+  {value: "foreground_window_title", label: "Foreground Window Title", varId: "foreground_window_title"},
+  {value: "game_window_focused", label: "Game Window Focused", varId: "game_window_focused"}
+];
+var SC_GET_GAME_PROPERTIES = [
+  {value: "connected", label: "Connected", varId: "connected"},
+  {value: "server_name", label: "Server Name", varId: "server_name"},
+  {value: "map", label: "Map", varId: "map"},
+  {value: "server_address", label: "Server Address", varId: "server_address"},
+  {value: "my_name", label: "My Name", varId: "my_name"},
+  {value: "nearest_player", label: "Nearest Player", varId: "nearest_player"}
+];
 var SC_ACTIONS = [
-  {id: "get", category: "flow", title: "Get", hint: "Read a value into a variable", icon: "\u2193", tone: "flow", defaults: {type: "get", property: "window_active"}},
+  {id: "get_os_detail", category: "flow", title: "Get OS Detail", hint: "Read window focus and other OS state into a variable", icon: "\u2193", tone: "flow", defaults: {type: "get", property: "foreground_window_title"}},
+  {id: "get_game_detail", category: "flow", title: "Get Game Detail", hint: "Read server, map, and player state into a variable", icon: "\u2193", tone: "connect", defaults: {type: "get", property: "connected"}},
   {id: "get_clipboard", category: "flow", title: "Get Clipboard", hint: "Read plain text from the system clipboard", icon: "\u2193", tone: "clip", defaults: {type: "get_clipboard", as: "clipboard"}},
   {id: "text", category: "flow", title: "Text", hint: "Combine variables and text into one value", icon: "\u270D", tone: "text", defaults: {type: "text", parts: [{mode: "text", text: ""}], as: "text"}},
   {id: "repeat", category: "flow", title: "Repeat", hint: "Run actions inside the loop several times", icon: "\u21bb", tone: "loop", defaults: {type: "repeat", count: 1}},
@@ -2533,6 +2570,10 @@ var SC_ACTIONS = [
   {id: "send_chat", category: "actions", title: "Send message", hint: "Send a variable or text to chat", icon: "\u2709", tone: "chat", defaults: {type: "send_chat", channelMode: "text", channel: "all", uclientRoomMode: "text", uclientRoomId: "", messageMode: "text", messageText: ""}},
   {id: "wait", category: "actions", title: "Wait", hint: "Pause before the next step", icon: "\u23f1", tone: "wait", defaults: {type: "wait", seconds: 1}},
   {id: "switch_weapon_use", category: "actions", title: "Use weapon", hint: "Switch weapon and use it", icon: "\u2692", tone: "action", defaults: {type: "switch_weapon_use", weapon: "hammer"}},
+  {id: "switch_weapon", category: "actions", title: "Switch weapon", hint: "Switch weapon without using it", icon: "\u2692", tone: "action", defaults: {type: "switch_weapon", weapon: "hammer"}},
+  {id: "emote", category: "actions", title: "Emote", hint: "Show an eye emote on your tee", icon: "\u263a", tone: "action", defaults: {type: "emote", emote: "normal"}},
+  {id: "kill", category: "actions", title: "Kill", hint: "Kill your tee (respawn)", icon: "\u2620", tone: "action", defaults: {type: "kill"}},
+  {id: "vote", category: "actions", title: "Vote", hint: "Vote yes or no on an active vote", icon: "\u2713", tone: "action", defaults: {type: "vote", choice: "yes"}},
   {id: "set_skin", category: "actions", title: "Set skin", hint: "Change player or dummy skin", icon: "\u2728", tone: "action", defaults: {type: "set_skin", target: "player", skin: "default"}},
   {id: "set_custom_color", category: "actions", title: "Custom colors", hint: "Toggle custom colors on or off", icon: "\u25cf", tone: "action", defaults: {type: "set_custom_color", target: "player", enabled: true}},
   {id: "set_body_color", category: "actions", title: "Body color", hint: "Set body color", icon: "\u25cf", tone: "action", defaults: {type: "set_body_color", target: "player", color: 0}},
@@ -2572,6 +2613,13 @@ function scActionDef(type) {
     if (SC_ACTIONS[i].id === type || SC_ACTIONS[i].defaults.type === type) return SC_ACTIONS[i];
   }
   return {title: "Action", hint: "Do something", icon: "\u2699", tone: "action"};
+}
+function scActionDefForAction(data) {
+  if (!data) return scActionDef("wait");
+  if (data.type === "get") {
+    return scGetPropertyGroup(data.property) === "game" ? scActionDef("get_game_detail") : scActionDef("get_os_detail");
+  }
+  return scActionDef(data.type);
 }
 function scNormalizeSenderFilter(f) {
   var names = [];
@@ -2695,9 +2743,67 @@ function scCatalogRow(kind, def) {
 function scSummaryTrigger(t) {
   return scTriggerWhenPreview(t);
 }
+function scGetOsPropertyOptions() {
+  return SC_GET_OS_PROPERTIES.map(function (p) { return {value: p.value, label: p.label}; });
+}
+function scGetGamePropertyOptions() {
+  return SC_GET_GAME_PROPERTIES.map(function (p) { return {value: p.value, label: p.label}; });
+}
+function scFindGetPropertyMeta(prop) {
+  var id = prop == null ? "" : String(prop);
+  if (id === "window_active") id = "foreground_window_title";
+  var i;
+  for (i = 0; i < SC_GET_OS_PROPERTIES.length; i++) {
+    if (SC_GET_OS_PROPERTIES[i].value === id) return SC_GET_OS_PROPERTIES[i];
+  }
+  for (i = 0; i < SC_GET_GAME_PROPERTIES.length; i++) {
+    if (SC_GET_GAME_PROPERTIES[i].value === id) return SC_GET_GAME_PROPERTIES[i];
+  }
+  return null;
+}
+function scGetPropertyGroup(prop) {
+  var meta = scFindGetPropertyMeta(prop);
+  if (!meta) return "os";
+  for (var i = 0; i < SC_GET_GAME_PROPERTIES.length; i++) {
+    if (SC_GET_GAME_PROPERTIES[i].value === meta.value) return "game";
+  }
+  return "os";
+}
+function scGetPropertyVarId(prop) {
+  var meta = scFindGetPropertyMeta(prop);
+  return meta ? meta.varId : (prop || "value");
+}
 function scLabelGetProperty(prop) {
-  if (prop === "window_active") return "Window Active";
-  return prop || "Value";
+  var meta = scFindGetPropertyMeta(prop);
+  return meta ? meta.label : (prop || "Value");
+}
+function scNormalizeGetProperty(prop, groupHint) {
+  var id = prop == null ? "" : String(prop);
+  if (id === "window_active") id = "foreground_window_title";
+  if (scFindGetPropertyMeta(id)) return id;
+  if (groupHint === "game" && SC_GET_GAME_PROPERTIES.length) return SC_GET_GAME_PROPERTIES[0].value;
+  return SC_GET_OS_PROPERTIES.length ? SC_GET_OS_PROPERTIES[0].value : "foreground_window_title";
+}
+function scLabelEmote(e) {
+  var m = {normal: "Normal", happy: "Happy", angry: "Angry", pain: "Pain", surprise: "Surprise", blink: "Blink"};
+  return m[e] || "Normal";
+}
+function scNormalizeEmote(e) {
+  var id = e == null ? "" : String(e);
+  var ok = ["normal", "happy", "angry", "pain", "surprise", "blink"];
+  return ok.indexOf(id) >= 0 ? id : "normal";
+}
+function scLabelVoteChoice(c) {
+  return c === "no" ? "No" : "Yes";
+}
+function scLabelYesNoValue(v) {
+  return String(v == null ? "" : v).toLowerCase() === "no" ? "No" : "Yes";
+}
+function scNormalizeYesNoValue(v) {
+  return String(v == null ? "" : v).toLowerCase() === "no" ? "No" : "Yes";
+}
+function scNormalizeVoteChoice(c) {
+  return c === "no" ? "no" : "yes";
 }
 function scLabelIfOp(op) {
   if (op === "is_not") return "is not";
@@ -2709,13 +2815,17 @@ function scLabelIfOp(op) {
   if (op === "ends_with") return "ends with";
   return "is";
 }
+function scIfVarIsYesNo(varId) {
+  return varId === "connected" || varId === "game_window_focused";
+}
 function scIfLeftValueKind(varId) {
   if (varId === "messageChannel") return "channel";
+  if (scIfVarIsYesNo(varId)) return "yesno";
   return "text";
 }
 function scIfOpsForVariable(varId) {
   if (!varId) return [];
-  if (varId === "messageChannel") {
+  if (varId === "messageChannel" || scIfVarIsYesNo(varId)) {
     return [{value: "is", label: "is"}, {value: "is_not", label: "is not"}];
   }
   return [
@@ -2751,6 +2861,11 @@ function scNormalizeIfConditionObj(obj) {
     return;
   }
   if (obj.right == null) obj.right = "";
+  if (scIfLeftValueKind(obj.left) === "yesno") {
+    if (obj.op !== "is" && obj.op !== "is_not") obj.op = "is";
+    obj.right = scNormalizeYesNoValue(obj.right);
+    return;
+  }
   if (scIfLeftValueKind(obj.left) === "channel" && !obj.right) obj.right = "all";
 }
 function scNormalizeIfCondition(ifAction) {
@@ -2820,6 +2935,8 @@ function scIfConditionLineHtml(cond, ifIdx, condIdx) {
     if (scIfOpNeedsRight(cond.op)) {
       if (scIfLeftValueKind(cond.left) === "channel") {
         html += scPill("right", cond.right || "all", ifIdx, "if-cond", condIdx);
+      } else if (scIfLeftValueKind(cond.left) === "yesno") {
+        html += scPill("right", cond.right || "Yes", ifIdx, "if-cond", condIdx);
       } else {
         html += scPillInput("right", cond.right, ifIdx, "if-cond", condIdx);
       }
@@ -2844,8 +2961,8 @@ function scIfMultiBlockHtml(data, idx, kind) {
     '<button type="button" class="sc-filter-add" data-add-if-condition="' + idx + '">+ Add Condition</button>' +
     '</div>';
 }
-function scLabelVariable(id) {
-  var vars = scAvailableVariables(null);
+function scLabelVariable(id, beforeIdx) {
+  var vars = scAvailableVariables(beforeIdx == null ? null : beforeIdx);
   for (var i = 0; i < vars.length; i++) {
     if (vars[i].id === id) return vars[i].label;
   }
@@ -2854,9 +2971,14 @@ function scLabelVariable(id) {
   if (id === "messageChannel") return "Message Channel";
   if (id === "messageUClientRoom") return "Message UClient Room";
   if (id === "messageUClientRoomId") return "Message UClient Room ID";
-  if (id === "window_active") return "Window Active";
-  if (id === "name") return "My Name";
-  if (id === "nearestPlayer") return "Nearest Player";
+  if (id === "window_active" || id === "foreground_window_title") return "Foreground Window Title";
+  if (id === "game_window_focused") return "Game Window Focused";
+  if (id === "connected") return "Connected";
+  if (id === "server_name") return "Server Name";
+  if (id === "map") return "Map";
+  if (id === "server_address") return "Server Address";
+  if (id === "my_name" || id === "name") return "My Name";
+  if (id === "nearestPlayer" || id === "nearest_player") return "Nearest Player";
   if (id === "clipboard") return "Clipboard";
   return id || "Variable";
 }
@@ -2878,8 +3000,9 @@ function scAvailableVariables(beforeIdx) {
     for (var i = 0; i < limit; i++) {
       var a = scEditing.actions[i];
       if (!a) continue;
-      if (a.type === "get" && a.property === "window_active")
-        vars.push({id: "window_active", label: "Window Active"});
+      if (a.type === "get") {
+        vars.push({id: scGetPropertyVarId(a.property), label: scLabelGetProperty(a.property)});
+      }
       if (a.type === "get_clipboard") {
         var clipAs = a.as || "clipboard";
         vars.push({id: clipAs, label: clipAs === "clipboard" ? "Clipboard" : clipAs});
@@ -2994,6 +3117,18 @@ function scNormalizeAction(a, actionIdx) {
       scNormalizeIfCondition(a);
     }
   }
+  if (a.type === "get") {
+    a.property = scNormalizeGetProperty(a.property);
+  }
+  if (a.type === "emote") {
+    a.emote = scNormalizeEmote(a.emote);
+  }
+  if (a.type === "vote") {
+    a.choice = scNormalizeVoteChoice(a.choice);
+  }
+  if (a.type === "switch_weapon" || a.type === "switch_weapon_use") {
+    a.weapon = a.weapon || "hammer";
+  }
   if (a.type === "get_clipboard") {
     if (!a.as) a.as = "clipboard";
   }
@@ -3101,14 +3236,19 @@ var SC_LUCIDE_PATHS = {
   "chevron-down": '<path d="m6 9 6 6 6-6"/>',
   pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
-  "trash-2": '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>'
+  "trash-2": '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+  smile: '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" x2="9.01" y1="9" y2="9"/><line x1="15" x2="15.01" y1="9" y2="9"/>',
+  skull: '<circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><path d="M8 20v-1a4 4 0 0 1 8 0v1"/><path d="M12 2v2"/><path d="M6.8 4.6 8 6"/><path d="M17.2 4.6 16 6"/><path d="M12 8a4 4 0 0 0-4 4v2h8v-2a4 4 0 0 0-4-4Z"/>',
+  "circle-check": '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  crosshair: '<circle cx="12" cy="12" r="10"/><line x1="22" x2="18" y1="12" y2="12"/><line x1="6" x2="2" y1="12" y2="12"/><line x1="12" x2="12" y1="6" y2="2"/><line x1="12" x2="12" y1="22" y2="18"/>'
 };
 var SC_TRIGGER_LUCIDE = {chat_received: "messages-square", server_connect: "server"};
 var SC_ACTION_LUCIDE = {
-  get: "variable", get_clipboard: "clipboard", text: "whole-word", repeat: "repeat", end_repeat: "list-end",
+  get: "app-window", get_os_detail: "app-window", get_game_detail: "server", get_clipboard: "clipboard", text: "whole-word", repeat: "repeat", end_repeat: "list-end",
   if: "git-branch", otherwise: "between-horizontal-start", end_if: "git-merge", stop: "circle-stop",
   connect_server: "plug", leave_server: "log-out", send_chat: "message-square-text", wait: "timer",
-  switch_weapon_use: "hammer", set_skin: "shirt", set_custom_color: "palette", set_body_color: "user-round",
+  switch_weapon_use: "hammer", switch_weapon: "crosshair", emote: "smile", kill: "skull", vote: "circle-check",
+  set_skin: "shirt", set_custom_color: "palette", set_body_color: "user-round",
   set_feet_color: "footprints", set_name: "signature", run_shortcut: "play"
 };
 function scLucideSvg(name, cssClass) {
@@ -3120,9 +3260,9 @@ function scLucideSvg(name, cssClass) {
 function scInlineLucide(name, cssClass) {
   return scLucideSvg(name, cssClass || "sc-block-icon-svg");
 }
-function scEdTitleMenuRow(iconName, label, act, danger) {
-  return '<button type="button" class="sc-smart-menu-item sc-ed-title-menu-item' + (danger ? " danger" : "") +
-    '" data-ed-title-act="' + esc(act) + '"><span class="sc-ed-menu-ico">' + scInlineLucide(iconName) +
+function scEdTitleMenuRow(iconName, label, act, destructive) {
+  return '<button type="button" class="sc-smart-menu-item sc-ed-title-menu-item' + (destructive ? " is-destructive" : "") +
+    '" data-ed-title-act="' + esc(act) + '"><span class="sc-ed-menu-ico">' + scInlineLucide(iconName, "sc-ed-menu-icon-svg") +
     '</span><span class="sc-ed-menu-label">' + esc(label) + "</span></button>";
 }
 function scEditorDisplayName() {
@@ -3214,10 +3354,14 @@ function scDuplicateEditingShortcut() {
   var copy = JSON.parse(JSON.stringify(scEditing));
   copy.id = scUuid();
   var base = (scEditorDisplayName() || "Shortcut").replace(/\s+Copy(\s+\d+)?$/i, "");
-  copy.name = base + " Copy";
+  copy.name = scEntryKind(copy) === "manual"
+    ? scUniqueManualShortcutName(base + " Copy", copy.id)
+    : base + " Copy";
   shortcutsLocal.push(JSON.parse(JSON.stringify(copy)));
   shortcutsSig = JSON.stringify(shortcutsLocal);
-  scOpenEditor(copy, scEditKind);
+  renderShortcutsGallery();
+  renderShortcutsList();
+  scAnimateEditorSwap(copy, scEditKind);
   scToast("Duplicated");
 }
 function scDeleteEditingShortcut() {
@@ -3270,7 +3414,12 @@ function scVarPillIconSvg(varId) {
   if (id.indexOf("message") === 0 || id === "senderName" || id === "sender" || id === "message") {
     return scLucideSvg("message-square-text", "sc-pill-icon-svg");
   }
-  if (id === "window_active") return scLucideSvg("app-window", "sc-pill-icon-svg");
+  if (id === "window_active" || id === "foreground_window_title" || id === "game_window_focused") {
+    return scLucideSvg("app-window", "sc-pill-icon-svg");
+  }
+  if (id === "connected" || id === "server_name" || id === "map" || id === "server_address") {
+    return scLucideSvg("server", "sc-pill-icon-svg");
+  }
   if (id === "text" || id.indexOf("text") === 0) return scLucideSvg("whole-word", "sc-pill-icon-svg");
   return scLucideSvg("variable", "sc-pill-icon-svg");
 }
@@ -3348,6 +3497,7 @@ function scCloseAllSmartMenus(except) {
 function scCloseAllPickers(exceptSmartField) {
   scClosePop();
   scCloseAllSmartMenus(exceptSmartField || null);
+  scHideTextVarPop();
 }
 function scResetSmartMenuPosition(menu) {
   if (!menu) return;
@@ -3489,29 +3639,362 @@ function scIfLeftFieldHtml(data, idx, kind, condIdx) {
   html += '</span>';
   return html;
 }
-function scMergeTextParts(parts) {
-  if (!parts || !parts.length) return [{mode: "text", text: ""}];
+function scMergeTextParts(parts, trackFocusIdx) {
+  if (!parts || !parts.length) {
+    return trackFocusIdx != null ? {parts: [{mode: "text", text: ""}], focusIdx: 0} : [{mode: "text", text: ""}];
+  }
   var out = [];
-  parts.forEach(function (p) {
+  var tracked = trackFocusIdx;
+  parts.forEach(function (p, i) {
     if (p.mode === "variable") {
       out.push({mode: "variable", variable: p.variable || "messageSender"});
+      if (i === trackFocusIdx) tracked = out.length - 1;
       return;
     }
     var text = p.text == null ? "" : String(p.text);
-    if (out.length && out[out.length - 1].mode === "text") out[out.length - 1].text += text;
-    else out.push({mode: "text", text: text});
+    if (out.length && out[out.length - 1].mode === "text") {
+      if (i === trackFocusIdx) tracked = out.length - 1;
+      out[out.length - 1].text += text;
+    } else {
+      out.push({mode: "text", text: text});
+      if (i === trackFocusIdx) tracked = out.length - 1;
+    }
   });
   if (!out.length) out.push({mode: "text", text: ""});
   if (out[out.length - 1].mode === "variable") out.push({mode: "text", text: ""});
+  if (trackFocusIdx != null) {
+    if (tracked == null || tracked >= out.length) tracked = out.length - 1;
+    while (tracked >= 0 && out[tracked].mode !== "text") tracked--;
+    if (tracked < 0) tracked = 0;
+    return {parts: out, focusIdx: tracked};
+  }
   return out;
 }
-function scTextBodyInputHtml(text, idx, kind) {
-  var val = esc(String(text == null ? "" : text));
-  return '<div class="sc-text-composer sc-text-composer-single">' +
-    '<span class="sc-smart-field sc-text-body-field" data-smart-slot="textBody" data-idx="' + idx + '" data-kind="' + kind + '">' +
-    '<textarea class="sc-text-body-input sc-smart-trigger" data-input="textBody" data-idx="' + idx + '" data-kind="' + kind + '" rows="2" placeholder="Text" spellcheck="false">' + val + '</textarea>' +
-    scSmartMenuHtml(idx, null, "input", "textPart") +
-    '</span></div>';
+var scTextVarPopState = {anchor: null, el: null, blockIdx: null, kind: null, partIdx: null};
+function scHideTextVarPop() {
+  var pop = $("sc-text-var-pop");
+  if (pop) {
+    pop.style.display = "none";
+    pop.setAttribute("aria-hidden", "true");
+    pop.innerHTML = "";
+  }
+  (document.querySelectorAll(".sc-text-var-bar") || []).forEach(function (bar) {
+    var composer = bar.closest(".sc-text-composer");
+    if (composer) composer.classList.remove("sc-text-var-open");
+    bar.remove();
+  });
+  scTextVarPopState = {anchor: null, el: null, blockIdx: null, kind: null, partIdx: null};
+}
+function scTextVarBarHtml(blockIdx, kind) {
+  var vars = scSmartFieldVariables("textPart", blockIdx);
+  return vars.map(function (v) {
+    return '<button type="button" class="sc-text-var-chip" data-text-var="' + esc(v.id) + '" data-idx="' + blockIdx + '" data-kind="' + esc(kind || "action") + '">' +
+      scVarPillIconSvg(v.id) + "<span>" + esc(v.label) + "</span></button>";
+  }).join("");
+}
+function scShowTextVarPopForBlock(blockIdx, kind) {
+  var vars = scSmartFieldVariables("textPart", blockIdx);
+  if (!vars.length) {
+    scHideTextVarPop();
+    return;
+  }
+  var composer = scTextVarPopState.anchor;
+  if (!composer) {
+    var block = document.querySelector('.sc-block[data-block-kind="action"][data-block-idx="' + blockIdx + '"]');
+    composer = block ? block.querySelector(".sc-text-composer") : null;
+  }
+  if (!composer) return;
+  var pop = $("sc-text-var-pop");
+  if (pop) {
+    pop.style.display = "none";
+    pop.innerHTML = "";
+    pop.setAttribute("aria-hidden", "true");
+  }
+  var bar = composer.querySelector(".sc-text-var-bar");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.className = "sc-text-var-bar";
+    bar.setAttribute("role", "toolbar");
+    bar.setAttribute("aria-label", "Insert variable");
+    composer.insertBefore(bar, composer.firstChild);
+  }
+  bar.innerHTML = scTextVarBarHtml(blockIdx, kind);
+  composer.classList.add("sc-text-var-open");
+}
+function scTextVarChipInlineHtml(varId, pi, idx) {
+  return '<span class="sc-text-var-inline" data-text-part="variable" data-var-id="' + esc(varId) + '" data-name-idx="' + pi + '" contenteditable="false">' +
+    scVarPillIconSvg(varId) + '<span class="sc-pill-label">' + esc(scLabelVariable(varId, idx)) + "</span></span>";
+}
+function scTextSegmentHtml(text, pi, idx, kind, showPlaceholder) {
+  var ph = showPlaceholder ? ' placeholder="Text"' : "";
+  return '<textarea class="sc-text-segment-input" data-text-part="text" data-input="textPart" data-name-idx="' + pi + '" data-idx="' + idx + '" data-kind="' + kind + '" rows="1" spellcheck="false"' + ph + ">" +
+    esc(text == null ? "" : String(text)) + "</textarea>";
+}
+function scTextComposerInnerHtml(parts, idx, kind) {
+  parts = scMergeTextParts(parts || []);
+  var onlyText = parts.length === 1 && parts[0].mode === "text";
+  var html = "";
+  parts.forEach(function (p, pi) {
+    if (p.mode === "variable") html += scTextVarChipInlineHtml(p.variable || "messageSender", pi, idx);
+    else html += scTextSegmentHtml(p.text, pi, idx, kind, onlyText && pi === 0);
+  });
+  return html;
+}
+function scTextComposerWrap(idx, kind, inner) {
+  return '<div class="sc-text-composer-wrap" data-text-block="' + idx + '">' + inner + "</div>";
+}
+function scTextComposerHtml(parts, idx, kind) {
+  var inner = '<div class="sc-text-composer" data-idx="' + idx + '" data-kind="' + kind + '" tabindex="-1">' +
+    scTextComposerInnerHtml(parts, idx, kind) + "</div>";
+  return scTextComposerWrap(idx, kind, inner);
+}
+function scRememberTextCaret(ta) {
+  if (!ta || ta.tagName !== "TEXTAREA") return;
+  var len = (ta.value || "").length;
+  var start = ta.selectionStart == null ? len : ta.selectionStart;
+  var end = ta.selectionEnd == null ? start : ta.selectionEnd;
+  ta._scCaret = {start: start, end: end};
+}
+function scTextInputCaret(input) {
+  if (!input) return {start: 0, end: 0};
+  var text = input.value || "";
+  var len = text.length;
+  if (input.dataset.scComposing === "1") {
+    if (input._scCaret) return input._scCaret;
+    return {start: len, end: len};
+  }
+  var start = input.selectionStart == null ? len : input.selectionStart;
+  var end = input.selectionEnd == null ? start : input.selectionEnd;
+  if (start < 0 || start > len) start = len;
+  if (end < 0 || end > len) end = start;
+  return {start: start, end: end};
+}
+function scFocusTextSegmentAfterVar(blockIdx, focusPartIdx, caretPos) {
+  requestAnimationFrame(function () {
+    var block = document.querySelector('.sc-block[data-block-kind="action"][data-block-idx="' + blockIdx + '"]');
+    if (!block) return;
+    var ta = block.querySelector('textarea.sc-text-segment-input[data-name-idx="' + focusPartIdx + '"]');
+    if (!ta) {
+      var all = block.querySelectorAll("textarea.sc-text-segment-input");
+      ta = all.length ? all[all.length - 1] : null;
+    }
+    if (!ta) return;
+    scFitTextSegment(ta);
+    ta.focus();
+    var pos = caretPos == null ? 0 : caretPos;
+    var max = (ta.value || "").length;
+    if (pos < 0) pos = 0;
+    if (pos > max) pos = max;
+    try { ta.setSelectionRange(pos, pos); } catch (err) {}
+    scRememberTextCaret(ta);
+    var composer = ta.closest(".sc-text-composer");
+    scTextVarPopState = {
+      anchor: composer, el: ta, blockIdx: String(blockIdx), kind: ta.dataset.kind || "action",
+      partIdx: ta.dataset.nameIdx
+    };
+    scShowTextVarPopForBlock(blockIdx, ta.dataset.kind);
+  });
+}
+function scInsertTextVariableAtCursor(varId) {
+  if (!varId || !scEditing) return;
+  var state = scTextVarPopState;
+  var idx = Number(state.blockIdx != null ? state.blockIdx : NaN);
+  var kind = state.kind || "action";
+  var ref = scGetBlockRef(kind, idx);
+  if (!ref || ref.type !== "text") return;
+  scCaptureTextPartsFromDom(idx, ref);
+  var pi = Number(state.partIdx);
+  var input = state.el;
+  if (!input || isNaN(pi) || !ref.parts[pi] || ref.parts[pi].mode !== "text") {
+    ref.parts = scMergeTextParts(ref.parts.concat([{mode: "variable", variable: varId}, {mode: "text", text: ""}]));
+    scUpdateBlockElement("action", idx);
+    scFocusTextSegmentAfterVar(idx, ref.parts.length - 1, 0);
+    return;
+  }
+  if (document.activeElement === input) scRememberTextCaret(input);
+  var text = input.value || "";
+  var caret = scTextInputCaret(input);
+  var start = caret.start;
+  var end = caret.end;
+  var before = text.slice(0, start);
+  var after = text.slice(end);
+  var rebuilt = ref.parts.slice(0, pi);
+  if (before) rebuilt.push({mode: "text", text: before});
+  rebuilt.push({mode: "variable", variable: varId});
+  var focusPi = rebuilt.length;
+  rebuilt.push({mode: "text", text: after});
+  rebuilt = rebuilt.concat(ref.parts.slice(pi + 1));
+  var merged = scMergeTextParts(rebuilt, focusPi);
+  ref.parts = merged.parts;
+  scUpdateBlockElement("action", idx);
+  scFocusTextSegmentAfterVar(idx, merged.focusIdx, 0);
+}
+function scReplaceTextVariableId(blockIdx, fromId, toId, scopeShortcut, skipRender) {
+  if (!scEditing || !fromId || !toId || fromId === toId) return false;
+  var actions = scEditing.actions;
+  if (!actions) return false;
+  var touched = false;
+  for (var i = 0; i < actions.length; i++) {
+    if (scopeShortcut !== true && i !== blockIdx) continue;
+    var a = actions[i];
+    if (!a || a.type !== "text" || !a.parts) continue;
+    var changed = false;
+    a.parts.forEach(function (p) {
+      if (p.mode === "variable" && p.variable === fromId) {
+        p.variable = toId;
+        changed = true;
+      }
+    });
+    if (changed) {
+      a.parts = scMergeTextParts(a.parts);
+      touched = true;
+      if (!scopeShortcut) {
+        scUpdateBlockElement("action", blockIdx);
+        return true;
+      }
+    }
+  }
+  if (touched && scopeShortcut && !skipRender) scRenderEditor();
+  return touched;
+}
+function scReplaceIfVariableId(fromId, toId) {
+  if (!scEditing || !fromId || !toId || fromId === toId) return false;
+  var actions = scEditing.actions;
+  if (!actions) return false;
+  var touched = false;
+  for (var i = 0; i < actions.length; i++) {
+    var a = actions[i];
+    if (!a || a.type !== "if") continue;
+    if (scIfIsMulti(a)) {
+      (a.conditions || []).forEach(function (c) {
+        if (c && c.left === fromId) {
+          c.left = toId;
+          scNormalizeIfConditionObj(c);
+          touched = true;
+        }
+      });
+    } else if (a.left === fromId) {
+      a.left = toId;
+      scNormalizeIfConditionObj(a);
+      touched = true;
+    }
+  }
+  return touched;
+}
+function scRemoveTextVariableId(blockIdx, varId, scopeShortcut) {
+  if (!scEditing || !varId) return;
+  var actions = scEditing.actions;
+  if (!actions) return;
+  var touched = false;
+  for (var i = 0; i < actions.length; i++) {
+    if (scopeShortcut !== true && i !== blockIdx) continue;
+    var a = actions[i];
+    if (!a || a.type !== "text" || !a.parts) continue;
+    var filtered = a.parts.filter(function (p) {
+      return !(p.mode === "variable" && p.variable === varId);
+    });
+    if (filtered.length === a.parts.length) continue;
+    a.parts = scMergeTextParts(filtered.length ? filtered : [{mode: "text", text: ""}]);
+    touched = true;
+    if (!scopeShortcut) {
+      scUpdateBlockElement("action", blockIdx);
+      scFocusTextSegmentAfterVar(blockIdx, 0, 0);
+      return;
+    }
+  }
+  if (touched && scopeShortcut) scRenderEditor();
+}
+function scRemapVariableIdInShortcut(fromId, toId) {
+  var touched = scReplaceTextVariableId(0, fromId, toId, true, true);
+  if (scReplaceIfVariableId(fromId, toId)) touched = true;
+  if (touched) scRenderEditor();
+}
+function scAllowedVariableIdMap(beforeIdx) {
+  var map = Object.create(null);
+  scAvailableVariables(beforeIdx).forEach(function (v) {
+    map[v.id] = true;
+  });
+  return map;
+}
+function scPruneStaleTextVariables() {
+  if (!scEditing || !scEditing.actions) return false;
+  var touched = false;
+  scEditing.actions.forEach(function (a, i) {
+    if (!a || a.type !== "text" || !a.parts) return;
+    scNormalizeAction(a, i);
+    var allowed = scAllowedVariableIdMap(i);
+    var filtered = a.parts.filter(function (p) {
+      if (p.mode !== "variable") return true;
+      if (allowed[p.variable]) return true;
+      touched = true;
+      return false;
+    });
+    if (filtered.length !== a.parts.length) {
+      a.parts = scMergeTextParts(filtered.length ? filtered : [{mode: "text", text: ""}]);
+    }
+  });
+  return touched;
+}
+function scTextBackspaceRemoveVar(input) {
+  if (!input || input.value || input.selectionStart !== 0 || input.selectionEnd !== 0) return false;
+  var pi = Number(input.dataset.nameIdx);
+  if (isNaN(pi) || pi <= 0) return false;
+  var idx = Number(input.dataset.idx || 0);
+  var kind = input.dataset.kind || "action";
+  var ref = scGetBlockRef(kind, idx);
+  if (!ref || ref.type !== "text") return false;
+  scCaptureTextPartsFromDom(idx, ref);
+  if (pi >= ref.parts.length || ref.parts[pi - 1].mode !== "variable") return false;
+  scPushHistory();
+  var curText = ref.parts[pi].text || "";
+  var rebuilt = ref.parts.slice(0, pi - 1);
+  var rest = ref.parts.slice(pi + 1);
+  var caretPos = 0;
+  if (rebuilt.length && rebuilt[rebuilt.length - 1].mode === "text") {
+    caretPos = (rebuilt[rebuilt.length - 1].text || "").length;
+    rebuilt[rebuilt.length - 1] = {mode: "text", text: (rebuilt[rebuilt.length - 1].text || "") + curText};
+  } else {
+    rebuilt.push({mode: "text", text: curText || ""});
+  }
+  var focusPiBefore = rebuilt.length - 1;
+  rebuilt = rebuilt.concat(rest);
+  ref.parts = scMergeTextParts(rebuilt);
+  var focusPi = Math.min(focusPiBefore, ref.parts.length - 1);
+  while (focusPi >= 0 && ref.parts[focusPi].mode !== "text") focusPi--;
+  if (focusPi < 0) {
+    for (var k = 0; k < ref.parts.length; k++) {
+      if (ref.parts[k].mode === "text") { focusPi = k; break; }
+    }
+  }
+  scUpdateBlockElement("action", idx);
+  scFocusTextSegmentAfterVar(idx, focusPi, caretPos);
+  return true;
+}
+function scFocusTextComposerFromEvent(composer, clientX) {
+  if (!composer) return;
+  var tas = composer.querySelectorAll("textarea.sc-text-segment-input");
+  if (!tas.length) return;
+  var target = tas[tas.length - 1];
+  if (clientX != null) {
+    for (var i = 0; i < tas.length; i++) {
+      var r = tas[i].getBoundingClientRect();
+      if (clientX >= r.left - 4 && clientX <= r.right + 4) {
+        target = tas[i];
+        break;
+      }
+    }
+  }
+  scFitTextSegment(target);
+  target.focus();
+  var len = (target.value || "").length;
+  try { target.setSelectionRange(len, len); } catch (err) {}
+  scRememberTextCaret(target);
+  var blockIdx = Number(target.dataset.idx || 0);
+  scTextVarPopState = {
+    anchor: composer, el: target, blockIdx: String(blockIdx), kind: target.dataset.kind || "action",
+    partIdx: target.dataset.nameIdx
+  };
+  scShowTextVarPopForBlock(blockIdx, target.dataset.kind);
 }
 function scMessageValueHtml(data, idx, kind) {
   scNormalizeAction(data, idx);
@@ -3554,23 +4037,43 @@ function scUClientRoomValueHtml(data, idx, kind) {
 function scTextBlockHtml(data, idx, kind) {
   scNormalizeAction(data, idx);
   data.parts = scMergeTextParts(data.parts);
-  var hasVar = data.parts.some(function (p) { return p.mode === "variable"; });
-  var bodyHtml;
-  if (!hasVar) {
-    bodyHtml = scTextBodyInputHtml((data.parts[0] && data.parts[0].text) || "", idx, kind);
-  } else {
-    var partsHtml = "";
-    data.parts.forEach(function (part, pi) {
-      partsHtml += scSmartFieldHtml({
-        slot: "textPart", idx: idx, kind: kind, partIdx: pi, beforeIdx: idx,
-        mode: part.mode === "variable" ? "variable" : "text",
-        textValue: part.text, varValue: part.variable || "messageSender",
-        textInputField: "textPart"
-      });
-    });
-    bodyHtml = '<div class="sc-text-composer"><span class="sc-text-parts">' + partsHtml + '</span></div>';
-  }
+  var bodyHtml = scTextComposerHtml(data.parts, idx, kind);
   return '<div class="sc-text-head"><span class="sc-text-title">Text</span></div>' + bodyHtml;
+}
+function scCaptureTextPartsFromDom(idx, ref) {
+  if (!ref || ref.type !== "text") return;
+  scNormalizeAction(ref, idx);
+  var block = document.querySelector('.sc-block[data-block-kind="action"][data-block-idx="' + idx + '"]');
+  if (!block) return;
+  var composer = block.querySelector(".sc-text-composer");
+  if (!composer) return;
+  var parts = [];
+  composer.querySelectorAll("[data-text-part]").forEach(function (el) {
+    if (el.dataset.textPart === "variable") {
+      parts.push({mode: "variable", variable: el.dataset.varId || ""});
+    } else if (el.dataset.textPart === "text") {
+      parts.push({mode: "text", text: el.value});
+    }
+  });
+  ref.parts = scMergeTextParts(parts.length ? parts : [{mode: "text", text: ""}]);
+}
+function scAppendTextVariable(idx, kind, varId) {
+  if (!varId || !scEditing) return;
+  if (!scTextVarPopState.el) {
+    var block = document.querySelector('.sc-block[data-block-kind="action"][data-block-idx="' + idx + '"]');
+    var ta = block ? block.querySelector("textarea.sc-text-segment-input") : null;
+    var composer = block ? block.querySelector(".sc-text-composer") : null;
+    if (ta && composer) {
+      scTextVarPopState = {
+        anchor: composer, el: ta, blockIdx: String(idx), kind: kind || "action", partIdx: ta.dataset.nameIdx
+      };
+    }
+  }
+  if (scTextVarPopState.el && document.activeElement === scTextVarPopState.el) {
+    scRememberTextCaret(scTextVarPopState.el);
+  }
+  scPushHistory();
+  scInsertTextVariableAtCursor(varId);
 }
 function setRailView(view) {
   activeRailView = view;
@@ -3696,10 +4199,15 @@ function renderShortcutsList() {
   }).join("");
 }
 function syncShortcutsFromState(st) {
-  var sig = JSON.stringify(st.shortcuts || []);
-  if (sig === shortcutsSig) return;
-  shortcutsSig = sig;
-  shortcutsLocal = JSON.parse(sig);
+  var incoming = JSON.stringify(st.shortcuts || []);
+  if (incoming === shortcutsSig) return;
+  shortcutsLocal = JSON.parse(incoming);
+  var beforeDedupe = JSON.stringify(shortcutsLocal);
+  scEnsureUniqueManualShortcutNames();
+  shortcutsSig = JSON.stringify(shortcutsLocal);
+  if (shortcutsSig !== beforeDedupe) {
+    send({cmd: "shortcutsSave", shortcuts: shortcutsLocal});
+  }
   renderShortcutsGallery();
   renderShortcutsList();
   setScLibraryTab(scLibraryTab);
@@ -3711,7 +4219,33 @@ function scToast(msg) {
   clearTimeout(scToast._timer);
   scToast._timer = setTimeout(function () { t.classList.remove("on"); }, 1600);
 }
+function scShortcutNameKey(name) {
+  return String(name || "").trim().toLowerCase();
+}
+function scManualNameConflicts(name, selfId) {
+  var key = scShortcutNameKey(name);
+  if (!key) return false;
+  return shortcutsLocal.some(function (s) {
+    return scEntryKind(s) === "manual" && s.id !== selfId && scShortcutNameKey(s.name) === key;
+  });
+}
+function scUniqueManualShortcutName(desired, selfId) {
+  var base = String(desired || "").trim() || "New Shortcut";
+  if (!scManualNameConflicts(base, selfId)) return base;
+  for (var i = 1; i < 1000; i++) {
+    var cand = base + " (" + i + ")";
+    if (!scManualNameConflicts(cand, selfId)) return cand;
+  }
+  return base + " (" + Date.now() + ")";
+}
+function scEnsureUniqueManualShortcutNames() {
+  shortcutsLocal.forEach(function (sc) {
+    if (scEntryKind(sc) !== "manual") return;
+    sc.name = scUniqueManualShortcutName(sc.name, sc.id);
+  });
+}
 function scSaveAll() {
+  scEnsureUniqueManualShortcutNames();
   send({cmd: "shortcutsSave", shortcuts: shortcutsLocal});
   scToast("Saved");
 }
@@ -3756,8 +4290,10 @@ document.addEventListener("click", function (e) {
   if (e.target.closest(".sc-pop") || e.target.closest(".sc-smart-menu")) return;
   if (e.target.closest(".sc-smart-trigger")) return;
   if (e.target.closest(".sc-pill[data-field]")) return;
-  if (e.target.closest(".sc-repeat-times-pill") || e.target.closest(".sc-stepper-pop")) return;
+  if (e.target.closest(".sc-stepper-pill") || e.target.closest(".sc-stepper-pop")) return;
   if (e.target.closest("#sc-ed-title-trigger") || e.target.closest(".sc-ed-title-pop")) return;
+  if (e.target.closest(".sc-text-composer") || e.target.closest(".sc-text-var-bar") ||
+      e.target.closest("#sc-text-var-pop")) return;
   scCloseAllPickers(null);
 });
 
@@ -3772,8 +4308,21 @@ function scRepeatTimesLabel(count) {
   return n + (n === 1 ? " time" : " times");
 }
 function scRepeatTimesControl(count, idx, kind) {
-  return '<button type="button" class="sc-pill sc-repeat-times-pill" data-repeat-times="' + idx + '" data-kind="' + esc(kind) + '">' +
+  return '<button type="button" class="sc-pill sc-stepper-pill sc-repeat-times-pill" data-stepper="repeat" data-repeat-times="' + idx + '" data-kind="' + esc(kind) + '">' +
     esc(scRepeatTimesLabel(count)) + '</button>';
+}
+function scWaitSecondsLabel(seconds) {
+  var n = scClampWaitSeconds(seconds);
+  return n + (n === 1 ? " second" : " seconds");
+}
+function scWaitSecondsControl(seconds, idx, kind) {
+  return '<button type="button" class="sc-pill sc-stepper-pill sc-wait-seconds-pill" data-stepper="wait" data-wait-seconds="' + idx + '" data-kind="' + esc(kind) + '">' +
+    esc(scWaitSecondsLabel(seconds)) + '</button>';
+}
+function scUpdateStepperPopAnchor(mode, ref) {
+  if (!scPopEl || !scPopEl._scStepperAnchor || !ref) return;
+  if (mode === "repeat") scPopEl._scStepperAnchor.textContent = scRepeatTimesLabel(ref.count);
+  else if (mode === "wait") scPopEl._scStepperAnchor.textContent = scWaitSecondsLabel(ref.seconds);
 }
 var scStepperHoldTimer = null;
 var scStepperHoldState = null;
@@ -3791,11 +4340,22 @@ function scAdjustRepeatCount(idx, kind, delta, skipHistory) {
   if (!skipHistory) scPushHistory();
   ref.count = scClampRepeatCount(scClampRepeatCount(ref.count) + delta);
   scUpdateRepeatGroupBlock(idx);
-  if (scPopEl && scPopEl._scRepeatAnchor) {
-    scPopEl._scRepeatAnchor.textContent = scRepeatTimesLabel(ref.count);
-  }
+  scUpdateStepperPopAnchor("repeat", ref);
 }
-function scOpenRepeatStepperPop(anchor, idx, kind) {
+function scAdjustWaitSeconds(idx, kind, delta, skipHistory) {
+  if (!scEditing || !scEditing.actions) return;
+  var ref = scGetBlockRef(kind, idx);
+  if (!ref || ref.type !== "wait") return;
+  if (!skipHistory) scPushHistory();
+  ref.seconds = scClampWaitSeconds(scClampWaitSeconds(ref.seconds) + delta);
+  scUpdateBlockElement(kind, idx);
+  scUpdateStepperPopAnchor("wait", ref);
+}
+function scAdjustStepperByMode(idx, kind, mode, delta, skipHistory) {
+  if (mode === "repeat") scAdjustRepeatCount(idx, kind, delta, skipHistory);
+  else if (mode === "wait") scAdjustWaitSeconds(idx, kind, delta, skipHistory);
+}
+function scOpenStepperPop(anchor, idx, kind, mode) {
   scCloseAllPickers(null);
   scPopEl = document.createElement("div");
   scPopEl.className = "sc-pop sc-stepper-pop";
@@ -3803,7 +4363,8 @@ function scOpenRepeatStepperPop(anchor, idx, kind) {
     '<button type="button" class="sc-stepper-btn" data-step-delta="-1" aria-label="Decrease">−</button>' +
     '<span class="sc-stepper-sep" aria-hidden="true"></span>' +
     '<button type="button" class="sc-stepper-btn" data-step-delta="1" aria-label="Increase">+</button></div>';
-  scPopEl._scRepeatAnchor = anchor;
+  scPopEl._scStepperAnchor = anchor;
+  scPopEl._scStepperMode = mode;
   document.body.appendChild(scPopEl);
   var r = anchor.getBoundingClientRect();
   var left = Math.min(r.left, window.innerWidth - scPopEl.offsetWidth - 8);
@@ -3813,7 +4374,7 @@ function scOpenRepeatStepperPop(anchor, idx, kind) {
   function onStep(btn) {
     var delta = Number(btn.dataset.stepDelta || 0);
     if (!delta) return;
-    scBeginStepperHold(idx, kind, delta);
+    scBeginStepperHold(idx, kind, mode, delta);
   }
   scPopEl.querySelectorAll(".sc-stepper-btn").forEach(function (btn) {
     btn.addEventListener("pointerdown", function (e) {
@@ -3824,15 +4385,21 @@ function scOpenRepeatStepperPop(anchor, idx, kind) {
     });
   });
 }
-function scBeginStepperHold(idx, kind, delta) {
+function scOpenRepeatStepperPop(anchor, idx, kind) {
+  scOpenStepperPop(anchor, idx, kind, "repeat");
+}
+function scOpenWaitStepperPop(anchor, idx, kind) {
+  scOpenStepperPop(anchor, idx, kind, "wait");
+}
+function scBeginStepperHold(idx, kind, mode, delta) {
   scClearStepperHold();
-  scAdjustRepeatCount(idx, kind, delta, false);
+  scAdjustStepperByMode(idx, kind, mode, delta, false);
   var start = performance.now();
-  scStepperHoldState = {idx: idx, kind: kind, delta: delta, start: start};
+  scStepperHoldState = {idx: idx, kind: kind, mode: mode, delta: delta, start: start};
   function tick() {
-    if (!scStepperHoldState || scStepperHoldState.idx !== idx) return;
+    if (!scStepperHoldState || scStepperHoldState.idx !== idx || scStepperHoldState.mode !== mode) return;
     var elapsed = performance.now() - scStepperHoldState.start;
-    if (elapsed >= 400) scAdjustRepeatCount(idx, kind, delta, true);
+    if (elapsed >= 400) scAdjustStepperByMode(idx, kind, mode, delta, true);
     var delay = elapsed >= 1200 ? 50 : (elapsed >= 400 ? 110 : 350);
     scStepperHoldTimer = setTimeout(tick, delay);
   }
@@ -4001,9 +4568,20 @@ function scRunWaitTotal(idx) {
   var seconds = act && act.type === "wait" ? Number(act.seconds) : 0;
   return seconds > 0 ? seconds : 0;
 }
-function scApplyRunWait(block, idx, remaining) {
+function scApplyRunSweep(block, idx, opts) {
+  opts = opts || {};
+  var pct = null;
+  if (opts.waitRemaining != null) {
+    var total = scRunWaitTotal(idx);
+    var left = Math.max(0, Number(opts.waitRemaining) || 0);
+    pct = total > 0 ? (1 - left / total) * 100 : 100;
+  } else if (opts.nestedStep != null && opts.nestedTotal != null) {
+    var nTotal = Number(opts.nestedTotal) || 0;
+    var nStep = Math.max(0, Number(opts.nestedStep) || 0);
+    if (nTotal > 0) pct = (nStep / nTotal) * 100;
+  }
   var el = block.querySelector(".sc-run-wait-sweep");
-  if (remaining == null) {
+  if (pct == null) {
     if (el) el.remove();
     block.classList.remove("sc-run-waiting");
     return;
@@ -4014,10 +4592,10 @@ function scApplyRunWait(block, idx, remaining) {
     block.insertBefore(el, block.firstChild);
   }
   block.classList.add("sc-run-waiting");
-  var total = scRunWaitTotal(idx);
-  var left = Math.max(0, Number(remaining) || 0);
-  var pct = total > 0 ? (1 - left / total) * 100 : 100;
   el.style.width = Math.max(0, Math.min(100, pct)).toFixed(2) + "%";
+}
+function scApplyRunWait(block, idx, remaining) {
+  scApplyRunSweep(block, idx, {waitRemaining: remaining});
 }
 function scRunReflowTargets(canvas) {
   return canvas.querySelectorAll(".sc-block, .sc-if-group, .sc-run-result");
@@ -4087,16 +4665,36 @@ function scApplyRunState() {
   var canvas = $("sc-ed-canvas");
   if (!canvas) return;
   var step = scRun && scRun.step != null ? scRun.step : -1;
+  var nestedStep = scRun && scRun.nestedStep != null ? scRun.nestedStep : null;
+  var nestedTotal = scRun && scRun.nestedTotal != null ? scRun.nestedTotal : null;
+  var nestedRun = scRunActive() && nestedTotal != null && nestedTotal > 0;
   canvas.querySelectorAll('.sc-block[data-block-kind="action"]').forEach(function (block) {
     var idx = Number(block.dataset.blockIdx);
     var current = scRunActive() && idx === step;
     block.classList.toggle("sc-run-current", current);
-    scApplyRunWait(block, idx, current && scRun.waitRemaining != null ? scRun.waitRemaining : null);
+    var act = scEditing && scEditing.actions ? scEditing.actions[idx] : null;
+    if (current && act && act.type === "run_shortcut" && nestedRun) {
+      scApplyRunSweep(block, idx, {nestedStep: nestedStep, nestedTotal: nestedTotal});
+    } else if (current && scRun.waitRemaining != null) {
+      scApplyRunSweep(block, idx, {waitRemaining: scRun.waitRemaining});
+    } else {
+      scApplyRunSweep(block, idx, null);
+    }
   });
   scApplyRunResults(canvas);
 }
 function scStopRun(notifyHost) {
   if (notifyHost && scRun && scRun.runId) send({cmd: "automationRunStop", runId: scRun.runId});
+  scRun = null;
+  scApplyRunState();
+  scUpdatePlayButton();
+}
+function scInvalidateTestRunFromEdit() {
+  if (!scRun) return;
+  if (scRunActive()) {
+    scStopRun(true);
+    return;
+  }
   scRun = null;
   scApplyRunState();
   scUpdatePlayButton();
@@ -4107,6 +4705,8 @@ window.__setAutomationRun = function (st) {
   scRun.step = st.status === "done" || st.step == null ? -1 : Number(st.step);
   scRun.total = st.total == null ? scRun.total : Number(st.total);
   scRun.waitRemaining = st.status === "done" || st.waitRemaining == null ? null : Number(st.waitRemaining);
+  scRun.nestedStep = st.status === "done" || st.nestedStep == null ? null : Number(st.nestedStep);
+  scRun.nestedTotal = st.status === "done" || st.nestedTotal == null ? null : Number(st.nestedTotal);
   scRun.results = st.results || [];
   scApplyRunState();
   scUpdatePlayButton();
@@ -4140,9 +4740,11 @@ function scPushHistory() {
   if (scEditHistory.length > SC_HISTORY_LIMIT) scEditHistory.shift();
   scEditFuture = [];
   scUpdateHistoryButtons();
+  scInvalidateTestRunFromEdit();
 }
 function scApplyHistorySnapshot(snap) {
   scHistoryApplying = true;
+  scInvalidateTestRunFromEdit();
   scEditing = JSON.parse(snap);
   scCloseAllPickers(null);
   scRenderEditor();
@@ -4175,6 +4777,7 @@ function scRenderEditor(opts) {
   var canvas = $("sc-ed-canvas");
   if (!scEditing) { canvas.innerHTML = ""; return; }
   if (scEditing.trigger) scEditing.trigger = scPrepareTriggerForEdit(scEditing.trigger);
+  scPruneStaleTextVariables();
   var scroll = canvas.scrollTop;
   var enterIdx = opts && opts.enterActionIdx != null ? opts.enterActionIdx : -1;
   scSyncEditorTitleUI();
@@ -4186,6 +4789,7 @@ function scRenderEditor(opts) {
   canvas.innerHTML = html || scEditorEmptyHtml();
   canvas.scrollTop = scroll;
   scSyncPillInputs(canvas);
+  scSyncTextareaHeights(canvas);
   scBindCanvasDropGap(null);
   scApplyRunState();
 }
@@ -4230,6 +4834,7 @@ function scUpdateRepeatGroupBlock(idx) {
   var fresh = wrap.firstElementChild;
   if (fresh) el.replaceWith(fresh);
   scSyncPillInputs(canvas);
+  scSyncTextareaHeights(canvas);
   scApplyRunState();
 }
 function scUpdateIfGroupBlock(idx) {
@@ -4246,6 +4851,7 @@ function scUpdateIfGroupBlock(idx) {
   var fresh = wrap.firstElementChild;
   if (fresh) el.replaceWith(fresh);
   scSyncPillInputs(canvas);
+  scSyncTextareaHeights(canvas);
   scApplyRunState();
 }
 function scUpdateBlockElement(kind, idx) {
@@ -4274,6 +4880,7 @@ function scUpdateBlockElement(kind, idx) {
   var fresh = wrap.firstElementChild;
   if (fresh) el.replaceWith(fresh);
   scSyncPillInputs(canvas);
+  scSyncTextareaHeights(canvas);
   scApplyRunState();
 }
 function scAppendBlockElement(kind, idx) {
@@ -4307,6 +4914,7 @@ function scRemoveActionBlock(idx) {
   } else {
     scEditing.actions.splice(idx, 1);
   }
+  scPruneStaleTextVariables();
   if (!scEditing.actions.length && (!scEditing.trigger || scIsManualEdit())) {
     $("sc-ed-canvas").innerHTML = scEditorEmptyHtml();
   } else {
@@ -4459,9 +5067,17 @@ function scBlockHtml(kind, data, idx, enter, ifMeta) {
   } else if (data.type === "leave_server") {
     inner = scTxt("Leave server");
   } else if (data.type === "wait") {
-    inner = scTxt("Wait") + scPillInput("seconds", data.seconds, idx, kind) + scTxt("seconds");
+    inner = scTxt("Wait") + scWaitSecondsControl(data.seconds, idx, kind);
   } else if (data.type === "switch_weapon_use") {
     inner = scTxt("Switch to") + scPill("weapon", data.weapon, idx, kind) + scTxt("and use");
+  } else if (data.type === "switch_weapon") {
+    inner = scTxt("Switch to") + scPill("weapon", data.weapon, idx, kind);
+  } else if (data.type === "emote") {
+    inner = scTxt("Emote") + scPill("emote", data.emote, idx, kind);
+  } else if (data.type === "kill") {
+    inner = scTxt("Kill");
+  } else if (data.type === "vote") {
+    inner = scTxt("Vote") + scPill("choice", data.choice, idx, kind);
   } else if (data.type === "set_skin") {
     inner = scTxt("Set") + scPill("target", data.target, idx, kind) + scTxt("skin to") +
       scPillInput("skin", data.skin, idx, kind);
@@ -4490,6 +5106,8 @@ function scBlockHtml(kind, data, idx, enter, ifMeta) {
         if (scIfOpNeedsRight(data.op)) {
           if (scIfLeftValueKind(data.left) === "channel") {
             inner += scPill("right", data.right || "all", idx, kind);
+          } else if (scIfLeftValueKind(data.left) === "yesno") {
+            inner += scPill("right", data.right || "Yes", idx, kind);
           } else {
             inner += scPillInput("right", data.right, idx, kind);
           }
@@ -4515,12 +5133,13 @@ function scBlockHtml(kind, data, idx, enter, ifMeta) {
   if (kind === "trigger") {
     return scTriggerBlockHtml(data, enter);
   }
-  var adef = scActionDef(data.type);
+  var adef = scActionDefForAction(data);
   var bodyCls = data.type === "if" && scIfIsMulti(data) ? " sc-if-multi-body" : "";
   var bodyInner = data.type === "if" && scIfIsMulti(data) ? inner : '<div class="sc-block-line">' + inner + '</div>';
+  var iconType = adef.id || data.type;
   return '<div class="sc-block sc-block-action' + enterCls + ifCls + '" data-block-kind="action" data-block-idx="' + idx + '"' + roleAttr + branchAttr + '>' +
     scBlockGrip(kind, idx, data.type) +
-    '<span class="sc-block-ico ' + esc(adef.tone || "action") + '">' + scBlockIconInner(adef.tone || "action", adef.icon, "action", data.type) + '</span>' +
+    '<span class="sc-block-ico ' + esc(adef.tone || "action") + '">' + scBlockIconInner(adef.tone || "action", adef.icon, "action", iconType) + '</span>' +
     '<div class="sc-block-body' + bodyCls + '">' + bodyInner + '</div>' + del + '</div>';
 }
 function scTxt(text) {
@@ -4543,10 +5162,16 @@ function scPill(field, value, idx, kind, condIdx) {
   if (field === "target") label = value === "dummy" ? "Dummy" : "Player";
   if (field === "enabled") label = value === "on" || value === true ? "On" : "Off";
   if (field === "property") label = scLabelGetProperty(value);
+  if (field === "emote") label = scLabelEmote(value);
+  if (field === "choice") label = scLabelVoteChoice(value);
   if (field === "shortcutId") label = scRunShortcutLabel(value);
   if (field === "left") label = value ? (scLabelVariable(value) || scLabelGetProperty(value)) : "Condition";
   if (field === "op") label = scLabelIfOp(value);
-  if (field === "right") label = String(value || "");
+  if (field === "right") {
+    var ifRef = scGetBlockRef(kind, idx, condIdx);
+    var ifLeft = ifRef ? ifRef.left : "";
+    label = scIfLeftValueKind(ifLeft) === "yesno" ? scLabelYesNoValue(value) : String(value || "");
+  }
   var isVar = field === "messageVariable" || field === "textPartVar" ||
     field === "channelVariable" || field === "uclientRoomVariable";
   if (isVar) {
@@ -4596,11 +5221,116 @@ function scPillMeasureStyle(input) {
 }
 function scMeasurePillInput(input, text) {
   var m = scPillMeasureStyle(input);
+  m.style.whiteSpace = "pre";
   m.textContent = text.length ? text : " ";
   return m.getBoundingClientRect().width;
 }
+function scMeasureTextSegment(ta, text) {
+  var lines = String(text || "").split("\n");
+  var longest = " ";
+  for (var i = 0; i < lines.length; i++) {
+    if (lines[i].length >= longest.length) longest = lines[i].length ? lines[i] : " ";
+  }
+  return scMeasurePillInput(ta, longest);
+}
+function scTextSegmentOneLineHeight(ta) {
+  var cs = getComputedStyle(ta);
+  var lh = parseFloat(cs.lineHeight);
+  if (!isFinite(lh)) lh = (parseFloat(cs.fontSize) || 15) * 1.45;
+  return Math.ceil(lh + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0));
+}
+function scGrowTextareaHeight(ta, minH, maxH) {
+  ta.style.height = "auto";
+  var next = Math.min(maxH, Math.max(minH, ta.scrollHeight));
+  ta.style.height = next + "px";
+  ta.style.overflowY = ta.scrollHeight > maxH ? "auto" : "hidden";
+}
+function scAutoGrowTextarea(ta) {
+  if (!ta || ta.tagName !== "TEXTAREA") return;
+  var minH = ta.classList.contains("sc-text-segment-input") ? 22 : 44;
+  var maxH = 240;
+  scGrowTextareaHeight(ta, minH, maxH);
+}
+function scInlineSegmentMaxWidth(ta) {
+  var composer = ta.closest(".sc-text-composer");
+  if (!composer) return 400;
+  var gap = 0;
+  var total = Math.max(48, composer.clientWidth - 24);
+  var used = 0;
+  var child = composer.firstElementChild;
+  while (child) {
+    if (child === ta) break;
+    if (child.classList && child.classList.contains("sc-text-var-bar")) {
+      child = child.nextElementSibling;
+      continue;
+    }
+    used += child.getBoundingClientRect().width + gap;
+    child = child.nextElementSibling;
+  }
+  return Math.max(48, total - used);
+}
+function scComposerTextSegmentCount(composer) {
+  return composer ? composer.querySelectorAll("textarea.sc-text-segment-input").length : 0;
+}
+function scTextSegmentAdjacentVar(ta) {
+  var prev = ta.previousElementSibling;
+  var next = ta.nextElementSibling;
+  return {
+    before: !!(prev && prev.classList && prev.classList.contains("sc-text-var-inline")),
+    after: !!(next && next.classList && next.classList.contains("sc-text-var-inline"))
+  };
+}
+function scFitTextSegment(ta) {
+  if (!ta || !ta.classList.contains("sc-text-segment-input")) {
+    scAutoGrowTextarea(ta);
+    return;
+  }
+  var val = ta.value || "";
+  var composer = ta.closest(".sc-text-composer");
+  var oneLine = scTextSegmentOneLineHeight(ta);
+  var minH = Math.max(22, oneLine);
+  var maxH = 240;
+  var rowMax = scInlineSegmentMaxWidth(ta);
+  var ph = ta.getAttribute("placeholder") || "";
+  var isEmpty = !val.length;
+  var multiSeg = scComposerTextSegmentCount(composer) > 1;
+  var hasInlineVar = composer && composer.querySelector(".sc-text-var-inline");
+  var adj = scTextSegmentAdjacentVar(ta);
+  var inlineFlow = adj.before || adj.after;
+  var contentW = scMeasureTextSegment(ta, val.length ? val : ph);
+  var inlineW;
+  if (isEmpty && !hasInlineVar && !multiSeg) {
+    inlineW = rowMax;
+  } else if (isEmpty && multiSeg) {
+    inlineW = document.activeElement === ta ? 12 : 4;
+  } else {
+    inlineW = Math.max(isEmpty ? 48 : 8, Math.min(rowMax, Math.ceil(contentW)));
+  }
+  if (val.indexOf("\n") >= 0) inlineW = rowMax;
+  ta.style.flex = "0 1 auto";
+  ta.style.maxWidth = rowMax + "px";
+  ta.style.width = inlineW + "px";
+  scGrowTextareaHeight(ta, minH, maxH);
+  if (!inlineFlow && val.length > 0 && val.indexOf("\n") < 0 && ta.scrollHeight > oneLine + 2 && inlineW < rowMax) {
+    ta.style.width = rowMax + "px";
+    scGrowTextareaHeight(ta, minH, maxH);
+  } else if (inlineFlow && val.length > 0 && val.indexOf("\n") < 0 && ta.scrollHeight > oneLine + 2) {
+    ta.style.width = inlineW + "px";
+    scGrowTextareaHeight(ta, minH, maxH);
+  }
+}
+function scSyncTextareaHeights(root) {
+  var el = root || $("sc-ed-canvas");
+  el.querySelectorAll(".sc-text-composer").forEach(function (composer) {
+    composer.querySelectorAll("textarea.sc-text-segment-input").forEach(scFitTextSegment);
+  });
+}
 function scFitPillInput(input) {
   if (!input) return;
+  if (input.tagName === "TEXTAREA") {
+    scAutoGrowTextarea(input);
+    return;
+  }
   var val = String(input.value || "");
   var focused = document.activeElement === input;
   var ph = val.length ? "" : String(input.getAttribute("placeholder") || "");
@@ -4634,7 +5364,7 @@ function scCommitAllPillInputs(root) {
   el.querySelectorAll("input.sc-pill.input").forEach(function (input) {
     scCommitPillInput(input, false);
   });
-  el.querySelectorAll("textarea.sc-text-body-input").forEach(function (input) {
+  el.querySelectorAll("textarea.sc-text-segment-input").forEach(function (input) {
     scCommitPillInput(input, false);
   });
 }
@@ -4651,10 +5381,12 @@ function scCommitPillInput(input, revert) {
   }
   if (field === "senderName" && kind === "trigger-filter") {
     scCommitSenderNameInput(idx, Number(input.dataset.nameIdx || 0), input.value);
+    scInvalidateTestRunFromEdit();
     return;
   }
   if (field === "serverTarget" && kind === "trigger") {
     scCommitServerTargetInput(Number(input.dataset.nameIdx || 0), input.value);
+    scInvalidateTestRunFromEdit();
     return;
   }
   var condIdx = input.dataset.condIdx != null ? Number(input.dataset.condIdx) : null;
@@ -4682,20 +5414,24 @@ function scCommitPillInput(input, revert) {
     ref.room = val;
   } else if (field === "textPart") {
     scNormalizeAction(ref, idx);
-    var pi = Number(input.dataset.nameIdx || 0);
-    if (!ref.parts[pi]) ref.parts[pi] = {mode: "text", text: ""};
-    ref.parts[pi] = {mode: "text", text: val};
-    ref.parts = scMergeTextParts(ref.parts);
-  } else if (field === "textBody") {
-    scNormalizeAction(ref, idx);
-    ref.parts = [{mode: "text", text: val}];
+    if (input.classList.contains("sc-text-segment-input")) scCaptureTextPartsFromDom(idx, ref);
+    else {
+      var pi = Number(input.dataset.nameIdx || 0);
+      if (!ref.parts[pi]) ref.parts[pi] = {mode: "text", text: ""};
+      ref.parts[pi] = {mode: "text", text: val};
+      ref.parts = scMergeTextParts(ref.parts);
+    }
   } else {
     ref[field] = val;
     if (field === "right" || field === "left") scNormalizeIfConditionObj(ref);
   }
-  scFitPillInput(input);
+  if (input.tagName === "TEXTAREA") {
+    if (input.classList.contains("sc-text-segment-input")) scFitTextSegment(input);
+    else scAutoGrowTextarea(input);
+  } else scFitPillInput(input);
   if (kind === "trigger-filter") scRememberFilterDraft(idx);
   else if (kind === "if-cond") scUpdateIfGroupBlock(idx);
+  scInvalidateTestRunFromEdit();
 }
 function scCommitSenderNameInput(filterIdx, nameIdx, rawVal) {
   var f = scGetFilterRef(filterIdx);
@@ -4948,6 +5684,15 @@ function scSetBlockField(kind, idx, field, value, condIdx) {
   } else if (field === "op") {
     ref.op = value;
     scNormalizeIfConditionObj(ref);
+  } else if (field === "right") {
+    ref.right = value;
+    scNormalizeIfConditionObj(ref);
+  } else if (field === "property" && ref.type === "get") {
+    var oldVar = scGetPropertyVarId(ref.property);
+    ref[field] = value;
+    ref.property = scNormalizeGetProperty(ref.property);
+    var newVar = scGetPropertyVarId(ref.property);
+    if (oldVar !== newVar) scRemapVariableIdInShortcut(oldVar, newVar);
   } else ref[field] = value;
   if (kind === "if-cond") scUpdateIfGroupBlock(idx);
   else scUpdateBlockElement(kind, idx);
@@ -4957,20 +5702,34 @@ function scOptionsForField(field, actionIdx, condIdx) {
   if (condIdx != null && condIdx >= 0) ref = scGetIfConditionRef(actionIdx, condIdx);
   else ref = actionIdx != null && scEditing && scEditing.actions ? scEditing.actions[actionIdx] : null;
   if (field === "channel") return [{value: "all", label: "All"}, {value: "team", label: "Team"}, {value: "uclient", label: "UClient"}];
-  if (field === "match") return [{value: "contains", label: "contains"}, {value: "equals", label: "equals"}, {value: "starts_with", label: "starts with"}];
-  if (field === "weapon") return [{value: "hammer", label: "Hammer"}, {value: "gun", label: "Gun"}, {value: "shotgun", label: "Shotgun"}, {value: "grenade", label: "Grenade"}, {value: "laser", label: "Laser"}];
-  if (field === "target") return [{value: "player", label: "Player"}, {value: "dummy", label: "Dummy"}];
-  if (field === "enabled") return [{value: "on", label: "On"}, {value: "off", label: "Off"}];
-  if (field === "property") return [{value: "window_active", label: "Window Active"}];
-  if (field === "match" && ref == null && actionIdx != null && scEditing && scEditing.actions) {
-    var ifAct = scEditing.actions[actionIdx];
+  if (field === "match") {
+    var ifAct = actionIdx != null && scEditing && scEditing.actions ? scEditing.actions[actionIdx] : null;
     if (ifAct && ifAct.type === "if" && scIfIsMulti(ifAct)) {
       return [{value: "all", label: "All"}, {value: "any", label: "Any"}];
     }
+    return [{value: "contains", label: "contains"}, {value: "equals", label: "equals"}, {value: "starts_with", label: "starts with"}];
   }
+  if (field === "weapon") return [{value: "hammer", label: "Hammer"}, {value: "gun", label: "Gun"}, {value: "shotgun", label: "Shotgun"}, {value: "grenade", label: "Grenade"}, {value: "laser", label: "Laser"}];
+  if (field === "target") return [{value: "player", label: "Player"}, {value: "dummy", label: "Dummy"}];
+  if (field === "enabled") return [{value: "on", label: "On"}, {value: "off", label: "Off"}];
+  if (field === "property") {
+    var group = "os";
+    if (actionIdx != null && scEditing && scEditing.actions && scEditing.actions[actionIdx]) {
+      group = scGetPropertyGroup(scEditing.actions[actionIdx].property);
+    }
+    return group === "game" ? scGetGamePropertyOptions() : scGetOsPropertyOptions();
+  }
+  if (field === "emote") {
+    return [{value: "normal", label: "Normal"}, {value: "happy", label: "Happy"}, {value: "angry", label: "Angry"},
+      {value: "pain", label: "Pain"}, {value: "surprise", label: "Surprise"}, {value: "blink", label: "Blink"}];
+  }
+  if (field === "choice") return [{value: "yes", label: "Yes"}, {value: "no", label: "No"}];
   if (field === "op" && ref && ref.left) return scIfOpsForVariable(ref.left || "");
   if (field === "right" && ref && ref.left && scIfLeftValueKind(ref.left || "") === "channel") {
     return [{value: "all", label: "All"}, {value: "team", label: "Team"}, {value: "uclient", label: "UClient"}];
+  }
+  if (field === "right" && ref && ref.left && scIfLeftValueKind(ref.left || "") === "yesno") {
+    return [{value: "Yes", label: "Yes"}, {value: "No", label: "No"}];
   }
   if (field === "shortcutId") {
     return scRunnableManualShortcuts(scEditing && scEditing.id).map(function (sc) {
@@ -4979,8 +5738,7 @@ function scOptionsForField(field, actionIdx, condIdx) {
   }
   return [];
 }
-function scOpenEditor(existing, editKind) {
-  scEditorAnimGen++;
+function scLoadEditorDocument(existing, editKind) {
   scEditKind = editKind || (existing ? scEntryKind(existing) : (scLibraryTab === "shortcuts" ? "manual" : "automation"));
   scEditing = existing ? JSON.parse(JSON.stringify(existing)) : {
     id: scUuid(), name: "New Shortcut", enabled: true,
@@ -4998,24 +5756,63 @@ function scOpenEditor(existing, editKind) {
   scRun = null;
   scUpdatePlayButton();
   $("sc-ed-delete").style.display = existing ? "grid" : "none";
+  scDrawerFilter = null;
+  var drawerSearch = $("sc-drawer-search");
+  if (drawerSearch) drawerSearch.value = "";
+  scRenderEditor();
+  scSyncDrawerSearchUI();
+  scRenderDrawer();
+}
+function scOpenEditor(existing, editKind) {
+  scEditorAnimGen++;
+  scLoadEditorDocument(existing, editKind);
   var ed = $("sc-editor");
   var view = $("shortcuts-view");
   ed.classList.remove("on");
   view.classList.add("editing");
   ed.style.display = "flex";
   ed.setAttribute("aria-hidden", "false");
-  scDrawerFilter = null;
-  var drawerSearch = $("sc-drawer-search");
-  if (drawerSearch) drawerSearch.value = "";
-  scSetDrawerY(scDrawerStage2Ratio(), false);
-  scRenderEditor();
-  scSyncDrawerSearchUI();
-  scRenderDrawer();
   requestAnimationFrame(function () {
+    scRelayoutDrawer();
     requestAnimationFrame(function () {
       ed.classList.add("on");
+      scRelayoutDrawer();
     });
   });
+}
+function scAnimateEditorSwap(existing, editKind) {
+  scCloseAllPickers(null);
+  scCommitAllPillInputs($("sc-ed-canvas"));
+  scEndDrag(true);
+  if (scRunActive()) scStopRun(true);
+  var ed = $("sc-editor");
+  if (ed.style.display !== "flex" || !ed.classList.contains("on")) {
+    scOpenEditor(existing, editKind);
+    return;
+  }
+  var gen = ++scEditorAnimGen;
+  ed.classList.remove("on");
+  var finished = false;
+  function revealNext() {
+    if (finished || gen !== scEditorAnimGen) return;
+    finished = true;
+    ed.removeEventListener("transitionend", onEnd);
+    scLoadEditorDocument(existing, editKind);
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        if (gen !== scEditorAnimGen) return;
+        ed.classList.add("on");
+        scRelayoutDrawer();
+      });
+    });
+  }
+  function onEnd(e) {
+    if (e.target !== ed) return;
+    if (e.propertyName !== "transform" && e.propertyName !== "-webkit-transform") return;
+    revealNext();
+  }
+  ed.addEventListener("transitionend", onEnd);
+  setTimeout(revealNext, 480);
 }
 var scEditorAnimGen = 0;
 function scFinishEditorClose() {
@@ -5072,9 +5869,36 @@ var SC_DRAWER_FLICK_PROJECT_S = 0.16;
 var scDrawerY = SC_DRAWER_PEEK;
 var scDrawerRawY = SC_DRAWER_PEEK;
 var scDrawerFullHeight = 520;
+var scDrawerRelayoutRaf = 0;
+function scDrawerHostMetrics(drawer) {
+  var body = drawer && drawer.parentElement;
+  var w = body && body.clientWidth ? body.clientWidth : 0;
+  var h = body && body.clientHeight ? body.clientHeight : 0;
+  if (!w || !h) {
+    var ed = $("sc-editor");
+    if (ed && ed.clientWidth && ed.clientHeight) {
+      var head = ed.querySelector(".sc-ed-head");
+      var headH = head ? head.offsetHeight : 0;
+      if (!w) w = ed.clientWidth;
+      if (!h) h = Math.max(0, ed.clientHeight - headH);
+    }
+  }
+  return {w: w || 0, h: h || 560};
+}
+function scScheduleDrawerRelayout() {
+  if (scDrawerRelayoutRaf) return;
+  scDrawerRelayoutRaf = requestAnimationFrame(function () {
+    scDrawerRelayoutRaf = 0;
+    requestAnimationFrame(function () { scRelayoutDrawer(); });
+  });
+}
+function scRelayoutDrawer() {
+  var ed = $("sc-editor");
+  if (!ed || ed.style.display !== "flex") return;
+  scSetDrawerY(scDrawerStage2Ratio(), false);
+}
 function scDrawerFullHeightPx(drawer) {
-  var parent = drawer && drawer.parentElement;
-  var parentH = parent && parent.clientHeight ? parent.clientHeight : 560;
+  var parentH = scDrawerHostMetrics(drawer).h;
   return Math.min(Math.round(parentH * SC_DRAWER_HEIGHT_FRAC), SC_DRAWER_HEIGHT_MAX);
 }
 function scDrawerCapsuleWidth(parentW) {
@@ -5089,8 +5913,10 @@ function scApplyDrawerChrome(drawer, ratio) {
   if (!drawer) return;
   var stage2 = scDrawerStage2Ratio();
   var t = scDrawerMorphT(ratio, stage2);
-  var parent = drawer.parentElement;
-  var parentW = parent && parent.clientWidth ? parent.clientWidth : window.innerWidth;
+  var host = scDrawerHostMetrics(drawer);
+  var parentW = host.w;
+  if (parentW < 80) scScheduleDrawerRelayout();
+  if (!parentW) parentW = host.w || 360;
   var fullH = scDrawerFullHeightPx(drawer);
   if (t < 0.02) scDrawerFullHeight = fullH;
   else if (drawer.offsetHeight > SC_DRAWER_CAP_H + 48) scDrawerFullHeight = fullH;
@@ -5108,7 +5934,6 @@ function scApplyDrawerChrome(drawer, ratio) {
   drawer.style.boxShadow = t > 0.08
     ? "0 0 0 0.5px rgba(255,255,255," + (0.028 * t).toFixed(3) + "),0 0 " + (36 * t).toFixed(0) + "px rgba(255,255,255," + (0.038 * t).toFixed(3) + "),0 0 " + (72 * t).toFixed(0) + "px rgba(255,255,255," + (0.022 * t).toFixed(3) + "),0 " + (10 * t).toFixed(0) + "px " + (36 * t).toFixed(0) + "px rgba(255,255,255," + (0.012 * t).toFixed(3) + ")"
     : "none";
-  // Full drawer slides on translateY; the capsule stays pinned to bottom (t=1 -> no slide).
   var slide = ratio * (1 - t);
   drawer.style.transform = "translateY(" + (slide * 100).toFixed(1) + "%)";
   drawer.style.setProperty("--sc-drawer-t", t.toFixed(4));
@@ -5498,7 +6323,10 @@ $("sc-fab-auto").addEventListener("click", function () { scOpenEditor(null, "aut
 document.querySelectorAll(".sc-lib-tab").forEach(function (btn) {
   btn.addEventListener("click", function () { setScLibraryTab(btn.dataset.scLib); });
 });
-window.addEventListener("resize", function () { scLayoutLibTabIndicator(); });
+window.addEventListener("resize", function () {
+  scLayoutLibTabIndicator();
+  if ($("sc-editor").style.display === "flex") scRelayoutDrawer();
+});
 requestAnimationFrame(scLayoutLibTabIndicator);
 $("sc-gallery-search").addEventListener("input", function (e) {
   scGallerySearch = e.target.value || "";
@@ -5533,8 +6361,9 @@ $("sc-ed-save").addEventListener("click", function () {
     scEditing.trigger = scCleanTriggerForSave(scEditing.trigger);
   }
   scEditing.actions = (scEditing.actions || []).map(scCleanActionForSave);
-  scEditing.name = $("sc-ed-title").value.trim() ||
+  var rawName = $("sc-ed-title").value.trim() ||
     (scIsManualEdit() ? "Shortcut" : scSummaryTrigger(scEditing.trigger));
+  scEditing.name = scIsManualEdit() ? scUniqueManualShortcutName(rawName, scEditing.id) : rawName;
   var idx = shortcutsLocal.findIndex(function (s) { return s.id === scEditing.id; });
   if (idx >= 0) shortcutsLocal[idx] = JSON.parse(JSON.stringify(scEditing));
   else shortcutsLocal.push(JSON.parse(JSON.stringify(scEditing)));
@@ -5582,6 +6411,7 @@ $("sc-ed-title").addEventListener("input", function (e) {
     scPushHistory();
   }
   scEditing.name = e.target.value;
+  scInvalidateTestRunFromEdit();
   var label = $("sc-ed-title-label");
   if (label) label.textContent = e.target.value || scEditorDisplayName();
 });
@@ -5597,7 +6427,7 @@ $("sc-tb-play").addEventListener("click", function () {
   scCommitAllPillInputs($("sc-ed-canvas"));
   var actions = (scEditing.actions || []).map(scCleanActionForSave);
   if (!actions.length) { scToast("Add at least one action"); return; }
-  scRun = {runId: scUuid(), status: "running", step: -1, total: actions.length, waitRemaining: null, results: []};
+  scRun = {runId: scUuid(), status: "running", step: -1, total: actions.length, waitRemaining: null, nestedStep: null, nestedTotal: null, results: []};
   scApplyRunState();
   scUpdatePlayButton();
   send({cmd: "automationRun", runId: scRun.runId, actions: actions});
@@ -5655,11 +6485,42 @@ $("sc-ed-canvas").addEventListener("pointerdown", function (e) {
   grip.setPointerCapture(e.pointerId);
   e.preventDefault();
 });
+$("sc-ed-canvas").addEventListener("compositionstart", function (e) {
+  var ta = e.target.closest("textarea.sc-text-segment-input");
+  if (ta) ta.dataset.scComposing = "1";
+}, true);
+$("sc-ed-canvas").addEventListener("compositionend", function (e) {
+  var ta = e.target.closest("textarea.sc-text-segment-input");
+  if (ta) {
+    delete ta.dataset.scComposing;
+    scRememberTextCaret(ta);
+    scFitTextSegment(ta);
+  }
+}, true);
+$("sc-ed-canvas").addEventListener("mouseup", function (e) {
+  var ta = e.target.closest("textarea.sc-text-segment-input");
+  if (ta) requestAnimationFrame(function () { scRememberTextCaret(ta); });
+});
+$("sc-ed-canvas").addEventListener("keyup", function (e) {
+  var ta = e.target.closest("textarea.sc-text-segment-input");
+  if (ta && !e.isComposing) scRememberTextCaret(ta);
+});
 $("sc-ed-canvas").addEventListener("focusin", function (e) {
   var input = e.target.closest("input.sc-pill.input");
-  var textarea = e.target.closest("textarea.sc-text-body-input");
+  var textarea = e.target.closest("textarea.sc-text-segment-input");
   if (textarea) {
     textarea.dataset.scOrig = textarea.value;
+    scFitTextSegment(textarea);
+    scRememberTextCaret(textarea);
+    var composer = textarea.closest(".sc-text-composer");
+    scTextVarPopState = {
+      anchor: composer, el: textarea, blockIdx: textarea.dataset.idx, kind: textarea.dataset.kind || "action",
+      partIdx: textarea.dataset.nameIdx
+    };
+    scCloseAllSmartMenus(null);
+    scClosePop();
+    scShowTextVarPopForBlock(Number(textarea.dataset.idx || 0), textarea.dataset.kind);
+    return;
   } else if (input) {
     input.dataset.scOrig = input.value;
     scFitPillInput(input);
@@ -5680,7 +6541,7 @@ $("sc-ed-canvas").addEventListener("focusin", function (e) {
   }
 });
 $("sc-ed-canvas").addEventListener("input", function (e) {
-  var textarea = e.target.closest("textarea.sc-text-body-input");
+  var textarea = e.target.closest("textarea.sc-text-segment-input");
   var input = e.target.closest("input.sc-pill.input");
   if (!input && !textarea) return;
   if (textarea) input = textarea;
@@ -5705,25 +6566,49 @@ $("sc-ed-canvas").addEventListener("input", function (e) {
       ref.messageText = input.value;
     }
   }
-  if (input.dataset.input === "textBody") {
-    var tRef = scGetBlockRef(input.dataset.kind, Number(input.dataset.idx || 0));
+  if (input.dataset.input === "textPart" && input.classList.contains("sc-text-segment-input")) {
+    var tIdx = Number(input.dataset.idx || 0);
+    var tRef = scGetBlockRef(input.dataset.kind, tIdx);
     if (tRef) {
-      scNormalizeAction(tRef, Number(input.dataset.idx || 0));
-      tRef.parts = [{mode: "text", text: input.value}];
+      scCaptureTextPartsFromDom(tIdx, tRef);
     }
+    scFitTextSegment(input);
+    scRememberTextCaret(input);
   }
   if (input.classList.contains("sc-smart-trigger")) {
     var field = input.closest(".sc-smart-field");
     if (String(input.value || "").length === 0) scSmartFieldShowMenu(field, true);
     else scSmartFieldHideMenu(field);
   }
-  scFitPillInput(input);
+  if (input.tagName !== "TEXTAREA") scFitPillInput(input);
 });
+var scTextVarPopEl = $("sc-text-var-pop");
+if (scTextVarPopEl) {
+  scTextVarPopEl.addEventListener("mousedown", function (e) {
+    if (e.target.closest(".sc-text-var-chip")) e.preventDefault();
+  });
+  scTextVarPopEl.addEventListener("click", function (e) {
+    var varChip = e.target.closest(".sc-text-var-chip");
+    if (!varChip || !scEditing) return;
+    e.preventDefault();
+    scAppendTextVariable(Number(varChip.dataset.idx), varChip.dataset.kind, varChip.dataset.textVar);
+  });
+}
 $("sc-ed-canvas").addEventListener("focusout", function (e) {
   var input = e.target.closest("input.sc-pill.input");
-  var textarea = e.target.closest("textarea.sc-text-body-input");
+  var textarea = e.target.closest("textarea.sc-text-segment-input");
   if (textarea) {
     scCommitPillInput(textarea, false);
+    var composer = textarea.closest(".sc-text-composer");
+    setTimeout(function () {
+      var pop = $("sc-text-var-pop");
+      if (pop && pop.contains(document.activeElement)) return;
+      var active = document.activeElement;
+      if (active && active.closest && active.closest(".sc-text-composer")) return;
+      if (active && active.closest && active.closest("#sc-text-var-pop")) return;
+      if (active && active.closest && active.closest(".sc-text-var-bar")) return;
+      if (scTextVarPopState.anchor === composer) scHideTextVarPop();
+    }, 150);
   } else if (input) {
     scCommitPillInput(input, false);
     scFitPillInput(input);
@@ -5740,6 +6625,17 @@ $("sc-ed-canvas").addEventListener("focusout", function (e) {
   }, 130);
 });
 $("sc-ed-canvas").addEventListener("keydown", function (e) {
+  var seg = e.target.closest("textarea.sc-text-segment-input");
+  if (seg) {
+    if (e.key === "Enter") {
+      e.stopPropagation();
+      return;
+    }
+    if (e.key === "Backspace" && scTextBackspaceRemoveVar(seg)) {
+      e.preventDefault();
+      return;
+    }
+  }
   var input = e.target.closest("input.sc-pill.input");
   if (!input) return;
   if (e.key === "Enter" && input.tagName !== "TEXTAREA") { e.preventDefault(); input.blur(); }
@@ -5754,6 +6650,14 @@ $("sc-ed-canvas").addEventListener("keydown", function (e) {
 });
 $("sc-ed-canvas").addEventListener("mousedown", function (e) {
   if (e.target.closest(".sc-smart-menu-item")) e.preventDefault();
+  if (e.target.closest(".sc-text-var-bar .sc-text-var-chip")) e.preventDefault();
+  var composerHit = e.target.closest(".sc-text-composer");
+  if (composerHit && !e.target.closest("textarea.sc-text-segment-input") &&
+      !e.target.closest(".sc-text-var-inline") && !e.target.closest(".sc-text-var-bar")) {
+    e.preventDefault();
+    scFocusTextComposerFromEvent(composerHit, e.clientX);
+    return;
+  }
   var textTrig = e.target.closest("input.sc-smart-trigger, textarea.sc-smart-trigger");
   if (textTrig) {
     var sf = textTrig.closest(".sc-smart-field");
@@ -5765,6 +6669,32 @@ $("sc-ed-canvas").addEventListener("mousedown", function (e) {
 });
 $("sc-ed-canvas").addEventListener("click", function (e) {
   if (!scEditing) return;
+  var textVarChip = e.target.closest(".sc-text-var-bar .sc-text-var-chip");
+  if (textVarChip) {
+    e.preventDefault();
+    e.stopPropagation();
+    scAppendTextVariable(Number(textVarChip.dataset.idx), textVarChip.dataset.kind, textVarChip.dataset.textVar);
+    return;
+  }
+  var inlineVar = e.target.closest(".sc-text-var-inline");
+  if (inlineVar) {
+    e.preventDefault();
+    e.stopPropagation();
+    var blockEl = inlineVar.closest(".sc-block[data-block-idx]");
+    var compEl = inlineVar.closest(".sc-text-composer");
+    var blockIdx = Number((blockEl && blockEl.dataset.blockIdx) || (compEl && compEl.dataset.idx) || 0);
+    var oldVar = inlineVar.dataset.varId || "";
+    var vars = scSmartFieldVariables("textPart", blockIdx);
+    if (!vars.length) return;
+    var opts = vars.map(function (v) {
+      return {value: v.id, label: v.label, isVar: true};
+    });
+    scOpenPop(inlineVar, opts, function (val) {
+      scPushHistory();
+      scReplaceTextVariableId(blockIdx, oldVar, val, false);
+    }, oldVar);
+    return;
+  }
   var addSenderName = e.target.closest("[data-add-sender-name]");
   if (addSenderName) {
     scAddSenderNameSlot(Number(addSenderName.dataset.addSenderName));
@@ -5796,6 +6726,12 @@ $("sc-ed-canvas").addEventListener("click", function (e) {
     scOpenRepeatStepperPop(repeatTimes, Number(repeatTimes.dataset.repeatTimes), repeatTimes.dataset.kind || "action");
     return;
   }
+  var waitSeconds = e.target.closest(".sc-wait-seconds-pill");
+  if (waitSeconds) {
+    e.stopPropagation();
+    scOpenWaitStepperPop(waitSeconds, Number(waitSeconds.dataset.waitSeconds), waitSeconds.dataset.kind || "action");
+    return;
+  }
   var del = e.target.closest("[data-del-action]");
   if (del) {
     scRemoveActionBlock(Number(del.dataset.delAction));
@@ -5821,8 +6757,10 @@ $("sc-ed-canvas").addEventListener("click", function (e) {
     }
   }
   if (!e.target.closest(".sc-smart-field") && !e.target.closest(".sc-pop") &&
-      !e.target.closest(".sc-pill[data-field]") && !e.target.closest(".sc-repeat-times-pill") &&
-      !e.target.closest(".sc-smart-menu-item")) {
+      !e.target.closest(".sc-pill[data-field]") && !e.target.closest(".sc-stepper-pill") &&
+      !e.target.closest(".sc-smart-menu-item") &&
+      !e.target.closest(".sc-text-composer") && !e.target.closest(".sc-text-var-bar") &&
+      !e.target.closest("#sc-text-var-pop")) {
     scCloseAllPickers(null);
   }
   var pill = e.target.closest(".sc-pill");
