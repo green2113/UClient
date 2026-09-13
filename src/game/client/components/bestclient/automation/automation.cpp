@@ -2066,6 +2066,8 @@ void CAutomation::SubmitAskInput(const char *pText)
 	const std::string Value = pText ? pText : "";
 	const std::string VarName = m_Runner.m_AskOutputVar.empty() ? "ask" : m_Runner.m_AskOutputVar;
 	SetRunnerVariable(VarName.c_str(), Value);
+	if(m_Runner.m_TestRun)
+		WriteTestRunState("running");
 	m_Runner.m_AskActive = false;
 	m_Runner.m_AskPrompt.clear();
 	m_Runner.m_AskOutputVar.clear();

@@ -360,7 +360,9 @@ body{
 .sc-smart-menu-inner::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(140,124,255,.7),rgba(100,180,255,.55));background-clip:padding-box}
 .sc-smart-menu-inner::-webkit-scrollbar-button{display:none;width:0;height:0}
 .sc-smart-menu-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--text);font:600 13px/1.35 inherit;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background .14s ease-out,color .14s ease-out}
-.sc-smart-menu-item.is-var{color:var(--text)}
+.sc-smart-menu-item.is-var{color:var(--text);display:flex;align-items:center;gap:8px}
+.sc-smart-menu-item.is-var .sc-smart-menu-item-label{min-width:0;flex:1 1 auto}
+.sc-smart-menu-item.is-var .sc-pill-icon-svg{width:16px;height:16px;flex:0 0 auto;opacity:.92}
 .sc-smart-menu-head{padding:6px 10px 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);pointer-events:none;user-select:none}
 .sc-smart-menu-item.sc-smart-menu-text{color:var(--dim);font-weight:600}
 .sc-smart-menu-item.sc-smart-menu-clear{color:var(--muted);font-weight:600}
@@ -3774,24 +3776,48 @@ function scCatalogBlockIcon(def, kind) {
   var bk = kind === "trigger" ? "trigger" : "action";
   return scBlockIconInner(tone, def.icon, bk, type);
 }
-function scVarPillIconSvg(varId) {
-  var id = varId || "";
-  if (id === "clipboard") return scLucideSvg("clipboard", "sc-pill-icon-svg");
-  if (id.indexOf("message") === 0 || id === "senderName" || id === "sender" || id === "message") {
-    return scLucideSvg("message-square-text", "sc-pill-icon-svg");
+function scVarSourceBlockMeta(sourceId, beforeIdx) {
+  var id = sourceId || "";
+  if (id === "messageSender" || id === "senderName" || id === "sender" ||
+      id === "messageText" || id === "message" ||
+      id === "messageChannel" || id === "messageUClientRoom" || id === "messageUClientRoomId") {
+    return {blockKind: "trigger", blockType: "chat_received"};
   }
   if (id === "window_active" || id === "foreground_window_title" || id === "game_window_focused") {
-    return scLucideSvg("app-window", "sc-pill-icon-svg");
+    return {blockKind: "action", blockType: "get_os_detail"};
   }
-  if (id === "connected" || id === "server_name" || id === "map" || id === "server_address") {
-    return scLucideSvg("server", "sc-pill-icon-svg");
+  if (id === "my_name" || id === "name" || id === "nearestPlayer" || id === "nearest_player" ||
+      id === "connected" || id === "server_name" || id === "map" || id === "server_address") {
+    return {blockKind: "action", blockType: "get_game_detail"};
   }
-  if (id === "text" || id.indexOf("text") === 0) return scLucideSvg("whole-word", "sc-pill-icon-svg");
+  if (scEditing && scEditing.actions) {
+    var limit = beforeIdx == null ? scEditing.actions.length : beforeIdx;
+    for (var i = 0; i < limit; i++) {
+      var a = scEditing.actions[i];
+      if (!a) continue;
+      if (a.type === "ask_for_text" && (a.as || "ask") === id) return {blockKind: "action", blockType: "ask_for_text"};
+      if (a.type === "text" && (a.as || ("text_" + i)) === id) return {blockKind: "action", blockType: "text"};
+      if (a.type === "get_player_info" && (a.as || "player") === id) return {blockKind: "action", blockType: "get_player_info"};
+      if (a.type === "get_clipboard" && (a.as || "clipboard") === id) return {blockKind: "action", blockType: "get_clipboard"};
+      if (a.type === "get" && scGetPropertyVarId(a.property) === id) {
+        return {blockKind: "action", blockType: scGetPropertyGroup(a.property) === "game" ? "get_game_detail" : "get_os_detail"};
+      }
+    }
+  }
+  if (id === "clipboard") return {blockKind: "action", blockType: "get_clipboard"};
+  return {blockKind: "action", blockType: null};
+}
+function scVarPillIconSvg(varId, beforeIdx) {
+  var meta = scVarSourceBlockMeta(varId, beforeIdx);
+  if (meta.blockType) {
+    var lucide = meta.blockKind === "trigger" ? SC_TRIGGER_LUCIDE[meta.blockType] : SC_ACTION_LUCIDE[meta.blockType];
+    if (lucide) return scLucideSvg(lucide, "sc-pill-icon-svg");
+  }
   return scLucideSvg("variable", "sc-pill-icon-svg");
 }
-function scVarPillButton(extraClass, varId, label, attrs) {
+function scVarPillButton(extraClass, varId, label, attrs, beforeIdx) {
   return '<button type="button" class="sc-pill var sc-pill-nested' + (extraClass ? " " + extraClass : "") + '"' + (attrs || "") + ">" +
-    scVarPillIconSvg(varId) + '<span class="sc-pill-label">' + esc(label) + "</span></button>";
+    scVarPillIconSvg(varId, beforeIdx) + '<span class="sc-pill-label">' + esc(label) + "</span></button>";
 }
 function scSmartMenuWouldBeEmpty(beforeIdx, fixedChoices, menuMode, slot) {
   var vars = scSmartFieldVariables(slot, beforeIdx);
@@ -3815,7 +3841,8 @@ function scSmartMenuHtml(beforeIdx, fixedChoices, menuMode, slot) {
   }
   if (showVars) html += '<div class="sc-smart-menu-head">Variable</div>';
   vars.forEach(function (v) {
-    html += '<button type="button" class="sc-smart-menu-item is-var" data-pick-type="var" data-pick-id="' + esc(v.id) + '">' + esc(v.label) + '</button>';
+    html += '<button type="button" class="sc-smart-menu-item is-var" data-pick-type="var" data-pick-id="' + esc(v.id) + '">' +
+      scVarPillIconSvg(v.id, beforeIdx) + '<span class="sc-smart-menu-item-label">' + esc(v.label) + "</span></button>";
   });
   html += '</div></div>';
   return html;
@@ -4020,7 +4047,7 @@ function scSmartFieldHtml(opts) {
   if (isVar) {
     var src = scVarRefSourceId(varRef);
     html += scVarPillButton("sc-smart-trigger", src, scVarRefDisplayLabel(varRef, opts.beforeIdx != null ? opts.beforeIdx : opts.idx),
-      ' data-smart-trigger="var"');
+      ' data-smart-trigger="var"', opts.beforeIdx != null ? opts.beforeIdx : opts.idx);
   } else if (opts.choice) {
     html += '<button type="button" class="sc-pill sc-smart-trigger sc-smart-choice" data-smart-trigger="choice">' +
       esc(opts.choiceLabel || scLabelChannel(opts.textValue) || "All") + '</button>';
@@ -4278,7 +4305,7 @@ function scIfLeftFieldHtml(data, idx, kind, condIdx) {
   var condAttr = condIdx != null ? ' data-cond-idx="' + condIdx + '"' : "";
   var html = '<span class="sc-smart-field" data-smart-slot="ifLeft" data-idx="' + idx + '" data-kind="' + esc(kind) + '"' + condAttr + '">';
   if (scVarRefIsSet(left)) {
-    html += scVarPillButton("sc-smart-trigger", scVarRefSourceId(left), scVarRefDisplayLabel(left, idx), ' data-smart-trigger="var"');
+    html += scVarPillButton("sc-smart-trigger", scVarRefSourceId(left), scVarRefDisplayLabel(left, idx), ' data-smart-trigger="var"', idx);
     html += scSmartFieldMenuHtml(idx, null, "variable", "ifLeft", left);
   } else {
     html += '<button type="button" class="sc-pill sc-smart-trigger sc-smart-choice" data-smart-trigger="choice">Condition</button>';
@@ -4337,7 +4364,7 @@ function scTextVarBarHtml(blockIdx, kind) {
   var vars = scSmartFieldVariables("textPart", blockIdx);
   return vars.map(function (v) {
     return '<button type="button" class="sc-text-var-chip" data-text-var="' + esc(v.id) + '" data-idx="' + blockIdx + '" data-kind="' + esc(kind || "action") + '">' +
-      scVarPillIconSvg(v.id) + "<span>" + esc(v.label) + "</span></button>";
+      scVarPillIconSvg(v.id, blockIdx) + "<span>" + esc(v.label) + "</span></button>";
   }).join("");
 }
 function scShowTextVarPopForBlock(blockIdx, kind) {
@@ -4376,7 +4403,7 @@ function scTextVarChipInlineHtml(varRef, pi, idx) {
   var label = n ? (n.label || "") : "";
   return '<span class="sc-text-var-inline" data-text-part="variable" data-var-id="' + esc(src) + '" data-var-get="' + esc(get) +
     '" data-var-label="' + esc(label) + '" data-name-idx="' + pi + '" contenteditable="false">' +
-    scVarPillIconSvg(src) + '<span class="sc-pill-label">' + esc(scVarRefDisplayLabel(varRef, idx)) + "</span></span>";
+    scVarPillIconSvg(src, idx) + '<span class="sc-pill-label">' + esc(scVarRefDisplayLabel(varRef, idx)) + "</span></span>";
 }
 function scVarRefFromInlineEl(el, beforeIdx) {
   if (!el) return null;
@@ -5506,20 +5533,31 @@ function scInvalidateTestRunFromEdit() {
 }
 window.__setAutomationRun = function (st) {
   if (!st || !st.runId) return;
+  if (!scRun || scRun.runId !== st.runId) {
+    if (st.status === "done") {
+      scApplyRunState();
+      scUpdatePlayButton();
+    }
+    return;
+  }
   if (st.status === "done") {
-    if (scRun && scRun.runId === st.runId) scRun = null;
+    scRun.status = "done";
+    scRun.step = -1;
+    scRun.waitRemaining = null;
+    scRun.nestedStep = null;
+    scRun.nestedTotal = null;
+    if (st.results && st.results.length) scRun.results = st.results;
     scApplyRunState();
     scUpdatePlayButton();
     return;
   }
-  if (!scRun || scRun.runId !== st.runId) return;
   scRun.status = "running";
   scRun.step = st.step == null ? -1 : Number(st.step);
   scRun.total = st.total == null ? scRun.total : Number(st.total);
   scRun.waitRemaining = st.waitRemaining == null ? null : Number(st.waitRemaining);
   scRun.nestedStep = st.nestedStep == null ? null : Number(st.nestedStep);
   scRun.nestedTotal = st.nestedTotal == null ? null : Number(st.nestedTotal);
-  scRun.results = st.results || [];
+  if (st.results && st.results.length) scRun.results = st.results;
   scApplyRunState();
   scUpdatePlayButton();
 };
