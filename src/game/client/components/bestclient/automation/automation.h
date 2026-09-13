@@ -261,6 +261,7 @@ private:
 		bool m_AskActive = false;
 		std::string m_AskPrompt;
 		std::string m_AskOutputVar;
+		size_t m_TestResultIndex = SIZE_MAX;
 	};
 
 	std::vector<SShortcut> m_vShortcuts;
@@ -306,6 +307,8 @@ private:
 	std::string GetGamePropertyValue(const char *pProperty) const;
 	std::string GetPropertyVariableName(const char *pProperty) const;
 	void SetRunnerVariable(const char *pName, const std::string &Value);
+	void RecordTestActionOutput(size_t ActionIndex, const std::string &Value);
+	std::string FormatGetPlayerInfoTestResult(const SAction &Action) const;
 	const SShortcut *RunnerShortcut() const;
 	void PollTestRunRequest();
 	bool ParseTestRunRequest(const char *pJson, size_t Length);

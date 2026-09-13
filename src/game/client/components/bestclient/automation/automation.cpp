@@ -434,7 +434,13 @@ static bool ParseUClientRoomField(const json_value *pRoom, CAutomation::SAction 
 
 static bool ParseTextParts(const json_value *pParts, std::vector<CAutomation::STextPart> &Out)
 {
-	if(!pParts || pParts->type != json_array)
+	Out.clear();
+	if(!pParts)
+	{
+		Out.push_back(CAutomation::STextPart{});
+		return true;
+	}
+	if(pParts->type != json_array)
 		return false;
 	const int Count = json_array_length(pParts);
 	for(int i = 0; i < Count; ++i)
@@ -460,7 +466,9 @@ static bool ParseTextParts(const json_value *pParts, std::vector<CAutomation::ST
 		}
 		Out.push_back(std::move(Part));
 	}
-	return !Out.empty();
+	if(Out.empty())
+		Out.push_back(CAutomation::STextPart{});
+	return true;
 }
 
 static bool ParseAction(const json_value *pAction, CAutomation::SAction &Out)
@@ -1839,6 +1847,11 @@ void CAutomation::ExecuteTextAction(const SAction &Action)
 	}
 	const std::string Key = Action.m_OutputVariable.empty() ? "text" : Action.m_OutputVariable;
 	SetRunnerVariable(Key.c_str(), Result);
+	if(m_Runner.m_TestRun)
+	{
+		const size_t Index = m_Runner.m_TestResultIndex != SIZE_MAX ? m_Runner.m_TestResultIndex : m_Runner.m_ActionIndex;
+		RecordTestActionOutput(Index, Result);
+	}
 }
 
 std::string CAutomation::ResolveMessageValue(const SAction &Action) const
@@ -2065,9 +2078,13 @@ void CAutomation::SubmitAskInput(const char *pText)
 		return;
 	const std::string Value = pText ? pText : "";
 	const std::string VarName = m_Runner.m_AskOutputVar.empty() ? "ask" : m_Runner.m_AskOutputVar;
+	const size_t AskIndex = m_Runner.m_ActionIndex;
 	SetRunnerVariable(VarName.c_str(), Value);
 	if(m_Runner.m_TestRun)
+	{
+		RecordTestActionOutput(AskIndex, Value);
 		WriteTestRunState("running");
+	}
 	m_Runner.m_AskActive = false;
 	m_Runner.m_AskPrompt.clear();
 	m_Runner.m_AskOutputVar.clear();
@@ -2105,18 +2122,42 @@ void CAutomation::ClearTestRun()
 void CAutomation::SetRunnerVariable(const char *pName, const std::string &Value)
 {
 	m_Runner.m_Variables[pName] = Value;
+}
+
+void CAutomation::RecordTestActionOutput(size_t ActionIndex, const std::string &Value)
+{
 	if(!m_Runner.m_TestRun)
 		return;
-	const size_t Index = m_Runner.m_ActionIndex;
 	for(auto &Result : m_vTestResults)
 	{
-		if(Result.first == Index)
+		if(Result.first == ActionIndex)
 		{
 			Result.second = Value;
 			return;
 		}
 	}
-	m_vTestResults.emplace_back(Index, Value);
+	m_vTestResults.emplace_back(ActionIndex, Value);
+}
+
+std::string CAutomation::FormatGetPlayerInfoTestResult(const SAction &Action) const
+{
+	const std::string VarName = Action.m_OutputVariable.empty() ? "player" : Action.m_OutputVariable;
+	const std::string SearchName = ResolvePlayerSearchName(Action);
+	const auto ClientIt = m_Runner.m_PlayerClientIds.find(VarName);
+	const int ClientId = ClientIt != m_Runner.m_PlayerClientIds.end() ? ClientIt->second : -1;
+	if(SearchName.empty())
+		return "No player name to search";
+	if(ClientId < 0)
+		return std::string("Not found: ") + SearchName;
+	std::string Out = std::string("Found: ") + GameClient()->m_aClients[ClientId].m_aName;
+	const std::string Clan = ChatSenderPropertyValue("clan", ClientId);
+	const std::string Skin = ChatSenderPropertyValue("skin_name", ClientId);
+	Out += " (clan: ";
+	Out += Clan.empty() ? "—" : Clan;
+	Out += ", skin: ";
+	Out += Skin.empty() ? "—" : Skin;
+	Out += ")";
+	return Out;
 }
 
 void CAutomation::WriteTestRunState(const char *pStatus)
@@ -2292,6 +2333,11 @@ void CAutomation::ExecuteAction(const SAction &Action)
 		}
 		else
 			GameClient()->m_Chat.SendChat(Channel == EChatChannel::TEAM ? 1 : 0, Message.c_str());
+		if(m_Runner.m_TestRun)
+		{
+			const size_t Index = m_Runner.m_TestResultIndex != SIZE_MAX ? m_Runner.m_TestResultIndex : m_Runner.m_ActionIndex;
+			RecordTestActionOutput(Index, Message);
+		}
 		break;
 	}
 	case EActionType::CONNECT_SERVER:
@@ -2378,6 +2424,9 @@ void CAutomation::StepRunner()
 	const SAction &Action = Shortcut.m_vActions[m_Runner.m_ActionIndex];
 	const int64_t Now = time_get();
 
+	if(m_Runner.m_TestRun)
+		m_Runner.m_TestResultIndex = m_Runner.m_ActionIndex;
+
 	if(m_Runner.m_TestRun && m_TestReportedStep != m_Runner.m_ActionIndex)
 	{
 		m_TestReportedStep = m_Runner.m_ActionIndex;
@@ -2391,6 +2440,8 @@ void CAutomation::StepRunner()
 			Action.m_Type == EActionType::SWITCH_WEAPON || Action.m_Type == EActionType::EMOTE ||
 			Action.m_Type == EActionType::KILL || Action.m_Type == EActionType::VOTE))
 	{
+		if(Action.m_Type == EActionType::SEND_CHAT)
+			RecordTestActionOutput(m_Runner.m_ActionIndex, ResolveMessageValue(Action));
 		++m_Runner.m_ActionIndex;
 		StepRunner();
 		return;
@@ -2399,6 +2450,11 @@ void CAutomation::StepRunner()
 	if(Action.m_Type == EActionType::GET)
 	{
 		ExecuteGetAction(Action);
+		if(m_Runner.m_TestRun)
+		{
+			const std::string VarName = GetPropertyVariableName(Action.m_GetProperty.c_str());
+			RecordTestActionOutput(m_Runner.m_ActionIndex, VarName.empty() ? std::string() : ResolveVariable(VarName.c_str(), nullptr));
+		}
 		++m_Runner.m_ActionIndex;
 		StepRunner();
 		return;
@@ -2407,6 +2463,11 @@ void CAutomation::StepRunner()
 	if(Action.m_Type == EActionType::GET_CLIPBOARD)
 	{
 		ExecuteGetClipboardAction(Action);
+		if(m_Runner.m_TestRun)
+		{
+			const std::string Key = Action.m_OutputVariable.empty() ? "clipboard" : Action.m_OutputVariable;
+			RecordTestActionOutput(m_Runner.m_ActionIndex, ResolveVariable(Key.c_str(), nullptr));
+		}
 		++m_Runner.m_ActionIndex;
 		StepRunner();
 		return;
@@ -2415,6 +2476,8 @@ void CAutomation::StepRunner()
 	if(Action.m_Type == EActionType::GET_PLAYER_INFO)
 	{
 		ExecuteGetPlayerInfoAction(Action);
+		if(m_Runner.m_TestRun)
+			RecordTestActionOutput(m_Runner.m_ActionIndex, FormatGetPlayerInfoTestResult(Action));
 		++m_Runner.m_ActionIndex;
 		StepRunner();
 		return;

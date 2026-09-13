@@ -94,11 +94,11 @@ static const wchar_t *const kLauncherHtml = LR"HTMLDOC(<!DOCTYPE html>
   --play-radius:34px;
   --play-radius-compact:28px;
   --sc-r-sheet:32px;
-  --sc-r-block:26px;
+  --sc-r-block:28px;
   --sc-r-drawer:40px;
-  --sc-r-inset:16px;
+  --sc-r-inset:18px;
   --sc-r-icon:50%;
-  --sc-r-control:16px;
+  --sc-r-control:20px;
   --sc-r-pill:14px;
   --sc-r-tile:clamp(22px,22%,30px);
   --sc-r-tile-ico:12px;
@@ -229,7 +229,7 @@ body{
 .sc-gallery-search-icon svg{width:18px;height:18px;display:block}
 .sc-gallery-search{flex:1;min-width:0;border:0;border-radius:0;padding:12px 0;font:inherit;font-size:15px;color:var(--text);background:transparent;margin:0;outline:none}
 .sc-gallery-search::-webkit-search-cancel-button{-webkit-appearance:none}
-.sc-gallery-grid{overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(156px,1fr));gap:11px;align-content:start;max-width:780px;width:100%;margin-left:auto;margin-right:auto;box-sizing:border-box}
+.sc-gallery-grid{overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(156px,1fr));gap:11px;align-content:start;width:100%;box-sizing:border-box}
 .sc-gallery-grid::-webkit-scrollbar{width:8px}
 .sc-gallery-grid::-webkit-scrollbar-thumb{border-radius:999px;background:rgba(255,255,255,.14)}
 .sc-tile{position:relative;display:flex;flex-direction:column;border:0;border-radius:var(--sc-r-tile);min-height:104px;padding:13px 14px 12px;text-align:left;color:#fff;cursor:pointer;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.28);transition:filter .18s var(--ease),box-shadow .18s var(--ease)}
@@ -273,8 +273,14 @@ body{
 .sc-ed-title-trigger:hover{background:rgba(255,255,255,.07)}
 .sc-ed-title-trigger:active{background:rgba(255,255,255,.1)}
 .sc-ed-title-trigger[aria-expanded="true"]{background:rgba(255,255,255,.08)}
-.sc-ed-title-tile{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:0 0 auto;background:rgba(124,108,240,.22);color:var(--accent-hi);overflow:hidden}
+.sc-ed-title-tile{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:0 0 auto;color:#fff;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
 .sc-ed-title-tile .sc-block-icon-svg{width:16px;height:16px}
+.sc-ed-title-tile.tone-brown{background:linear-gradient(145deg,#8b6914,#6b4f0f)}
+.sc-ed-title-tile.tone-slate{background:linear-gradient(145deg,#4a5568,#2d3748)}
+.sc-ed-title-tile.tone-green{background:linear-gradient(145deg,#2d6a4f,#1b4332)}
+.sc-ed-title-tile.tone-blue{background:linear-gradient(145deg,#1d4e89,#1a365d)}
+.sc-ed-title-tile.tone-purple{background:linear-gradient(145deg,#5b21b6,#4c1d95)}
+.sc-ed-title-tile.tone-rose{background:linear-gradient(145deg,#9f1239,#881337)}
 .sc-ed-title-text{font:700 17px/1.2 inherit;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:min(46vw,280px)}
 .sc-ed-title-chev{display:grid;place-items:center;flex:0 0 auto;width:22px;height:22px;border-radius:50%;color:var(--dim);opacity:.92}
 .sc-ed-title-chev .sc-ed-chev-svg{width:18px;height:18px;display:block}
@@ -3482,6 +3488,7 @@ function scNormalizeAction(a, actionIdx) {
 function scCleanActionForSave(a, actionIdx) {
   a = JSON.parse(JSON.stringify(a));
   var idx = actionIdx == null ? 0 : actionIdx;
+  scNormalizeAction(a, idx);
   if (a.type === "send_chat") {
     if (a.channelMode === "variable")
       a.channel = {mode: "variable", variable: scVarRefCompactForSave(a.channelVariable || "messageChannel", idx)};
@@ -3638,12 +3645,26 @@ function scEditorDisplayName() {
   if (scEditing.trigger) return scSummaryTrigger(scEditing.trigger);
   return "New Automation";
 }
-function scEditorTitleTileHtml() {
-  var first = scEditing && scEditing.actions && scEditing.actions[0];
-  if (first && first.type) {
-    return scBlockIconInner(scActionDef(first.type).tone, scActionDef(first.type).icon, "action", first.type);
+function scShortcutCoverVisual(sc) {
+  if (!sc) return {kind: "action", type: "wait", tone: "action", icon: scActionDef("wait").icon};
+  if (scEntryKind(sc) === "automation" && sc.trigger && sc.trigger.type) {
+    var tdef = scTriggerDef(sc.trigger.type);
+    return {kind: "trigger", type: sc.trigger.type, tone: tdef.tone || "chat", icon: tdef.icon};
   }
-  return scInlineLucide("workflow");
+  var first = sc.actions && sc.actions[0];
+  if (first && first.type) {
+    var adef = scActionDefForAction(first);
+    return {kind: "action", type: first.type, tone: adef.tone || "action", icon: adef.icon};
+  }
+  return {kind: "action", type: "wait", tone: "action", icon: scActionDef("wait").icon};
+}
+function scShortcutCoverIconHtml(sc) {
+  var vis = scShortcutCoverVisual(sc);
+  return scBlockIconInner(vis.tone, vis.icon, vis.kind, vis.type);
+}
+function scEditorTitleTileHtml() {
+  if (!scEditing) return scInlineLucide("workflow");
+  return scShortcutCoverIconHtml(scEditing);
 }
 function scSyncEditorTitleUI() {
   var label = $("sc-ed-title-label");
@@ -3655,7 +3676,10 @@ function scSyncEditorTitleUI() {
   input.value = scEditing.name != null ? scEditing.name : "";
   if (!input.value && name) input.placeholder = name;
   label.textContent = name;
-  if (tile) tile.innerHTML = scEditorTitleTileHtml();
+  if (tile) {
+    tile.className = "sc-ed-title-tile " + scTileTone(scEditing.id);
+    tile.innerHTML = scEditorTitleTileHtml();
+  }
   if (chev) chev.innerHTML = scInlineLucide("chevron-down", "sc-ed-chev-svg-inner");
 }
 function scSetEditorTitleMenuOpen(open) {
@@ -3957,6 +3981,19 @@ function scVarDetailFillMenu(menu, ctx) {
       }
     });
   }
+}
+function scVarDetailMenuOpen() {
+  if (document.querySelector(".sc-var-detail-menu.is-open")) return true;
+  return !!(scVarDetailPortalHost && scVarDetailPortalHost.querySelector(".sc-var-detail-menu.is-open"));
+}
+function scDismissVarDetailMenu() {
+  if (!scVarDetailMenuOpen()) return;
+  var menu = document.querySelector(".sc-var-detail-menu.is-open");
+  if (!menu && scVarDetailPortalHost) menu = scVarDetailPortalHost.querySelector(".sc-var-detail-menu.is-open");
+  var ctx = menu && menu._scVarDetailCtx;
+  scCloseVarDetailMenu(null);
+  if (ctx && ctx.fieldEl) scHideVarDetailForField(ctx.fieldEl);
+  scCloseAllSmartMenus(null);
 }
 function scCloseVarDetailMenu(exceptMenu) {
   scVarDetailOpenAnchor = null;
@@ -4817,10 +4854,8 @@ function scTileTone(id) {
   for (var i = 0; i < id.length; i++) hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0;
   return SC_TILE_TONES[Math.abs(hash) % SC_TILE_TONES.length];
 }
-function scTileIcon(sc) {
-  var first = sc.actions && sc.actions[0];
-  if (first && first.type) return scActionDef(first.type).icon;
-  return "\u2699";
+function scTileIconHtml(sc) {
+  return scShortcutCoverIconHtml(sc);
 }
 function scRunShortcutActions(sc) {
   if (!sc || !sc.actions || !sc.actions.length) { scToast("Add at least one action"); return; }
@@ -4876,7 +4911,7 @@ function renderShortcutsGallery() {
     return '<div class="sc-tile ' + scTileTone(sc.id) +
       '" role="button" tabindex="0" data-id="' + esc(sc.id) + '">' +
       '<span class="sc-tile-top">' +
-      '<span class="sc-tile-ico">' + esc(scTileIcon(sc)) + '</span>' +
+      '<span class="sc-tile-ico">' + scTileIconHtml(sc) + '</span>' +
       '<button type="button" class="sc-tile-play" data-play="' + esc(sc.id) + '" title="Run shortcut" aria-label="Run shortcut">' +
       SC_PLAY_ICON + '</button></span>' +
       '<span class="sc-tile-name">' + esc(sc.name || "Shortcut") + '</span></div>';
@@ -5279,6 +5314,11 @@ function scCollectActionVarSources(action, idx) {
     scPushActionVarSource(src, action.channelVariable);
     scPushActionVarSource(src, action.uclientRoomVariable);
     scPushActionVarSource(src, action.messageVariable);
+  } else if (action.type === "get_player_info") {
+    if (scVarRefIsSet(action.nameVariable)) scPushActionVarSource(src, action.nameVariable);
+    else if (action.name && typeof action.name === "object" && action.name.mode === "variable") {
+      scPushActionVarSource(src, action.name.variable);
+    }
   } else if (action.type === "text") {
     (action.parts || []).forEach(function (p) {
       if (p.mode === "variable") scPushActionVarSource(src, p.variable);
@@ -5288,15 +5328,27 @@ function scCollectActionVarSources(action, idx) {
 }
 function scActionReferencesSource(action, idx, sourceId) {
   if (!sourceId || !action) return false;
-  return scCollectActionVarSources(action, idx).indexOf(sourceId) >= 0;
+  if (scCollectActionVarSources(action, idx).indexOf(sourceId) >= 0) return true;
+  if (action.type === "get_player_info") {
+    var nameTxt = action.nameText == null ? "" : String(action.nameText);
+    if (nameTxt.indexOf("%" + sourceId + "%") >= 0) return true;
+  }
+  if (action.type === "send_chat") {
+    var msgTxt = action.messageText == null ? "" : String(action.messageText);
+    if (msgTxt.indexOf("%" + sourceId + "%") >= 0) return true;
+  }
+  return false;
 }
 function scFlowLinkedFromPrev(idx) {
   if (!scEditing || !scEditing.actions || idx <= 0) return false;
   var actions = scEditing.actions;
   var prevIdx = idx - 1;
-  var prevOut = scActionOutputVariableId(actions[prevIdx], prevIdx);
+  var prevAction = actions[prevIdx];
+  var curAction = actions[idx];
+  if (!prevAction || !curAction) return false;
+  var prevOut = scActionOutputVariableId(prevAction, prevIdx);
   if (!prevOut) return false;
-  return scActionReferencesSource(actions[idx], idx, prevOut);
+  return scActionReferencesSource(curAction, idx, prevOut);
 }
 function scFlowLinksSignature() {
   var actions = scEditing && scEditing.actions;
@@ -5638,6 +5690,7 @@ function scRenderEditor(opts) {
   canvas.scrollTop = scroll;
   scSyncPillInputs(canvas);
   scSyncTextareaHeights(canvas);
+  scDeferTextComposerLayout(canvas);
   scBindCanvasDropGap(null);
   scApplyRunState({animateFlow: false});
 }
@@ -6099,7 +6152,14 @@ function scInlineSegmentMaxWidth(ta) {
   var composer = ta.closest(".sc-text-composer");
   if (!composer) return 400;
   var gap = 0;
-  var total = Math.max(48, composer.clientWidth - 24);
+  var composerW = composer.clientWidth;
+  if (composerW < 80) {
+    var wrap = composer.closest(".sc-text-composer-wrap");
+    var body = composer.closest(".sc-block-body");
+    if (wrap && wrap.clientWidth > composerW) composerW = wrap.clientWidth;
+    else if (body && body.clientWidth > composerW) composerW = body.clientWidth;
+  }
+  var total = Math.max(120, composerW - 24);
   var used = 0;
   var child = composer.firstElementChild;
   while (child) {
@@ -6165,8 +6225,18 @@ function scFitTextSegment(ta) {
 }
 function scSyncTextareaHeights(root) {
   var el = root || $("sc-ed-canvas");
+  if (!el) return;
   el.querySelectorAll(".sc-text-composer").forEach(function (composer) {
     composer.querySelectorAll("textarea.sc-text-segment-input").forEach(scFitTextSegment);
+  });
+}
+function scDeferTextComposerLayout(root) {
+  var el = root || $("sc-ed-canvas");
+  if (!el) return;
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () {
+      scSyncTextareaHeights(el);
+    });
   });
 }
 function scFitPillInput(input) {
@@ -6643,6 +6713,7 @@ function scOpenEditor(existing, editKind) {
     requestAnimationFrame(function () {
       ed.classList.add("on");
       scRelayoutDrawer();
+      scDeferTextComposerLayout($("sc-ed-canvas"));
     });
   });
 }
@@ -6669,6 +6740,7 @@ function scAnimateEditorSwap(existing, editKind) {
         if (gen !== scEditorAnimGen) return;
         ed.classList.add("on");
         scRelayoutDrawer();
+        scDeferTextComposerLayout($("sc-ed-canvas"));
       });
     });
   }
@@ -7202,7 +7274,10 @@ document.querySelectorAll(".sc-lib-tab").forEach(function (btn) {
 });
 window.addEventListener("resize", function () {
   scLayoutLibTabIndicator();
-  if ($("sc-editor").style.display === "flex") scRelayoutDrawer();
+  if ($("sc-editor").style.display === "flex") {
+    scRelayoutDrawer();
+    scDeferTextComposerLayout($("sc-ed-canvas"));
+  }
 });
 requestAnimationFrame(scLayoutLibTabIndicator);
 $("sc-gallery-search").addEventListener("input", function (e) {
@@ -7390,6 +7465,10 @@ $("sc-ed-canvas").addEventListener("keyup", function (e) {
   if (ta && !e.isComposing) scRememberTextCaret(ta);
 });
 $("sc-ed-canvas").addEventListener("focusin", function (e) {
+  if (scVarDetailMenuOpen() && !e.target.closest(".sc-var-detail-menu") &&
+      e.target.closest("input.sc-pill.input, textarea.sc-text-segment-input")) {
+    scDismissVarDetailMenu();
+  }
   var input = e.target.closest("input.sc-pill.input");
   var textarea = e.target.closest("textarea.sc-text-segment-input");
   if (textarea) {
@@ -7481,6 +7560,10 @@ $("sc-ed-canvas").addEventListener("input", function (e) {
   }
   if (input.classList.contains("sc-var-detail-name-input")) {
     return;
+  }
+  if (scVarDetailMenuOpen() && !input.closest(".sc-var-detail-menu") &&
+      input.matches("input.sc-pill.input, textarea.sc-text-segment-input")) {
+    scDismissVarDetailMenu();
   }
   if (input.tagName !== "TEXTAREA") scFitPillInput(input);
 });
