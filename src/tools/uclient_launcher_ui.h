@@ -431,14 +431,15 @@ body{
 .sc-drawer.sc-drawer-capsule .sc-drawer-search-chip.is-on{padding:2px 8px;font-size:11px;line-height:1.2;gap:4px}
 .sc-drawer.sc-drawer-capsule .sc-drawer-search-chip .sc-drawer-filter-ico{width:11px;height:11px}
 .sc-drawer.sc-drawer-capsule .sc-drawer-chips,.sc-drawer.sc-drawer-capsule .sc-drawer-list{display:none}
-.sc-drawer-toolbar{display:flex;align-items:center;justify-content:space-between;gap:6px;flex:0 0 auto;max-height:calc(var(--sc-drawer-t) * 54px);padding:calc(var(--sc-drawer-t) * 2px) calc(var(--sc-drawer-t) * 18px) calc(var(--sc-drawer-t) * 12px);overflow:hidden;opacity:var(--sc-drawer-t);pointer-events:none;transition:max-height .34s var(--spring),padding .34s var(--spring),opacity .28s var(--ease)}
-.sc-drawer.sc-drawer-capsule .sc-drawer-toolbar{max-height:40px;padding:0 14px 4px;opacity:1;pointer-events:auto}
-.sc-tb-btn{width:40px;height:40px;border:0;border-radius:50%;background:transparent;color:var(--dim);padding:0;display:grid;place-items:center;transition:background .14s var(--ease),color .14s var(--ease),transform 80ms ease-out}
-.sc-tb-btn:not(:disabled){cursor:pointer}
-.sc-tb-btn svg{width:21px;height:21px;display:block;flex:0 0 auto;pointer-events:none}
-.sc-tb-btn:hover:not(:disabled){background:rgba(255,255,255,.08);color:#fff}
-.sc-tb-btn:active:not(:disabled){transform:scale(.9)}
-.sc-tb-btn:disabled,.sc-tb-btn:disabled:hover,.sc-tb-btn:disabled:active{opacity:.32;cursor:default;background:transparent;transform:none}
+.sc-drawer-toolbar{display:flex;align-items:center;justify-content:center;gap:0;flex:0 0 auto;max-height:0;padding:0 10px;margin:0;overflow:hidden;opacity:0;pointer-events:none;transition:max-height .32s var(--spring),padding .32s var(--spring),opacity .22s var(--ease)}
+.sc-drawer.sc-drawer-capsule .sc-drawer-toolbar{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));place-items:center;max-height:48px;padding:0 8px 8px;opacity:1;pointer-events:auto}
+.sc-drawer.sc-drawer-capsule .sc-drawer-toolbar .sc-tb-btn{width:40px;height:40px;max-width:40px;flex:none;margin:0}
+.sc-tb-btn{width:40px;height:40px;min-width:40px;min-height:40px;border:0;border-radius:50%;background:transparent;color:var(--dim);padding:0;display:grid;place-items:center;box-sizing:border-box;pointer-events:auto;transition:background .14s var(--ease),color .14s var(--ease),transform 80ms ease-out}
+.sc-tb-btn:not([aria-disabled="true"]){cursor:pointer}
+.sc-tb-btn svg{width:21px;height:21px;display:block;pointer-events:none}
+.sc-tb-btn:hover:not([aria-disabled="true"]){background:rgba(255,255,255,.08);color:#fff}
+.sc-tb-btn:active:not([aria-disabled="true"]){transform:scale(.9)}
+.sc-tb-btn[aria-disabled="true"],.sc-tb-btn[aria-disabled="true"]:hover,.sc-tb-btn[aria-disabled="true"]:active{opacity:.32;cursor:default;background:transparent;transform:none}
 .sc-tb-btn.sc-tb-play{color:var(--text)}
 .sc-drawer-grab{padding:12px 0 8px;cursor:grab;touch-action:none;flex:0 0 auto}
 .sc-drawer-grab:active{cursor:grabbing}
@@ -1331,16 +1332,16 @@ body.dev-build #dev-panel{display:block}
             <input class="sc-drawer-search" id="sc-drawer-search" type="text" autocomplete="off" placeholder="Search actions" enterkeyhint="search">
           </div>
           <div class="sc-drawer-toolbar" id="sc-drawer-toolbar">
-            <button class="sc-tb-btn" id="sc-tb-undo" type="button" title="Undo" disabled>
+            <button class="sc-tb-btn" id="sc-tb-undo" type="button" title="Undo" aria-disabled="true">
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 7L5 11l4 4M5 11h8a5 5 0 0 1 5 5v1" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="sc-tb-btn" id="sc-tb-redo" type="button" title="Redo" disabled>
+            <button class="sc-tb-btn" id="sc-tb-redo" type="button" title="Redo" aria-disabled="true">
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 7l4 4-4 4M19 11h-8a5 5 0 0 0-5 5v1" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="sc-tb-btn" id="sc-tb-info" type="button" title="Info" disabled>
+            <button class="sc-tb-btn" id="sc-tb-info" type="button" title="Info" aria-disabled="true">
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.6" stroke="currentColor" stroke-width="1.8"/><path d="M12 11v5.2M12 8.1v.9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
             </button>
-            <button class="sc-tb-btn" id="sc-tb-share" type="button" title="Share" disabled>
+            <button class="sc-tb-btn" id="sc-tb-share" type="button" title="Share" aria-disabled="true">
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15.5V4.2M8.4 7.6L12 4l3.6 3.6M6 13v6.2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V13" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
             <button class="sc-tb-btn sc-tb-play" id="sc-tb-play" type="button" title="Test run">
@@ -3015,6 +3016,29 @@ function scAvailableVariables(beforeIdx) {
   }
   return vars;
 }
+function scActionOutputVariableId(action, actionIdx) {
+  if (!action) return "";
+  if (action.type === "get") return scGetPropertyVarId(action.property);
+  if (action.type === "get_clipboard") return action.as || "clipboard";
+  if (action.type === "text") return action.as || ("text_" + actionIdx);
+  return "";
+}
+function scNearestVariableIdAbove(beforeIdx) {
+  if (!scEditing || !scEditing.actions) return "";
+  var start = beforeIdx == null ? scEditing.actions.length : beforeIdx;
+  for (var i = start - 1; i >= 0; i--) {
+    var id = scActionOutputVariableId(scEditing.actions[i], i);
+    if (id) return id;
+  }
+  return "";
+}
+function scPrefillIfFromNearestVariable(ifAction, beforeIdx) {
+  if (!ifAction || ifAction.type !== "if") return;
+  var varId = scNearestVariableIdAbove(beforeIdx);
+  if (!varId) return;
+  ifAction.left = varId;
+  scNormalizeIfConditionObj(ifAction);
+}
 function scSmartFieldVariables(slot, beforeIdx) {
   var all = scAvailableVariables(beforeIdx);
   if (slot === "channel") {
@@ -4545,6 +4569,19 @@ var scRun = null;
 function scRunActive() {
   return !!(scRun && scRun.status === "running");
 }
+function scTbBtnSetDisabled(btn, disabled) {
+  if (!btn) return;
+  if (disabled) {
+    btn.setAttribute("aria-disabled", "true");
+    btn.tabIndex = -1;
+  } else {
+    btn.removeAttribute("aria-disabled");
+    btn.tabIndex = 0;
+  }
+}
+function scTbBtnDisabled(btn) {
+  return !!(btn && btn.getAttribute("aria-disabled") === "true");
+}
 function scUpdatePlayButton() {
   var btn = $("sc-tb-play");
   if (!btn) return;
@@ -4552,7 +4589,7 @@ function scUpdatePlayButton() {
   // The icon stays the play glyph while running, only the action flips to stop.
   if (!btn.firstChild) btn.innerHTML = SC_PLAY_ICON;
   btn.title = running ? "Stop test run" : "Test run";
-  btn.disabled = !running && !(lastState && lastState.gameRunning);
+  scTbBtnSetDisabled(btn, !running && !(lastState && lastState.gameRunning));
 }
 var SC_WAIT_SECONDS_MIN = 1;
 var SC_WAIT_SECONDS_MAX = 3600;
@@ -4721,10 +4758,8 @@ function scEditingSnapshot() {
   return scEditing ? JSON.stringify(scEditing) : null;
 }
 function scUpdateHistoryButtons() {
-  var undo = $("sc-tb-undo");
-  var redo = $("sc-tb-redo");
-  if (undo) undo.disabled = !scEditHistory.length;
-  if (redo) redo.disabled = !scEditFuture.length;
+  scTbBtnSetDisabled($("sc-tb-undo"), !scEditHistory.length);
+  scTbBtnSetDisabled($("sc-tb-redo"), !scEditFuture.length);
 }
 function scResetHistory() {
   scEditHistory = [];
@@ -5860,7 +5895,7 @@ var SC_DRAWER_HEIGHT_MAX = 520;
 var SC_DRAWER_STAGE2_VISIBLE = 100;
 var SC_DRAWER_CAP_W_MAX = 340;
 var SC_DRAWER_CAP_W_MARGIN = 72;
-var SC_DRAWER_CAP_H = 100;
+var SC_DRAWER_CAP_H = 114;
 var SC_DRAWER_CAP_BOTTOM = 12;
 var SC_DRAWER_RUBBER = 0.16;
 var SC_DRAWER_FLICK_PX_S = 520;
@@ -6051,6 +6086,7 @@ function scAddCatalogBlock(kind, id) {
     }
     if (copy.type === "if") {
       var startIdx = scEditing.actions.length;
+      scPrefillIfFromNearestVariable(copy, startIdx);
       scEditing.actions.push(copy);
       scEditing.actions.push({type: "otherwise"});
       scEditing.actions.push({type: "end_if"});
@@ -6415,9 +6451,16 @@ $("sc-ed-title").addEventListener("input", function (e) {
   var label = $("sc-ed-title-label");
   if (label) label.textContent = e.target.value || scEditorDisplayName();
 });
-$("sc-tb-undo").addEventListener("click", scUndo);
-$("sc-tb-redo").addEventListener("click", scRedo);
+$("sc-tb-undo").addEventListener("click", function () {
+  if (scTbBtnDisabled($("sc-tb-undo"))) return;
+  scUndo();
+});
+$("sc-tb-redo").addEventListener("click", function () {
+  if (scTbBtnDisabled($("sc-tb-redo"))) return;
+  scRedo();
+});
 $("sc-tb-play").addEventListener("click", function () {
+  if (scTbBtnDisabled($("sc-tb-play"))) return;
   if (!scEditing) return;
   if (scRunActive()) {
     scStopRun(true);
