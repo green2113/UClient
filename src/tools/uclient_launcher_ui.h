@@ -1623,7 +1623,7 @@ document.addEventListener("keydown", function (e) {
     var inEditor = ed && ed.style.display === "flex" && ed.classList.contains("on");
     if (inEditor) return;
     if (e.target.closest("input,textarea,button,form,[contenteditable='true']")) return;
-    send({cmd: "play"});
+    scSendPlayOrUpdate();
   }
   if (!scEditing || !(e.ctrlKey || e.metaKey)) return;
   var key = String(e.key || "").toLowerCase();
@@ -1943,9 +1943,13 @@ document.addEventListener("pointerout", function (e) {
 });
 window.addEventListener("resize", function () { hideLogoutTooltip(true); });
 window.addEventListener("scroll", function () { hideLogoutTooltip(true); }, true);
+function scSendPlayOrUpdate() {
+  var play = $("play");
+  if (!play || play.disabled) return;
+  send({cmd: play.classList.contains("mode-update") ? "update" : "play"});
+}
 $("play").addEventListener("click", function () {
-  if ($("play").disabled) return;
-  send({cmd: "play"});
+  scSendPlayOrUpdate();
 });
 $("update-now").addEventListener("click", function () {
   if ($("update-now").disabled) return;
@@ -7881,11 +7885,18 @@ window.__setState = function (st) {
   var play = $("play");
   var actionBlocked = !!st.playBlocked;
   var accountReady = st.accountState === "ready_anonymous" || st.accountState === "ready_email";
-  play.disabled = st.phase !== "ready" || actionBlocked || !accountReady;
+  var showUpdateBtn = st.phase === "ready" && !!st.updateAvailable;
+  play.disabled = st.phase !== "ready" || actionBlocked || !accountReady ||
+    (showUpdateBtn && !!st.gameRunning);
 
   if (st.phase === "ready") {
-    setPlayFaceMode(play, "mode-play");
-    $("play-label").textContent = st.buttonLabel || "Play";
+    if (showUpdateBtn) {
+      setPlayFaceMode(play, "mode-update");
+      $("update-label").textContent = "Update";
+    } else {
+      setPlayFaceMode(play, "mode-play");
+      $("play-label").textContent = st.buttonLabel || "Play";
+    }
   } else if (st.phase === "checking") {
     setPlayFaceMode(play, "mode-checking");
     $("play-check-label").textContent = st.buttonLabel || "Checking for updates";

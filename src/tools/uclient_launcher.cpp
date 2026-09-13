@@ -1649,8 +1649,7 @@ static bool FetchClientUpdateMetadata(UpdateMetadata &Out)
 	if(FetchUpdateMetadata(UCLIENT_CLIENT_UPDATE_LATEST_URL, "client", false, Out))
 		return true;
 	UpdateMetadata Legacy;
-	if(FetchUpdateMetadata(UCLIENT_UPDATE_LATEST_URL, "client", true, Legacy) &&
-		CompareVersions(Legacy.Version, UCLIENT_CLIENT_VERSION) <= 0)
+	if(FetchUpdateMetadata(UCLIENT_UPDATE_LATEST_URL, "client", true, Legacy))
 	{
 		Out = std::move(Legacy);
 		return true;
