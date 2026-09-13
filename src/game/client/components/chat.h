@@ -672,6 +672,8 @@ class CChat : public CComponent
 	bool CanReactToLine(const CLine &Line) const;
 	float ReplyBannerHeight(float ScaledFontSize) const;
 	void RenderReplyBanner(float x, float InputY, float ScaledFontSize);
+	float AutomationAskBannerHeight(float ScaledFontSize) const;
+	void RenderAutomationAskBanner(float x, float AnchorY, float ScaledFontSize, float LineWidth);
 	void ResetTypingAnimation();
 	void SyncTypingAnimationBaseline();
 	void RefreshTypingAnimation();

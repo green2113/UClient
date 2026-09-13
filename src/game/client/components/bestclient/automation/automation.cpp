@@ -16,6 +16,7 @@
 #include <game/client/components/chat.h>
 #include <game/client/components/controls.h>
 #include <game/client/gameclient.h>
+#include <game/localization.h>
 
 // Reading the foreground window title needs the Win32 API. It is included last
 // and lean so its macros cannot leak into any DDNet header.
@@ -29,6 +30,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shellapi.h>
 #endif
 
 static constexpr const char *SHORTCUTS_FILE = "uclient_shortcuts.json";
@@ -220,7 +222,7 @@ static bool ParseTrigger(const json_value *pTrigger, CAutomation::STrigger &Out)
 	Out.m_Channel = ParseChannel(pChannel && pChannel->type == json_string ? pChannel->u.string.ptr : nullptr);
 
 	const json_value *pFilters = json_object_get(pTrigger, "filters");
-	if(pFilters && pFilters->type == json_array && json_array_length(pFilters) > 0)
+	if(pFilters && pFilters->type == json_array)
 	{
 		const int Count = json_array_length(pFilters);
 		for(int i = 0; i < Count; ++i)
@@ -229,10 +231,11 @@ static bool ParseTrigger(const json_value *pTrigger, CAutomation::STrigger &Out)
 			if(ParseChatFilter(json_array_get(pFilters, i), Filter))
 				Out.m_Filters.push_back(std::move(Filter));
 		}
+		// Editor saves chat_received with filters: [] ("from others", any message).
 		return true;
 	}
 
-	// Legacy flat trigger format.
+	// Legacy flat trigger format (no "filters" key).
 	CAutomation::SChatFilter SenderFilter;
 	SenderFilter.m_Kind = CAutomation::SChatFilter::EKind::SENDER;
 	const json_value *pSender = json_object_get(pTrigger, "sender");
@@ -261,10 +264,78 @@ static CAutomation::EValueMode ParseValueMode(const char *pValue)
 	return CAutomation::EValueMode::TEXT;
 }
 
+static bool ParseVarRefField(const json_value *pVariable, std::string &OutSource, std::string &OutGet)
+{
+	OutSource.clear();
+	OutGet.clear();
+	if(!pVariable)
+		return false;
+	if(pVariable->type == json_string && pVariable->u.string.ptr && pVariable->u.string.ptr[0])
+	{
+		OutSource = pVariable->u.string.ptr;
+		return true;
+	}
+	if(pVariable->type == json_object)
+	{
+		const json_value *pSource = json_object_get(pVariable, "source");
+		if(!pSource || pSource->type != json_string || !pSource->u.string.ptr || !pSource->u.string.ptr[0])
+			return false;
+		OutSource = pSource->u.string.ptr;
+		const json_value *pGet = json_object_get(pVariable, "get");
+		if(pGet && pGet->type == json_string && pGet->u.string.ptr)
+			OutGet = pGet->u.string.ptr;
+		return true;
+	}
+	return false;
+}
+
+static bool ParseTextOrVariableField(const json_value *pField, CAutomation::EValueMode &OutMode, std::string &OutText, std::string &OutVariable, std::string &OutVariableGet)
+{
+	if(!pField)
+	{
+		OutMode = CAutomation::EValueMode::TEXT;
+		OutText.clear();
+		return true;
+	}
+	if(pField->type == json_string)
+	{
+		OutMode = CAutomation::EValueMode::TEXT;
+		OutText = pField->u.string.ptr;
+		return true;
+	}
+	if(pField->type != json_object)
+		return false;
+	const json_value *pMode = json_object_get(pField, "mode");
+	const char *pModeStr = pMode && pMode->type == json_string ? pMode->u.string.ptr : "text";
+	OutMode = ParseValueMode(pModeStr);
+	if(OutMode == CAutomation::EValueMode::VARIABLE)
+	{
+		const json_value *pVariable = json_object_get(pField, "variable");
+		if(!ParseVarRefField(pVariable, OutVariable, OutVariableGet))
+		{
+			OutMode = CAutomation::EValueMode::TEXT;
+			OutText.clear();
+		}
+		return true;
+	}
+	const json_value *pText = json_object_get(pField, "text");
+	if(!pText || pText->type != json_string)
+	{
+		OutText.clear();
+		return true;
+	}
+	OutText = pText->u.string.ptr;
+	return true;
+}
+
 static bool ParseMessageField(const json_value *pMessage, CAutomation::SAction &Out)
 {
 	if(!pMessage)
-		return false;
+	{
+		Out.m_MessageMode = CAutomation::EValueMode::TEXT;
+		Out.m_Message.clear();
+		return true;
+	}
 	if(pMessage->type == json_string)
 	{
 		Out.m_MessageMode = CAutomation::EValueMode::TEXT;
@@ -279,9 +350,11 @@ static bool ParseMessageField(const json_value *pMessage, CAutomation::SAction &
 	if(Out.m_MessageMode == CAutomation::EValueMode::VARIABLE)
 	{
 		const json_value *pVariable = json_object_get(pMessage, "variable");
-		if(!pVariable || pVariable->type != json_string || !pVariable->u.string.ptr)
-			return false;
-		Out.m_Variable = pVariable->u.string.ptr;
+		if(!ParseVarRefField(pVariable, Out.m_Variable, Out.m_MessageVariableGet))
+		{
+			Out.m_MessageMode = CAutomation::EValueMode::TEXT;
+			Out.m_Message.clear();
+		}
 		return true;
 	}
 	const json_value *pText = json_object_get(pMessage, "text");
@@ -297,7 +370,11 @@ static bool ParseMessageField(const json_value *pMessage, CAutomation::SAction &
 static bool ParseChannelField(const json_value *pChannel, CAutomation::SAction &Out)
 {
 	if(!pChannel)
-		return false;
+	{
+		Out.m_ChannelMode = CAutomation::EValueMode::TEXT;
+		Out.m_Channel = CAutomation::EChatChannel::ALL;
+		return true;
+	}
 	if(pChannel->type == json_string)
 	{
 		Out.m_ChannelMode = CAutomation::EValueMode::TEXT;
@@ -312,9 +389,8 @@ static bool ParseChannelField(const json_value *pChannel, CAutomation::SAction &
 	if(Out.m_ChannelMode == CAutomation::EValueMode::VARIABLE)
 	{
 		const json_value *pVariable = json_object_get(pChannel, "variable");
-		if(!pVariable || pVariable->type != json_string || !pVariable->u.string.ptr)
+		if(!ParseVarRefField(pVariable, Out.m_ChannelVariable, Out.m_ChannelVariableGet))
 			return false;
-		Out.m_ChannelVariable = pVariable->u.string.ptr;
 		return true;
 	}
 	const json_value *pText = json_object_get(pChannel, "text");
@@ -344,9 +420,8 @@ static bool ParseUClientRoomField(const json_value *pRoom, CAutomation::SAction 
 	if(Out.m_UClientRoomMode == CAutomation::EValueMode::VARIABLE)
 	{
 		const json_value *pVariable = json_object_get(pRoom, "variable");
-		if(!pVariable || pVariable->type != json_string || !pVariable->u.string.ptr)
+		if(!ParseVarRefField(pVariable, Out.m_UClientRoomVariable, Out.m_UClientRoomVariableGet))
 			return false;
-		Out.m_UClientRoomVariable = pVariable->u.string.ptr;
 		return true;
 	}
 	const json_value *pText = json_object_get(pRoom, "text");
@@ -374,9 +449,8 @@ static bool ParseTextParts(const json_value *pParts, std::vector<CAutomation::ST
 		if(Part.m_Mode == CAutomation::EValueMode::VARIABLE)
 		{
 			const json_value *pVariable = json_object_get(pPart, "variable");
-			if(!pVariable || pVariable->type != json_string || !pVariable->u.string.ptr)
+			if(!ParseVarRefField(pVariable, Part.m_Variable, Part.m_VariableGet))
 				continue;
-			Part.m_Variable = pVariable->u.string.ptr;
 		}
 		else
 		{
@@ -537,6 +611,32 @@ static bool ParseAction(const json_value *pAction, CAutomation::SAction &Out)
 			Out.m_OutputVariable = "clipboard";
 		return true;
 	}
+	if(str_comp(pTypeStr, "get_player_info") == 0)
+	{
+		Out.m_Type = CAutomation::EActionType::GET_PLAYER_INFO;
+		const json_value *pName = json_object_get(pAction, "name");
+		if(!ParseTextOrVariableField(pName, Out.m_NameMode, Out.m_Name, Out.m_NameVariable, Out.m_NameVariableGet))
+			return false;
+		const json_value *pAs = json_object_get(pAction, "as");
+		if(pAs && pAs->type == json_string && pAs->u.string.ptr && pAs->u.string.ptr[0])
+			Out.m_OutputVariable = pAs->u.string.ptr;
+		else
+			Out.m_OutputVariable = "player";
+		return true;
+	}
+	if(str_comp(pTypeStr, "ask_for_text") == 0)
+	{
+		Out.m_Type = CAutomation::EActionType::ASK_FOR_TEXT;
+		const json_value *pPrompt = json_object_get(pAction, "prompt");
+		if(pPrompt && pPrompt->type == json_string && pPrompt->u.string.ptr)
+			Out.m_Message = pPrompt->u.string.ptr;
+		const json_value *pAs = json_object_get(pAction, "as");
+		if(pAs && pAs->type == json_string && pAs->u.string.ptr && pAs->u.string.ptr[0])
+			Out.m_OutputVariable = pAs->u.string.ptr;
+		else
+			Out.m_OutputVariable = "ask";
+		return true;
+	}
 	if(str_comp(pTypeStr, "repeat") == 0)
 	{
 		Out.m_Type = CAutomation::EActionType::REPEAT;
@@ -581,15 +681,17 @@ static bool ParseAction(const json_value *pAction, CAutomation::SAction &Out)
 				const json_value *pLeft = json_object_get(pCond, "left");
 				const json_value *pOp = json_object_get(pCond, "op");
 				const json_value *pRight = json_object_get(pCond, "right");
-				if(!pLeft || pLeft->type != json_string || !pLeft->u.string.ptr || !pLeft->u.string.ptr[0])
-					continue;
 				if(!pOp || pOp->type != json_string || !pOp->u.string.ptr)
 					continue;
 				CAutomation::SIfCondition Cond;
-				Cond.m_Left = pLeft->u.string.ptr;
+				if(!ParseVarRefField(pLeft, Cond.m_Left, Cond.m_LeftGet))
+					continue;
 				Cond.m_Op = pOp->u.string.ptr;
 				if(pRight && pRight->type == json_string && pRight->u.string.ptr)
 					Cond.m_Right = pRight->u.string.ptr;
+				const json_value *pRightUnit = json_object_get(pCond, "rightUnit");
+				if(pRightUnit && pRightUnit->type == json_string && pRightUnit->u.string.ptr)
+					Cond.m_RightUnit = pRightUnit->u.string.ptr;
 				Out.m_IfConditions.push_back(std::move(Cond));
 			}
 			return true;
@@ -597,14 +699,16 @@ static bool ParseAction(const json_value *pAction, CAutomation::SAction &Out)
 		const json_value *pLeft = json_object_get(pAction, "left");
 		const json_value *pOp = json_object_get(pAction, "op");
 		const json_value *pRight = json_object_get(pAction, "right");
-		if(!pLeft || pLeft->type != json_string || !pLeft->u.string.ptr)
+		if(!ParseVarRefField(pLeft, Out.m_IfLeft, Out.m_IfLeftGet))
 			return false;
 		if(!pOp || pOp->type != json_string || !pOp->u.string.ptr)
 			return false;
-		Out.m_IfLeft = pLeft->u.string.ptr;
 		Out.m_IfOp = pOp->u.string.ptr;
 		if(pRight && pRight->type == json_string && pRight->u.string.ptr)
 			Out.m_IfRight = pRight->u.string.ptr;
+		const json_value *pRightUnit = json_object_get(pAction, "rightUnit");
+		if(pRightUnit && pRightUnit->type == json_string && pRightUnit->u.string.ptr)
+			Out.m_IfRightUnit = pRightUnit->u.string.ptr;
 		return true;
 	}
 	if(str_comp(pTypeStr, "otherwise") == 0)
@@ -763,8 +867,8 @@ void CAutomation::OnUpdate()
 	}
 	if(m_RunnerActive)
 		StepRunner();
-	// While waiting the remaining time keeps changing, so refresh at ~10 Hz.
-	if(m_RunnerActive && m_Runner.m_TestRun && m_Runner.m_WaitUntil != 0 &&
+	// Keep the launcher in sync during test runs (fast steps can finish between polls).
+	if(m_RunnerActive && m_Runner.m_TestRun &&
 		Now - m_LastTestStateWrite >= time_freq() / 10)
 		WriteTestRunState("running");
 }
@@ -1041,6 +1145,8 @@ void CAutomation::OnStateChange(int NewState, int OldState)
 	if(NewState == IClient::STATE_OFFLINE)
 	{
 		m_ServerConnectTriggeredForSession = false;
+		if(m_RunnerActive)
+			StopRunner();
 		return;
 	}
 	if(NewState != IClient::STATE_ONLINE || OldState != IClient::STATE_LOADING)
@@ -1083,6 +1189,8 @@ bool CAutomation::MatchesChatTrigger(const SShortcut &Shortcut, const SChatEvent
 
 void CAutomation::OnChatReceived(const SChatEvent &Event)
 {
+	m_LastChatEvent = Event;
+	m_HasLastChatEvent = true;
 	if(!IsActive() || m_vShortcuts.empty())
 		return;
 	if(m_RunnerActive)
@@ -1101,6 +1209,22 @@ void CAutomation::OnChatReceived(const SChatEvent &Event)
 	}
 }
 
+void CAutomation::SeedRunnerChatVariables(const SChatEvent &Event)
+{
+	m_Runner.m_HadChatEvent = true;
+	m_Runner.m_ChatEvent = Event;
+	const char *pChannel = Event.m_Channel == EChatChannel::TEAM ? "team" :
+						   Event.m_Channel == EChatChannel::UCLIENT ? "uclient" : "all";
+	m_Runner.m_Variables["messageSender"] = Event.m_Name;
+	m_Runner.m_Variables["messageText"] = Event.m_Text;
+	m_Runner.m_Variables["messageChannel"] = pChannel;
+	m_Runner.m_Variables["messageUClientRoom"] = Event.m_UClientRoomName;
+	m_Runner.m_Variables["messageUClientRoomId"] = Event.m_UClientRoomId;
+	m_Runner.m_Variables["senderName"] = Event.m_Name;
+	m_Runner.m_Variables["sender"] = Event.m_Name;
+	m_Runner.m_Variables["message"] = Event.m_Text;
+}
+
 void CAutomation::StartRunner(size_t ShortcutIndex, const SChatEvent *pChatEvent)
 {
 	if(ShortcutIndex >= m_vShortcuts.size())
@@ -1110,20 +1234,7 @@ void CAutomation::StartRunner(size_t ShortcutIndex, const SChatEvent *pChatEvent
 	m_Runner.m_ShortcutId = m_vShortcuts[ShortcutIndex].m_Id;
 	m_Runner.m_ActionIndex = 0;
 	if(pChatEvent)
-	{
-		m_Runner.m_HadChatEvent = true;
-		m_Runner.m_ChatEvent = *pChatEvent;
-		const char *pChannel = pChatEvent->m_Channel == EChatChannel::TEAM ? "team" :
-							   pChatEvent->m_Channel == EChatChannel::UCLIENT ? "uclient" : "all";
-		m_Runner.m_Variables["messageSender"] = pChatEvent->m_Name;
-		m_Runner.m_Variables["messageText"] = pChatEvent->m_Text;
-		m_Runner.m_Variables["messageChannel"] = pChannel;
-		m_Runner.m_Variables["messageUClientRoom"] = pChatEvent->m_UClientRoomName;
-		m_Runner.m_Variables["messageUClientRoomId"] = pChatEvent->m_UClientRoomId;
-		m_Runner.m_Variables["senderName"] = pChatEvent->m_Name;
-		m_Runner.m_Variables["sender"] = pChatEvent->m_Name;
-		m_Runner.m_Variables["message"] = pChatEvent->m_Text;
-	}
+		SeedRunnerChatVariables(*pChatEvent);
 	if(g_Config.m_PlayerName[0])
 		m_Runner.m_Variables["name"] = g_Config.m_PlayerName;
 	char aNearestPlayer[MAX_NAME_LENGTH];
@@ -1194,8 +1305,14 @@ void CAutomation::PushRunnerCallFrame(size_t ReturnActionIndex)
 	Frame.m_WeaponUseReadyTime = m_Runner.m_WeaponUseReadyTime;
 	Frame.m_vIfFrames = std::move(m_Runner.m_vIfFrames);
 	Frame.m_vRepeatFrames = std::move(m_Runner.m_vRepeatFrames);
+	Frame.m_AskActive = m_Runner.m_AskActive;
+	Frame.m_AskPrompt = std::move(m_Runner.m_AskPrompt);
+	Frame.m_AskOutputVar = std::move(m_Runner.m_AskOutputVar);
 	m_Runner.m_vIfFrames.clear();
 	m_Runner.m_vRepeatFrames.clear();
+	m_Runner.m_AskActive = false;
+	m_Runner.m_AskPrompt.clear();
+	m_Runner.m_AskOutputVar.clear();
 	m_Runner.m_vCallStack.push_back(std::move(Frame));
 }
 
@@ -1214,6 +1331,9 @@ void CAutomation::PopRunnerCallFrame()
 	m_Runner.m_WeaponUseReadyTime = Frame.m_WeaponUseReadyTime;
 	m_Runner.m_vIfFrames = std::move(Frame.m_vIfFrames);
 	m_Runner.m_vRepeatFrames = std::move(Frame.m_vRepeatFrames);
+	m_Runner.m_AskActive = Frame.m_AskActive;
+	m_Runner.m_AskPrompt = std::move(Frame.m_AskPrompt);
+	m_Runner.m_AskOutputVar = std::move(Frame.m_AskOutputVar);
 }
 
 const CAutomation::SShortcut *CAutomation::RunnerShortcut() const
@@ -1314,12 +1434,83 @@ size_t CAutomation::FindOtherwise(size_t IfIndex, size_t EndIfIndex) const
 	return SIZE_MAX;
 }
 
+static bool ParseInt64Loose(const char *pStr, int64_t *pOut)
+{
+	if(!pStr || !pOut)
+		return false;
+	while(*pStr == ' ' || *pStr == '\t')
+		pStr++;
+	if(*pStr == 0)
+		return false;
+	char *pEnd = nullptr;
+	const int64_t Value = strtoll(pStr, &pEnd, 10);
+	if(pEnd == pStr)
+		return false;
+	while(*pEnd == ' ' || *pEnd == '\t')
+		pEnd++;
+	if(*pEnd != 0)
+		return false;
+	*pOut = Value;
+	return true;
+}
+
+static int64_t FileSizeUnitMultiplier(const char *pUnit)
+{
+	if(!pUnit || !pUnit[0])
+		return 1;
+	if(str_comp_nocase(pUnit, "bytes") == 0)
+		return 1;
+	if(str_comp(pUnit, "KB") == 0)
+		return 1024;
+	if(str_comp(pUnit, "MB") == 0)
+		return 1024 * 1024;
+	if(str_comp(pUnit, "GB") == 0)
+		return 1024LL * 1024 * 1024;
+	if(str_comp(pUnit, "TB") == 0)
+		return 1024LL * 1024 * 1024 * 1024;
+	return 1;
+}
+
+static std::string RightBytesForFileSizeCompare(const std::string &Right, const std::string &Unit)
+{
+	int64_t Num = 0;
+	if(!ParseInt64Loose(Right.c_str(), &Num))
+		return Right;
+	const int64_t Mult = FileSizeUnitMultiplier(Unit.c_str());
+	const int64_t Bytes = Num * Mult;
+	char aBuf[32];
+	str_format(aBuf, sizeof(aBuf), "%lld", (long long)Bytes);
+	return aBuf;
+}
+
 bool CAutomation::ValuesMatch(const std::string &Left, const std::string &Op, const std::string &Right) const
 {
 	if(Op == "has_any")
 		return !Left.empty();
 	if(Op == "has_none")
 		return Left.empty();
+	int64_t LeftNum = 0;
+	int64_t RightNum = 0;
+	const bool LeftIsNum = ParseInt64Loose(Left.c_str(), &LeftNum);
+	const bool RightIsNum = ParseInt64Loose(Right.c_str(), &RightNum);
+	const bool NumericOp = Op == "is_less_than" || Op == "is_less_than_or_equal" ||
+			       Op == "is_greater_than" || Op == "is_greater_than_or_equal";
+	if(NumericOp || (LeftIsNum && RightIsNum && (Op == "is" || Op == "is_not")))
+	{
+		if(!LeftIsNum || !RightIsNum)
+			return false;
+		if(Op == "is_less_than")
+			return LeftNum < RightNum;
+		if(Op == "is_less_than_or_equal")
+			return LeftNum <= RightNum;
+		if(Op == "is_greater_than")
+			return LeftNum > RightNum;
+		if(Op == "is_greater_than_or_equal")
+			return LeftNum >= RightNum;
+		if(Op == "is_not")
+			return LeftNum != RightNum;
+		return LeftNum == RightNum;
+	}
 	if(Op == "contains")
 		return str_find_nocase(Left.c_str(), Right.c_str()) != nullptr;
 	if(Op == "not_contains")
@@ -1335,12 +1526,16 @@ bool CAutomation::ValuesMatch(const std::string &Left, const std::string &Op, co
 	return false;
 }
 
-bool CAutomation::EvaluateOneIfCondition(const std::string &IfLeft, const std::string &IfOp, const std::string &IfRight) const
+bool CAutomation::EvaluateOneIfCondition(const std::string &IfLeft, const std::string &IfOp, const std::string &IfRight, const std::string &IfLeftGet, const std::string &IfRightUnit) const
 {
 	if(IfLeft.empty())
 		return false;
-	const std::string Left = ResolveVariable(IfLeft.c_str());
-	return ValuesMatch(Left, IfOp, IfRight);
+	const char *pGet = IfLeftGet.empty() ? nullptr : IfLeftGet.c_str();
+	const std::string Left = ResolveVariable(IfLeft.c_str(), pGet);
+	std::string Right = IfRight;
+	if(pGet && str_comp(pGet, "file_size") == 0 && !IfRightUnit.empty())
+		Right = RightBytesForFileSizeCompare(IfRight, IfRightUnit);
+	return ValuesMatch(Left, IfOp, Right);
 }
 
 bool CAutomation::EvaluateIfCondition(const SAction &Action) const
@@ -1353,7 +1548,7 @@ bool CAutomation::EvaluateIfCondition(const SAction &Action) const
 		{
 			if(Cond.m_Left.empty())
 				continue;
-			const bool Match = EvaluateOneIfCondition(Cond.m_Left, Cond.m_Op, Cond.m_Right);
+			const bool Match = EvaluateOneIfCondition(Cond.m_Left, Cond.m_Op, Cond.m_Right, Cond.m_LeftGet, Cond.m_RightUnit);
 			AnyChecked = true;
 			if(Any && Match)
 				return true;
@@ -1364,7 +1559,7 @@ bool CAutomation::EvaluateIfCondition(const SAction &Action) const
 	}
 	if(Action.m_IfLeft.empty())
 		return false;
-	return EvaluateOneIfCondition(Action.m_IfLeft, Action.m_IfOp, Action.m_IfRight);
+	return EvaluateOneIfCondition(Action.m_IfLeft, Action.m_IfOp, Action.m_IfRight, Action.m_IfLeftGet, Action.m_IfRightUnit);
 }
 
 // Title of the window the user is currently looking at (Windows). Empty when unknown.
@@ -1465,10 +1660,168 @@ std::string CAutomation::ClipboardTextValue() const
 	return std::string();
 }
 
+std::string CAutomation::ClipboardFileSizeValue() const
+{
+#if defined(CONF_FAMILY_WINDOWS)
+	if(!OpenClipboard(nullptr))
+		return std::string();
+	HANDLE hDrop = GetClipboardData(CF_HDROP);
+	if(hDrop == nullptr)
+	{
+		CloseClipboard();
+		return std::string();
+	}
+	const HDROP hDropList = static_cast<HDROP>(hDrop);
+	wchar_t aPath[MAX_PATH];
+	if(DragQueryFileW(hDropList, 0, aPath, (UINT)std::size(aPath)) == 0)
+	{
+		CloseClipboard();
+		return std::string();
+	}
+	CloseClipboard();
+	const std::optional<std::string> Utf8 = windows_wide_to_utf8(aPath);
+	if(!Utf8.has_value())
+		return std::string();
+	IOHANDLE Io = io_open(Utf8->c_str(), IOFLAG_READ);
+	if(!Io)
+		return std::string();
+	const int64_t Size = io_length(Io);
+	io_close(Io);
+	if(Size < 0)
+		return std::string();
+	char aBuf[32];
+	str_format(aBuf, sizeof(aBuf), "%lld", (long long)Size);
+	return aBuf;
+#else
+	return std::string();
+#endif
+}
+
+std::string CAutomation::ChatSenderPropertyValue(const char *pGet, int ClientId) const
+{
+	if(!pGet || !pGet[0] || ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return std::string();
+	const CGameClient::CClientData &Client = GameClient()->m_aClients[ClientId];
+	if(str_comp(pGet, "name") == 0)
+		return Client.m_aName;
+	if(str_comp(pGet, "clan") == 0)
+		return Client.m_aClan;
+	if(str_comp(pGet, "skin_name") == 0)
+		return Client.m_aSkinName;
+	if(str_comp(pGet, "body_color") == 0)
+	{
+		char aBuf[32];
+		str_format(aBuf, sizeof(aBuf), "%d", Client.m_ColorBody);
+		return aBuf;
+	}
+	if(str_comp(pGet, "feet_color") == 0)
+	{
+		char aBuf[32];
+		str_format(aBuf, sizeof(aBuf), "%d", Client.m_ColorFeet);
+		return aBuf;
+	}
+	if(str_comp(pGet, "flag") == 0)
+	{
+		char aBuf[32];
+		str_format(aBuf, sizeof(aBuf), "%d", Client.m_Country);
+		return aBuf;
+	}
+	if(str_comp(pGet, "custom_color") == 0)
+		return Client.m_UseCustomColor ? "Yes" : "No";
+	return std::string();
+}
+
 void CAutomation::ExecuteGetClipboardAction(const SAction &Action)
 {
 	const std::string Key = Action.m_OutputVariable.empty() ? "clipboard" : Action.m_OutputVariable;
 	SetRunnerVariable(Key.c_str(), ClipboardTextValue());
+}
+
+int CAutomation::FindClientByName(const char *pName) const
+{
+	if(!pName || !pName[0])
+		return -1;
+	auto FindMatch = [&](bool NoCase) {
+		int MatchId = -1;
+		int MatchCount = 0;
+		for(int ClientId = 0; ClientId < MAX_CLIENTS; ++ClientId)
+		{
+			if(!GameClient()->m_aClients[ClientId].m_Active)
+				continue;
+			const bool Match = NoCase ?
+				str_comp_nocase(GameClient()->m_aClients[ClientId].m_aName, pName) == 0 :
+				str_comp(GameClient()->m_aClients[ClientId].m_aName, pName) == 0;
+			if(Match)
+			{
+				MatchId = ClientId;
+				++MatchCount;
+			}
+		}
+		return MatchCount == 1 ? MatchId : -1;
+	};
+	if(int ClientId = FindMatch(false); ClientId >= 0)
+		return ClientId;
+	return FindMatch(true);
+}
+
+bool CAutomation::IsPlayerInfoVariableKey(const char *pKey) const
+{
+	if(!pKey || !pKey[0])
+		return false;
+	return m_Runner.m_PlayerClientIds.find(pKey) != m_Runner.m_PlayerClientIds.end();
+}
+
+std::string CAutomation::ResolvePlayerInfoVariable(const char *pKey, const char *pGet) const
+{
+	const auto ClientIt = m_Runner.m_PlayerClientIds.find(pKey);
+	if(ClientIt == m_Runner.m_PlayerClientIds.end())
+		return std::string();
+	const int ClientId = ClientIt->second;
+	if(pGet && pGet[0])
+	{
+		if(str_comp(pGet, "name") == 0)
+		{
+			if(ClientId >= 0)
+				return ChatSenderPropertyValue("name", ClientId);
+			const auto NameIt = m_Runner.m_Variables.find(pKey);
+			return NameIt != m_Runner.m_Variables.end() ? NameIt->second : std::string();
+		}
+		if(ClientId >= 0)
+			return ChatSenderPropertyValue(pGet, ClientId);
+		return std::string();
+	}
+	const auto NameIt = m_Runner.m_Variables.find(pKey);
+	return NameIt != m_Runner.m_Variables.end() ? NameIt->second : std::string();
+}
+
+std::string CAutomation::ResolvePlayerSearchName(const SAction &Action) const
+{
+	if(Action.m_NameMode == EValueMode::VARIABLE)
+	{
+		const char *pGet = Action.m_NameVariableGet.empty() ? nullptr : Action.m_NameVariableGet.c_str();
+		return ResolveVariable(Action.m_NameVariable.c_str(), pGet);
+	}
+	if(Action.m_Name.find('%') != std::string::npos)
+		return ExpandTemplate(Action.m_Name);
+	return Action.m_Name;
+}
+
+void CAutomation::ExecuteGetPlayerInfoAction(const SAction &Action)
+{
+	const std::string VarName = Action.m_OutputVariable.empty() ? "player" : Action.m_OutputVariable;
+	const std::string SearchName = ResolvePlayerSearchName(Action);
+	if(!IsActive() || SearchName.empty())
+	{
+		SetRunnerVariable(VarName.c_str(), std::string());
+		m_Runner.m_PlayerClientIds[VarName] = -1;
+		return;
+	}
+	const int ClientId = FindClientByName(SearchName.c_str());
+	if(ClientId >= 0)
+		SetRunnerVariable(VarName.c_str(), GameClient()->m_aClients[ClientId].m_aName);
+	else
+		SetRunnerVariable(VarName.c_str(), std::string());
+	m_Runner.m_PlayerClientIds[VarName] = ClientId;
 }
 
 void CAutomation::ExecuteTextAction(const SAction &Action)
@@ -1477,7 +1830,10 @@ void CAutomation::ExecuteTextAction(const SAction &Action)
 	for(const STextPart &Part : Action.m_TextParts)
 	{
 		if(Part.m_Mode == EValueMode::VARIABLE)
-			Result += ResolveVariable(Part.m_Variable.c_str());
+		{
+			const char *pGet = Part.m_VariableGet.empty() ? nullptr : Part.m_VariableGet.c_str();
+			Result += ResolveVariable(Part.m_Variable.c_str(), pGet);
+		}
 		else
 			Result += Part.m_Text;
 	}
@@ -1488,7 +1844,10 @@ void CAutomation::ExecuteTextAction(const SAction &Action)
 std::string CAutomation::ResolveMessageValue(const SAction &Action) const
 {
 	if(Action.m_MessageMode == EValueMode::VARIABLE)
-		return ResolveVariable(Action.m_Variable.c_str());
+	{
+		const char *pGet = Action.m_MessageVariableGet.empty() ? nullptr : Action.m_MessageVariableGet.c_str();
+		return ResolveVariable(Action.m_Variable.c_str(), pGet);
+	}
 	if(Action.m_Message.find('%') != std::string::npos)
 		return ExpandTemplate(Action.m_Message);
 	return Action.m_Message;
@@ -1518,7 +1877,8 @@ bool CAutomation::ResolveSendChannel(const SAction &Action, EChatChannel &OutCha
 {
 	if(Action.m_ChannelMode == EValueMode::VARIABLE)
 	{
-		const std::string Label = ResolveVariable(Action.m_ChannelVariable.c_str());
+		const char *pGet = Action.m_ChannelVariableGet.empty() ? nullptr : Action.m_ChannelVariableGet.c_str();
+		const std::string Label = ResolveVariable(Action.m_ChannelVariable.c_str(), pGet);
 		return ParseChannelLabel(Label, OutChannel);
 	}
 	OutChannel = Action.m_Channel;
@@ -1528,14 +1888,37 @@ bool CAutomation::ResolveSendChannel(const SAction &Action, EChatChannel &OutCha
 std::string CAutomation::ResolveUClientRoomId(const SAction &Action) const
 {
 	if(Action.m_UClientRoomMode == EValueMode::VARIABLE)
-		return ResolveVariable(Action.m_UClientRoomVariable.c_str());
+	{
+		const char *pGet = Action.m_UClientRoomVariableGet.empty() ? nullptr : Action.m_UClientRoomVariableGet.c_str();
+		return ResolveVariable(Action.m_UClientRoomVariable.c_str(), pGet);
+	}
 	return Action.m_UClientRoomId;
 }
 
-std::string CAutomation::ResolveVariable(const char *pKey) const
+static bool IsSenderVariableKey(const char *pKey)
+{
+	return str_comp(pKey, "messageSender") == 0 || str_comp(pKey, "senderName") == 0 || str_comp(pKey, "sender") == 0;
+}
+
+std::string CAutomation::ResolveVariable(const char *pKey, const char *pGet) const
 {
 	if(!pKey || !pKey[0])
 		return "";
+	if(pGet && pGet[0])
+	{
+		if(str_comp(pGet, "file_size") == 0)
+			return ClipboardFileSizeValue();
+		if(IsPlayerInfoVariableKey(pKey))
+			return ResolvePlayerInfoVariable(pKey, pGet);
+		if(IsSenderVariableKey(pKey) && str_comp(pGet, "name") != 0)
+		{
+			if(m_Runner.m_HadChatEvent)
+				return ChatSenderPropertyValue(pGet, m_Runner.m_ChatEvent.m_ClientId);
+			return std::string();
+		}
+	}
+	if(IsPlayerInfoVariableKey(pKey))
+		return ResolvePlayerInfoVariable(pKey, nullptr);
 	const auto It = m_Runner.m_Variables.find(pKey);
 	if(It != m_Runner.m_Variables.end())
 		return It->second;
@@ -1662,6 +2045,39 @@ std::string CAutomation::ExpandTemplate(const std::string &Template) const
 		i = End;
 	}
 	return Result;
+}
+
+bool CAutomation::IsAskInputActive() const
+{
+	return m_RunnerActive && m_Runner.m_AskActive;
+}
+
+const char *CAutomation::AskPrompt() const
+{
+	if(!IsAskInputActive())
+		return "";
+	return m_Runner.m_AskPrompt.c_str();
+}
+
+void CAutomation::SubmitAskInput(const char *pText)
+{
+	if(!IsAskInputActive())
+		return;
+	const std::string Value = pText ? pText : "";
+	const std::string VarName = m_Runner.m_AskOutputVar.empty() ? "ask" : m_Runner.m_AskOutputVar;
+	SetRunnerVariable(VarName.c_str(), Value);
+	m_Runner.m_AskActive = false;
+	m_Runner.m_AskPrompt.clear();
+	m_Runner.m_AskOutputVar.clear();
+	++m_Runner.m_ActionIndex;
+	StepRunner();
+}
+
+void CAutomation::CancelAskInput()
+{
+	if(!IsAskInputActive())
+		return;
+	StopRunner();
 }
 
 void CAutomation::StopRunner()
@@ -1848,6 +2264,8 @@ bool CAutomation::ParseTestRunRequest(const char *pJson, size_t Length)
 	char aNearestPlayer[MAX_NAME_LENGTH];
 	if(GameClient()->m_Binds.FindNearestPlayerName(aNearestPlayer, sizeof(aNearestPlayer)))
 		m_Runner.m_Variables["nearestPlayer"] = aNearestPlayer;
+	if(m_HasLastChatEvent)
+		SeedRunnerChatVariables(m_LastChatEvent);
 	m_RunnerActive = true;
 	WriteTestRunState("running");
 	StepRunner();
@@ -1952,6 +2370,9 @@ void CAutomation::StepRunner()
 		return;
 	}
 
+	if(m_Runner.m_AskActive)
+		return;
+
 	const SAction &Action = Shortcut.m_vActions[m_Runner.m_ActionIndex];
 	const int64_t Now = time_get();
 
@@ -1986,6 +2407,39 @@ void CAutomation::StepRunner()
 		ExecuteGetClipboardAction(Action);
 		++m_Runner.m_ActionIndex;
 		StepRunner();
+		return;
+	}
+
+	if(Action.m_Type == EActionType::GET_PLAYER_INFO)
+	{
+		ExecuteGetPlayerInfoAction(Action);
+		++m_Runner.m_ActionIndex;
+		StepRunner();
+		return;
+	}
+
+	if(Action.m_Type == EActionType::ASK_FOR_TEXT)
+	{
+		std::string Prompt = Action.m_Message;
+		while(!Prompt.empty() && str_isspace((unsigned char)Prompt.front()))
+			Prompt.erase(Prompt.begin());
+		while(!Prompt.empty() && str_isspace((unsigned char)Prompt.back()))
+			Prompt.pop_back();
+		if(Prompt.empty())
+		{
+			++m_Runner.m_ActionIndex;
+			StepRunner();
+			return;
+		}
+		if(!IsActive())
+		{
+			GameClient()->m_Chat.Echo(Localize("Not connected"));
+			StopRunner();
+			return;
+		}
+		m_Runner.m_AskActive = true;
+		m_Runner.m_AskPrompt = std::move(Prompt);
+		m_Runner.m_AskOutputVar = Action.m_OutputVariable.empty() ? "ask" : Action.m_OutputVariable;
 		return;
 	}
 

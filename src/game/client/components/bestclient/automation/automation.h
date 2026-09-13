@@ -69,6 +69,8 @@ public:
 		SET_NAME,
 		GET,
 		GET_CLIPBOARD,
+		GET_PLAYER_INFO,
+		ASK_FOR_TEXT,
 		REPEAT,
 		END_REPEAT,
 		IF,
@@ -85,6 +87,7 @@ public:
 		EValueMode m_Mode = EValueMode::TEXT;
 		std::string m_Text;
 		std::string m_Variable;
+		std::string m_VariableGet;
 	};
 
 	enum class ETarget
@@ -122,8 +125,10 @@ public:
 	struct SIfCondition
 	{
 		std::string m_Left;
+		std::string m_LeftGet;
 		std::string m_Op;
 		std::string m_Right;
+		std::string m_RightUnit;
 	};
 
 	struct SAction
@@ -132,12 +137,15 @@ public:
 		EChatChannel m_Channel = EChatChannel::ALL;
 		EValueMode m_ChannelMode = EValueMode::TEXT;
 		std::string m_ChannelVariable;
+		std::string m_ChannelVariableGet;
 		EValueMode m_UClientRoomMode = EValueMode::TEXT;
 		std::string m_UClientRoomId;
 		std::string m_UClientRoomVariable;
+		std::string m_UClientRoomVariableGet;
 		EValueMode m_MessageMode = EValueMode::TEXT;
 		std::string m_Message;
 		std::string m_Variable;
+		std::string m_MessageVariableGet;
 		std::vector<STextPart> m_TextParts;
 		std::string m_OutputVariable;
 		std::string m_ServerAddress;
@@ -150,11 +158,16 @@ public:
 		bool m_CustomColorEnabled = false;
 		int m_Color = 0;
 		std::string m_Name;
+		EValueMode m_NameMode = EValueMode::TEXT;
+		std::string m_NameVariable;
+		std::string m_NameVariableGet;
 		std::string m_GetProperty;
 		int m_RepeatCount = 1;
 		std::string m_IfLeft;
+		std::string m_IfLeftGet;
 		std::string m_IfOp;
 		std::string m_IfRight;
+		std::string m_IfRightUnit;
 		std::string m_IfMatch;
 		std::vector<SIfCondition> m_IfConditions;
 		std::string m_RunShortcutId;
@@ -187,6 +200,11 @@ public:
 
 	void OnChatReceived(const SChatEvent &Event);
 
+	bool IsAskInputActive() const;
+	const char *AskPrompt() const;
+	void SubmitAskInput(const char *pText);
+	void CancelAskInput();
+
 	static void ConShortcut(IConsole::IResult *pResult, void *pUserData);
 
 private:
@@ -216,6 +234,9 @@ private:
 		int64_t m_WeaponUseReadyTime = 0;
 		std::vector<SIfFrame> m_vIfFrames;
 		std::vector<SRepeatFrame> m_vRepeatFrames;
+		bool m_AskActive = false;
+		std::string m_AskPrompt;
+		std::string m_AskOutputVar;
 	};
 
 	struct SRunner
@@ -235,7 +256,11 @@ private:
 		bool m_TestRun = false;
 		SChatEvent m_ChatEvent;
 		std::unordered_map<std::string, std::string> m_Variables;
+		std::unordered_map<std::string, int> m_PlayerClientIds;
 		std::vector<SRunnerCallFrame> m_vCallStack;
+		bool m_AskActive = false;
+		std::string m_AskPrompt;
+		std::string m_AskOutputVar;
 	};
 
 	std::vector<SShortcut> m_vShortcuts;
@@ -243,6 +268,8 @@ private:
 	int64_t m_FileModifiedTime = -1;
 	SRunner m_Runner;
 	bool m_RunnerActive = false;
+	bool m_HasLastChatEvent = false;
+	SChatEvent m_LastChatEvent;
 	bool m_ServerConnectTriggeredForSession = false;
 
 	// Test run driven by the launcher through two files in the user directory.
@@ -264,6 +291,7 @@ private:
 	bool ChannelsMatch(EChatChannel TriggerChannel, EChatChannel EventChannel) const;
 	bool MatchesChatFilter(const SChatFilter &Filter, const SChatEvent &Event, bool IsMe) const;
 	bool MatchText(ETextMatch Match, const char *pNeedle, const char *pHaystack) const;
+	void SeedRunnerChatVariables(const SChatEvent &Event);
 	void StartRunner(size_t ShortcutIndex, const SChatEvent *pChatEvent = nullptr);
 	size_t FindShortcutIndexById(const std::string &Id) const;
 	size_t FindManualShortcutIndexByName(const char *pName) const;
@@ -284,16 +312,23 @@ private:
 	void WriteTestRunState(const char *pStatus);
 	void ClearTestRun();
 	bool EvaluateIfCondition(const SAction &Action) const;
-	bool EvaluateOneIfCondition(const std::string &IfLeft, const std::string &IfOp, const std::string &IfRight) const;
+	bool EvaluateOneIfCondition(const std::string &IfLeft, const std::string &IfOp, const std::string &IfRight, const std::string &IfLeftGet = std::string(), const std::string &IfRightUnit = std::string()) const;
 	bool ValuesMatch(const std::string &Left, const std::string &Op, const std::string &Right) const;
 	void ExecuteGetAction(const SAction &Action);
 	void ExecuteGetClipboardAction(const SAction &Action);
+	void ExecuteGetPlayerInfoAction(const SAction &Action);
+	std::string ResolvePlayerSearchName(const SAction &Action) const;
+	int FindClientByName(const char *pName) const;
+	bool IsPlayerInfoVariableKey(const char *pKey) const;
+	std::string ResolvePlayerInfoVariable(const char *pKey, const char *pGet) const;
 	std::string ClipboardTextValue() const;
+	std::string ClipboardFileSizeValue() const;
+	std::string ChatSenderPropertyValue(const char *pGet, int ClientId) const;
 	void ExecuteTextAction(const SAction &Action);
 	std::string ResolveMessageValue(const SAction &Action) const;
 	bool ResolveSendChannel(const SAction &Action, EChatChannel &OutChannel) const;
 	std::string ResolveUClientRoomId(const SAction &Action) const;
-	std::string ResolveVariable(const char *pKey) const;
+	std::string ResolveVariable(const char *pKey, const char *pGet = nullptr) const;
 	std::string ResolveFilterKey(const char *pKey, const SChatEvent &Event) const;
 	std::string ExpandFilterText(const std::string &Template, const SChatEvent &Event) const;
 	std::string ExpandTemplate(const std::string &Template) const;

@@ -5348,8 +5348,9 @@ static void OnWebMessage(const std::string &Json)
 			Document += RunId;
 			Document += "\"}";
 			WriteAutomationFile(GetAutomationRunPath(), Document);
+			const std::string DoneUi = "{\"version\":1,\"runId\":\"" + RunId + "\",\"status\":\"done\"}";
+			WebUi::PostAutomationRun(DoneUi);
 		}
-		StopAutomationRunPolling();
 	}
 }
 

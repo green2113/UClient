@@ -5640,6 +5640,24 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	const bool ChatInputActive = m_Mode != MODE_NONE;
 	const bool ChatInteractionActive = ChatInputActive || m_Show;
 
+	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_ESCAPE &&
+		GameClient()->m_Automation.IsAskInputActive())
+	{
+		GameClient()->m_Automation.CancelAskInput();
+		if(ChatInputActive)
+		{
+			DisableMode();
+			GameClient()->OnRelease();
+			m_Input.Clear();
+			m_SavedInputPending = false;
+			m_aSavedInputText[0] = '\0';
+			m_pHistoryEntry = nullptr;
+			m_HasSelection = false;
+			m_WantsSelectionCopy = false;
+		}
+		return true;
+	}
+
 	if(ChatInputActive && Input()->ModifierIsPressed())
 	{
 		const bool PasteKey = (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_V;
@@ -6252,6 +6270,20 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 	}
 	else if(Event.m_Flags & IInput::FLAG_PRESS && (Event.m_Key == KEY_RETURN || Event.m_Key == KEY_KP_ENTER))
 	{
+		if(GameClient()->m_Automation.IsAskInputActive())
+		{
+			GameClient()->m_Automation.SubmitAskInput(m_Input.GetString());
+			m_SavedInputPending = false;
+			m_aSavedInputText[0] = '\0';
+			m_pHistoryEntry = nullptr;
+			DisableMode();
+			GameClient()->OnRelease();
+			m_Input.Clear();
+			m_HasSelection = false;
+			m_WantsSelectionCopy = false;
+			return true;
+		}
+
 		// uclient: chat paste image
 		if(m_UcChatPaste.TrySendOnEnter(this, m_Input.GetString()))
 		{
@@ -7390,6 +7422,49 @@ void CChat::RenderReplyBanner(float x, float InputY, float ScaledFontSize)
 
 	if(HoveredCancel)
 		Ui()->SetHotItem(&m_ReplyCancelButton);
+}
+
+float CChat::AutomationAskBannerHeight(float ScaledFontSize) const
+{
+	if(!GameClient()->m_Automation.IsAskInputActive())
+		return 0.0f;
+	const float PromptSize = ScaledFontSize * 0.85f;
+	const float HintSize = ScaledFontSize * 0.58f;
+	const float LineGap = 2.0f;
+	const float BottomPad = 2.0f;
+	const float AnchorShift = ScaledFontSize * 0.10f;
+	const float ContentHeight = PromptSize + LineGap + HintSize + BottomPad;
+	return maximum(0.0f, ContentHeight - AnchorShift) + 2.0f;
+}
+
+void CChat::RenderAutomationAskBanner(float x, float AnchorY, float ScaledFontSize, float LineWidth)
+{
+	if(!GameClient()->m_Automation.IsAskInputActive())
+		return;
+
+	const char *pPrompt = GameClient()->m_Automation.AskPrompt();
+	const float PromptSize = ScaledFontSize * 0.85f;
+	const float HintSize = ScaledFontSize * 0.58f;
+	const float LineGap = 2.0f;
+	const float AnchorShift = ScaledFontSize * 0.10f;
+	const float BaseY = AnchorY + AnchorShift;
+	const float HintY = BaseY - HintSize - LineGap;
+	const float PromptY = HintY - PromptSize - LineGap;
+
+	TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.95f);
+	CTextCursor PromptCursor;
+	PromptCursor.SetPosition(vec2(x, PromptY));
+	PromptCursor.m_FontSize = PromptSize;
+	PromptCursor.m_LineWidth = LineWidth;
+	TextRender()->TextEx(&PromptCursor, pPrompt && pPrompt[0] ? pPrompt : "");
+
+	CTextCursor HintCursor;
+	HintCursor.SetPosition(vec2(x, HintY));
+	HintCursor.m_FontSize = HintSize;
+	HintCursor.m_LineWidth = LineWidth;
+	TextRender()->TextColor(0.78f, 0.78f, 0.78f, 0.96f);
+	TextRender()->TextEx(&HintCursor, Localize("Press Esc to cancel."));
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
 }
 
 static constexpr const char *SAVES_HEADER[] = {
@@ -8971,6 +9046,13 @@ void CChat::OnRender()
 				StackAboveInput += ReplyBannerReserve;
 			}
 
+			const float AskBannerReserveInput = AutomationAskBannerHeight(ScaledFontSize);
+			if(AskBannerReserveInput > 0.0f)
+			{
+				RenderAutomationAskBanner(x + ChatOpenOffsetX, y, ScaledFontSize, ChatWidth());
+				StackAboveInput += AskBannerReserveInput;
+			}
+
 			// uclient: chat paste image preview above input
 			const float PreviewH = m_UcChatPaste.PreviewHeight(this, InputAreaWidth, ScaledFontSize);
 			if(PreviewH > 0.0f)
@@ -9271,7 +9353,19 @@ void CChat::OnRender()
 		return;
 
 	y -= PendingPreviewReserve;
-	y -= ScaledFontSize;
+	if(m_Mode == MODE_NONE)
+	{
+		const float AskBannerReserve = AutomationAskBannerHeight(ScaledFontSize);
+		if(AskBannerReserve > 0.0f)
+		{
+			RenderAutomationAskBanner(x + ChatOpenOffsetX, y, ScaledFontSize, ChatWidth());
+			y -= AskBannerReserve;
+		}
+	}
+	if(GameClient()->m_Automation.IsAskInputActive())
+		y -= ScaledFontSize * 0.35f;
+	else
+		y -= ScaledFontSize;
 	const bool IsScoreBoardOpen = GameClient()->m_Scoreboard.IsActive();
 	const bool ShowLargeArea = m_Show || (m_Mode != MODE_NONE && g_Config.m_ClShowChat == 1) || g_Config.m_ClShowChat == 2;
 	const bool KeepLinesAlive = m_MediaViewerOpen && ValidateMediaViewerLine();

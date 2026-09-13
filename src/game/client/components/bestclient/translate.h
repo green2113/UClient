@@ -5,6 +5,7 @@
 #include <game/client/component.h>
 #include <game/client/components/chat.h>
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -17,9 +18,9 @@ public:
 	virtual ~ITranslateBackend() = default;
 	virtual const char *EncodeSource(const char *pSource) const;
 	virtual const char *EncodeTarget(const char *pTarget) const;
-	virtual bool CompareTargets(const char *pA, const char *pB) const;
 	virtual const char *Name() const = 0;
 	virtual std::optional<bool> Update(CTranslateResponse &Out) = 0;
+	virtual bool IsRateLimited() const { return false; }
 };
 
 class CTranslate : public CComponent
@@ -44,6 +45,8 @@ class CTranslate : public CComponent
 		bool m_RespectIgnoredIncomingLanguages = false;
 	};
 	std::vector<CTranslateJob> m_vJobs;
+	int64_t m_NextRequestTime = 0;
+	int64_t m_RateLimitUntil = 0;
 
 	static void ConTranslate(IConsole::IResult *pResult, void *pUserData);
 	static void ConTranslateId(IConsole::IResult *pResult, void *pUserData);
@@ -56,6 +59,7 @@ class CTranslate : public CComponent
 	bool IsIgnoredIncomingLanguage(const char *pLanguage) const;
 	bool ShouldTranslateOutgoingChat(const char *pText) const;
 	bool HasPendingJobs() const;
+	bool CanStartRequest() const;
 	void TranslateLine(CChat::CLine &Line, bool ShowProgress, bool RespectIgnoredIncomingLanguages);
 
 public:

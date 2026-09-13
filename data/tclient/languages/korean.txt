@@ -872,3 +872,11 @@ Changing name to %s near finish
 [translate]
 %s to %s failed: %s
 == 
+
+[automation]
+Press Esc to cancel.
+== Esc를 눌러 취소합니다.
+
+[automation]
+Not connected
+== 연결되지 않음
