@@ -7,20 +7,53 @@ on:
       - published
   workflow_dispatch:
     inputs:
-      tag_name:
-        description: 'Tag for the release (e.g., v1.0.0). Did you remember to bump the version.h?'
-        required: true
-      release_name:
-        description: 'Name of the release'
-        required: true
-      body:
-        description: 'Release description'
-        required: false
       run_id:
-        description: 'Optional Fast Build (or Build) workflow run ID. If set, reuse that run''s ddnet-* artifacts and skip rebuilding. If empty, build in this workflow.'
+        description: 'Fast Build workflow run ID (same commit). Leave empty to build in this workflow.'
         required: false
         type: string
         default: ''
+      client_version:
+        description: 'Client version (UCLIENT_VERSION in version.h)'
+        required: true
+        type: string
+      launcher_version:
+        description: 'Launcher version (UCLIENT_LAUNCHER_VERSION in version.h)'
+        required: true
+        type: string
+      publish_full:
+        description: 'Publish full distribution (download + legacy platforms)'
+        required: false
+        type: boolean
+        default: true
+      publish_client:
+        description: 'Publish client update channel (zip without UClient.exe)'
+        required: false
+        type: boolean
+        default: true
+      publish_launcher:
+        description: 'Publish launcher update channel (small launcher zip)'
+        required: false
+        type: boolean
+        default: true
+      create_github_release:
+        description: 'Create GitHub Release and tag'
+        required: false
+        type: boolean
+        default: true
+      tag_name:
+        description: 'Optional Git tag override (must not exist)'
+        required: false
+        type: string
+        default: ''
+      release_name:
+        description: 'Optional GitHub release title'
+        required: false
+        type: string
+        default: ''
+      body:
+        description: 'Release description'
+        required: false
+        type: string
       r2_bucket:
         description: 'Cloudflare R2 bucket name'
         required: false
@@ -39,8 +72,98 @@ env:
   BUILD_PREFIX: ddnet
 
 jobs:
+  validate:
+    name: Validate release versions
+    runs-on: ubuntu-latest
+    outputs:
+      client_version: ${{ steps.versions.outputs.client_version }}
+      launcher_version: ${{ steps.versions.outputs.launcher_version }}
+      min_launcher_version: ${{ steps.versions.outputs.min_launcher_version }}
+      publish_full: ${{ steps.flags.outputs.publish_full }}
+      publish_client: ${{ steps.flags.outputs.publish_client }}
+      publish_launcher: ${{ steps.flags.outputs.publish_launcher }}
+      create_github_release: ${{ steps.flags.outputs.create_github_release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version.h
+        id: header
+        shell: bash
+        run: |
+          set -euo pipefail
+          client="$(
+            awk '/^#define UCLIENT_VERSION "/ { gsub(/"/, "", $3); print $3; exit }' src/game/version.h
+          )"
+          launcher="$(
+            awk '/^#define UCLIENT_LAUNCHER_VERSION "/ { gsub(/"/, "", $3); print $3; exit }' src/game/version.h
+          )"
+          test -n "$client" && test -n "$launcher"
+          echo "client=$client" >> "$GITHUB_OUTPUT"
+          echo "launcher=$launcher" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve requested versions
+        id: versions
+        shell: bash
+        env:
+          HEADER_CLIENT: ${{ steps.header.outputs.client }}
+          HEADER_LAUNCHER: ${{ steps.header.outputs.launcher }}
+          INPUT_CLIENT: ${{ github.event.inputs.client_version }}
+          INPUT_LAUNCHER: ${{ github.event.inputs.launcher_version }}
+        run: |
+          set -euo pipefail
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            requested="${{ github.event.release.tag_name }}"
+            requested="${requested#v}"
+            requested="${requested#V}"
+            client="$requested"
+            launcher="$HEADER_LAUNCHER"
+          else
+            client="${INPUT_CLIENT#v}"
+            client="${client#client-v}"
+            launcher="${INPUT_LAUNCHER#v}"
+            launcher="${launcher#launcher-v}"
+          fi
+          [[ "$client" =~ $semver ]] || { echo "::error::Invalid client version '$client'"; exit 1; }
+          [[ "$launcher" =~ $semver ]] || { echo "::error::Invalid launcher version '$launcher'"; exit 1; }
+          [[ "$client" == "$HEADER_CLIENT" ]] || {
+            echo "::error::Client version '$client' != UCLIENT_VERSION '$HEADER_CLIENT'"
+            exit 1
+          }
+          [[ "$launcher" == "$HEADER_LAUNCHER" ]] || {
+            echo "::error::Launcher version '$launcher' != UCLIENT_LAUNCHER_VERSION '$HEADER_LAUNCHER'"
+            exit 1
+          }
+          echo "client_version=$client" >> "$GITHUB_OUTPUT"
+          echo "launcher_version=$launcher" >> "$GITHUB_OUTPUT"
+          echo "min_launcher_version=$launcher" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve publish flags
+        id: flags
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "publish_full=true" >> "$GITHUB_OUTPUT"
+            echo "publish_client=true" >> "$GITHUB_OUTPUT"
+            echo "publish_launcher=true" >> "$GITHUB_OUTPUT"
+            echo "create_github_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "publish_full=${{ github.event.inputs.publish_full }}" >> "$GITHUB_OUTPUT"
+          echo "publish_client=${{ github.event.inputs.publish_client }}" >> "$GITHUB_OUTPUT"
+          echo "publish_launcher=${{ github.event.inputs.publish_launcher }}" >> "$GITHUB_OUTPUT"
+          echo "create_github_release=${{ github.event.inputs.create_github_release }}" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event.inputs.publish_full }}" != "true" \
+             && "${{ github.event.inputs.publish_client }}" != "true" \
+             && "${{ github.event.inputs.publish_launcher }}" != "true" ]]; then
+            echo "::error::At least one of publish_full, publish_client, publish_launcher must be true"
+            exit 1
+          fi
+
   build-cmake:
     name: Build Release (${{ matrix.name }})
+    needs: validate
     if: >-
       (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v')) ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.run_id == '')
@@ -104,6 +227,7 @@ jobs:
 
   build-android:
     name: Build Release (android)
+    needs: validate
     if: >-
       (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v')) ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.run_id == '')
@@ -127,10 +251,7 @@ jobs:
         tar --strip-components 1 -C /home/runner/cmake -xf cmake-3.22.1-Linux-x86_64.tar.gz
         rustup default 1.92.0
         cargo install cargo-ndk
-        rustup target add armv7-linux-androideabi
-        rustup target add i686-linux-android
-        rustup target add aarch64-linux-android
-        rustup target add x86_64-linux-android
+        rustup target add armv7-linux-androideabi i686-linux-android aarch64-linux-android x86_64-linux-android
         scripts/android/download_android_sdk.sh /home/runner
 
     - name: Install Vulkan SDK
@@ -152,17 +273,14 @@ jobs:
         RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
       run: |
         TW_KEY_NAME=/home/runner/DDNet.jks
-        # Release events use tag refs, while manual release builds must run from main.
         if [ -n "$RELEASE_KEYSTORE_BASE64" ] && { [ "$GITHUB_EVENT_NAME" = "release" ] || [ "$GITHUB_REF" = "refs/heads/main" ]; }; then
           echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$TW_KEY_NAME"
           TW_KEY_ALIAS="$RELEASE_KEY_ALIAS"
           TW_KEY_PW="$RELEASE_KEYSTORE_PASSWORD"
-          echo "Signed with persistent release keystore" >> "$GITHUB_STEP_SUMMARY"
         else
           TW_KEY_ALIAS=DDNet-Key
           TW_KEY_PW="$(openssl rand -base64 32)"
           keytool -genkey -v -keystore "$TW_KEY_NAME" -keyalg RSA -keysize 2048 -validity 10000 -alias "$TW_KEY_ALIAS" -storepass "$TW_KEY_PW" -dname "CN=DDNet CI, OU=DDNet, O=DDNet"
-          echo "Signed with ephemeral CI keystore" >> "$GITHUB_STEP_SUMMARY"
         fi
         {
           echo "TW_KEY_NAME=$TW_KEY_NAME"
@@ -189,16 +307,24 @@ jobs:
   publish:
     name: Publish Release Assets
     needs:
+      - validate
       - build-cmake
       - build-android
     if: |
-      always() && !cancelled() && (
+      always() && !cancelled() && needs.validate.result == 'success' && (
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_id != '') ||
         (needs.build-cmake.result == 'success' && needs.build-android.result == 'success')
       )
     runs-on: ubuntu-latest
 
     env:
+      CLIENT_VERSION: ${{ needs.validate.outputs.client_version }}
+      LAUNCHER_VERSION: ${{ needs.validate.outputs.launcher_version }}
+      MIN_LAUNCHER_VERSION: ${{ needs.validate.outputs.min_launcher_version }}
+      PUBLISH_FULL: ${{ needs.validate.outputs.publish_full }}
+      PUBLISH_CLIENT: ${{ needs.validate.outputs.publish_client }}
+      PUBLISH_LAUNCHER: ${{ needs.validate.outputs.publish_launcher }}
+      CREATE_GITHUB_RELEASE: ${{ needs.validate.outputs.create_github_release }}
       R2_BUCKET: ${{ github.event.inputs.r2_bucket || 'download' }}
       R2_PUBLIC_BASE_URL: ${{ github.event.inputs.r2_public_base_url || 'https://ddnet.under1111.com/uclient' }}
       CF_R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
@@ -206,7 +332,11 @@ jobs:
       CF_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
 
     steps:
-    - name: Download packages from Build workflow run
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Download packages from Fast Build run
       if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_id != ''
       uses: actions/download-artifact@v4
       with:
@@ -217,36 +347,26 @@ jobs:
         repository: ${{ github.repository }}
         run-id: ${{ github.event.inputs.run_id }}
 
-    - name: Normalize Build workflow artifacts
+    - name: Normalize Fast Build artifacts
       if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_id != ''
+      shell: bash
       run: |
         set -euo pipefail
         mkdir -p ./artifacts
-
         win=$(find ./artifacts/raw -type f -name "*.zip" | head -n 1 || true)
         lin=$(find ./artifacts/raw -type f -name "*.tar.xz" | head -n 1 || true)
         mac=$(find ./artifacts/raw -type f -name "*.dmg" | head -n 1 || true)
         apk=$(find ./artifacts/raw -type f -name "*.apk" | head -n 1 || true)
-
-        if [ -z "$win" ]; then
-          echo "No windows .zip artifact found in run ${{ github.event.inputs.run_id }}"
-          exit 1
-        fi
-        if [ -z "$lin" ]; then
-          echo "No linux .tar.xz artifact found in run ${{ github.event.inputs.run_id }}"
-          exit 1
-        fi
-
-        mv "$win" "./artifacts/${CLIENT_NAME}-windows.zip"
-        mv "$lin" "./artifacts/${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz"
-        if [ -n "$mac" ]; then
-          mv "$mac" "./artifacts/${CLIENT_NAME}-macos.dmg"
-        fi
-        if [ -n "$apk" ]; then
-          mv "$apk" "./artifacts/${CLIENT_NAME}-android.apk"
-        fi
-
-        ls -R ./artifacts
+        manifest=$(find ./artifacts/raw -type f -name "uclient_build_manifest.json" | head -n 1 || true)
+        test -n "$win" || { echo "No windows zip in Fast Build run"; exit 1; }
+        test -n "$lin" || { echo "No linux tar.xz in Fast Build run"; exit 1; }
+        cp "$win" "./artifacts/${CLIENT_NAME}-windows-full.zip"
+        cp "$win" "./artifacts/${CLIENT_NAME}-windows.zip"
+        cp "$lin" "./artifacts/${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz"
+        test -n "$manifest" || { echo "Missing uclient_build_manifest.json in Fast Build artifacts"; exit 1; }
+        cp "$manifest" "./artifacts/${CLIENT_NAME}-windows.zip.manifest.json"
+        if [ -n "$mac" ]; then cp "$mac" "./artifacts/${CLIENT_NAME}-macos.dmg"; fi
+        if [ -n "$apk" ]; then cp "$apk" "./artifacts/${CLIENT_NAME}-android.apk"; fi
 
     - name: Download packages built in this workflow
       if: github.event_name == 'release' || github.event.inputs.run_id == ''
@@ -256,30 +376,375 @@ jobs:
         path: artifacts
         merge-multiple: true
 
-    - name: List downloaded release packages
-      run: ls -R artifacts
+    - name: Ensure full Windows zip for local builds
+      if: github.event_name == 'release' || github.event.inputs.run_id == ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -s "artifacts/${CLIENT_NAME}-windows.zip"
+        cp "artifacts/${CLIENT_NAME}-windows.zip" "artifacts/${CLIENT_NAME}-windows-full.zip"
+
+    - name: Ensure client build manifest exists
+      shell: bash
+      run: |
+        set -euo pipefail
+        manifest="artifacts/${CLIENT_NAME}-windows.zip.manifest.json"
+        if [[ -f "$manifest" ]]; then
+          exit 0
+        fi
+        python3 - "$manifest" <<'PY'
+        import json, os, pathlib, sys
+        path = pathlib.Path(sys.argv[1])
+        payload = {
+            "component": "client",
+            "clientVersion": os.environ["CLIENT_VERSION"],
+            "launcherVersion": os.environ["LAUNCHER_VERSION"],
+            "platform": "windows",
+            "architecture": "x86_64",
+            "gitSha": os.environ["GITHUB_SHA"],
+        }
+        path.write_text(json.dumps(payload, separators=(",", ":")) + "\n", encoding="utf-8")
+        PY
 
     - name: Verify full Windows distribution contents
+      if: env.PUBLISH_FULL == 'true'
       shell: bash
       run: |
         python3 - <<'PY'
-        import pathlib
-        import zipfile
-
-        package = pathlib.Path("artifacts/UClient-windows.zip")
-        if not package.is_file():
-            raise SystemExit("Full Windows distribution is missing")
+        import pathlib, zipfile
+        package = pathlib.Path("artifacts/UClient-windows-full.zip")
         with zipfile.ZipFile(package) as archive:
             names = {
-                pathlib.PurePosixPath(name.replace("\\", "/")).name.lower()
-                for name in archive.namelist()
-                if not name.endswith("/")
+                pathlib.PurePosixPath(n.replace("\\", "/")).name.lower()
+                for n in archive.namelist() if not n.endswith("/")
             }
-        required = {"ddnet.exe", "uclient.exe"}
-        missing = sorted(required - names)
+        missing = sorted({"ddnet.exe", "uclient.exe"} - names)
         if missing:
-            raise SystemExit(f"Full Windows distribution is incomplete; missing: {missing}")
+            raise SystemExit(f"Full Windows distribution incomplete; missing: {missing}")
         PY
+
+    - name: Prepare Windows client and launcher packages
+      if: env.PUBLISH_CLIENT == 'true' || env.PUBLISH_LAUNCHER == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 scripts/prepare_distribution_packages.py \
+          --full "artifacts/${CLIENT_NAME}-windows-full.zip" \
+          --client-manifest "artifacts/${CLIENT_NAME}-windows.zip.manifest.json" \
+          --client-version "$CLIENT_VERSION" \
+          --launcher-version "$LAUNCHER_VERSION" \
+          --git-sha "$GITHUB_SHA" \
+          --client-out "artifacts/${CLIENT_NAME}-windows-client.zip" \
+          --launcher-out "artifacts/${CLIENT_NAME}-launcher-windows.zip"
+        if [[ "$PUBLISH_CLIENT" == "true" ]]; then
+          cp "artifacts/${CLIENT_NAME}-windows-client.zip" "artifacts/${CLIENT_NAME}-windows.zip"
+          python3 scripts/verify_uclient_release.py package \
+            --component client --version "$CLIENT_VERSION" --git-sha "$GITHUB_SHA" \
+            --archive "artifacts/${CLIENT_NAME}-windows.zip"
+        fi
+        if [[ "$PUBLISH_LAUNCHER" == "true" ]]; then
+          python3 scripts/verify_uclient_release.py package \
+            --component launcher --version "$LAUNCHER_VERSION" --git-sha "$GITHUB_SHA" \
+            --archive "artifacts/${CLIENT_NAME}-launcher-windows.zip"
+        fi
+
+    - name: Inject client manifest into Linux archive
+      if: env.PUBLISH_CLIENT == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        archive="artifacts/${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz"
+        test -f "$archive"
+        manifest="artifacts/${CLIENT_NAME}-windows.zip.manifest.json"
+        test -f "$manifest"
+        stage="$RUNNER_TEMP/client-linux"
+        rm -rf "$stage" && mkdir -p "$stage"
+        tar -xJf "$archive" -C "$stage"
+        mapfile -d '' top < <(find "$stage" -mindepth 1 -maxdepth 1 -print0)
+        content="$stage"
+        if [[ "${#top[@]}" -eq 1 && -d "${top[0]}" ]]; then content="${top[0]}"; fi
+        python3 - "$manifest" "$content/uclient_build_manifest.json" <<'PY'
+        import json, pathlib, sys
+        src, dst = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+        data = json.loads(src.read_text(encoding="utf-8-sig"))
+        data["component"] = "client"
+        data["clientVersion"] = __import__("os").environ["CLIENT_VERSION"]
+        data["gitSha"] = __import__("os").environ["GITHUB_SHA"]
+        dst.write_text(json.dumps(data, separators=(",", ":")) + "\n", encoding="utf-8")
+        PY
+        tar -cJf "$archive" -C "$stage" .
+
+    - name: Derive full distribution metadata
+      if: env.PUBLISH_FULL == 'true'
+      id: full_meta
+      shell: bash
+      run: |
+        set -euo pipefail
+        RELEASED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        WIN_FILE="${CLIENT_NAME}-windows.zip"
+        LIN_FILE="${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz"
+        MAC_FILE="${CLIENT_NAME}-macos.dmg"
+        WIN_PATH="uclient/${CLIENT_VERSION}/windows/${WIN_FILE}"
+        LIN_PATH="uclient/${CLIENT_VERSION}/linux/${LIN_FILE}"
+        mkdir -p ./artifacts/update-meta
+        WIN_SHA=$(sha256sum "./artifacts/${CLIENT_NAME}-windows-full.zip" | awk '{print $1}')
+        LIN_SHA=$(sha256sum "./artifacts/${LIN_FILE}" | awk '{print $1}')
+        WIN_SIZE=$(stat -c%s "./artifacts/${CLIENT_NAME}-windows-full.zip")
+        LIN_SIZE=$(stat -c%s "./artifacts/${LIN_FILE}")
+        BASE="${R2_PUBLIC_BASE_URL%/}"
+        if [ -f "./artifacts/${MAC_FILE}" ]; then
+          MAC_SHA=$(sha256sum "./artifacts/${MAC_FILE}" | awk '{print $1}')
+          MAC_SIZE=$(stat -c%s "./artifacts/${MAC_FILE}")
+          jq -n \
+            --arg version "$CLIENT_VERSION" \
+            --arg launcherVersion "$LAUNCHER_VERSION" \
+            --arg releasedAt "$RELEASED_AT" \
+            --arg winFile "$WIN_FILE" --arg winPath "$WIN_PATH" \
+            --arg winUrl "${BASE}/${CLIENT_VERSION}/windows/${WIN_FILE}" \
+            --arg winSha "$WIN_SHA" --argjson winSize "$WIN_SIZE" \
+            --arg linFile "$LIN_FILE" --arg linPath "$LIN_PATH" \
+            --arg linUrl "${BASE}/${CLIENT_VERSION}/linux/${LIN_FILE}" \
+            --arg linSha "$LIN_SHA" --argjson linSize "$LIN_SIZE" \
+            --arg macFile "$MAC_FILE" \
+            --arg macPath "uclient/${CLIENT_VERSION}/macos/${MAC_FILE}" \
+            --arg macUrl "${BASE}/${CLIENT_VERSION}/macos/${MAC_FILE}" \
+            --arg macSha "$MAC_SHA" --argjson macSize "$MAC_SIZE" \
+            '{
+              version: $version,
+              launcherVersion: $launcherVersion,
+              releasedAt: $releasedAt,
+              platforms: {
+                windows: { name: $winFile, path: $winPath, url: $winUrl, sha256: $winSha, size: $winSize },
+                linux: { name: $linFile, path: $linPath, url: $linUrl, sha256: $linSha, size: $linSize },
+                macos: { name: $macFile, path: $macPath, url: $macUrl, sha256: $macSha, size: $macSize }
+              }
+            }' > ./artifacts/update-meta/full-latest.json
+          echo "has_mac=1" >> "$GITHUB_OUTPUT"
+        else
+          jq -n \
+            --arg version "$CLIENT_VERSION" \
+            --arg launcherVersion "$LAUNCHER_VERSION" \
+            --arg releasedAt "$RELEASED_AT" \
+            --arg winFile "$WIN_FILE" --arg winPath "$WIN_PATH" \
+            --arg winUrl "${BASE}/${CLIENT_VERSION}/windows/${WIN_FILE}" \
+            --arg winSha "$WIN_SHA" --argjson winSize "$WIN_SIZE" \
+            --arg linFile "$LIN_FILE" --arg linPath "$LIN_PATH" \
+            --arg linUrl "${BASE}/${CLIENT_VERSION}/linux/${LIN_FILE}" \
+            --arg linSha "$LIN_SHA" --argjson linSize "$LIN_SIZE" \
+            '{
+              version: $version,
+              launcherVersion: $launcherVersion,
+              releasedAt: $releasedAt,
+              platforms: {
+                windows: { name: $winFile, path: $winPath, url: $winUrl, sha256: $winSha, size: $winSize },
+                linux: { name: $linFile, path: $linPath, url: $linUrl, sha256: $linSha, size: $linSize }
+              }
+            }' > ./artifacts/update-meta/full-latest.json
+          echo "has_mac=0" >> "$GITHUB_OUTPUT"
+        fi
+        echo "released_at=$RELEASED_AT" >> "$GITHUB_OUTPUT"
+        echo "win_path=$WIN_PATH" >> "$GITHUB_OUTPUT"
+        echo "lin_path=$LIN_PATH" >> "$GITHUB_OUTPUT"
+
+    - name: Prepare client channel metadata
+      if: env.PUBLISH_CLIENT == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        base="${R2_PUBLIC_BASE_URL%/}"
+        released_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        jq -n \
+          --arg version "$CLIENT_VERSION" \
+          --arg minLauncherVersion "$MIN_LAUNCHER_VERSION" \
+          --arg releasedAt "$released_at" \
+          --arg base "$base" \
+          --arg win_sha "$(sha256sum artifacts/UClient-windows.zip | cut -d' ' -f1)" \
+          --argjson win_size "$(stat -c%s artifacts/UClient-windows.zip)" \
+          --arg lin_sha "$(sha256sum artifacts/UClient-ubuntu-linux_x86_64.tar.xz | cut -d' ' -f1)" \
+          --argjson lin_size "$(stat -c%s artifacts/UClient-ubuntu-linux_x86_64.tar.xz)" \
+          '{
+            component: "client",
+            version: $version,
+            minLauncherVersion: $minLauncherVersion,
+            releasedAt: $releasedAt,
+            platforms: {
+              windows: {
+                name: "UClient-windows.zip",
+                path: ("uclient/client/" + $version + "/windows/UClient-windows.zip"),
+                url: ($base + "/client/" + $version + "/windows/UClient-windows.zip"),
+                sha256: $win_sha, size: $win_size
+              },
+              linux: {
+                name: "UClient-ubuntu-linux_x86_64.tar.xz",
+                path: ("uclient/client/" + $version + "/linux/UClient-ubuntu-linux_x86_64.tar.xz"),
+                url: ($base + "/client/" + $version + "/linux/UClient-ubuntu-linux_x86_64.tar.xz"),
+                sha256: $lin_sha, size: $lin_size
+              }
+            }
+          }' > artifacts/update-meta/client-latest.json
+        if [ -f artifacts/UClient-macos.dmg ]; then
+          jq \
+            --arg mac_sha "$(sha256sum artifacts/UClient-macos.dmg | cut -d' ' -f1)" \
+            --argjson mac_size "$(stat -c%s artifacts/UClient-macos.dmg)" \
+            --arg version "$CLIENT_VERSION" \
+            --arg base "$base" \
+            '.platforms.macos = {
+              name: "UClient-macos.dmg",
+              path: ("uclient/client/" + $version + "/macos/UClient-macos.dmg"),
+              url: ($base + "/client/" + $version + "/macos/UClient-macos.dmg"),
+              sha256: $mac_sha, size: $mac_size
+            }' artifacts/update-meta/client-latest.json > artifacts/update-meta/client-latest.json.tmp
+          mv artifacts/update-meta/client-latest.json.tmp artifacts/update-meta/client-latest.json
+        fi
+        if [ -f artifacts/UClient-android.apk ]; then
+          jq \
+            --arg apk_sha "$(sha256sum artifacts/UClient-android.apk | cut -d' ' -f1)" \
+            --argjson apk_size "$(stat -c%s artifacts/UClient-android.apk)" \
+            --arg version "$CLIENT_VERSION" \
+            --arg base "$base" \
+            '.platforms.android = {
+              name: "UClient-android.apk",
+              path: ("uclient/client/" + $version + "/android/UClient-android.apk"),
+              url: ($base + "/client/" + $version + "/android/UClient-android.apk"),
+              sha256: $apk_sha, size: $apk_size
+            }' artifacts/update-meta/client-latest.json > artifacts/update-meta/client-latest.json.tmp
+          mv artifacts/update-meta/client-latest.json.tmp artifacts/update-meta/client-latest.json
+        fi
+        echo "CLIENT_RELEASED_AT=$released_at" >> "$GITHUB_ENV"
+
+    - name: Prepare launcher channel metadata
+      if: env.PUBLISH_LAUNCHER == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        base="${R2_PUBLIC_BASE_URL%/}"
+        released_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        jq -n \
+          --arg version "$LAUNCHER_VERSION" \
+          --arg releasedAt "$released_at" \
+          --arg base "$base" \
+          --arg sha "$(sha256sum artifacts/UClient-launcher-windows.zip | cut -d' ' -f1)" \
+          --argjson size "$(stat -c%s artifacts/UClient-launcher-windows.zip)" \
+          '{
+            component: "launcher",
+            version: $version,
+            releasedAt: $releasedAt,
+            platforms: {
+              windows: {
+                name: "UClient-launcher-windows.zip",
+                path: ("uclient/launcher/" + $version + "/windows/UClient-launcher-windows.zip"),
+                url: ($base + "/launcher/" + $version + "/windows/UClient-launcher-windows.zip"),
+                sha256: $sha,
+                size: $size
+              }
+            }
+          }' > artifacts/update-meta/launcher-latest.json
+        echo "LAUNCHER_RELEASED_AT=$released_at" >> "$GITHUB_ENV"
+
+    - name: Set release timestamp
+      id: release_time
+      shell: bash
+      run: echo "released_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+    - name: Merge legacy distribution latest.json
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p /tmp/r2-existing
+        RELEASED_AT="${{ steps.release_time.outputs.released_at }}"
+        EXISTING_LATEST=/tmp/r2-existing/latest.json
+        EXISTING_VERSIONS=/tmp/r2-existing/versions.json
+        if [[ -n "${CF_R2_ACCOUNT_ID:-}" ]]; then
+          rclone cat ":s3:${R2_BUCKET}/uclient/latest.json" \
+            --s3-provider Cloudflare \
+            --s3-endpoint "https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+            --s3-access-key-id "${CF_R2_ACCESS_KEY_ID}" \
+            --s3-secret-access-key "${CF_R2_SECRET_ACCESS_KEY}" \
+            > "$EXISTING_LATEST" 2>/dev/null || true
+          rclone cat ":s3:${R2_BUCKET}/uclient/versions.json" \
+            --s3-provider Cloudflare \
+            --s3-endpoint "https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+            --s3-access-key-id "${CF_R2_ACCESS_KEY_ID}" \
+            --s3-secret-access-key "${CF_R2_SECRET_ACCESS_KEY}" \
+            > "$EXISTING_VERSIONS" 2>/dev/null || true
+        fi
+        ARGS=(
+          --client-version "$CLIENT_VERSION"
+          --launcher-version "$LAUNCHER_VERSION"
+          --released-at "$RELEASED_AT"
+          --out-latest artifacts/update-meta/legacy-latest.json
+          --out-versions artifacts/update-meta/legacy-versions.json
+        )
+        [[ -s "$EXISTING_LATEST" ]] && ARGS+=(--existing-latest "$EXISTING_LATEST")
+        [[ -s "$EXISTING_VERSIONS" ]] && ARGS+=(--existing-versions "$EXISTING_VERSIONS")
+        if [[ "$PUBLISH_FULL" == "true" ]]; then
+          ARGS+=(--publish-full --full-latest artifacts/update-meta/full-latest.json)
+        fi
+        python3 scripts/merge_distribution_latest.py "${ARGS[@]}"
+
+    - name: Resolve Git tag and release title
+      id: release_tag
+      if: env.CREATE_GITHUB_RELEASE == 'true' && github.event_name == 'workflow_dispatch'
+      shell: bash
+      run: |
+        set -euo pipefail
+        override='${{ github.event.inputs.tag_name }}'
+        if [[ -n "$override" ]]; then
+          tag="$override"
+        elif [[ "$PUBLISH_FULL" == "true" || ( "$PUBLISH_CLIENT" == "true" && "$PUBLISH_LAUNCHER" == "true" ) ]]; then
+          tag="dist-${CLIENT_VERSION}-${LAUNCHER_VERSION}"
+        elif [[ "$PUBLISH_CLIENT" == "true" ]]; then
+          tag="client-v${CLIENT_VERSION}"
+        elif [[ "$PUBLISH_LAUNCHER" == "true" ]]; then
+          tag="launcher-v${LAUNCHER_VERSION}"
+        else
+          tag="dist-${CLIENT_VERSION}-${LAUNCHER_VERSION}"
+        fi
+        if git rev-parse "$tag" >/dev/null 2>&1; then
+          echo "::error::Git tag '$tag' already exists"
+          exit 1
+        fi
+        title='${{ github.event.inputs.release_name }}'
+        if [[ -z "$title" ]]; then
+          title="Client ${CLIENT_VERSION} / Launcher ${LAUNCHER_VERSION}"
+        fi
+        echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        echo "title=$title" >> "$GITHUB_OUTPUT"
+
+    - name: Collect GitHub Release assets
+      if: github.event_name == 'workflow_dispatch' && env.CREATE_GITHUB_RELEASE == 'true'
+      id: release_assets
+      shell: bash
+      run: |
+        set -euo pipefail
+        list="$RUNNER_TEMP/release-assets.txt"
+        : > "$list"
+        if [[ "$PUBLISH_FULL" == "true" ]]; then
+          echo "artifacts/${CLIENT_NAME}-windows-full.zip" >> "$list"
+        fi
+        if [[ "$PUBLISH_CLIENT" == "true" ]]; then
+          echo "artifacts/${CLIENT_NAME}-windows.zip" >> "$list"
+          echo "artifacts/${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz" >> "$list"
+          test ! -f "artifacts/${CLIENT_NAME}-macos.dmg" || echo "artifacts/${CLIENT_NAME}-macos.dmg" >> "$list"
+          test ! -f "artifacts/${CLIENT_NAME}-android.apk" || echo "artifacts/${CLIENT_NAME}-android.apk" >> "$list"
+        fi
+        if [[ "$PUBLISH_LAUNCHER" == "true" ]]; then
+          echo "artifacts/${CLIENT_NAME}-launcher-windows.zip" >> "$list"
+        fi
+        {
+          echo "files<<EOF"
+          cat "$list"
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Create GitHub Release
+      if: github.event_name == 'workflow_dispatch' && env.CREATE_GITHUB_RELEASE == 'true'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.release_tag.outputs.tag }}
+        name: ${{ steps.release_tag.outputs.title }}
+        body: ${{ github.event.inputs.body }}
+        files: ${{ steps.release_assets.outputs.files }}
 
     - name: Attach assets to published GitHub release
       if: github.event_name == 'release'
@@ -288,180 +753,83 @@ jobs:
         tag_name: ${{ github.event.release.tag_name }}
         files: artifacts/${{ env.CLIENT_NAME }}-*
 
-    - name: Create or update release manually
-      if: github.event_name == 'workflow_dispatch'
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ github.event.inputs.tag_name }}
-        name: ${{ github.event.inputs.release_name }}
-        body: ${{ github.event.inputs.body }}
-        files: artifacts/${{ env.CLIENT_NAME }}-*
-
-    - name: Derive release metadata
-      id: release_meta
-      run: |
-        set -euo pipefail
-        VERSION="${{ github.event.inputs.tag_name || github.event.release.tag_name }}"
-        VERSION="${VERSION#v}"
-        VERSION="${VERSION#V}"
-        RELEASED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-        WIN_FILE="${CLIENT_NAME}-windows.zip"
-        LIN_FILE="${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz"
-        MAC_FILE="${CLIENT_NAME}-macos.dmg"
-
-        WIN_PATH="uclient/${VERSION}/windows/${WIN_FILE}"
-        LIN_PATH="uclient/${VERSION}/linux/${LIN_FILE}"
-        MAC_PATH="uclient/${VERSION}/macos/${MAC_FILE}"
-
-        WIN_SHA=$(sha256sum "./artifacts/${WIN_FILE}" | awk '{print $1}')
-        LIN_SHA=$(sha256sum "./artifacts/${LIN_FILE}" | awk '{print $1}')
-        WIN_SIZE=$(stat -c%s "./artifacts/${WIN_FILE}")
-        LIN_SIZE=$(stat -c%s "./artifacts/${LIN_FILE}")
-
-        mkdir -p ./artifacts/update-meta
-
-        if [ -f "./artifacts/${MAC_FILE}" ]; then
-          MAC_SHA=$(sha256sum "./artifacts/${MAC_FILE}" | awk '{print $1}')
-          MAC_SIZE=$(stat -c%s "./artifacts/${MAC_FILE}")
-          cat > ./artifacts/update-meta/latest.json <<JSON
-        {
-          "version": "${VERSION}",
-          "releasedAt": "${RELEASED_AT}",
-          "platforms": {
-            "windows": {
-              "name": "${WIN_FILE}",
-              "path": "${WIN_PATH}",
-              "url": "${R2_PUBLIC_BASE_URL}/${VERSION}/windows/${WIN_FILE}",
-              "sha256": "${WIN_SHA}",
-              "size": ${WIN_SIZE}
-            },
-            "macos": {
-              "name": "${MAC_FILE}",
-              "path": "${MAC_PATH}",
-              "url": "${R2_PUBLIC_BASE_URL}/${VERSION}/macos/${MAC_FILE}",
-              "sha256": "${MAC_SHA}",
-              "size": ${MAC_SIZE}
-            },
-            "linux": {
-              "name": "${LIN_FILE}",
-              "path": "${LIN_PATH}",
-              "url": "${R2_PUBLIC_BASE_URL}/${VERSION}/linux/${LIN_FILE}",
-              "sha256": "${LIN_SHA}",
-              "size": ${LIN_SIZE}
-            }
-          }
-        }
-        JSON
-          echo "has_mac=1" >> "$GITHUB_OUTPUT"
-          echo "mac_path=${MAC_PATH}" >> "$GITHUB_OUTPUT"
-        else
-          cat > ./artifacts/update-meta/latest.json <<JSON
-        {
-          "version": "${VERSION}",
-          "releasedAt": "${RELEASED_AT}",
-          "platforms": {
-            "windows": {
-              "name": "${WIN_FILE}",
-              "path": "${WIN_PATH}",
-              "url": "${R2_PUBLIC_BASE_URL}/${VERSION}/windows/${WIN_FILE}",
-              "sha256": "${WIN_SHA}",
-              "size": ${WIN_SIZE}
-            },
-            "linux": {
-              "name": "${LIN_FILE}",
-              "path": "${LIN_PATH}",
-              "url": "${R2_PUBLIC_BASE_URL}/${VERSION}/linux/${LIN_FILE}",
-              "sha256": "${LIN_SHA}",
-              "size": ${LIN_SIZE}
-            }
-          }
-        }
-        JSON
-          echo "has_mac=0" >> "$GITHUB_OUTPUT"
-        fi
-
-        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-        echo "released_at=${RELEASED_AT}" >> "$GITHUB_OUTPUT"
-        echo "win_path=${WIN_PATH}" >> "$GITHUB_OUTPUT"
-        echo "lin_path=${LIN_PATH}" >> "$GITHUB_OUTPUT"
-
     - name: Install rclone
       if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends rclone
-        rclone version
+        sudo apt-get install -y --no-install-recommends rclone jq
 
-    - name: Upload OS artifacts to versioned Cloudflare R2 paths
+    - name: Upload artifacts and metadata to R2
       if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
+      shell: bash
       run: |
-        rclone copyto "./artifacts/${CLIENT_NAME}-windows.zip" \
-          ":s3:${R2_BUCKET}/${{ steps.release_meta.outputs.win_path }}" \
-          --s3-provider Cloudflare \
-          --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-          --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-          --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
+        set -euo pipefail
+        r2=(--s3-provider Cloudflare
+            --s3-endpoint "https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+            --s3-access-key-id "$CF_R2_ACCESS_KEY_ID"
+            --s3-secret-access-key "$CF_R2_SECRET_ACCESS_KEY")
+        copy() { rclone copyto "$1" ":s3:${R2_BUCKET}/$2" "${r2[@]}"; }
 
-        rclone copyto "./artifacts/${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz" \
-          ":s3:${R2_BUCKET}/${{ steps.release_meta.outputs.lin_path }}" \
-          --s3-provider Cloudflare \
-          --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-          --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-          --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
-
-        if [ "${{ steps.release_meta.outputs.has_mac }}" = "1" ]; then
-          rclone copyto "./artifacts/${CLIENT_NAME}-macos.dmg" \
-            ":s3:${R2_BUCKET}/${{ steps.release_meta.outputs.mac_path }}" \
-            --s3-provider Cloudflare \
-            --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-            --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-            --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
-        fi
-
-    - name: Publish latest/versions update metadata to Cloudflare R2
-      if: env.CF_R2_ACCOUNT_ID != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != ''
-      run: |
-        set -e
-
-        EXISTING="[]"
-        if rclone cat ":s3:${R2_BUCKET}/uclient/versions.json" \
-          --s3-provider Cloudflare \
-          --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-          --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-          --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY} > /tmp/versions_existing.json 2>/dev/null; then
-          if [ -s /tmp/versions_existing.json ] && jq -e 'type == "array"' /tmp/versions_existing.json >/dev/null 2>&1; then
-            EXISTING=$(jq -c . /tmp/versions_existing.json)
-          else
-            echo "Existing uclient/versions.json missing or invalid; starting from empty list"
+        if [[ "$PUBLISH_FULL" == "true" ]]; then
+          copy "artifacts/${CLIENT_NAME}-windows-full.zip" "${{ steps.full_meta.outputs.win_path }}"
+          copy "artifacts/${CLIENT_NAME}-windows-full.zip" "uclient/win64/UClient-windows.zip"
+          copy "artifacts/${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz" "${{ steps.full_meta.outputs.lin_path }}"
+          if [[ "${{ steps.full_meta.outputs.has_mac }}" == "1" ]]; then
+            copy "artifacts/${CLIENT_NAME}-macos.dmg" "uclient/${CLIENT_VERSION}/macos/${CLIENT_NAME}-macos.dmg"
           fi
         fi
 
-        jq --arg ver "${{ steps.release_meta.outputs.version }}" --arg released_at "${{ steps.release_meta.outputs.released_at }}" -n \
-          --argjson existing "$EXISTING" \
-          '([{"version": $ver, "releasedAt": $released_at}] + ($existing | map(select(.version != $ver))))' \
-          > ./artifacts/update-meta/versions.json
+        if [[ "$PUBLISH_CLIENT" == "true" ]]; then
+          copy "artifacts/${CLIENT_NAME}-windows.zip" "uclient/client/${CLIENT_VERSION}/windows/${CLIENT_NAME}-windows.zip"
+          copy "artifacts/${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz" "uclient/client/${CLIENT_VERSION}/linux/${CLIENT_NAME}-ubuntu-linux_x86_64.tar.xz"
+          if [[ -f "artifacts/${CLIENT_NAME}-macos.dmg" ]]; then
+            copy "artifacts/${CLIENT_NAME}-macos.dmg" "uclient/client/${CLIENT_VERSION}/macos/${CLIENT_NAME}-macos.dmg"
+          fi
+          if [[ -f "artifacts/${CLIENT_NAME}-android.apk" ]]; then
+            copy "artifacts/${CLIENT_NAME}-android.apk" "uclient/client/${CLIENT_VERSION}/android/${CLIENT_NAME}-android.apk"
+          fi
+          copy artifacts/update-meta/client-latest.json "uclient/client/latest.json"
+          copy artifacts/update-meta/client-latest.json "uclient/client/${CLIENT_VERSION}/latest.json"
+          existing='[]'
+          if rclone cat ":s3:${R2_BUCKET}/uclient/client/versions.json" "${r2[@]}" \
+              > /tmp/client-versions.json 2>/dev/null &&
+              jq -e 'type == "array"' /tmp/client-versions.json >/dev/null; then
+            existing="$(jq -c . /tmp/client-versions.json)"
+          fi
+          jq -n \
+            --arg version "$CLIENT_VERSION" \
+            --arg releasedAt "${CLIENT_RELEASED_AT:-${{ steps.release_time.outputs.released_at }}}" \
+            --argjson existing "$existing" \
+            '([{ version: $version, releasedAt: $releasedAt }]
+              + ($existing | map(select(.version != $version))))' \
+            > artifacts/update-meta/client-versions.json
+          copy artifacts/update-meta/client-versions.json "uclient/client/versions.json"
+        fi
 
-        rclone copyto ./artifacts/update-meta/latest.json \
-          ":s3:${R2_BUCKET}/uclient/latest.json" \
-          --s3-provider Cloudflare \
-          --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-          --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-          --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
+        if [[ "$PUBLISH_LAUNCHER" == "true" ]]; then
+          copy "artifacts/${CLIENT_NAME}-launcher-windows.zip" \
+            "uclient/launcher/${LAUNCHER_VERSION}/windows/UClient-launcher-windows.zip"
+          copy artifacts/update-meta/launcher-latest.json "uclient/launcher/latest.json"
+          copy artifacts/update-meta/launcher-latest.json "uclient/launcher/${LAUNCHER_VERSION}/latest.json"
+          existing='[]'
+          if rclone cat ":s3:${R2_BUCKET}/uclient/launcher/versions.json" "${r2[@]}" \
+              > /tmp/launcher-versions.json 2>/dev/null &&
+              jq -e 'type == "array"' /tmp/launcher-versions.json >/dev/null; then
+            existing="$(jq -c . /tmp/launcher-versions.json)"
+          fi
+          jq -n \
+            --arg version "$LAUNCHER_VERSION" \
+            --arg releasedAt "${LAUNCHER_RELEASED_AT:-${{ steps.release_time.outputs.released_at }}}" \
+            --argjson existing "$existing" \
+            '([{ version: $version, releasedAt: $releasedAt }]
+              + ($existing | map(select(.version != $version))))' \
+            > artifacts/update-meta/launcher-versions.json
+          copy artifacts/update-meta/launcher-versions.json "uclient/launcher/versions.json"
+        fi
 
-        rclone copyto ./artifacts/update-meta/latest.json \
-          ":s3:${R2_BUCKET}/uclient/${{ steps.release_meta.outputs.version }}/latest.json" \
-          --s3-provider Cloudflare \
-          --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-          --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-          --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
-
-        rclone copyto ./artifacts/update-meta/versions.json \
-          ":s3:${R2_BUCKET}/uclient/versions.json" \
-          --s3-provider Cloudflare \
-          --s3-endpoint https://${CF_R2_ACCOUNT_ID}.r2.cloudflarestorage.com \
-          --s3-access-key-id ${CF_R2_ACCESS_KEY_ID} \
-          --s3-secret-access-key ${CF_R2_SECRET_ACCESS_KEY}
+        copy artifacts/update-meta/legacy-latest.json "uclient/latest.json"
+        copy artifacts/update-meta/legacy-latest.json "uclient/${CLIENT_VERSION}/latest.json"
+        copy artifacts/update-meta/legacy-versions.json "uclient/versions.json"
 
     - name: Skip R2 publish (missing secrets)
       if: env.CF_R2_ACCOUNT_ID == '' || env.CF_R2_ACCESS_KEY_ID == '' || env.CF_R2_SECRET_ACCESS_KEY == ''

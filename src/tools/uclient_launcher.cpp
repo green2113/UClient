@@ -259,6 +259,7 @@ static std::atomic<bool> g_UpdateDownloadRunning{false};
 static bool g_UpdateAvailable = false;
 static bool g_GameRunning = false;
 static UpdateMetadata g_PendingClientUpdate;
+static UpdateMetadata g_PendingLauncherPollUpdate;
 static std::wstring g_ButtonHint;
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
 static struct
@@ -322,6 +323,7 @@ static int g_MascotH = 0;
 #define WM_SHOW_LAUNCHER (WM_APP + 6)
 #define WM_ACCOUNT_READY (WM_APP + 7)
 #define WM_BACKUP_READY (WM_APP + 8)
+#define WM_LAUNCHER_POLL_UPDATE (WM_APP + 9)
 static constexpr ULONG_PTR COPYDATA_FORWARD_LAUNCH_ARG = 0x55434C46;
 
 #define ANIM_TIMER_ID 1
@@ -4533,6 +4535,19 @@ static DWORD WINAPI UpdateCheckThread(LPVOID)
 		return 0;
 	}
 
+	UpdateMetadata LauncherMetadata;
+	if(FetchUpdateMetadata(UCLIENT_LAUNCHER_UPDATE_LATEST_URL, "launcher", false, LauncherMetadata) &&
+		CompareVersions(LauncherMetadata.Version, UCLIENT_LAUNCHER_VERSION) > 0)
+	{
+		EnterCriticalSection(&g_Lock);
+		g_PendingLauncherPollUpdate = LauncherMetadata;
+		g_UpdateCheckRefreshing = false;
+		LeaveCriticalSection(&g_Lock);
+		if(g_hWnd)
+			PostMessage(g_hWnd, WM_LAUNCHER_POLL_UPDATE, 0, 0);
+		return 0;
+	}
+
 	const std::string LocalVersion = ResolveLocalClientVersion(g_pArgs->InstallDir);
 	UpdateMetadata Metadata;
 	bool NeedUpdate = false;
@@ -6299,6 +6314,16 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 	case WM_UPDATE_CHECK_READY:
 		InvalidateRect(hWnd, nullptr, FALSE);
 		PushWebState(true);
+		return 0;
+	case WM_LAUNCHER_POLL_UPDATE:
+		if(g_pArgs && g_Phase == EUiPhase::Ready && !EffectiveGameRunning() && !EffectivePlayBlocked() &&
+			!g_PendingLauncherPollUpdate.Version.empty())
+		{
+			const UpdateMetadata Metadata = g_PendingLauncherPollUpdate;
+			g_PendingLauncherPollUpdate = {};
+			if(ApplyLauncherUpdate(g_pArgs, Metadata))
+				return 0;
+		}
 		return 0;
 	case WM_ACCOUNT_READY:
 		InvalidateRect(hWnd, nullptr, FALSE);

@@ -1,9 +1,7 @@
+# Deprecated: use ".github/workflows/release.yml" (Full UClient Distribution Release).
 name: Release UClient Launcher
 
 on:
-  push:
-    tags:
-      - "launcher-v*"
   workflow_dispatch:
     inputs:
       version:
