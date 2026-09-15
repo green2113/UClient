@@ -828,23 +828,16 @@ bool ReadClipboardGifFromHDropOpen(std::vector<uint8_t> &OutBytes, size_t MaxByt
 	if(pFileName != nullptr && FileNameSize > 0)
 		pFileName[0] = '\0';
 	if(!IsClipboardFormatAvailable(CF_HDROP))
-	{
-		log_info("clipboard", "GIF file paste: CF_HDROP is not available");
 		return false;
-	}
 
 	HANDLE hDrop = GetClipboardData(CF_HDROP);
 	if(hDrop == nullptr)
-	{
-		log_info("clipboard", "GIF file paste: GetClipboardData(CF_HDROP) failed (%lu)", GetLastError());
 		return false;
-	}
 
 	const HDROP hDropList = static_cast<HDROP>(hDrop);
 
 	bool Success = false;
 	const UINT FileCount = DragQueryFileW(hDropList, 0xFFFFFFFF, nullptr, 0);
-	log_info("clipboard", "GIF file paste: CF_HDROP contains %u file(s)", FileCount);
 	for(int Attempt = 0; Attempt < 4 && !Success; ++Attempt)
 	{
 		if(Attempt > 0)
@@ -881,8 +874,6 @@ bool ReadClipboardGifFromHDropOpen(std::vector<uint8_t> &OutBytes, size_t MaxByt
 			}
 			if(!Success && Attempt == 3)
 				LogClipboardPathFailure("GIF file paste", Path.data(), GetLastError());
-			if(Attempt == 0 || Success || Attempt == 3)
-				log_info("clipboard", "GIF file paste: file %u read %s (%zu bytes)", i, Success ? "successfully" : "failed", OutBytes.size());
 		}
 	}
 
@@ -1043,8 +1034,6 @@ bool ReadClipboardGifFromDataObject(std::vector<uint8_t> &OutBytes, size_t MaxBy
 	}
 
 	pDataObject->Release();
-	if(Success)
-		log_info("clipboard", "GIF file paste: read successfully from IDataObject stream (%zu bytes)", OutBytes.size());
 	return Success;
 }
 
@@ -1082,7 +1071,8 @@ bool ReadClipboardGifOpen(std::vector<uint8_t> &OutBytes, size_t MaxBytes, char 
 	// CFSTR_FILECONTENTS through GetClipboardData/GlobalLock: Shell data objects
 	// commonly expose it as an IStream, and requesting it this way can invalidate
 	// delayed-rendered clipboard formats before CF_HDROP is read.
-	if(ReadClipboardGifFromHDropOpen(OutBytes, MaxBytes, pFileName, FileNameSize))
+	if(IsClipboardFormatAvailable(CF_HDROP) &&
+		ReadClipboardGifFromHDropOpen(OutBytes, MaxBytes, pFileName, FileNameSize))
 		return true;
 
 	std::vector<uint8_t> PathBytes;

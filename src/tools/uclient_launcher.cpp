@@ -1332,7 +1332,8 @@ static bool PathsEqualNoCase(const std::wstring &A, const std::wstring &B)
 	return _wcsicmp(A.c_str(), B.c_str()) == 0;
 }
 
-static void CopyTree(const wchar_t *pSrc, const wchar_t *pDst, const std::wstring &SelfPath, std::function<void()> PerFile = nullptr)
+static void CopyTree(const wchar_t *pSrc, const wchar_t *pDst, const std::wstring &SelfPath, std::function<void()> PerFile = nullptr,
+	bool SkipLauncherExecutable = false)
 {
 	CreateDirectoryW(pDst, NULL);
 	std::wstring Search(pSrc);
@@ -1354,9 +1355,11 @@ static void CopyTree(const wchar_t *pSrc, const wchar_t *pDst, const std::wstrin
 		Dst += L"\\";
 		Dst += Fd.cFileName;
 		if(Fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-			CopyTree(Src.c_str(), Dst.c_str(), SelfPath, PerFile);
+			CopyTree(Src.c_str(), Dst.c_str(), SelfPath, PerFile, SkipLauncherExecutable);
 		else
 		{
+			if(SkipLauncherExecutable && _wcsicmp(Fd.cFileName, L"UClient.exe") == 0)
+				continue;
 			// Running launcher cannot overwrite itself — rename then replace.
 			if(PathsEqualNoCase(Dst, SelfPath))
 			{
@@ -1381,7 +1384,10 @@ static bool ApplyUpdateArchive(const std::wstring &ArchivePath, const std::wstri
 	SetButtonLabel(L"Applying update");
 	SetStatus(L"Extracting update...");
 	SetPercent(10);
-	if(!ValidateArchiveEntries(ArchivePath, AllowLauncherExecutable))
+	// Legacy unified latest.json serves the full distribution zip (includes UClient.exe).
+	// Client updates must accept that archive but must not replace the running launcher.
+	const bool AllowLauncherInArchive = AllowLauncherExecutable || RequireBuildManifest;
+	if(!ValidateArchiveEntries(ArchivePath, AllowLauncherInArchive))
 	{
 		SetStatus(L"Update archive contains an unsafe or unexpected path");
 		g_Failed = true;
@@ -1448,15 +1454,25 @@ static bool ApplyUpdateArchive(const std::wstring &ArchivePath, const std::wstri
 	{
 		std::string BuildManifest;
 		std::string BuiltClientVersion;
-		if(!ReadTextFile(JoinPath(CopyRoot, kBuildManifestFile), BuildManifest) ||
-			!ExtractJsonString(BuildManifest, "clientVersion", BuiltClientVersion) ||
-			BuiltClientVersion != ExpectedClientVersion)
+		if(ReadTextFile(JoinPath(CopyRoot, kBuildManifestFile), BuildManifest) &&
+			ExtractJsonString(BuildManifest, "clientVersion", BuiltClientVersion))
 		{
-			SetStatus(L"Built client version does not match update metadata");
+			if(CompareVersions(BuiltClientVersion, ExpectedClientVersion) != 0)
+			{
+				SetStatus(L"Built client version does not match update metadata");
+				g_Failed = true;
+				DeleteTree(ExtractDir.c_str());
+				return false;
+			}
+		}
+		else if(ExpectedClientVersion.empty())
+		{
+			SetStatus(L"Update archive has no build manifest");
 			g_Failed = true;
 			DeleteTree(ExtractDir.c_str());
 			return false;
 		}
+		// Legacy full-distribution zips omit uclient_build_manifest.json; SHA-256 was checked on download.
 	}
 
 	SetStatus(L"Backing up settings...");
@@ -1485,7 +1501,7 @@ static bool ApplyUpdateArchive(const std::wstring &ArchivePath, const std::wstri
 			++Done;
 			const int Pct = 55 + Done * 35 / Total;
 			SetPercent(Pct < 90 ? Pct : 90);
-		});
+		}, RequireBuildManifest);
 	}
 	SetPercent(90);
 
@@ -1657,6 +1673,28 @@ static bool FetchClientUpdateMetadata(UpdateMetadata &Out)
 		return true;
 	}
 	return false;
+}
+
+static bool FetchLauncherUpdateMetadata(UpdateMetadata &Out)
+{
+	if(FetchUpdateMetadata(UCLIENT_LAUNCHER_UPDATE_LATEST_URL, "launcher", false, Out))
+		return true;
+
+	std::string Body;
+	char aUrl[768];
+	_snprintf_s(aUrl, _TRUNCATE, "%s?t=%lld", UCLIENT_UPDATE_LATEST_URL, (long long)time(nullptr));
+	if(!HttpGetToString(Utf8ToWide(aUrl), Body))
+		return false;
+
+	std::string RemoteLauncherVersion;
+	if(!ExtractJsonString(Body, "launcherVersion", RemoteLauncherVersion) ||
+		!ValidComponentVersion(RemoteLauncherVersion) ||
+		CompareVersions(RemoteLauncherVersion, UCLIENT_LAUNCHER_VERSION) <= 0)
+		return false;
+
+	_snprintf_s(aUrl, _TRUNCATE, "https://ddnet.under1111.com/uclient/launcher/%s/latest.json",
+		RemoteLauncherVersion.c_str());
+	return FetchUpdateMetadata(aUrl, "launcher", false, Out);
 }
 
 static bool ExtractJsonBool(const std::string &Json, const char *Key, bool &Out)
@@ -3969,7 +4007,7 @@ static bool ApplyLauncherUpdate(LauncherArgs *pA, const UpdateMetadata &Metadata
 	std::string BuiltVersion;
 	if(!ReadTextFile(BuildManifestPath, BuildManifest) ||
 		!ExtractJsonString(BuildManifest, "launcherVersion", BuiltVersion) ||
-		BuiltVersion != Metadata.Version)
+		CompareVersions(BuiltVersion, Metadata.Version) != 0)
 	{
 		SetStatus(L"Built launcher version does not match update metadata");
 		g_Failed = true;
@@ -4391,6 +4429,13 @@ static void SyncButtonHint()
 		{
 			Hint = L"You cannot update because the game is currently running. Please close the game and then proceed with the update.";
 		}
+		else if(EffectiveUpdateAvailable() && g_Failed)
+		{
+			EnterCriticalSection(&g_Lock);
+			if(g_aStatus[0])
+				Hint = g_aStatus;
+			LeaveCriticalSection(&g_Lock);
+		}
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
 		else if(g_Dev.ForceGameRunning && EffectiveUpdateAvailable())
 		{
@@ -4434,7 +4479,11 @@ static bool RunUpdateDownload(LauncherArgs *pA, const UpdateMetadata &Metadata)
 	SetButtonLabel(L"Applying update");
 	if(!ApplyUpdateArchive(ArchivePath, pA->InstallDir, pA->SelfPath, Metadata.Version, true, false))
 	{
-		SetStatus(L"Update failed — you can still play");
+		EnterCriticalSection(&g_Lock);
+		const bool HasDetail = g_aStatus[0] != L'\0';
+		LeaveCriticalSection(&g_Lock);
+		if(!HasDetail)
+			SetStatus(L"Update failed — you can still play");
 		g_Failed = true;
 		g_UpdateStage = EUpdateStage::None;
 		return false;
@@ -4536,7 +4585,7 @@ static DWORD WINAPI UpdateCheckThread(LPVOID)
 	}
 
 	UpdateMetadata LauncherMetadata;
-	if(FetchUpdateMetadata(UCLIENT_LAUNCHER_UPDATE_LATEST_URL, "launcher", false, LauncherMetadata) &&
+	if(FetchLauncherUpdateMetadata(LauncherMetadata) &&
 		CompareVersions(LauncherMetadata.Version, UCLIENT_LAUNCHER_VERSION) > 0)
 	{
 		EnterCriticalSection(&g_Lock);
@@ -4697,7 +4746,7 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 	SetPercent(0);
 
 	UpdateMetadata LauncherMetadata;
-	if(FetchUpdateMetadata(UCLIENT_LAUNCHER_UPDATE_LATEST_URL, "launcher", false, LauncherMetadata) &&
+	if(FetchLauncherUpdateMetadata(LauncherMetadata) &&
 		CompareVersions(LauncherMetadata.Version, UCLIENT_LAUNCHER_VERSION) > 0)
 	{
 		if(ApplyLauncherUpdate(pA, LauncherMetadata))

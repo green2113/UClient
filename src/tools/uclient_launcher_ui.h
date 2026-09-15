@@ -685,9 +685,9 @@ body{
 #play-hint-flyout{display:none}
 #play-wrap.hint-on #play-hint-flyout{
   display:block;
-  position:absolute;left:calc(100% + 10px);top:50%;transform:translateY(-50%);
-  width:min(360px,72vw);opacity:0;visibility:hidden;pointer-events:none;
-  transition:opacity .18s var(--ease),visibility .18s var(--ease);z-index:60;
+  position:fixed;left:0;top:0;transform:none;
+  width:min(360px,calc(100vw - 16px));opacity:0;visibility:hidden;pointer-events:none;
+  transition:opacity .18s var(--ease),visibility .18s var(--ease);z-index:320;
 }
 #play-wrap.hint-on #play-hint-flyout::before{
   content:"";position:absolute;right:100%;top:0;width:10px;height:100%;
@@ -865,10 +865,10 @@ body{
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 #alert-flyout{
-  position:absolute;left:calc(100% + 10px);top:0;
-  width:min(360px,72vw);opacity:0;visibility:hidden;pointer-events:none;
+  position:fixed;left:0;top:0;
+  width:min(360px,calc(100vw - 16px));opacity:0;visibility:hidden;pointer-events:none;
   transition:opacity .18s var(--ease),visibility .18s var(--ease);
-  z-index:60;
+  z-index:320;
 }
 #alert-flyout::before{
   content:"";position:absolute;right:100%;top:0;width:10px;height:100%;
@@ -1663,6 +1663,58 @@ function fmtNoticeExpiry(n) {
   return '<p class="notice-expiry"><b>Until:</b> ' + esc(d.toLocaleString()) + '</p>';
 }
 
+function fmtNoticeBody(text) {
+  if (!text) return "";
+  var normalized = String(text).replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+  return esc(normalized);
+}
+
+function positionSideFlyout(anchorEl, flyoutEl, innerEl, boxEl) {
+  if (!anchorEl || !flyoutEl) return;
+  var margin = 8;
+  var gap = 10;
+  var from = anchorEl.getBoundingClientRect();
+  var vw = window.innerWidth;
+  var vh = window.innerHeight;
+  var maxBox = Math.min(280, vh - margin * 2);
+  if (boxEl) boxEl.style.maxHeight = maxBox + "px";
+  if (innerEl) innerEl.style.maxHeight = Math.max(120, Math.min(240, maxBox - 40)) + "px";
+  flyoutEl.style.visibility = "hidden";
+  flyoutEl.style.left = margin + "px";
+  flyoutEl.style.top = margin + "px";
+  var box = flyoutEl.getBoundingClientRect();
+  var left = from.right + gap;
+  if (left + box.width > vw - margin) left = from.left - gap - box.width;
+  left = Math.min(Math.max(left, margin), Math.max(margin, vw - box.width - margin));
+  var top = from.top;
+  if (top + box.height > vh - margin) {
+    top = Math.max(margin, vh - margin - box.height);
+  }
+  if (top < margin) top = margin;
+  if (box.height > vh - margin * 2) top = margin;
+  flyoutEl.style.left = left + "px";
+  flyoutEl.style.top = top + "px";
+  flyoutEl.style.removeProperty("visibility");
+}
+
+function positionAlertFlyout() {
+  positionSideFlyout(
+    $("alert-strip"),
+    $("alert-flyout"),
+    $("alert-flyout-inner"),
+    $("alert-flyout-box")
+  );
+}
+
+function positionPlayHintFlyout() {
+  positionSideFlyout(
+    $("play"),
+    $("play-hint-flyout"),
+    $("play-hint-flyout-inner"),
+    $("play-hint-flyout-box")
+  );
+}
+
 function renderAlerts(st) {
   noticeState = sortedNotices(st.notices || []);
   var wrap = $("alert-wrap");
@@ -1677,9 +1729,10 @@ function renderAlerts(st) {
   $("alert-flyout-inner").innerHTML = noticeState.map(function (n) {
     var expiry = n.id === "account_ban" ? fmtNoticeExpiry(n) : "";
     return '<article class="notice-block"><h4>' + esc(n.title || "Notice") +
-      '</h4><p>' + esc(n.body || "") + '</p>' + expiry + '</article>';
+      '</h4><p>' + fmtNoticeBody(n.body || "") + '</p>' + expiry + '</article>';
   }).join("");
   wrap.classList.add("on");
+  requestAnimationFrame(positionAlertFlyout);
 }
 
 function moveIndicator() {
@@ -1709,6 +1762,25 @@ function showView(name) {
       showView(e.currentTarget.dataset.view);
     });
   }
+})();
+
+(function () {
+  var alertWrap = $("alert-wrap");
+  if (alertWrap) {
+    function scheduleAlertFlyout() { requestAnimationFrame(positionAlertFlyout); }
+    alertWrap.addEventListener("mouseenter", scheduleAlertFlyout);
+    alertWrap.addEventListener("focusin", scheduleAlertFlyout);
+  }
+  var playWrap = $("play-wrap");
+  if (playWrap) {
+    function schedulePlayHintFlyout() { requestAnimationFrame(positionPlayHintFlyout); }
+    playWrap.addEventListener("mouseenter", schedulePlayHintFlyout);
+    playWrap.addEventListener("focusin", schedulePlayHintFlyout);
+  }
+  window.addEventListener("resize", function () {
+    positionAlertFlyout();
+    positionPlayHintFlyout();
+  });
 })();
 
 function toggleSettings(on) {
@@ -7940,10 +8012,13 @@ window.__setState = function (st) {
   playWrap.classList.toggle("hint-on", showHint);
   playWrap.tabIndex = showHint ? 0 : -1;
   $("play-hint-flyout-inner").textContent = showHint ? st.buttonHint : "";
+  if (showHint) requestAnimationFrame(positionPlayHintFlyout);
   renderAlerts(st);
   syncShortcutsFromState(st);
-  $("ov-status").textContent = playButtonShowsStatus(st.phase) || st.phase === "ready" ? "" : (st.status || "");
-  $("ov-status").classList.toggle("bad", !!st.failed && st.phase !== "ready");
+  var showFailedOnReady = st.phase === "ready" && !!st.failed && !!st.status;
+  $("ov-status").textContent = showFailedOnReady ? st.status :
+    (playButtonShowsStatus(st.phase) || st.phase === "ready" ? "" : (st.status || ""));
+  $("ov-status").classList.toggle("bad", !!st.failed && (st.phase !== "ready" || showFailedOnReady));
 
   $("up-version").textContent = st.version || "";
   $("up-status").textContent = st.phase === "checking" || st.phase === "launching" ? "" : (st.status || "");
