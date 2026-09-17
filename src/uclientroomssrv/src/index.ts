@@ -5,6 +5,12 @@ import {
 	adminUpdateNotice,
 	publicNotices,
 } from "./notices";
+import {
+	getShortcutShare,
+	handleShortcutsShare,
+	postShortcutShare,
+	serveSharePage,
+} from "./shortcuts-share";
 
 interface Env extends Cloudflare.Env {
 	ACCOUNT_PEPPER: string;
@@ -1281,6 +1287,19 @@ export default {
 			}
 			if(segments[0] === "backups" && segments[1] === "cfg")
 				return handleBackups(request, env, segments);
+			if(segments[0] === "shortcuts" && segments[1] === "share") {
+				if(segments.length === 2 && request.method === "POST") {
+					const authenticated = await authenticate(request, env);
+					if(authenticated instanceof Response)
+						return authenticated;
+					return postShortcutShare(request, env, authenticated.installId);
+				}
+				return handleShortcutsShare(request, env, segments);
+			}
+			if(segments[0] === "share" && segments.length === 2 && request.method === "GET") {
+				const redirectUrl = new URL(`/shortcuts/share/${segments[1]!}`, request.url);
+				return Response.redirect(redirectUrl.toString(), 301);
+			}
 			if(segments[0] === "rooms")
 				return handleRooms(request, env, ctx, segments);
 			return error(404, "not_found", "Endpoint not found.");

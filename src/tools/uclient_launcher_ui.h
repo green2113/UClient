@@ -113,6 +113,7 @@ static const wchar_t *const kLauncherHtml = LR"HTMLDOC(<!DOCTYPE html>
   --font-apple-round:"SF Pro Rounded","SF Pro Display",ui-rounded,"Nunito","Pretendard Variable","Pretendard",-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI",system-ui,sans-serif;
 }
 *{margin:0;padding:0;box-sizing:border-box}
+[hidden]{display:none!important}
 #shortcuts-view svg path,#shortcuts-view svg line,#shortcuts-view svg polyline,#shortcuts-view svg rect,#shortcuts-view svg circle,#sc-editor svg path,#sc-editor svg line,#sc-editor svg polyline,#sc-editor svg rect,#sc-editor svg circle{stroke-linecap:round;stroke-linejoin:round}
 html,body{
   height:100%;overflow:hidden;
@@ -286,6 +287,11 @@ body{
 .sc-ed-title-chev .sc-ed-chev-svg{width:18px;height:18px;display:block}
 .sc-ed-head-center.is-renaming .sc-ed-title-trigger{display:none}
 .sc-ed-head-center.is-renaming .sc-ed-title-input{display:block}
+.sc-import-banner{
+  margin:0 16px 10px;padding:10px 14px;border-radius:10px;
+  background:rgba(124,108,240,.16);border:1px solid rgba(124,108,240,.32);
+  color:var(--accent-hi);font-size:13px;line-height:1.45;
+}
 .sc-ed-title-input{display:none;width:100%;min-width:180px;max-width:min(68vw,440px);margin:0 auto;text-align:center}
 .sc-ed-back,.sc-ed-icon{width:40px;height:40px;min-width:40px;min-height:40px;aspect-ratio:1;border:0;border-radius:50%;padding:0;display:grid;place-items:center;cursor:pointer;flex:0 0 auto;transition:transform 80ms ease-out,background .15s var(--ease),color .15s var(--ease),opacity .15s var(--ease)}
 .sc-ed-back{background:transparent;color:var(--dim)}
@@ -587,14 +593,15 @@ body{
 .sc-stepper-sep{width:1px;margin:6px 0;background:rgba(255,255,255,.1);flex:0 0 auto}
 .sc-stepper-pill{cursor:pointer}
 @supports (corner-shape:squircle){
-  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search-wrap,.sc-drawer-search-chip,.sc-drawer-filter-pick,.sc-chip,.sc-catalog,.sc-tile,.sc-tile-ico,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.sc-text-var-chip,.sc-text-composer .sc-text-var-inline,.modal-box,.opt{corner-shape:squircle}
+  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search-wrap,.sc-drawer-search-chip,.sc-drawer-filter-pick,.sc-chip,.sc-catalog,.sc-tile,.sc-tile-ico,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.sc-text-var-chip,.sc-text-composer .sc-text-var-inline,.modal-box,.opt,.confirm-box,.confirm-files,#share-link-url{corner-shape:squircle}
+  .confirm-actions .primary,.confirm-actions .secondary,.confirm-actions .danger,.confirm-box .row-actions .primary,.confirm-box .row-actions .secondary{corner-shape:squircle}
   .sc-ed-back,.sc-ed-icon,.sc-ed-delete,.sc-ed-save{corner-shape:round;border-radius:50%}
 }
 .sc-toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:rgba(0,0,0,.82);color:#fff;padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s var(--ease);z-index:360;backdrop-filter:blur(12px)}
 .sc-toast.on{opacity:1}
 
 /* -- main -------------------------------------------------------------- */
-#main{position:relative;z-index:20;padding:56px 34px 34px 44px;display:flex;flex-direction:column;min-width:0}
+#main{position:relative;z-index:20;padding:56px 34px 34px 44px;display:flex;flex-direction:column;min-width:0;overflow:visible}
 #tabs{position:relative;align-self:center;display:flex;background:rgba(255,255,255,.045);border:1px solid var(--line);border-radius:999px;padding:5px;backdrop-filter:blur(10px)}
 .tab{
   position:relative;z-index:1;border:0;background:transparent;cursor:pointer;
@@ -677,7 +684,7 @@ body{
 /* -- play -------------------------------------------------------------- */
 #play-stack{
   margin-top:auto;align-self:flex-start;display:flex;flex-direction:column;align-items:flex-start;gap:10px;
-  transform:translateY(-30px);
+  transform:translateY(-30px);overflow:visible;
 }
 #play-wrap{
   position:relative;display:inline-flex;
@@ -841,15 +848,16 @@ body{
 
 /* -- alerts ------------------------------------------------------------ */
 #alert-wrap{
-  position:relative;display:none;align-self:flex-start;max-width:min(460px,100%);
+  position:relative;display:none;align-self:flex-start;max-width:min(460px,100%);z-index:50;
 }
 #alert-wrap.on{display:block}
+#alert-wrap,#alert-strip,#alert-flyout{cursor:default}
 #alert-strip{
   display:flex;align-items:center;gap:9px;padding:7px 12px;border:0;border-radius:8px;
-  background:transparent;color:#fff;font:inherit;text-align:left;cursor:default;outline:none;
+  background:transparent;color:#fff;font:inherit;text-align:left;outline:none;
   transition:background .18s var(--ease);
 }
-#alert-wrap:hover #alert-strip,#alert-wrap:focus-within #alert-strip{
+#alert-wrap:hover #alert-strip,#alert-wrap:focus-within #alert-strip,#alert-wrap.flyout-open #alert-strip{
   background:rgba(255,255,255,.09);
 }
 #alert-strip .alert-ico{
@@ -866,14 +874,15 @@ body{
 }
 #alert-flyout{
   position:fixed;left:0;top:0;
-  width:min(360px,calc(100vw - 16px));opacity:0;visibility:hidden;pointer-events:none;
+  width:min(360px,calc(100vw - 32px));min-width:260px;
+  opacity:0;visibility:hidden;pointer-events:none;
   transition:opacity .18s var(--ease),visibility .18s var(--ease);
   z-index:320;
 }
 #alert-flyout::before{
-  content:"";position:absolute;right:100%;top:0;width:10px;height:100%;
+  content:"";position:absolute;right:100%;top:0;width:12px;height:100%;
 }
-#alert-wrap:hover #alert-flyout,#alert-wrap:focus-within #alert-flyout{
+#alert-flyout.flyout-open{
   opacity:1;visibility:visible;pointer-events:auto;
 }
 #alert-flyout-box{
@@ -1118,17 +1127,36 @@ body.dev-build #dev-panel{display:block}
 .confirm-layer.on{opacity:1;visibility:visible;pointer-events:auto}
 .confirm-dim{position:absolute;inset:0;background:rgba(0,0,0,.68);backdrop-filter:blur(7px)}
 .confirm-box{
-  position:relative;width:min(430px,calc(100vw - 48px));padding:22px;
-  border:1px solid rgba(255,255,255,.11);border-radius:14px;
-  background:linear-gradient(160deg,#20222b,#16181e);box-shadow:0 24px 70px rgba(0,0,0,.72);
+  position:relative;width:min(430px,calc(100vw - 48px));padding:24px 22px 20px;
+  font-family:var(--font-apple-round);letter-spacing:-.01em;
+  border:1px solid rgba(255,255,255,.10);border-radius:var(--sc-r-sheet);
+  background:var(--sc-surface);box-shadow:0 24px 70px rgba(0,0,0,.72),inset 0 1px 0 rgba(255,255,255,.06);
   transform:translateY(8px) scale(.97);transition:transform .2s var(--ease);
 }
 .confirm-layer.on .confirm-box{transform:none}
-.confirm-box h3{font:700 18px/1.25 inherit;color:#fff}
+.confirm-box h3{font:700 20px/1.2 var(--font-apple-round);letter-spacing:-.02em;color:#fff}
 .confirm-box p{margin-top:9px;color:var(--dim);font-size:14px;line-height:1.5}
-.confirm-files{display:flex;flex-direction:column;gap:5px;margin-top:13px;max-height:min(240px,45vh);overflow-y:auto;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:rgba(0,0,0,.18)}
+.confirm-files{
+  display:flex;flex-direction:column;gap:5px;margin-top:13px;max-height:min(240px,45vh);overflow-y:auto;
+  padding:9px 10px;border:1px solid var(--line);border-radius:var(--sc-r-inset);background:rgba(0,0,0,.18);
+}
+.confirm-files[hidden]{display:none!important;margin:0!important;padding:0!important;border:0!important;max-height:0!important}
 .confirm-file{color:var(--dim);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.confirm-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:22px}
+.confirm-actions,.confirm-box .row-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:20px;flex-wrap:wrap;align-items:center}
+.confirm-actions .primary,.confirm-actions .secondary,.confirm-actions .danger,
+.confirm-box .row-actions .primary,.confirm-box .row-actions .secondary{
+  border-radius:999px;padding:11px 20px;font:650 14px/1 var(--font-apple-round);
+}
+#share-link-layer #share-link-url{
+  width:100%;margin-top:14px;border-radius:var(--sc-r-inset);padding:12px 14px;
+  font:500 14px/1.35 var(--font-apple-round);border:1px solid rgba(255,255,255,.13);
+  background:rgba(0,0,0,.25);color:#fff;
+}
+#share-link-layer .share-link-copied{
+  flex:1 1 auto;align-self:center;margin:0 8px 0 0;text-align:right;
+  font:600 13px/1.2 var(--font-apple-round);color:#34c759;opacity:0;transition:opacity .18s var(--ease);
+}
+#share-link-layer .share-link-copied.on{opacity:1}
 
 :is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,.confirm-files){
   scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent;
@@ -1234,11 +1262,6 @@ body.dev-build #dev-panel{display:block}
           </svg>
         </span>
         <span class="alert-title" id="alert-title"></span>
-      </div>
-      <div id="alert-flyout" aria-hidden="true">
-        <div id="alert-flyout-box">
-          <div id="alert-flyout-inner"></div>
-        </div>
       </div>
     </div>
     <div id="play-wrap">
@@ -1359,6 +1382,9 @@ body.dev-build #dev-panel{display:block}
           </button>
         </div>
       </div>
+      <div id="sc-import-banner" class="sc-import-banner" hidden>
+        <span id="sc-import-banner-text">Shared shortcut — save to add it to your library. Leave without saving to discard.</span>
+      </div>
       <div class="sc-ed-body">
         <div class="sc-ed-canvas" id="sc-ed-canvas"></div>
         <div id="sc-text-var-pop" class="sc-text-var-pop" role="toolbar" aria-label="Insert variable" aria-hidden="true"></div>
@@ -1379,7 +1405,7 @@ body.dev-build #dev-panel{display:block}
             <button class="sc-tb-btn" id="sc-tb-info" type="button" title="Info" aria-disabled="true">
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.6" stroke="currentColor" stroke-width="1.8"/><path d="M12 11v5.2M12 8.1v.9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
             </button>
-            <button class="sc-tb-btn" id="sc-tb-share" type="button" title="Share" aria-disabled="true">
+            <button class="sc-tb-btn" id="sc-tb-share" type="button" title="Share">
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15.5V4.2M8.4 7.6L12 4l3.6 3.6M6 13v6.2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V13" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
             <button class="sc-tb-btn sc-tb-play" id="sc-tb-play" type="button" title="Test run">
@@ -1392,6 +1418,12 @@ body.dev-build #dev-panel{display:block}
       </div>
     </div>
   </section>
+</div>
+
+<div id="alert-flyout" role="dialog" aria-hidden="true" aria-labelledby="alert-title">
+  <div id="alert-flyout-box">
+    <div id="alert-flyout-inner"></div>
+  </div>
 </div>
 
 <div class="sc-toast" id="sc-toast">Saved</div>
@@ -1461,6 +1493,7 @@ body.dev-build #dev-panel{display:block}
       <h2>Settings</h2>
       <nav class="modal-nav">
         <button class="on" type="button" data-settings-view="general">General</button>
+        <button type="button" data-settings-view="account">Account</button>
         <button type="button" data-settings-view="backup">File Backup</button>
       </nav>
       <div class="settings-account-footer">
@@ -1499,17 +1532,30 @@ body.dev-build #dev-panel{display:block}
           <small>Display your in-game status in Discord. Restart the client to apply.</small></span>
         </div>
       </div>
-      <div class="settings-pane" id="settings-backup">
-        <p class="page-sub">Keep versions of selected files from your DDNet folder in your UClient account.</p>
-        <p class="fine">Allowed types: CFG, TXT, PNG, JPG, JPEG, and LOG. Total cloud storage is limited to 10 MB.</p>
-        <div id="backup-link" class="card">
-          <h3>Connect an email first</h3>
-          <p class="fine" style="margin:8px 0 16px">Cloud backups require an email-connected account.</p>
-          <form class="form" id="backup-link-form">
+      <div class="settings-pane" id="settings-account">
+        <p class="page-sub">Manage your UClient account. Email sign-in is required for cloud backup and sharing shortcuts.</p>
+        <div class="card" id="account-profile-card">
+          <h3 id="account-profile-title">Account</h3>
+          <p class="fine" id="account-profile-email" style="margin:8px 0 4px"></p>
+          <p class="fine" id="account-profile-uuid" style="margin:0 0 14px"></p>
+        </div>
+        <div id="account-link-card" class="card">
+          <h3>Connect email</h3>
+          <p class="fine" style="margin:8px 0 16px">Link an email and password to use cloud backup and shortcut sharing.</p>
+          <form class="form" id="account-link-form">
             <label>Email<input class="field" id="link-email" type="email" required autocomplete="email"></label>
             <label>Password<input class="field" id="link-password" type="password" minlength="10" maxlength="128" required autocomplete="new-password"></label>
             <button class="primary" type="submit">Connect email</button>
           </form>
+        </div>
+      </div>
+      <div class="settings-pane" id="settings-backup">
+        <p class="page-sub">Keep versions of selected files from your DDNet folder in your UClient account.</p>
+        <p class="fine">Allowed types: CFG, TXT, PNG, JPG, JPEG, and LOG. Total cloud storage is limited to 10 MB.</p>
+        <div id="backup-gate" class="card">
+          <h3>Email account required</h3>
+          <p class="fine" style="margin:8px 0 16px">Connect an email on the Account page before using cloud backup.</p>
+          <button class="primary" type="button" id="backup-open-account">Open Account settings</button>
         </div>
         <div id="backup-main" style="display:none">
           <div class="backup-panel-head">
@@ -1565,6 +1611,20 @@ body.dev-build #dev-panel{display:block}
 </div>
 
 <div class="logout-tooltip" id="logout-tooltip" role="tooltip" hidden>Close DDNet before logging out</div>
+
+<div class="confirm-layer" id="share-link-layer" aria-hidden="true">
+  <div class="confirm-dim" id="share-link-dim"></div>
+  <div class="confirm-box" role="dialog" aria-modal="true" aria-labelledby="share-link-title">
+    <h3 id="share-link-title">Share link</h3>
+    <p class="fine" id="share-link-hint">Anyone with this link can import the shortcut in UClient.</p>
+    <input class="field" id="share-link-url" type="text" readonly autocomplete="off">
+    <div class="row-actions">
+      <span class="share-link-copied" id="share-link-copied" aria-live="polite">Copied</span>
+      <button class="secondary" type="button" id="share-link-close">Close</button>
+      <button class="primary" type="button" id="share-link-copy">Copy link</button>
+    </div>
+  </div>
+</div>
 
 <div class="confirm-layer" id="confirm-layer" aria-hidden="true">
   <div class="confirm-dim" id="confirm-dim"></div>
@@ -1669,41 +1729,84 @@ function fmtNoticeBody(text) {
   return esc(normalized);
 }
 
-function positionSideFlyout(anchorEl, flyoutEl, innerEl, boxEl) {
+function positionSideFlyout(anchorEl, flyoutEl, innerEl, boxEl, edgeMargin, avoidEl) {
   if (!anchorEl || !flyoutEl) return;
-  var margin = 8;
-  var gap = 10;
+  var margin = typeof edgeMargin === "number" ? edgeMargin : 8;
+  var gap = 12;
   var from = anchorEl.getBoundingClientRect();
   var vw = window.innerWidth;
   var vh = window.innerHeight;
-  var maxBox = Math.min(280, vh - margin * 2);
+  var avoidBottom = vh - margin;
+  if (avoidEl) {
+    var avoid = avoidEl.getBoundingClientRect();
+    avoidBottom = Math.min(avoidBottom, avoid.top - gap);
+  }
+  flyoutEl.style.position = "fixed";
+  flyoutEl.style.visibility = "visible";
+  flyoutEl.style.opacity = "0";
+  flyoutEl.style.pointerEvents = "none";
+  flyoutEl.style.left = "-10000px";
+  flyoutEl.style.top = "0";
+  var maxBox = Math.min(320, Math.max(96, avoidBottom - margin));
   if (boxEl) boxEl.style.maxHeight = maxBox + "px";
-  if (innerEl) innerEl.style.maxHeight = Math.max(120, Math.min(240, maxBox - 40)) + "px";
-  flyoutEl.style.visibility = "hidden";
-  flyoutEl.style.left = margin + "px";
-  flyoutEl.style.top = margin + "px";
+  if (innerEl) innerEl.style.maxHeight = Math.max(96, maxBox - 44) + "px";
   var box = flyoutEl.getBoundingClientRect();
   var left = from.right + gap;
   if (left + box.width > vw - margin) left = from.left - gap - box.width;
   left = Math.min(Math.max(left, margin), Math.max(margin, vw - box.width - margin));
   var top = from.top;
-  if (top + box.height > vh - margin) {
-    top = Math.max(margin, vh - margin - box.height);
+  var useH = Math.min(maxBox, Math.max(box.height, 120));
+  if (top + useH > avoidBottom) {
+    top = Math.max(margin, avoidBottom - useH);
   }
+  if (top + useH > vh - margin) top = Math.max(margin, vh - margin - useH);
   if (top < margin) top = margin;
-  if (box.height > vh - margin * 2) top = margin;
+  useH = Math.min(useH, avoidBottom - top, vh - margin - top);
+  if (boxEl) boxEl.style.maxHeight = Math.max(96, useH) + "px";
+  if (innerEl) innerEl.style.maxHeight = Math.max(72, useH - 44) + "px";
   flyoutEl.style.left = left + "px";
   flyoutEl.style.top = top + "px";
+  flyoutEl.style.removeProperty("opacity");
   flyoutEl.style.removeProperty("visibility");
+  flyoutEl.style.removeProperty("pointer-events");
 }
 
 function positionAlertFlyout() {
+  var wrap = $("alert-wrap");
+  if (!wrap || !wrap.classList.contains("on")) return;
   positionSideFlyout(
     $("alert-strip"),
     $("alert-flyout"),
     $("alert-flyout-inner"),
-    $("alert-flyout-box")
+    $("alert-flyout-box"),
+    16,
+    $("play")
   );
+}
+
+function isAlertFlyoutTarget(el) {
+  if (!el) return false;
+  var wrap = $("alert-wrap");
+  var flyout = $("alert-flyout");
+  return !!(wrap && (wrap === el || wrap.contains(el))) ||
+    !!(flyout && (flyout === el || flyout.contains(el)));
+}
+
+function pointerOverAlertZone(clientX, clientY) {
+  var el = document.elementFromPoint(clientX, clientY);
+  if (isAlertFlyoutTarget(el)) return true;
+  var strip = $("alert-strip");
+  if (!strip) return false;
+  var a = strip.getBoundingClientRect();
+  if (clientX >= a.left && clientX <= a.right && clientY >= a.top && clientY <= a.bottom) return true;
+  var flyout = $("alert-flyout");
+  if (!flyout || !flyout.classList.contains("flyout-open")) return false;
+  var b = flyout.getBoundingClientRect();
+  var left = Math.min(a.left, b.left);
+  var right = Math.max(a.right, b.right);
+  var top = Math.min(a.top, b.top);
+  var bottom = Math.max(a.bottom, b.bottom);
+  return clientX >= left && clientX <= right && clientY >= top && clientY <= bottom;
 }
 
 function positionPlayHintFlyout() {
@@ -1715,11 +1818,40 @@ function positionPlayHintFlyout() {
   );
 }
 
+function noticeBodyText(n, st) {
+  var body = n.body || "";
+  if (!body && st && st.status) {
+    var title = String(n.title || "").toLowerCase();
+    if (title.indexOf("update") >= 0 || n.blocksPlay) body = st.status;
+  }
+  if (!body && st && st.failed && st.status) body = st.status;
+  return body;
+}
+
 function renderAlerts(st) {
   noticeState = sortedNotices(st.notices || []);
+  if (st && st.failed && st.status) {
+    var hasUpdateErr = false;
+    for (var i = 0; i < noticeState.length; i++) {
+      if (noticeBodyText(noticeState[i], st)) hasUpdateErr = true;
+    }
+    if (!hasUpdateErr) {
+      noticeState.unshift({
+        id: "local_update_status",
+        title: "Update",
+        body: st.status,
+        severity: "warning",
+        blocksPlay: false
+      });
+      noticeState = sortedNotices(noticeState);
+    }
+  }
   var wrap = $("alert-wrap");
   if (!noticeState.length) {
     wrap.classList.remove("on");
+    wrap.classList.remove("flyout-open");
+    var af = $("alert-flyout");
+    if (af) af.classList.remove("flyout-open");
     return;
   }
   var top = noticeState[0];
@@ -1729,10 +1861,11 @@ function renderAlerts(st) {
   $("alert-flyout-inner").innerHTML = noticeState.map(function (n) {
     var expiry = n.id === "account_ban" ? fmtNoticeExpiry(n) : "";
     return '<article class="notice-block"><h4>' + esc(n.title || "Notice") +
-      '</h4><p>' + fmtNoticeBody(n.body || "") + '</p>' + expiry + '</article>';
+      '</h4><p>' + fmtNoticeBody(noticeBodyText(n, st)) + '</p>' + expiry + '</article>';
   }).join("");
   wrap.classList.add("on");
-  requestAnimationFrame(positionAlertFlyout);
+  var afOpen = $("alert-flyout");
+  if (afOpen && afOpen.classList.contains("flyout-open")) requestAnimationFrame(positionAlertFlyout);
 }
 
 function moveIndicator() {
@@ -1765,11 +1898,88 @@ function showView(name) {
 })();
 
 (function () {
+  var alertFlyoutOpen = false;
+  var alertHoverRaf = 0;
+
+  function setAlertFlyoutOpen(open) {
+    var wrap = $("alert-wrap");
+    if (!wrap || !wrap.classList.contains("on")) return;
+    var next = !!open;
+    if (alertFlyoutOpen === next) return;
+    alertFlyoutOpen = next;
+    wrap.classList.toggle("flyout-open", alertFlyoutOpen);
+    var flyout = $("alert-flyout");
+    if (flyout) {
+      flyout.classList.toggle("flyout-open", alertFlyoutOpen);
+      flyout.setAttribute("aria-hidden", alertFlyoutOpen ? "false" : "true");
+    }
+    if (alertFlyoutOpen) requestAnimationFrame(positionAlertFlyout);
+  }
+
+  function syncAlertFlyoutHover(clientX, clientY) {
+    var wrap = $("alert-wrap");
+    if (!wrap || !wrap.classList.contains("on")) {
+      if (alertFlyoutOpen) setAlertFlyoutOpen(false);
+      return;
+    }
+    setAlertFlyoutOpen(pointerOverAlertZone(clientX, clientY));
+  }
+
+  var lastAlertPointerX;
+  var lastAlertPointerY;
+  function onAlertPointer(e) {
+    lastAlertPointerX = e.clientX;
+    lastAlertPointerY = e.clientY;
+    if (alertHoverRaf) return;
+    alertHoverRaf = requestAnimationFrame(function () {
+      alertHoverRaf = 0;
+      syncAlertFlyoutHover(e.clientX, e.clientY);
+    });
+  }
+  document.addEventListener("pointermove", onAlertPointer);
+  document.addEventListener("mousemove", onAlertPointer);
+  document.addEventListener("pointerdown", function (e) {
+    syncAlertFlyoutHover(e.clientX, e.clientY);
+  });
+
   var alertWrap = $("alert-wrap");
+  var alertStrip = $("alert-strip");
+  var alertFlyout = $("alert-flyout");
+  var alertLeaveTimer = 0;
+  function scheduleAlertFlyoutClose() {
+    clearTimeout(alertLeaveTimer);
+    alertLeaveTimer = setTimeout(function () {
+      alertLeaveTimer = 0;
+      if (typeof lastAlertPointerX === "number") {
+        setAlertFlyoutOpen(pointerOverAlertZone(lastAlertPointerX, lastAlertPointerY));
+      } else {
+        setAlertFlyoutOpen(false);
+      }
+    }, 120);
+  }
+  function openAlertFlyoutFromHover() {
+    clearTimeout(alertLeaveTimer);
+    setAlertFlyoutOpen(true);
+  }
   if (alertWrap) {
-    function scheduleAlertFlyout() { requestAnimationFrame(positionAlertFlyout); }
-    alertWrap.addEventListener("mouseenter", scheduleAlertFlyout);
-    alertWrap.addEventListener("focusin", scheduleAlertFlyout);
+    alertWrap.addEventListener("pointerenter", openAlertFlyoutFromHover);
+    alertWrap.addEventListener("mouseenter", openAlertFlyoutFromHover);
+    alertWrap.addEventListener("pointerleave", scheduleAlertFlyoutClose);
+    alertWrap.addEventListener("mouseleave", scheduleAlertFlyoutClose);
+    alertWrap.addEventListener("focusin", function () { setAlertFlyoutOpen(true); });
+    alertWrap.addEventListener("focusout", function (e) {
+      if (!alertWrap.contains(e.relatedTarget)) setAlertFlyoutOpen(false);
+    });
+  }
+  if (alertFlyout) {
+    alertFlyout.addEventListener("pointerenter", openAlertFlyoutFromHover);
+    alertFlyout.addEventListener("mouseenter", openAlertFlyoutFromHover);
+    alertFlyout.addEventListener("pointerleave", scheduleAlertFlyoutClose);
+    alertFlyout.addEventListener("mouseleave", scheduleAlertFlyoutClose);
+  }
+  if (alertStrip) {
+    alertStrip.addEventListener("pointermove", onAlertPointer);
+    alertStrip.addEventListener("mousemove", onAlertPointer);
   }
   var playWrap = $("play-wrap");
   if (playWrap) {
@@ -1778,7 +1988,9 @@ function showView(name) {
     playWrap.addEventListener("focusin", schedulePlayHintFlyout);
   }
   window.addEventListener("resize", function () {
-    positionAlertFlyout();
+    var wrap = $("alert-wrap");
+    var af = $("alert-flyout");
+    if (af && af.classList.contains("flyout-open")) positionAlertFlyout();
     positionPlayHintFlyout();
   });
 })();
@@ -1798,7 +2010,15 @@ function showSettingsView(name) {
   for (var i = 0; i < panes.length; i++) panes[i].classList.toggle("on", panes[i].id === "settings-" + name);
   var buttons = document.querySelectorAll(".modal-nav button[data-settings-view]");
   for (var j = 0; j < buttons.length; j++) buttons[j].classList.toggle("on", buttons[j].dataset.settingsView === name);
-  $("settings-title").textContent = name === "backup" ? "File Backup" : "General";
+  $("settings-title").textContent =
+    name === "backup" ? "File Backup" : (name === "account" ? "Account" : "General");
+}
+function hasEmailAccount(st) {
+  return st && st.accountState === "ready_email";
+}
+function openSettingsAccount() {
+  toggleSettings(true);
+  showSettingsView("account");
 }
 document.querySelector(".modal-nav").addEventListener("click", function (e) {
   var button = e.target.closest("button[data-settings-view]");
@@ -1924,6 +2144,7 @@ function openConfirmDialog(title, message, acceptLabel, danger, action, details)
     files.appendChild(row);
   });
   files.hidden = !detailItems.length;
+  files.style.display = detailItems.length ? "flex" : "none";
   $("confirm-accept").textContent = acceptLabel || "Confirm";
   $("confirm-accept").className = danger ? "danger" : "primary";
   $("confirm-layer").classList.add("on");
@@ -2091,7 +2312,7 @@ $("register-anonymous").addEventListener("click", function () {
     }
   );
 });
-$("backup-link-form").addEventListener("submit", function (e) {
+$("account-link-form").addEventListener("submit", function (e) {
   e.preventDefault();
   var password = $("link-password").value;
   send({cmd: "accountLinkEmail", email: $("link-email").value, password: password});
@@ -2588,9 +2809,19 @@ function renderAccountAndBackup(st) {
   }
   $("on-saved-account").style.display = st.hasSavedAccount ? "block" : "none";
   $("saved-account-id").textContent = st.savedAccountInstallId ? ("UUID: " + st.savedAccountInstallId) : "";
-  $("backup-link").style.display = state === "ready_anonymous" ? "block" : "none";
-  $("backup-main").style.display = state === "ready_email" ? "block" : "none";
-  $("backup-error").textContent = st.backupError || st.accountError || "";
+  var emailReady = state === "ready_email";
+  $("backup-gate").style.display = emailReady ? "none" : "block";
+  $("backup-main").style.display = emailReady ? "block" : "none";
+  $("account-link-card").style.display = emailReady ? "none" : "block";
+  $("account-profile-title").textContent = emailReady ? "Signed in" : "Anonymous account";
+  $("account-profile-email").textContent = emailReady && st.accountEmail ?
+    ("Email: " + st.accountEmail) : "No email connected yet.";
+  var installId = st.accountInstallId || st.savedAccountInstallId || "";
+  $("account-profile-uuid").textContent = installId ? ("Install UUID: " + installId) : "";
+  var backupErr = st.backupError || "";
+  if (backupErr === "email_required")
+    backupErr = "Connect an email on the Account page to use cloud backup.";
+  $("backup-error").textContent = backupErr || st.accountError || "";
   $("account-logout").disabled = !!st.gameRunning;
   $("account-logout").removeAttribute("title");
   $("account-logout").parentElement.classList.toggle("logout-blocked", !!st.gameRunning);
@@ -2642,6 +2873,13 @@ var scLibraryTab = "shortcuts";
 var scEditKind = "automation";
 var scGallerySearch = "";
 var scEditing = null;
+var scImportSession = false;
+var lastShareResultSig = "";
+var lastShareImportSig = "";
+var scShareCacheSig = "";
+var scShareCacheUrl = "";
+var scSharePendingSig = "";
+var shareLinkCopiedTimer = 0;
 var scDrawerFilter = null;
 var scPopEl = null;
 var SC_TILE_TONES = ["tone-brown", "tone-slate", "tone-green", "tone-blue", "tone-purple", "tone-rose"];
@@ -6750,7 +6988,130 @@ function scOptionsForField(field, actionIdx, condIdx) {
   }
   return [];
 }
+function scSyncImportBanner() {
+  var banner = $("sc-import-banner");
+  if (!banner) return;
+  var show = scImportSession && $("sc-editor").style.display === "flex";
+  banner.hidden = !show;
+}
+function scWarnMissingRunShortcutRefs(entry) {
+  if (!entry || !entry.actions || !entry.actions.length) return;
+  var missing = false;
+  entry.actions.forEach(function (a) {
+    if (a.type === "run_shortcut" && a.shortcutId &&
+        !shortcutsLocal.some(function (s) { return s.id === a.shortcutId; }))
+      missing = true;
+  });
+  if (missing) scToast("Some Run Shortcut blocks refer to shortcuts not in your library.");
+}
+function scBuildShareEntryFromEditor() {
+  if (!scEditing) return null;
+  scCommitAllPillInputs($("sc-ed-canvas"));
+  var entry = JSON.parse(JSON.stringify(scEditing));
+  if (scIsManualEdit()) {
+    entry.kind = "manual";
+    entry.trigger = null;
+  } else {
+    if (!entry.trigger) return null;
+    entry.kind = "automation";
+    entry.trigger = scCleanTriggerForSave(entry.trigger);
+  }
+  entry.actions = (entry.actions || []).map(function (a, i) { return scCleanActionForSave(a, i); });
+  var rawName = $("sc-ed-title").value.trim() ||
+    (scIsManualEdit() ? "Shortcut" : scSummaryTrigger(entry.trigger));
+  entry.name = scIsManualEdit() ? scUniqueManualShortcutName(rawName, entry.id) : rawName;
+  entry.enabled = entry.enabled !== false;
+  delete entry.id;
+  return entry;
+}
+function scOpenShareImport(entry) {
+  if (!entry || typeof entry !== "object") return;
+  var doc = JSON.parse(JSON.stringify(entry));
+  doc.id = scUuid();
+  if (!doc.kind) doc.kind = scEntryKind(doc);
+  var kind = scEntryKind(doc);
+  setRailView("shortcuts");
+  setScLibraryTab(kind === "automation" ? "automation" : "shortcuts");
+  scImportSession = true;
+  scOpenEditor(doc, kind, true);
+  $("sc-ed-delete").style.display = "none";
+  scSyncImportBanner();
+  scWarnMissingRunShortcutRefs(doc);
+}
+function setShareLinkCopiedVisible(on) {
+  var el = $("share-link-copied");
+  if (!el) return;
+  el.classList.toggle("on", !!on);
+}
+function openShareLinkModal(url) {
+  if (shareLinkCopiedTimer) {
+    clearTimeout(shareLinkCopiedTimer);
+    shareLinkCopiedTimer = 0;
+  }
+  setShareLinkCopiedVisible(false);
+  $("share-link-url").value = url || "";
+  $("share-link-layer").classList.add("on");
+  $("share-link-layer").setAttribute("aria-hidden", "false");
+}
+function closeShareLinkModal() {
+  if (shareLinkCopiedTimer) {
+    clearTimeout(shareLinkCopiedTimer);
+    shareLinkCopiedTimer = 0;
+  }
+  setShareLinkCopiedVisible(false);
+  $("share-link-layer").classList.remove("on");
+  $("share-link-layer").setAttribute("aria-hidden", "true");
+}
+function flashShareLinkCopied() {
+  setShareLinkCopiedVisible(true);
+  if (shareLinkCopiedTimer) clearTimeout(shareLinkCopiedTimer);
+  shareLinkCopiedTimer = setTimeout(function () {
+    shareLinkCopiedTimer = 0;
+    setShareLinkCopiedVisible(false);
+  }, 1800);
+}
+function handleShareResult(result) {
+  if (!result) return;
+  var sig = JSON.stringify(result);
+  if (sig === lastShareResultSig) return;
+  lastShareResultSig = sig;
+  if (result.ok && result.webUrl) {
+    if (scSharePendingSig) scShareCacheSig = scSharePendingSig;
+    scShareCacheUrl = result.webUrl;
+    scSharePendingSig = "";
+    openShareLinkModal(result.webUrl);
+    return;
+  }
+  if (result.error === "email_required") {
+    openConfirmDialog(
+      "Email required",
+      "Connect an email on the Account page before sharing shortcuts.",
+      "Open Account", false, openSettingsAccount);
+    return;
+  }
+  scToast(result.message || "Could not create a share link.");
+}
+function handleShareImport(imp) {
+  if (!imp || !imp.status) return;
+  var sig = imp.status + "|" + (imp.shareId || "") + "|" + (imp.error || "") +
+    (imp.entry ? JSON.stringify(imp.entry) : "");
+  if (imp.status === "loading") {
+    setRailView("shortcuts");
+    lastShareImportSig = "";
+    return;
+  }
+  if (sig === lastShareImportSig) return;
+  lastShareImportSig = sig;
+  if (imp.status === "ready" && imp.entry) scOpenShareImport(imp.entry);
+  else if (imp.status === "error") scToast(imp.error || "Could not import the shared shortcut.");
+}
+function scInvalidateShareCache() {
+  scShareCacheSig = "";
+  scShareCacheUrl = "";
+  scSharePendingSig = "";
+}
 function scLoadEditorDocument(existing, editKind) {
+  scInvalidateShareCache();
   scEditKind = editKind || (existing ? scEntryKind(existing) : (scLibraryTab === "shortcuts" ? "manual" : "automation"));
   scEditing = existing ? JSON.parse(JSON.stringify(existing)) : {
     id: scUuid(), name: "New Shortcut", enabled: true,
@@ -6775,7 +7136,11 @@ function scLoadEditorDocument(existing, editKind) {
   scSyncDrawerSearchUI();
   scRenderDrawer();
 }
-function scOpenEditor(existing, editKind) {
+function scOpenEditor(existing, editKind, keepImportSession) {
+  if (!keepImportSession) {
+    scImportSession = false;
+    scSyncImportBanner();
+  }
   scEditorAnimGen++;
   scLoadEditorDocument(existing, editKind);
   var ed = $("sc-editor");
@@ -6836,8 +7201,15 @@ function scFinishEditorClose() {
   ed.setAttribute("aria-hidden", "true");
   $("shortcuts-view").classList.remove("editing");
   scEditing = null;
+  scSyncImportBanner();
 }
-function scCloseEditor() {
+function scCloseEditorAfterImportDiscard() {
+  scImportSession = false;
+  send({cmd: "shortcutsShareDismiss"});
+  scSyncImportBanner();
+  scCloseEditorCore();
+}
+function scCloseEditorCore() {
   scEndDrag(true);
   scCloseAllPickers(null);
   if (scRunActive()) scStopRun(true);
@@ -6866,6 +7238,16 @@ function scCloseEditor() {
   }
   ed.addEventListener("transitionend", onEnd);
   setTimeout(done, 480);
+}
+function scCloseEditor() {
+  if (scImportSession) {
+    openConfirmDialog(
+      "Discard import?",
+      "This shared shortcut is not in your library yet. Leave without saving to discard it.",
+      "Discard", true, scCloseEditorAfterImportDiscard);
+    return;
+  }
+  scCloseEditorCore();
 }
 var SC_DRAWER_FULL = 0;
 var SC_DRAWER_PEEK = 0;
@@ -7399,9 +7781,64 @@ $("sc-ed-save").addEventListener("click", function () {
   scSaveAll();
   renderShortcutsGallery();
   renderShortcutsList();
-  scCloseEditor();
+  if (scImportSession) {
+    scImportSession = false;
+    send({cmd: "shortcutsShareDismiss"});
+    scSyncImportBanner();
+  }
+  scCloseEditorCore();
 });
 $("sc-ed-delete").addEventListener("click", scDeleteEditingShortcut);
+$("sc-tb-share").addEventListener("click", function () {
+  if (!scEditing) return;
+  if (!hasEmailAccount(lastState)) {
+    openConfirmDialog(
+      "Email required",
+      "Connect an email on the Account page before sharing shortcuts.",
+      "Open Account", false, openSettingsAccount);
+    return;
+  }
+  if (lastState.shareUploadBusy) {
+    scToast("Share upload already in progress");
+    return;
+  }
+  var entry = scBuildShareEntryFromEditor();
+  if (!entry || !entry.actions || !entry.actions.length) {
+    scToast("Add at least one action");
+    return;
+  }
+  if (!scIsManualEdit() && !entry.trigger) {
+    scToast("Add a When trigger");
+    return;
+  }
+  var sig = JSON.stringify(entry);
+  if (sig === scShareCacheSig && scShareCacheUrl) {
+    openShareLinkModal(scShareCacheUrl);
+    return;
+  }
+  scSharePendingSig = sig;
+  lastShareResultSig = "";
+  send({cmd: "shortcutsShare", entry: entry});
+});
+$("share-link-close").addEventListener("click", closeShareLinkModal);
+$("share-link-dim").addEventListener("click", closeShareLinkModal);
+$("share-link-copy").addEventListener("click", function () {
+  var url = $("share-link-url").value || "";
+  if (!url) return;
+  function done() { flashShareLinkCopied(); }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(done).catch(function () {
+      $("share-link-url").select();
+      try { document.execCommand("copy"); } catch (e) {}
+      done();
+    });
+  } else {
+    $("share-link-url").select();
+    try { document.execCommand("copy"); } catch (e) {}
+    done();
+  }
+});
+$("backup-open-account").addEventListener("click", openSettingsAccount);
 $("sc-ed-title-trigger").addEventListener("click", function (e) {
   e.stopPropagation();
   scOpenEditorTitleMenu();
@@ -8015,6 +8452,10 @@ window.__setState = function (st) {
   if (showHint) requestAnimationFrame(positionPlayHintFlyout);
   renderAlerts(st);
   syncShortcutsFromState(st);
+  handleShareResult(st.shareResult);
+  handleShareImport(st.shareImport);
+  var shareBtn = $("sc-tb-share");
+  if (shareBtn) shareBtn.classList.toggle("busy", !!st.shareUploadBusy);
   var showFailedOnReady = st.phase === "ready" && !!st.failed && !!st.status;
   $("ov-status").textContent = showFailedOnReady ? st.status :
     (playButtonShowsStatus(st.phase) || st.phase === "ready" ? "" : (st.status || ""));

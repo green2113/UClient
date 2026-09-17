@@ -1,26 +1,33 @@
 ---
-description: UClient launcher / Shortcuts editor — Apple-style squircle corners on all UI chrome
+description: UClient launcher — Apple squircle + SF Rounded on dialogs, modals, and Shortcuts chrome
 globs: src/tools/uclient_launcher_ui.h
 alwaysApply: false
 ---
 
-# Apple corners (squircle) in launcher UI
+# Apple corners & typography (launcher UI)
 
-All **Shortcuts / Automation editor** surfaces in `uclient_launcher_ui.h` use **continuous curvature (squircle)**, not plain CSS `border-radius` alone.
+In `uclient_launcher_ui.h`, treat **Apple-style** UI as the default for launcher surfaces: **`var(--font-apple-round)`**, generous **`border-radius`** (sheet `var(--sc-r-sheet)`, inset fields `var(--sc-r-inset)`, **pill buttons `999px`**), plus **squircle** where supported.
 
-## Required pattern
+## Squircle (`corner-shape`)
 
-1. Set a generous `border-radius` on the element (blocks ~26px, pills 999px, inset fields ~16–22px).
-2. Include the selector in the existing `@supports (corner-shape: squircle)` block so `corner-shape: squircle` applies.
+1. Set `border-radius` on the element (blocks ~26–32px, inset ~18px, pills 999px).
+2. Add the selector to the `@supports (corner-shape: squircle)` block in the same edit.
 
-## Must use squircle
+## Must use Apple round + squircle
 
-- Editor sheet, blocks, drawer, chips, catalog rows, pills, smart menus, run-result boxes, modals, and control surfaces inside `#sc-editor` / `#shortcuts-view`.
+- **Shortcuts / Automation editor** (`#sc-editor`, `#shortcuts-view`): blocks, drawer, tiles, pills, menus, run results (existing list).
+- **Confirm / share dialogs** (`.confirm-layer`, `.confirm-box`, `#confirm-layer`, `#share-link-layer`): modal sheet, optional `.confirm-files` list, **Cancel / Confirm / Discard** and **Copy link** buttons (pill shape).
+- **Readonly link fields** in dialogs (e.g. `#share-link-url`).
+
+## Dialog details list
+
+- `#confirm-files` is only for **optional detail lines** (file names, etc.) when `openConfirmDialog(..., details)` passes a non-empty array.
+- When there are no details, keep it **`hidden`** and **`display: none`** — never show an empty bordered box.
 
 ## When adding new UI
 
-- Add the new class to the squircle `@supports` list in the same edit.
-- Do not ship sharp-corner-only panels in the shortcut editor unless the host OS cannot parse `corner-shape` (fallback remains `border-radius` only).
+- Reuse `.confirm-box` / `.confirm-actions` patterns instead of one-off modal CSS.
+- Do not ship sharp-corner-only panels in the launcher unless squircle is unsupported (fallback remains `border-radius` only).
 
 ## Related
 

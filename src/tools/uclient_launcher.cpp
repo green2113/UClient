@@ -288,6 +288,13 @@ static std::vector<BackupFileView> g_BackupFiles;
 static std::vector<BackupVersionView> g_BackupVersions;
 static uint64_t g_BackupUsed = 0;
 static uint64_t g_BackupLimit = 0;
+static std::string g_ShareImportStatus;
+static std::string g_ShareImportShareId;
+static std::string g_ShareImportEntryJson;
+static std::string g_ShareImportError;
+static bool g_ShareImportBusy = false;
+static std::string g_ShareResultJson;
+static bool g_ShareUploadBusy = false;
 static std::wstring g_ConnectAddress;
 static HANDLE g_hLaunchedGame = nullptr;
 static DWORD g_LaunchPollStartTick = 0;
@@ -326,6 +333,9 @@ static int g_MascotH = 0;
 #define WM_LAUNCHER_POLL_UPDATE (WM_APP + 9)
 static constexpr ULONG_PTR COPYDATA_FORWARD_LAUNCH_ARG = 0x55434C46;
 
+#define WM_SHARE_IMPORT_READY (WM_APP + 10)
+#define WM_SHARE_UPLOAD_READY (WM_APP + 11)
+
 #define ANIM_TIMER_ID 1
 #define LAUNCH_TIMER_ID 2
 #define NOTICES_TIMER_ID 3
@@ -353,9 +363,17 @@ static void RequestAccountCheck();
 static void ShowLauncherWindow(HWND hWnd);
 static void ActivateExistingLauncherWindow(HWND hWnd);
 static bool IsForwardableShellArg(const std::wstring &Arg);
+static bool IsUclientShellArg(const std::wstring &Arg);
+static bool TryParseUclientShareUrl(const std::wstring &Arg, std::string &OutShareId);
+static void QueueShareImportFetch(const std::string &ShareId);
+static void ClearShareImportState();
+static void ProcessUclientShareLaunchArgs();
+static bool BackupCredentials(std::string &InstallId, std::string &Secret);
 static std::wstring SingleInstanceMutexName(const std::wstring &InstallDir);
 static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallDir, const std::vector<std::wstring> &ForwardArgs);
 static bool RunUpdateDownload(LauncherArgs *pA, const UpdateMetadata &Metadata);
+static std::wstring ResolveGameUserDataRoot();
+static void MigrateTeeworldsUserDataIfNeeded();
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
 static void RequestFakeDownload();
 static void HandleDevCommand(const std::string &Json);
@@ -1821,18 +1839,14 @@ static void ParseLauncherNotices(const std::string &Json, std::vector<NoticeView
 
 static std::wstring GetUclientAccountPath()
 {
-	wchar_t aAppData[MAX_PATH] = {};
-	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
-		return {};
-	return std::wstring(aAppData) + L"\\DDNet\\uclient_account.json";
+	const std::wstring Root = ResolveGameUserDataRoot();
+	return Root.empty() ? std::wstring{} : JoinPath(Root, L"uclient_account.json");
 }
 
 static std::wstring GetShortcutsJsonPath()
 {
-	wchar_t aAppData[MAX_PATH] = {};
-	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
-		return {};
-	return std::wstring(aAppData) + L"\\DDNet\\uclient_shortcuts.json";
+	const std::wstring Root = ResolveGameUserDataRoot();
+	return Root.empty() ? std::wstring{} : JoinPath(Root, L"uclient_shortcuts.json");
 }
 
 static std::string g_ShortcutsFileJson = "{\"version\":1,\"shortcuts\":[]}";
@@ -1947,18 +1961,14 @@ static void SaveShortcutsDocument(const std::string &ShortcutsArrayJson)
 
 static std::wstring GetAutomationRunPath()
 {
-	wchar_t aAppData[MAX_PATH] = {};
-	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
-		return {};
-	return std::wstring(aAppData) + L"\\DDNet\\uclient_automation_run.json";
+	const std::wstring Root = ResolveGameUserDataRoot();
+	return Root.empty() ? std::wstring{} : JoinPath(Root, L"uclient_automation_run.json");
 }
 
 static std::wstring GetAutomationStatePath()
 {
-	wchar_t aAppData[MAX_PATH] = {};
-	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
-		return {};
-	return std::wstring(aAppData) + L"\\DDNet\\uclient_automation_state.json";
+	const std::wstring Root = ResolveGameUserDataRoot();
+	return Root.empty() ? std::wstring{} : JoinPath(Root, L"uclient_automation_state.json");
 }
 
 static std::string g_AutomationRunId;
@@ -2377,18 +2387,12 @@ static void RequestNoticesRefresh()
 
 static std::wstring GetDdnetSettingsPath()
 {
-	wchar_t aAppData[MAX_PATH] = {};
-	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
-		return {};
-	return std::wstring(aAppData) + L"\\DDNet\\settings_ddnet.cfg";
+	return JoinPath(ResolveGameUserDataRoot(), L"settings_ddnet.cfg");
 }
 
 static std::wstring GetTclientSettingsPath()
 {
-	wchar_t aAppData[MAX_PATH] = {};
-	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
-		return {};
-	return std::wstring(aAppData) + L"\\DDNet\\settings_tclient.cfg";
+	return JoinPath(ResolveGameUserDataRoot(), L"settings_tclient.cfg");
 }
 
 static bool ParseConfigIntLine(const std::string &Line, const char *pKey, int &Out)
@@ -3232,16 +3236,100 @@ static void RequestAccountCheck()
 	StartAccountWork(pWork);
 }
 
-static std::wstring GetBackupRoot()
+static bool GetRoamingAppDataDir(std::wstring &Out)
 {
 	wchar_t aAppData[MAX_PATH] = {};
 	if(FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, aAppData)))
-		return {};
-	std::wstring Ddnet = std::wstring(aAppData) + L"\\DDNet";
-	if(GetFileAttributesW(Ddnet.c_str()) != INVALID_FILE_ATTRIBUTES)
+		return false;
+	Out = aAppData;
+	return true;
+}
+
+static std::wstring GetDDNetUserDataRootPath()
+{
+	std::wstring AppData;
+	return GetRoamingAppDataDir(AppData) ? AppData + L"\\DDNet" : std::wstring{};
+}
+
+static std::wstring GetTeeworldsUserDataRootPath()
+{
+	std::wstring AppData;
+	return GetRoamingAppDataDir(AppData) ? AppData + L"\\Teeworlds" : std::wstring{};
+}
+
+static bool UserDataRootHasGameProfile(const std::wstring &Root)
+{
+	if(Root.empty() || (GetFileAttributesW(Root.c_str()) & FILE_ATTRIBUTE_DIRECTORY) == 0)
+		return false;
+	if(GetFileAttributesW(JoinPath(Root, L"settings_ddnet.cfg").c_str()) != INVALID_FILE_ATTRIBUTES)
+		return true;
+	return GetFileAttributesW(JoinPath(Root, L"settings.cfg").c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+static std::wstring ResolveGameUserDataRoot()
+{
+	const std::wstring Ddnet = GetDDNetUserDataRootPath();
+	const std::wstring Legacy = GetTeeworldsUserDataRootPath();
+	const DWORD DdnetAttr = Ddnet.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(Ddnet.c_str());
+	const DWORD LegacyAttr = Legacy.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(Legacy.c_str());
+	const bool DdnetDir = DdnetAttr != INVALID_FILE_ATTRIBUTES && (DdnetAttr & FILE_ATTRIBUTE_DIRECTORY);
+	const bool LegacyDir = LegacyAttr != INVALID_FILE_ATTRIBUTES && (LegacyAttr & FILE_ATTRIBUTE_DIRECTORY);
+	const bool DdnetProfile = DdnetDir && UserDataRootHasGameProfile(Ddnet);
+	const bool LegacyProfile = LegacyDir && UserDataRootHasGameProfile(Legacy);
+
+	if(LegacyProfile && !DdnetProfile)
+		return Legacy;
+	if(DdnetDir)
 		return Ddnet;
-	std::wstring Legacy = std::wstring(aAppData) + L"\\Teeworlds";
-	return GetFileAttributesW(Legacy.c_str()) != INVALID_FILE_ATTRIBUTES ? Legacy : Ddnet;
+	if(LegacyDir)
+		return Legacy;
+	return Ddnet;
+}
+
+static void MergeCopyTreeSkipExisting(const wchar_t *pSrc, const wchar_t *pDst)
+{
+	CreateDirectoryW(pDst, nullptr);
+	std::wstring Search(pSrc);
+	Search += L"\\*";
+	WIN32_FIND_DATAW Fd;
+	HANDLE h = FindFirstFileW(Search.c_str(), &Fd);
+	if(h == INVALID_HANDLE_VALUE)
+		return;
+	do
+	{
+		if(!wcscmp(Fd.cFileName, L".") || !wcscmp(Fd.cFileName, L".."))
+			continue;
+		if(Fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+			continue;
+		std::wstring Src(pSrc);
+		Src += L"\\";
+		Src += Fd.cFileName;
+		std::wstring Dst(pDst);
+		Dst += L"\\";
+		Dst += Fd.cFileName;
+		if(Fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			MergeCopyTreeSkipExisting(Src.c_str(), Dst.c_str());
+		else if(GetFileAttributesW(Dst.c_str()) == INVALID_FILE_ATTRIBUTES)
+			CopyFileW(Src.c_str(), Dst.c_str(), FALSE);
+	} while(FindNextFileW(h, &Fd));
+	FindClose(h);
+}
+
+static void MigrateTeeworldsUserDataIfNeeded()
+{
+	const std::wstring Legacy = GetTeeworldsUserDataRootPath();
+	const std::wstring Ddnet = GetDDNetUserDataRootPath();
+	if(Legacy.empty() || Ddnet.empty() || !UserDataRootHasGameProfile(Legacy))
+		return;
+	if(UserDataRootHasGameProfile(Ddnet))
+		return;
+	EnsureDirectoryTree(Ddnet);
+	MergeCopyTreeSkipExisting(Legacy.c_str(), Ddnet.c_str());
+}
+
+static std::wstring GetBackupRoot()
+{
+	return ResolveGameUserDataRoot();
 }
 
 static bool SafeRelativePath(const std::string &Path);
@@ -3477,6 +3565,251 @@ static void ParseBackupVersions(const std::string &Json, std::vector<BackupVersi
 	}
 }
 
+static bool IsAccountEmailReady()
+{
+	EnterCriticalSection(&g_Lock);
+	const bool Ready = g_AccountState == EAccountState::ReadyEmail;
+	LeaveCriticalSection(&g_Lock);
+	return Ready;
+}
+
+static bool IsValidShareUuid(const std::string &Id)
+{
+	if(Id.size() != 36)
+		return false;
+	for(size_t i = 0; i < Id.size(); ++i)
+	{
+		const char C = Id[i];
+		if(i == 8 || i == 13 || i == 18 || i == 23)
+		{
+			if(C != '-')
+				return false;
+		}
+		else if(!((C >= '0' && C <= '9') || (C >= 'a' && C <= 'f') || (C >= 'A' && C <= 'F')))
+			return false;
+	}
+	return true;
+}
+
+static bool TryParseUclientShareUrl(const std::wstring &Arg, std::string &OutShareId)
+{
+	OutShareId.clear();
+	if(Arg.empty())
+		return false;
+	std::wstring Lower = Arg;
+	std::transform(Lower.begin(), Lower.end(), Lower.begin(), [](wchar_t Ch) {
+		return (wchar_t)towlower(Ch);
+	});
+	const wchar_t *pPrefixes[] = {L"uclient://share/", L"uclient:share/"};
+	size_t PrefixLen = 0;
+	for(const wchar_t *pPrefix : pPrefixes)
+	{
+		if(Lower.rfind(pPrefix, 0) == 0)
+		{
+			PrefixLen = wcslen(pPrefix);
+			break;
+		}
+	}
+	if(!PrefixLen)
+		return false;
+	std::wstring IdWide = Lower.substr(PrefixLen);
+	while(!IdWide.empty() && (IdWide.back() == L'/' || IdWide.back() == L'"'))
+		IdWide.pop_back();
+	if(IdWide.size() >= 2 && IdWide.front() == L'"')
+		IdWide = IdWide.substr(1);
+	const std::string Id = WideToUtf8(IdWide.c_str());
+	if(!IsValidShareUuid(Id))
+		return false;
+	OutShareId = Id;
+	return true;
+}
+
+static bool IsUclientShellArg(const std::wstring &Arg)
+{
+	std::string Ignored;
+	return TryParseUclientShareUrl(Arg, Ignored);
+}
+
+static void ClearShareImportState()
+{
+	EnterCriticalSection(&g_Lock);
+	g_ShareImportStatus.clear();
+	g_ShareImportShareId.clear();
+	g_ShareImportEntryJson.clear();
+	g_ShareImportError.clear();
+	LeaveCriticalSection(&g_Lock);
+}
+
+static DWORD WINAPI ShareImportThread(LPVOID pData)
+{
+	std::unique_ptr<std::string> ShareId((std::string *)pData);
+	std::string Body;
+	int Status = 0;
+	const std::wstring Url = Utf8ToWide((std::string(UCLIENT_API_BASE_URL) + "/shortcuts/share/" + *ShareId).c_str());
+	const bool Ok = HttpJsonRequest(L"GET", Url, {}, Body, Status, L"");
+	std::string EntryJson;
+	std::string Error;
+	if(!Ok || Status < 200 || Status >= 300)
+		Error = Status == 404 ? "This share link was not found." : "Could not download the shared shortcut.";
+	else if(!ExtractJsonRawValue(Body, "entry", EntryJson) || EntryJson.empty())
+		Error = "Shared shortcut data is invalid.";
+	EnterCriticalSection(&g_Lock);
+	g_ShareImportBusy = false;
+	if(Error.empty())
+	{
+		g_ShareImportStatus = "ready";
+		g_ShareImportShareId = *ShareId;
+		g_ShareImportEntryJson = EntryJson;
+		g_ShareImportError.clear();
+	}
+	else
+	{
+		g_ShareImportStatus = "error";
+		g_ShareImportShareId = *ShareId;
+		g_ShareImportEntryJson.clear();
+		g_ShareImportError = Error;
+	}
+	LeaveCriticalSection(&g_Lock);
+	if(g_hWnd)
+		PostMessage(g_hWnd, WM_SHARE_IMPORT_READY, 0, 0);
+	return 0;
+}
+
+static void ProcessUclientShareLaunchArgs()
+{
+	if(!g_pArgs)
+		return;
+	for(const std::wstring &Arg : g_pArgs->ForwardArgs)
+	{
+		std::string ShareId;
+		if(TryParseUclientShareUrl(Arg, ShareId))
+			QueueShareImportFetch(ShareId);
+	}
+}
+
+static void QueueShareImportFetch(const std::string &ShareId)
+{
+	if(!IsValidShareUuid(ShareId))
+		return;
+	EnterCriticalSection(&g_Lock);
+	if(g_ShareImportShareId == ShareId && g_ShareImportStatus == "ready" && !g_ShareImportEntryJson.empty())
+	{
+		LeaveCriticalSection(&g_Lock);
+		PushWebState(true);
+		return;
+	}
+	if(g_ShareImportBusy)
+	{
+		LeaveCriticalSection(&g_Lock);
+		return;
+	}
+	g_ShareImportBusy = true;
+	g_ShareImportStatus = "loading";
+	g_ShareImportShareId = ShareId;
+	g_ShareImportEntryJson.clear();
+	g_ShareImportError.clear();
+	LeaveCriticalSection(&g_Lock);
+	PushWebState(true);
+	auto *pShareId = new std::string(ShareId);
+	HANDLE hThread = CreateThread(nullptr, 0, ShareImportThread, pShareId, 0, nullptr);
+	if(hThread)
+		CloseHandle(hThread);
+	else
+	{
+		delete pShareId;
+		EnterCriticalSection(&g_Lock);
+		g_ShareImportBusy = false;
+		g_ShareImportStatus = "error";
+		g_ShareImportError = "Could not start the share import.";
+		LeaveCriticalSection(&g_Lock);
+		PushWebState(true);
+	}
+}
+
+struct ShareUploadWork
+{
+	std::string EntryJson;
+};
+
+static DWORD WINAPI ShareUploadThread(LPVOID pData)
+{
+	std::unique_ptr<ShareUploadWork> Work((ShareUploadWork *)pData);
+	std::string InstallId, Secret, Body, Response;
+	int Status = 0;
+	std::string ResultJson;
+	if(!IsAccountEmailReady())
+	{
+		ResultJson = "{\"ok\":false,\"error\":\"email_required\",\"message\":\"Connect an email to your account before sharing.\"}";
+	}
+	else if(!BackupCredentials(InstallId, Secret))
+	{
+		ResultJson = "{\"ok\":false,\"error\":\"account_unavailable\",\"message\":\"Account credentials are unavailable.\"}";
+	}
+	else
+	{
+		const std::string Payload = std::string("{\"entry\":") + Work->EntryJson + "}";
+		const std::wstring Url = Utf8ToWide((std::string(UCLIENT_API_BASE_URL) + "/shortcuts/share").c_str());
+		if(!HttpJsonRequest(L"POST", Url, Payload, Response, Status, AccountAuthHeaders(InstallId, Secret) + L"Content-Type: application/json\r\n") ||
+			Status < 200 || Status >= 300)
+		{
+			std::string Code = "share_failed";
+			std::string Message = "Could not create a share link.";
+			if(Status == 403 && Response.find("email_required") != std::string::npos)
+			{
+				Code = "email_required";
+				Message = "Connect an email to your account before sharing.";
+			}
+			ResultJson = std::string("{\"ok\":false,\"error\":\"") + JsonEscapeValue(Code) + "\",\"message\":\"" + JsonEscapeValue(Message) + "\"}";
+		}
+		else
+		{
+			std::string ShareId, WebUrl, DeepLink;
+			ExtractJsonString(Response, "shareId", ShareId);
+			ExtractJsonString(Response, "webUrl", WebUrl);
+			ExtractJsonString(Response, "deepLink", DeepLink);
+			ResultJson = std::string("{\"ok\":true,\"shareId\":\"") + JsonEscapeValue(ShareId) +
+				"\",\"webUrl\":\"" + JsonEscapeValue(WebUrl) +
+				"\",\"deepLink\":\"" + JsonEscapeValue(DeepLink) + "\"}";
+		}
+	}
+	EnterCriticalSection(&g_Lock);
+	g_ShareUploadBusy = false;
+	g_ShareResultJson = ResultJson;
+	LeaveCriticalSection(&g_Lock);
+	if(g_hWnd)
+		PostMessage(g_hWnd, WM_SHARE_UPLOAD_READY, 0, 0);
+	return 0;
+}
+
+static void StartShareUpload(const std::string &EntryJson)
+{
+	if(EntryJson.empty())
+		return;
+	EnterCriticalSection(&g_Lock);
+	if(g_ShareUploadBusy)
+	{
+		LeaveCriticalSection(&g_Lock);
+		return;
+	}
+	g_ShareUploadBusy = true;
+	g_ShareResultJson.clear();
+	LeaveCriticalSection(&g_Lock);
+	auto *pWork = new ShareUploadWork();
+	pWork->EntryJson = EntryJson;
+	HANDLE hThread = CreateThread(nullptr, 0, ShareUploadThread, pWork, 0, nullptr);
+	if(hThread)
+		CloseHandle(hThread);
+	else
+	{
+		delete pWork;
+		EnterCriticalSection(&g_Lock);
+		g_ShareUploadBusy = false;
+		g_ShareResultJson = "{\"ok\":false,\"error\":\"share_failed\",\"message\":\"Could not start the share upload.\"}";
+		LeaveCriticalSection(&g_Lock);
+		PushWebState(true);
+	}
+}
+
 enum class EBackupOp { Refresh, Upload, Restore, Delete };
 struct BackupWork
 {
@@ -3536,6 +3869,11 @@ static DWORD WINAPI BackupThread(LPVOID pData)
 		Error = "Account credentials are unavailable.";
 	const std::wstring Auth = AccountAuthHeaders(InstallId, Secret);
 
+	if(Error.empty() && Work->Op == EBackupOp::Upload)
+	{
+		if(!IsAccountEmailReady())
+			Error = "email_required";
+	}
 	if(Error.empty() && Work->Op == EBackupOp::Upload)
 	{
 		for(const std::string &Rel : Work->Paths)
@@ -4140,6 +4478,19 @@ static void RegisterShellHandlers(const std::wstring &LauncherExe)
 	};
 	RegisterExt(L".map", L"DDNet.map", L"Map File");
 	RegisterExt(L".demo", L"DDNet.demo", L"Demo File");
+
+	// uclient:// (launcher deep links)
+	{
+		HKEY hProt = nullptr;
+		if(RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\uclient", 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &hProt, nullptr) == ERROR_SUCCESS)
+		{
+			const wchar_t *Desc = L"URL:uclient Protocol";
+			RegSetValueExW(hProt, L"", 0, REG_SZ, (const BYTE *)Desc, (DWORD)((wcslen(Desc) + 1) * sizeof(wchar_t)));
+			RegSetValueExW(hProt, L"URL Protocol", 0, REG_SZ, (const BYTE *)L"", sizeof(wchar_t));
+			RegCloseKey(hProt);
+		}
+		RegSetCommand(L"Software\\Classes\\uclient\\shell\\open\\command", LauncherExe);
+	}
 }
 
 // ─── Worker ───────────────────────────────────────────────────────────────────
@@ -4980,12 +5331,18 @@ static std::string BuildStateJson()
 	bool GameRunning = false;
 	std::wstring ButtonHint;
 	EAccountState AccountState;
-	std::string AccountEmail, AccountError, SavedAccountInstallId, BackupError;
+	std::string AccountEmail, AccountError, SavedAccountInstallId, AccountInstallId, BackupError;
 	bool HasSavedAccount = false;
 	bool BackupBusy = false;
 	uint64_t BackupUsed = 0, BackupLimit = 0;
 	std::vector<BackupFileView> BackupFiles;
 	std::vector<BackupVersionView> BackupVersions;
+	std::string ShareImportStatus;
+	std::string ShareImportShareId;
+	std::string ShareImportEntryJson;
+	std::string ShareImportError;
+	std::string ShareResultJson;
+	bool ShareUploadBusy = false;
 	EnterCriticalSection(&g_Lock);
 	Button = g_aButtonLabel;
 	Version = g_aVersionText;
@@ -5003,12 +5360,21 @@ static std::string BuildStateJson()
 	AccountError = g_AccountError;
 	HasSavedAccount = g_HasSavedAccount;
 	SavedAccountInstallId = g_SavedAccountInstallId;
+	AccountInstallId = g_AccountInstallId;
 	BackupBusy = g_BackupBusy;
 	BackupError = g_BackupError;
 	BackupUsed = g_BackupUsed;
 	BackupLimit = g_BackupLimit;
 	BackupFiles = g_BackupFiles;
 	BackupVersions = g_BackupVersions;
+	ShareImportStatus = g_ShareImportStatus;
+	ShareImportShareId = g_ShareImportShareId;
+	ShareImportEntryJson = g_ShareImportEntryJson;
+	ShareImportError = g_ShareImportError;
+	ShareResultJson = g_ShareResultJson;
+	ShareUploadBusy = g_ShareUploadBusy;
+	if(!ShareResultJson.empty())
+		g_ShareResultJson.clear();
 	LeaveCriticalSection(&g_Lock);
 	PlayBlocked = EffectivePlayBlocked();
 	UpdateAvailable = EffectiveUpdateAvailable();
@@ -5034,6 +5400,7 @@ static std::string BuildStateJson()
 	JsonAddString(Json, "accountEmail", AccountEmail);
 	JsonAddString(Json, "accountError", AccountError);
 	JsonAddString(Json, "savedAccountInstallId", SavedAccountInstallId);
+	JsonAddString(Json, "accountInstallId", AccountInstallId);
 	JsonAddString(Json, "backupError", BackupError);
 
 	char aNum[64];
@@ -5148,7 +5515,38 @@ static std::string BuildStateJson()
 		Json += Friends[i].Online ? "\"online\":true" : "\"online\":false";
 		Json += "}";
 	}
-	Json += "]}";
+	Json += "],\"shareUploadBusy\":";
+	Json += ShareUploadBusy ? "true" : "false";
+	if(!ShareResultJson.empty())
+	{
+		Json += ",\"shareResult\":";
+		Json += ShareResultJson;
+	}
+	if(!ShareImportStatus.empty())
+	{
+		Json += ",\"shareImport\":{\"status\":\"";
+		Json += JsonEscape(ShareImportStatus);
+		Json += "\"";
+		if(!ShareImportShareId.empty())
+		{
+			Json += ",\"shareId\":\"";
+			Json += JsonEscape(ShareImportShareId);
+			Json += "\"";
+		}
+		if(!ShareImportError.empty())
+		{
+			Json += ",\"error\":\"";
+			Json += JsonEscape(ShareImportError);
+			Json += "\"";
+		}
+		if(!ShareImportEntryJson.empty())
+		{
+			Json += ",\"entry\":";
+			Json += ShareImportEntryJson;
+		}
+		Json += "}";
+	}
+	Json += "}";
 	return Json;
 }
 
@@ -5217,6 +5615,7 @@ static void OnWebMessage(const std::string &Json)
 
 	if(Cmd == "ready")
 	{
+		ProcessUclientShareLaunchArgs();
 		PushWebState(true);
 	}
 	else if(Cmd == "close")
@@ -5377,6 +5776,24 @@ static void OnWebMessage(const std::string &Json)
 			DeleteShortcutById(Id);
 			PushWebState(true);
 		}
+	}
+	else if(Cmd == "shortcutsShare")
+	{
+		std::string EntryJson;
+		if(ExtractJsonRawValue(Json, "entry", EntryJson) && !EntryJson.empty())
+			StartShareUpload(EntryJson);
+		else
+		{
+			EnterCriticalSection(&g_Lock);
+			g_ShareResultJson = "{\"ok\":false,\"error\":\"invalid_entry\",\"message\":\"Nothing to share.\"}";
+			LeaveCriticalSection(&g_Lock);
+			PushWebState(true);
+		}
+	}
+	else if(Cmd == "shortcutsShareDismiss")
+	{
+		ClearShareImportState();
+		PushWebState(true);
 	}
 	else if(Cmd == "automationRun")
 	{
@@ -6336,7 +6753,16 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		if(pArg[Chars - 1] != L'\0' || wcsnlen_s(pArg, Chars) != Chars - 1)
 			return FALSE;
 		const std::wstring Arg(pArg, Chars - 1);
-		if(!IsForwardableShellArg(Arg) || !g_pArgs)
+		if(!g_pArgs)
+			return FALSE;
+		std::string ShareId;
+		if(TryParseUclientShareUrl(Arg, ShareId))
+		{
+			QueueShareImportFetch(ShareId);
+			ShowLauncherWindow(hWnd);
+			return TRUE;
+		}
+		if(!IsForwardableShellArg(Arg))
 			return FALSE;
 		EnterCriticalSection(&g_Lock);
 		g_pArgs->ForwardArgs.push_back(Arg);
@@ -6395,6 +6821,13 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		return 0;
 	case WM_BACKUP_READY:
 		InvalidateRect(hWnd, nullptr, FALSE);
+		PushWebState(true);
+		return 0;
+	case WM_SHARE_IMPORT_READY:
+		ShowLauncherWindow(hWnd);
+		PushWebState(true);
+		return 0;
+	case WM_SHARE_UPLOAD_READY:
 		PushWebState(true);
 		return 0;
 	case WM_UPDATE_READY:
@@ -6681,7 +7114,7 @@ static void ForwardShellArgsToExistingLauncher(HWND hWnd, const std::vector<std:
 {
 	for(const std::wstring &Arg : ForwardArgs)
 	{
-		if(!IsForwardableShellArg(Arg))
+		if(!IsForwardableShellArg(Arg) && !IsUclientShellArg(Arg))
 			continue;
 		COPYDATASTRUCT Copy = {};
 		Copy.dwData = COPYDATA_FORWARD_LAUNCH_ARG;
@@ -6780,6 +7213,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 	g_pArgs->SelfPath = aSelf;
 	g_pArgs->InstallDir = ParentDir(aSelf);
 	g_InstallDir = g_pArgs->InstallDir;
+	MigrateTeeworldsUserDataIfNeeded();
 	for(int i = 1; i < Argc; ++i)
 	{
 		if(!wcscmp(ppArgv[i], kFromGameArg))

@@ -251,6 +251,18 @@ public:
 		}
 	}
 
+	static bool HasGameUserProfile(const char *pRoot)
+	{
+		if(!pRoot[0] || !fs_is_dir(pRoot))
+			return false;
+		char aPath[IO_MAX_PATH_LENGTH];
+		str_format(aPath, sizeof(aPath), "%s/settings_ddnet.cfg", pRoot);
+		if(fs_is_file(aPath))
+			return true;
+		str_format(aPath, sizeof(aPath), "%s/settings.cfg", pRoot);
+		return fs_is_file(aPath);
+	}
+
 	void FindUserDirectory()
 	{
 #if defined(CONF_PLATFORM_ANDROID)
@@ -259,8 +271,9 @@ public:
 		// on Android. The user data is stored within a folder "user" in the external storage.
 		str_copy(m_aUserdir, "user");
 #else
-		char aFallbackUserdir[IO_MAX_PATH_LENGTH];
-		if(fs_storage_path("DDNet", m_aUserdir, sizeof(m_aUserdir)))
+		char aDdnetUserdir[IO_MAX_PATH_LENGTH] = "";
+		char aFallbackUserdir[IO_MAX_PATH_LENGTH] = "";
+		if(fs_storage_path("DDNet", aDdnetUserdir, sizeof(aDdnetUserdir)))
 		{
 			log_error("storage", "could not determine user directory");
 		}
@@ -269,10 +282,21 @@ public:
 			log_error("storage", "could not determine fallback user directory");
 		}
 
-		if((m_aUserdir[0] == '\0' || !fs_is_dir(m_aUserdir)) && aFallbackUserdir[0] != '\0' && fs_is_dir(aFallbackUserdir))
-		{
+		const bool DdnetDir = aDdnetUserdir[0] != '\0' && fs_is_dir(aDdnetUserdir);
+		const bool LegacyDir = aFallbackUserdir[0] != '\0' && fs_is_dir(aFallbackUserdir);
+		const bool DdnetProfile = DdnetDir && HasGameUserProfile(aDdnetUserdir);
+		const bool LegacyProfile = LegacyDir && HasGameUserProfile(aFallbackUserdir);
+
+		// UClient/launcher may create an empty DDNet folder before the game runs; keep using
+		// Teeworlds until a real DDNet profile exists or migration copies the legacy data.
+		if(LegacyProfile && !DdnetProfile)
 			str_copy(m_aUserdir, aFallbackUserdir);
-		}
+		else if(DdnetDir)
+			str_copy(m_aUserdir, aDdnetUserdir);
+		else if(LegacyDir)
+			str_copy(m_aUserdir, aFallbackUserdir);
+		else
+			str_copy(m_aUserdir, aDdnetUserdir);
 #endif
 	}
 

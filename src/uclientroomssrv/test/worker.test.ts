@@ -540,3 +540,61 @@ describe("cfg backups", () => {
 		expect((await upload("uclient_account.json", new TextEncoder().encode("{}"))).status).toBe(400);
 	});
 });
+
+describe("shortcut share", () => {
+	beforeAll(async () => {
+		await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
+	});
+
+	const sampleEntry = {
+		name: "Hello Share",
+		kind: "manual",
+		enabled: true,
+		trigger: null,
+		actions: [{type: "wait", seconds: 1}],
+	};
+
+	it("rejects anonymous accounts with email_required", async () => {
+		const anon = {
+			install_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+			secret: "share-anon-secret-with-at-least-32-characters",
+		};
+		expect((await SELF.fetch(jsonRequest("/account/register", anon))).status).toBe(201);
+		const upload = await SELF.fetch(jsonRequest("/shortcuts/share", {entry: sampleEntry}, anon));
+		expect(upload.status).toBe(403);
+		expect(await responseJson<{error: string}>(upload)).toMatchObject({error: "email_required"});
+	});
+
+	it("uploads and downloads a shared shortcut", async () => {
+		const account = {
+			install_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+			secret: "share-email-secret-with-at-least-32-characters",
+		};
+		expect((await SELF.fetch(jsonRequest("/account/register", account))).status).toBe(201);
+		const link = await SELF.fetch(jsonRequest("/account/link-email", {
+			email: "share.user@example.com",
+			password: "a-secure-password",
+		}, account));
+		expect(link.status).toBe(200);
+
+		const upload = await SELF.fetch(jsonRequest("/shortcuts/share", {entry: sampleEntry}, account));
+		expect(upload.status).toBe(201);
+		const created = await responseJson<{shareId: string; webUrl: string; deepLink: string; name: string}>(upload);
+		expect(created.shareId).toMatch(/^[0-9a-f-]{36}$/i);
+		expect(created.webUrl).toContain(`/shortcuts/share/${created.shareId}`);
+		expect(created.deepLink).toBe(`uclient://share/${created.shareId}`);
+		expect(created.name).toBe("Hello Share");
+
+		const download = await SELF.fetch(new Request(`https://worker.test/shortcuts/share/${created.shareId}`));
+		expect(download.status).toBe(200);
+		const payload = await responseJson<{version: number; entry: {name: string; kind: string}}>(download);
+		expect(payload.version).toBe(1);
+		expect(payload.entry).toMatchObject({name: "Hello Share", kind: "manual"});
+
+		const page = await SELF.fetch(new Request(`https://worker.test/shortcuts/share/${created.shareId}`, {
+			headers: {"Sec-Fetch-Dest": "document", Accept: "text/html"},
+		}));
+		expect(page.status).toBe(200);
+		expect(page.headers.get("content-type") ?? "").toContain("text/html");
+	});
+});
