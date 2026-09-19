@@ -675,6 +675,47 @@ char *CBinds::GetKeyBindCommand(int ModifierCombination, int Key) const
 	return pBuf;
 }
 
+std::string CBinds::BindsJson() const
+{
+	std::string Out = "[";
+	bool First = true;
+	for(int Modifier = KeyModifier::NONE; Modifier < KeyModifier::COMBINATION_COUNT; Modifier++)
+	{
+		for(int Key = KEY_FIRST; Key < KEY_LAST; Key++)
+		{
+			if(!m_aapKeyBindings[Modifier][Key] || !m_aapKeyBindings[Modifier][Key][0])
+				continue;
+			char aName[128];
+			GetKeyBindName(Key, Modifier, aName, sizeof(aName));
+			if(!First)
+				Out += ",";
+			First = false;
+			Out += "{\"key\":\"";
+			for(const char *p = aName; *p; ++p)
+			{
+				if(*p == '\\' || *p == '"')
+					Out += '\\';
+				Out += *p;
+			}
+			Out += "\",\"command\":\"";
+			for(const char *p = m_aapKeyBindings[Modifier][Key]; *p; ++p)
+			{
+				if(*p == '\\' || *p == '"')
+					Out += '\\';
+				else if(*p == '\n')
+				{
+					Out += "\\n";
+					continue;
+				}
+				Out += *p;
+			}
+			Out += "\"}";
+		}
+	}
+	Out += "]";
+	return Out;
+}
+
 void CBinds::ConfigSaveCallback(IConfigManager *pConfigManager, void *pUserData)
 {
 	CBinds *pSelf = (CBinds *)pUserData;

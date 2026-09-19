@@ -10746,6 +10746,9 @@ void CChat::SayUClient(const char *pLine, const char *pRoomId)
 	if(!pLine || *str_utf8_skip_whitespaces(pLine) == '\0')
 		return;
 
+	if(GameClient()->m_Translate.TryTranslateOutgoingChat(TEAM_UCLIENT, pLine))
+		return;
+
 	GameClient()->m_ClientIndicator.SendUClientChat(pLine, pRoomId);
 }
 

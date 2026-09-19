@@ -1,9 +1,17 @@
 import {describe, expect, it} from "vitest";
-import {parseRetrievalPlan, pickLiveSettings, replyLanguage, retrieveAssistantContext, shortcutIntent} from "../src/ai-retrieve";
+import {parseRetrievalPlan, pickBinds, pickLiveSettings, replyLanguage, retrieveAssistantContext} from "../src/ai-retrieve";
 
 describe("retrieveAssistantContext", () => {
-	it("finds UClient chat disable path without dumping the catalog", () => {
-		const retrieved = retrieveAssistantContext("혹시 유클 챗 끄는 방법 알아?");
+	it("finds UClient chat from planner search queries, not Korean aliases", () => {
+		const retrieved = retrieveAssistantContext("혹시 유클 챗 끄는 방법 알아?", {
+			intent: "settings",
+			searchQueries: ["uc_chat", "UClient chat"],
+			needShortcutBlocks: false,
+			needSettings: true,
+			needLauncher: false,
+			replyLanguage: "Korean",
+			ddnet: [],
+		});
 		expect(retrieved.knowledgeIds).toContain("settings");
 		expect(retrieved.knowledgeIds).toContain("conversation");
 		expect(retrieved.knowledgeIds.some((id) => id.startsWith("block-"))).toBe(false);
@@ -13,36 +21,90 @@ describe("retrieveAssistantContext", () => {
 		expect(retrieved.text).not.toContain("cl_predict\t");
 	});
 
-	it("loads shortcut blocks only when asked to make a shortcut", () => {
-		expect(shortcutIntent("안녕이라고 하면 답장하는 단축어 만들어줘")).toBe(true);
-		const retrieved = retrieveAssistantContext("안녕이라고 하면 답장하는 단축어 만들어줘");
+	it("loads shortcut blocks only when the planner asks for them", () => {
+		const retrieved = retrieveAssistantContext("안녕이라고 하면 답장하는 단축어 만들어줘", {
+			intent: "shortcut_create",
+			searchQueries: ["shortcuts", "chat_received"],
+			needShortcutBlocks: true,
+			needSettings: false,
+			needLauncher: false,
+			replyLanguage: "Korean",
+			ddnet: [],
+		});
 		expect(retrieved.knowledgeIds).toContain("shortcuts");
 		expect(retrieved.knowledgeIds).toContain("block-triggers");
 		expect(retrieved.knowledgeIds).toContain("block-flow");
 		expect(retrieved.knowledgeIds).toContain("block-actions");
 		expect(retrieved.text).toContain("chat_received");
+		expect(retrieved.text).toContain("ask_for_text");
+		expect(retrieved.text).toContain("There is no trigger for");
 		expect(retrieved.text).toContain('type:"if"');
 	});
 
 	it("does not load the shortcut catalog for a follow-up question", () => {
-		expect(shortcutIntent("내 서버 이름이 뭐야")).toBe(false);
 		const retrieved = retrieveAssistantContext("내 서버 이름이 뭐야");
 		expect(retrieved.knowledgeIds).toContain("conversation");
 		expect(retrieved.knowledgeIds).not.toContain("shortcuts");
 		expect(retrieved.knowledgeIds.some((id) => id.startsWith("block-"))).toBe(false);
-		expect(retrieved.text).toContain("cannot see the live server");
+		expect(retrieved.text).toContain("cannot see which server they are on");
 	});
 
-	it("finds chat animation settings from an English question", () => {
-		const retrieved = retrieveAssistantContext("How do I turn off chat animations?");
+	it("finds system/server chat from planner keys, not UClient", () => {
+		const retrieved = retrieveAssistantContext("노란색으로 메세지가 뜨는 건 뭐야? 앞에 *도 붙어있어", {
+			intent: "settings",
+			searchQueries: ["cl_message_system_color", "cl_show_chat_system", "system message"],
+			needShortcutBlocks: false,
+			needSettings: true,
+			needLauncher: false,
+			replyLanguage: "Korean",
+			ddnet: [],
+		});
+		expect(retrieved.knowledgeIds).toContain("settings");
+		expect(retrieved.settingNames).toContain("cl_message_system_color");
+		expect(retrieved.settingNames).toContain("cl_show_chat_system");
+		expect(retrieved.text).toContain("server/system message");
+		expect(retrieved.text).toContain("Do not guess UClient chat for every colored line");
+	});
+
+	it("finds chat animation settings from planner keys", () => {
+		const retrieved = retrieveAssistantContext("How do I turn off chat animations?", {
+			intent: "settings",
+			searchQueries: ["bc_chat_animation", "chat animation"],
+			needShortcutBlocks: false,
+			needSettings: true,
+			needLauncher: false,
+			replyLanguage: "English",
+			ddnet: [],
+		});
 		expect(retrieved.settingNames).toContain("bc_chat_animation");
 		expect(retrieved.knowledgeIds).toContain("settings");
 	});
 
-	it("finds camera drift settings from an English question", () => {
+	it("finds camera drift settings from the English words in the question", () => {
 		const retrieved = retrieveAssistantContext("What is Camera Drift?");
 		expect(retrieved.settingNames).toContain("bc_camera_drift");
 		expect(retrieved.settingNames.length).toBeLessThanOrEqual(16);
+	});
+
+	it("picks the matching bind from planner search terms", () => {
+		const binds = pickBinds(
+			[
+				{key: "mouse1", command: "+fire"},
+				{key: "space", command: "+jump"},
+				{key: "mouse2", command: "+hook"},
+			],
+			"내 총 쏘는 키가 뭐로 설정되어 있지?",
+			{
+				intent: "settings",
+				searchQueries: ["Binds", "+fire"],
+				needShortcutBlocks: false,
+				needSettings: true,
+				needLauncher: false,
+				replyLanguage: "Korean",
+				ddnet: [],
+			},
+		);
+		expect(binds).toEqual([{key: "mouse1", command: "+fire"}]);
 	});
 
 	it("keeps only retrieved live setting values", () => {
@@ -53,17 +115,49 @@ describe("retrieveAssistantContext", () => {
 		expect(live).toEqual({uc_chat: 1});
 	});
 
-	it("lets a planner override keyword shortcut detection", () => {
+	it("does not load shortcut blocks when the planner says not to", () => {
 		const retrieved = retrieveAssistantContext("만들어 둔 단축어가 뭐야", {
 			intent: "status",
 			searchQueries: ["shortcuts list"],
 			needShortcutBlocks: false,
 			needSettings: false,
 			needLauncher: false,
+			replyLanguage: "Korean",
 			ddnet: [],
 		});
 		expect(retrieved.knowledgeIds).not.toContain("shortcuts");
 		expect(retrieved.knowledgeIds.some((id) => id.startsWith("block-"))).toBe(false);
+	});
+
+	it("loads Binds when the planner asks for that chunk", () => {
+		const retrieved = retrieveAssistantContext("e키에 웃는 이모트 만들어줘", {
+			intent: "settings",
+			searchQueries: ["Binds", "emote 14"],
+			needShortcutBlocks: false,
+			needSettings: true,
+			needLauncher: false,
+			replyLanguage: "Korean",
+			ddnet: [],
+		});
+		expect(retrieved.knowledgeIds).toContain("binds");
+		expect(retrieved.knowledgeIds).not.toContain("shortcuts");
+		expect(retrieved.text).toContain('bind e "emote 14"');
+	});
+
+	it("follows the planner for a hammerfly bind", () => {
+		const retrieved = retrieveAssistantContext("해머플라이 하는 거 만들어줘", {
+			intent: "mixed",
+			searchQueries: ["Binds", "cl_dummy_hammer", "Hammerfly"],
+			needShortcutBlocks: false,
+			needSettings: true,
+			needLauncher: false,
+			replyLanguage: "Korean",
+			ddnet: [{type: "wiki", query: "Hammerfly"}],
+		});
+		expect(retrieved.knowledgeIds).toContain("binds");
+		expect(retrieved.knowledgeIds).not.toContain("shortcuts");
+		expect(retrieved.settingNames).toContain("cl_dummy_hammer");
+		expect(retrieved.text).toContain("toggle cl_dummy_hammer 0 1");
 	});
 
 	it("uses planner search queries to find settings", () => {
@@ -73,6 +167,7 @@ describe("retrieveAssistantContext", () => {
 			needShortcutBlocks: false,
 			needSettings: true,
 			needLauncher: false,
+			replyLanguage: "Korean",
 			ddnet: [],
 		});
 		expect(retrieved.knowledgeIds).toContain("settings");
@@ -81,8 +176,8 @@ describe("retrieveAssistantContext", () => {
 });
 
 describe("replyLanguage", () => {
-	it("uses English for an English suggestion even if locale is Korean", () => {
-		expect(replyLanguage("Make a shortcut", "korean")).toBe("English");
+	it("uses English for an English message even if locale is Korean", () => {
+		expect(replyLanguage("Make a shortcut", "ko-KR")).toBe("English");
 		expect(replyLanguage("How do I turn off UClient chat?", "ko")).toBe("English");
 	});
 
@@ -90,26 +185,36 @@ describe("replyLanguage", () => {
 		expect(replyLanguage("단축어 만들어줘", "en")).toBe("Korean");
 	});
 
-	it("honors an explicit language request", () => {
-		expect(replyLanguage("이거 영어로 답해줘", "ko-KR")).toBe("English");
+	it("uses the planner language for an explicit switch", () => {
+		expect(replyLanguage("이거 영어로 답해줘", "ko-KR")).toBe("Korean");
+		expect(replyLanguage("이거 영어로 답해줘", "ko-KR", "English")).toBe("English");
 	});
 
 	it("falls back to the Windows locale when the message has no language", () => {
 		expect(replyLanguage("?", "ko-KR")).toBe("Korean");
 		expect(replyLanguage("?", "")).toBe("English");
+		expect(replyLanguage("?", "zh-CN")).toBe("Simplified Chinese");
+		expect(replyLanguage("?", "zh-TW")).toBe("Traditional Chinese");
+	});
+
+	it("answers Chinese from the message, and Taiwan locale as traditional", () => {
+		expect(replyLanguage("怎么关掉 UClient 聊天", "en-US")).toBe("Simplified Chinese");
+		expect(replyLanguage("怎麼關掉聊天", "zh-TW")).toBe("Traditional Chinese");
+		expect(replyLanguage("怎么关掉聊天", "zh-TW", "Traditional Chinese")).toBe("Traditional Chinese");
 	});
 });
 
 describe("parseRetrievalPlan", () => {
 	it("reads JSON after reasoning tags", () => {
 		const plan = parseRetrievalPlan(`<reasoning>think</reasoning>
-{"intent":"settings","search_queries":["uc_chat","UClient chat"],"need_shortcut_blocks":false,"need_settings":true,"need_launcher":false}`);
+{"intent":"settings","search_queries":["uc_chat","UClient chat"],"need_shortcut_blocks":false,"need_settings":true,"need_launcher":false,"reply_language":"Korean"}`);
 		expect(plan).toEqual({
 			intent: "settings",
 			searchQueries: ["uc_chat", "UClient chat"],
 			needShortcutBlocks: false,
 			needSettings: true,
 			needLauncher: false,
+			replyLanguage: "Korean",
 			ddnet: [],
 		});
 	});
@@ -135,5 +240,6 @@ describe("parseRetrievalPlan", () => {
 			{type: "player", query: "deen"},
 			{type: "map", query: "Multeasystraight"},
 		]);
+		expect(plan?.replyLanguage).toBe("");
 	});
 });

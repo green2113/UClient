@@ -49,19 +49,6 @@ export function parseDdnetLookups(value: unknown): DdnetLookup[] {
 	return out;
 }
 
-export function fallbackDdnetLookups(query: string): DdnetLookup[] {
-	const text = query.trim();
-	if(!text)
-		return [];
-	if(/릴리스|새로 나온 맵|최근 맵|map releases|recent maps/i.test(text))
-		return [{type: "releases", query: ""}];
-	if(/위키|wiki/i.test(text)) {
-		const topic = text.replace(/위키|wiki|디디넷|디디|ddnet/gi, "").replace(/\s+/g, " ").trim().slice(0, MAX_QUERY);
-		return topic ? [{type: "wiki", query: topic}] : [];
-	}
-	return [];
-}
-
 function fmtDate(sec: unknown): string {
 	const n = typeof sec === "number" ? sec : Number(sec);
 	if(!Number.isFinite(n) || n <= 0)

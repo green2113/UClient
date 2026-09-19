@@ -40,6 +40,7 @@ export type RetrievalPlan = {
 	needShortcutBlocks: boolean;
 	needSettings: boolean;
 	needLauncher: boolean;
+	replyLanguage: string;
 	ddnet: DdnetLookup[];
 };
 
@@ -124,87 +125,111 @@ function tokenize(text: string): string[] {
 	return [...tokens];
 }
 
-function expandTokens(query: string, tokens: string[]): Set<string> {
-	const out = new Set(tokens);
-	const q = query.toLowerCase();
-	if(/유클|uclient|유클라이언트/.test(q)) {
-		out.add("uclient");
-		out.add("uc");
-	}
-	if(/챗|채팅|chat/.test(q))
-		out.add("chat");
-	if((/유클|uclient/.test(q) && /챗|채팅|chat/.test(q)) || /유클챗/.test(q))
-		out.add("uc_chat");
-	if(/끄|꺼|비활성|disable/.test(q)) {
-		out.add("enable");
-		out.add("disable");
-	}
-	if(/켜|활성/.test(q) && !/비활성/.test(q))
-		out.add("enable");
-	if(/단축어|숏컷|shortcut|automation|자동화/.test(q)) {
-		out.add("shortcut");
-		out.add("automation");
-	}
-	if(/친구|friend/.test(q))
-		out.add("friend");
-	if(/공지|notice/.test(q))
-		out.add("notice");
-	if(/계정|로그인|account|email/.test(q)) {
-		out.add("account");
-		out.add("email");
-	}
-	if(/스킨|skin/.test(q))
-		out.add("skin");
-	if(/바인드|키설정|controls|bind/.test(q)) {
-		out.add("bind");
-		out.add("controls");
-	}
-	if(/그래픽|graphics/.test(q))
-		out.add("graphics");
-	if(/사운드|소리|sound/.test(q))
-		out.add("sound");
-	if(/camera\s*drift|카메라/.test(q) && /drift|드리프트|camera/.test(q)) {
-		out.add("camera");
-		out.add("drift");
-		out.add("bc_camera_drift");
-	}
-	return out;
+function titleLanguage(value: string): string {
+	return value
+		.trim()
+		.replace(/\s+/g, " ")
+		.split(" ")
+		.map((word) => word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : "")
+		.join(" ");
 }
 
-export function replyLanguage(message: string, locale = ""): string {
-	const text = message.trim();
-	if(/영어로|영문으로|in english|reply in english|answer in english|speak english/i.test(text))
-		return "English";
-	if(/한국어로|한글로|in korean|reply in korean|answer in korean/i.test(text))
+function localeLanguage(locale: string): string {
+	const loc = locale.trim().toLowerCase().replace(/_/g, "-");
+	if(!loc)
+		return "";
+	if(loc.startsWith("zh-tw") || loc.startsWith("zh-hk") || loc.startsWith("zh-mo") || loc === "zh-hant")
+		return "Traditional Chinese";
+	if(loc.startsWith("zh"))
+		return "Simplified Chinese";
+	if(loc.startsWith("ko"))
 		return "Korean";
-	const hangul = (text.match(/[\uac00-\ud7a3]/g) ?? []).length;
-	const latin = (text.match(/[A-Za-z]/g) ?? []).length;
-	if(hangul >= 2 && hangul >= latin)
-		return "Korean";
-	if(latin >= 3 && hangul === 0)
+	if(loc.startsWith("ja"))
+		return "Japanese";
+	if(loc.startsWith("en"))
 		return "English";
-	if(hangul > latin)
-		return "Korean";
-	if(latin > hangul)
-		return "English";
-	const loc = locale.toLowerCase();
-	if(loc.startsWith("ko") || loc.includes("korean"))
-		return "Korean";
-	if(loc.startsWith("en") || loc.includes("english"))
-		return "English";
-	return "English";
+	if(loc.startsWith("de"))
+		return "German";
+	if(loc.startsWith("fr"))
+		return "French";
+	if(loc.startsWith("es"))
+		return "Spanish";
+	if(loc.startsWith("pt"))
+		return "Portuguese";
+	if(loc.startsWith("ru"))
+		return "Russian";
+	if(loc.startsWith("vi"))
+		return "Vietnamese";
+	if(loc.startsWith("th"))
+		return "Thai";
+	if(loc.startsWith("ar"))
+		return "Arabic";
+	if(loc.startsWith("it"))
+		return "Italian";
+	if(loc.startsWith("pl"))
+		return "Polish";
+	if(loc.startsWith("tr"))
+		return "Turkish";
+	if(loc.startsWith("uk"))
+		return "Ukrainian";
+	if(loc.startsWith("nl"))
+		return "Dutch";
+	const base = loc.split("-")[0] ?? "";
+	return base.length === 2 ? titleLanguage(base) : "";
 }
 
-export function shortcutIntent(query: string): boolean {
-	return /단축어|숏컷|shortcut|automation|자동화|만들어|만들어줘|추가해|수정해|바꿔줘|바꿔 줘|create shortcut|edit shortcut/i.test(query);
+function plannedLanguage(value: unknown): string {
+	const raw = typeof value === "string" ? value.trim() : "";
+	if(!raw || raw.length > 40)
+		return "";
+	const text = raw.toLowerCase().replace(/_/g, "-");
+	if(text.includes("traditional") || text.startsWith("zh-tw") || text.startsWith("zh-hk") || text.startsWith("zh-mo") || text.includes("zh-hant"))
+		return "Traditional Chinese";
+	if(text.includes("simplified") || text.startsWith("zh-cn") || text === "zh" || text.startsWith("zh-hans") || text.includes("chinese"))
+		return "Simplified Chinese";
+	if(text === "en" || text.startsWith("en-") || text.includes("english"))
+		return "English";
+	if(text === "ko" || text.startsWith("ko-") || text.includes("korean"))
+		return "Korean";
+	if(text === "ja" || text.startsWith("ja-") || text.includes("japanese"))
+		return "Japanese";
+	if(localeLanguage(text))
+		return localeLanguage(text);
+	if(/^[a-z][a-z0-9\s\-()]{1,39}$/i.test(raw))
+		return titleLanguage(raw);
+	return "";
 }
 
-function settingsIntent(query: string): boolean {
-	return /설정|settings|끄|꺼|켜|방법|어디|어떻게|disable|enable|option|config|콘솔|\bf1\b|끄는/i.test(query);
+function scriptLanguage(message: string, locale = ""): string {
+	const hangul = (message.match(/[\uac00-\ud7a3]/g) ?? []).length;
+	const kana = (message.match(/[\u3040-\u30ff]/g) ?? []).length;
+	const han = (message.match(/[\u4e00-\u9fff]/g) ?? []).length;
+	const cyrillic = (message.match(/[\u0400-\u04ff]/g) ?? []).length;
+	const arabic = (message.match(/[\u0600-\u06ff]/g) ?? []).length;
+	const thai = (message.match(/[\u0e00-\u0e7f]/g) ?? []).length;
+	const latin = (message.match(/[A-Za-z]/g) ?? []).length;
+	if(hangul >= 2)
+		return "Korean";
+	if(kana >= 2)
+		return "Japanese";
+	if(han >= 2)
+		return localeLanguage(locale).includes("Traditional") ? "Traditional Chinese" : "Simplified Chinese";
+	if(cyrillic >= 2)
+		return "Russian";
+	if(arabic >= 2)
+		return "Arabic";
+	if(thai >= 2)
+		return "Thai";
+	if(latin >= 3)
+		return "English";
+	return "";
 }
 
-function launcherIntent(query: string): boolean {
-	return /런처|launcher|친구|friend|공지|notice|계정|account|업데이트|update|플레이|playblocked|차단/i.test(query);
+export function replyLanguage(message: string, locale = "", planned = ""): string {
+	const fromPlan = plannedLanguage(planned);
+	if(fromPlan)
+		return fromPlan;
+	return scriptLanguage(message, locale) || localeLanguage(locale) || "English";
 }
 
 function asBoolean(value: unknown): boolean {
@@ -239,9 +264,11 @@ export function parseRetrievalPlan(raw: string): RetrievalPlan | null {
 		const searchQueries = asStringList(parsed.search_queries ?? parsed.searchQueries);
 		const intent = typeof parsed.intent === "string" ? parsed.intent.trim().slice(0, 40) : "";
 		const ddnet = parseDdnetLookups(parsed.ddnet);
+		const replyLanguage = plannedLanguage(parsed.reply_language ?? parsed.replyLanguage);
 		const hasFlag = parsed.need_shortcut_blocks !== undefined || parsed.needShortcutBlocks !== undefined
 			|| parsed.need_settings !== undefined || parsed.needSettings !== undefined
-			|| parsed.need_launcher !== undefined || parsed.needLauncher !== undefined;
+			|| parsed.need_launcher !== undefined || parsed.needLauncher !== undefined
+			|| !!replyLanguage;
 		if(!intent && !searchQueries.length && !hasFlag && !ddnet.length)
 			return null;
 		return {
@@ -250,24 +277,13 @@ export function parseRetrievalPlan(raw: string): RetrievalPlan | null {
 			needShortcutBlocks: asBoolean(parsed.need_shortcut_blocks ?? parsed.needShortcutBlocks),
 			needSettings: asBoolean(parsed.need_settings ?? parsed.needSettings),
 			needLauncher: asBoolean(parsed.need_launcher ?? parsed.needLauncher),
+			replyLanguage,
 			ddnet,
 		};
 	}
 	catch {
 		return null;
 	}
-}
-
-function aliasSettingNames(query: string): string[] {
-	const q = query.toLowerCase();
-	const names: string[] = [];
-	if((/유클|uclient/.test(q) && /챗|채팅|chat/.test(q)) || /유클챗/.test(q))
-		names.push("uc_chat");
-	if((/챗|채팅|chat/.test(q) && /애니|animation/.test(q)) || /bc_chat_animation/.test(q))
-		names.push("bc_chat_animation", "bc_chat_open_animation", "bc_chat_typing_animation");
-	if(/camera\s*drift|카메라\s*드리프트/.test(q) || (/\bcamera\b/.test(q) && /\bdrift\b/.test(q)))
-		names.push("bc_camera_drift", "bc_camera_drift_amount", "bc_camera_drift_smoothness", "bc_camera_drift_reverse");
-	return names;
 }
 
 function scoreHaystack(haystack: string, tokens: Iterable<string>, titleBoost = 0): number {
@@ -281,39 +297,33 @@ function scoreHaystack(haystack: string, tokens: Iterable<string>, titleBoost = 
 	return score + titleBoost;
 }
 
-function wantShortcuts(query: string, plan?: RetrievalPlan | null): boolean {
-	return plan ? plan.needShortcutBlocks : shortcutIntent(query);
-}
-
-function wantSettings(query: string, plan?: RetrievalPlan | null): boolean {
-	return plan ? plan.needSettings : settingsIntent(query);
-}
-
-function wantLauncher(query: string, plan?: RetrievalPlan | null): boolean {
-	return plan ? plan.needLauncher : launcherIntent(query);
-}
-
-function pickKnowledge(query: string, tokens: Set<string>, plan?: RetrievalPlan | null): KnowledgeChunk[] {
+function pickKnowledge(tokens: Set<string>, plan?: RetrievalPlan | null): KnowledgeChunk[] {
 	const selected = new Map<string, KnowledgeChunk>();
 	const conversation = KNOWLEDGE_CHUNKS.find((chunk) => chunk.id === "conversation");
 	if(conversation)
 		selected.set(conversation.id, conversation);
 
-	if(wantShortcuts(query, plan)) {
+	if(plan?.needShortcutBlocks) {
 		for(const chunk of KNOWLEDGE_CHUNKS) {
 			if(chunk.id === "shortcuts" || chunk.id.startsWith("block-"))
 				selected.set(chunk.id, chunk);
 		}
 	}
-	if(wantSettings(query, plan)) {
+	if(plan?.needSettings) {
 		const settings = KNOWLEDGE_CHUNKS.find((chunk) => chunk.id === "settings");
 		if(settings)
 			selected.set(settings.id, settings);
 	}
-	if(wantLauncher(query, plan)) {
+	if(plan?.needLauncher) {
 		const launcher = KNOWLEDGE_CHUNKS.find((chunk) => chunk.id === "launcher");
 		if(launcher)
 			selected.set(launcher.id, launcher);
+	}
+	for(const query of plan?.searchQueries ?? []) {
+		const id = slug(query);
+		const chunk = KNOWLEDGE_CHUNKS.find((item) => item.id === id || item.title.toLowerCase() === query.trim().toLowerCase());
+		if(chunk && chunk.id !== "shortcuts" && !chunk.id.startsWith("block-"))
+			selected.set(chunk.id, chunk);
 	}
 
 	const ranked = KNOWLEDGE_CHUNKS
@@ -333,14 +343,11 @@ function pickKnowledge(query: string, tokens: Set<string>, plan?: RetrievalPlan 
 }
 
 function pickSettings(query: string, tokens: Set<string>): IndexedSetting[] {
-	const forced = new Set(aliasSettingNames(query));
 	const scored = INDEXED_SETTINGS.map((row) => {
 		let score = 0;
 		const q = query.toLowerCase();
 		if(q.includes(row.name) || tokens.has(row.name))
 			score += 50;
-		if(forced.has(row.name))
-			score += 100;
 		for(const part of row.nameParts) {
 			if(tokens.has(part))
 				score += 12;
@@ -358,13 +365,6 @@ function pickSettings(query: string, tokens: Set<string>): IndexedSetting[] {
 
 	const picked: IndexedSetting[] = [];
 	const seen = new Set<string>();
-	for(const name of forced) {
-		const row = INDEXED_SETTINGS.find((item) => item.name === name);
-		if(row && !seen.has(row.name)) {
-			picked.push(row);
-			seen.add(row.name);
-		}
-	}
 	for(const item of scored) {
 		if(seen.has(item.row.name))
 			continue;
@@ -378,8 +378,8 @@ function pickSettings(query: string, tokens: Set<string>): IndexedSetting[] {
 
 export function retrieveAssistantContext(query: string, plan?: RetrievalPlan | null): RetrievedAssistantContext {
 	const searchText = plan?.searchQueries.length ? `${query}\n${plan.searchQueries.join("\n")}` : query;
-	const tokens = expandTokens(searchText, tokenize(searchText));
-	const knowledge = pickKnowledge(query, tokens, plan);
+	const tokens = new Set(tokenize(searchText));
+	const knowledge = pickKnowledge(tokens, plan);
 	const settings = pickSettings(searchText, tokens);
 	const parts = [
 		"Retrieved knowledge for this question (not the full catalog):",
@@ -408,4 +408,38 @@ export function pickLiveSettings(
 			out[name] = values[name];
 	}
 	return out;
+}
+
+export type BindRow = {
+	key: string;
+	command: string;
+};
+
+export function pickBinds(binds: BindRow[] | undefined, query: string, plan?: RetrievalPlan | null): BindRow[] {
+	const rows = (binds ?? [])
+		.filter((row) => row && typeof row.key === "string" && typeof row.command === "string" && row.key && row.command)
+		.slice(0, 300);
+	if(!rows.length)
+		return [];
+	const searchText = plan?.searchQueries.length ? `${query}\n${plan.searchQueries.join("\n")}` : query;
+	const tokens = new Set(tokenize(searchText));
+	const lower = searchText.toLowerCase();
+	const scored = rows.map((row) => {
+		const hay = `${row.key} ${row.command}`.toLowerCase();
+		let score = 0;
+		if(lower.includes(row.key.toLowerCase()))
+			score += 20;
+		if(lower.includes(row.command.toLowerCase()))
+			score += 20;
+		for(const token of tokens) {
+			if(token.length < 2)
+				continue;
+			if(hay.includes(token))
+				score += token.length >= 4 ? 4 : 2;
+		}
+		return {row, score};
+	})
+		.filter((item) => item.score >= 2)
+		.sort((a, b) => b.score - a.score || a.row.key.localeCompare(b.row.key));
+	return scored.slice(0, 40).map((item) => item.row);
 }

@@ -3066,6 +3066,71 @@ static std::string CollectShortcutSummariesJson()
 	return Out;
 }
 
+static void ParseCfgBinds(const std::string &Text, std::vector<std::pair<std::string, std::string>> &Out)
+{
+	size_t LineStart = 0;
+	while(LineStart <= Text.size())
+	{
+		size_t LineEnd = Text.find('\n', LineStart);
+		if(LineEnd == std::string::npos)
+			LineEnd = Text.size();
+		std::string Line = Text.substr(LineStart, LineEnd - LineStart);
+		if(!Line.empty() && Line.back() == '\r')
+			Line.pop_back();
+		size_t i = 0;
+		while(i < Line.size() && isspace((unsigned char)Line[i]))
+			++i;
+		if(i < Line.size() && !strncmp(Line.c_str() + i, "unbindall", 9) &&
+			(i + 9 == Line.size() || isspace((unsigned char)Line[i + 9])))
+		{
+			Out.clear();
+		}
+		else if(i + 5 <= Line.size() && !strncmp(Line.c_str() + i, "bind", 4) && isspace((unsigned char)Line[i + 4]))
+		{
+			i += 4;
+			while(i < Line.size() && isspace((unsigned char)Line[i]))
+				++i;
+			const size_t KeyStart = i;
+			while(i < Line.size() && !isspace((unsigned char)Line[i]))
+				++i;
+			std::string Key = Line.substr(KeyStart, i - KeyStart);
+			while(i < Line.size() && isspace((unsigned char)Line[i]))
+				++i;
+			std::string Command = Line.substr(i);
+			if(Command.size() >= 2 && Command.front() == '"' && Command.back() == '"')
+				Command = JsonUnescapeValue(Command.substr(1, Command.size() - 2));
+			if(!Key.empty() && !Command.empty())
+				Out.emplace_back(Key, Command);
+		}
+		if(LineEnd == Text.size())
+			break;
+		LineStart = LineEnd + 1;
+	}
+}
+
+static std::string BindsToJson(const std::vector<std::pair<std::string, std::string>> &Binds)
+{
+	std::string Json = "[";
+	for(size_t i = 0; i < Binds.size(); ++i)
+	{
+		if(i)
+			Json += ",";
+		Json += "{\"key\":\"" + JsonEscapeValue(Binds[i].first) + "\",\"command\":\"" + JsonEscapeValue(Binds[i].second) + "\"}";
+	}
+	Json += "]";
+	return Json;
+}
+
+static std::string CollectDiskBindsJson()
+{
+	std::vector<std::pair<std::string, std::string>> Binds;
+	const std::wstring Root = ResolveGameUserDataRoot();
+	std::string Text;
+	if(!Root.empty() && ReadUtf8File(JoinPath(Root, L"settings_ddnet.cfg"), Text))
+		ParseCfgBinds(Text, Binds);
+	return BindsToJson(Binds);
+}
+
 static std::string CollectDiskSettingsJson()
 {
 	static const wchar_t *Files[] = {
@@ -3086,9 +3151,10 @@ static std::string CollectDiskSettingsJson()
 	return SettingsMapToJson(Values);
 }
 
-static std::string CollectLiveSettingsJson(std::string &Source)
+static std::string CollectLiveSettingsJson(std::string &Source, std::string &BindsJson)
 {
 	Source = "disk";
+	BindsJson = CollectDiskBindsJson();
 	const bool GameRunning = EffectiveGameRunning();
 	if(!GameRunning)
 		return CollectDiskSettingsJson();
@@ -3106,6 +3172,9 @@ static std::string CollectLiveSettingsJson(std::string &Source)
 			std::string Values;
 			if(ExtractJsonRawValue(Live, "values", Values))
 			{
+				std::string LiveBinds;
+				if(ExtractJsonRawValue(Live, "binds", LiveBinds) && LiveBinds.size() >= 2 && LiveBinds.front() == '[')
+					BindsJson = LiveBinds;
 				Source = "memory";
 				DeleteFileW(LivePath.c_str());
 				DeleteFileW(RequestPath.c_str());
@@ -3275,7 +3344,8 @@ static DWORD WINAPI AiChatThread(LPVOID pData)
 	}
 
 	std::string SettingsSource;
-	const std::string SettingsJson = CollectLiveSettingsJson(SettingsSource);
+	std::string BindsJson;
+	const std::string SettingsJson = CollectLiveSettingsJson(SettingsSource, BindsJson);
 	const std::string ShortcutsArray = CollectShortcutSummariesJson();
 
 	std::vector<FriendView> Friends;
@@ -3337,7 +3407,8 @@ static DWORD WINAPI AiChatThread(LPVOID pData)
 		Locale = CollectLocale();
 
 	std::string Body = "{\"locale\":\"" + JsonEscapeValue(Locale) + "\",\"settingsSource\":\"" + JsonEscapeValue(SettingsSource) +
-		"\",\"settingsValues\":" + SettingsJson + ",\"shortcuts\":" + ShortcutsArray + ",\"friends\":" + FriendsJson +
+		"\",\"settingsValues\":" + SettingsJson + ",\"binds\":" + (BindsJson.empty() ? "[]" : BindsJson) +
+		",\"shortcuts\":" + ShortcutsArray + ",\"friends\":" + FriendsJson +
 		",\"launcher\":{\"gameRunning\":" + (EffectiveGameRunning() ? "true" : "false") +
 		",\"playBlocked\":" + (EffectivePlayBlocked() ? "true" : "false") +
 		",\"phase\":\"" + JsonEscapeValue(pPhase) + "\",\"updateAvailable\":" + (EffectiveUpdateAvailable() ? "true" : "false") +
@@ -6280,6 +6351,19 @@ static void OnWebMessage(const std::string &Json)
 	else if(Cmd == "aiChatAbort")
 	{
 		AbortAiChat();
+	}
+	else if(Cmd == "openUrl")
+	{
+		std::string Url;
+		ExtractWebString(Json, "url", Url);
+		if(Url.rfind("https://", 0) == 0 || Url.rfind("http://", 0) == 0)
+		{
+			if(Url.find(' ') == std::string::npos && Url.size() < 1024)
+			{
+				const std::wstring Wide = Utf8ToWide(Url.c_str());
+				ShellExecuteW(nullptr, L"open", Wide.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+			}
+		}
 	}
 	else if(Cmd == "shortcutsShareDismiss")
 	{

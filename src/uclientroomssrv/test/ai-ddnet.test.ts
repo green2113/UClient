@@ -1,6 +1,5 @@
 import {describe, expect, it} from "vitest";
 import {
-	fallbackDdnetLookups,
 	parseDdnetLookups,
 	summarizeMap,
 	summarizePlayer,
@@ -25,16 +24,6 @@ describe("parseDdnetLookups", () => {
 
 	it("allows releases without a query", () => {
 		expect(parseDdnetLookups([{type: "releases"}])).toEqual([{type: "releases", query: ""}]);
-	});
-});
-
-describe("fallbackDdnetLookups", () => {
-	it("requests releases for recent-map questions", () => {
-		expect(fallbackDdnetLookups("최근 맵 릴리스 뭐야")).toEqual([{type: "releases", query: ""}]);
-	});
-
-	it("requests wiki when the user says wiki", () => {
-		expect(fallbackDdnetLookups("디디 위키 dummy")).toEqual([{type: "wiki", query: "dummy"}]);
 	});
 });
 

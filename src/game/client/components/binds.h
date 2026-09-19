@@ -85,6 +85,7 @@ public:
 	static int GetModifierMaskOfKey(int Key);
 	static const char *GetModifierName(int Modifier);
 	void GetKeyBindName(int Key, int ModifierMask, char *pBuf, size_t BufSize) const;
+	std::string BindsJson() const;
 
 	void OnConsoleInit() override;
 	bool OnInput(const IInput::CEvent &Event) override;

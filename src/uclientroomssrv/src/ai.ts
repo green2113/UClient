@@ -1,5 +1,5 @@
-import {fallbackDdnetLookups, fetchDdnetLookups} from "./ai-ddnet";
-import {parseRetrievalPlan, pickLiveSettings, replyLanguage, retrieveAssistantContext, type RetrievalPlan} from "./ai-retrieve";
+import {fetchDdnetLookups} from "./ai-ddnet";
+import {parseRetrievalPlan, pickBinds, pickLiveSettings, replyLanguage, retrieveAssistantContext, type RetrievalPlan} from "./ai-retrieve";
 
 export interface AiEnv {
 	DB: D1Database;
@@ -20,6 +20,7 @@ type AiChatBody = {
 	messages?: ChatTurn[];
 	settingsValues?: Record<string, string | number | boolean>;
 	settingsSource?: string;
+	binds?: Array<{key?: string; command?: string}>;
 	shortcuts?: Array<{id?: string; name?: string; kind?: string; enabled?: boolean; trigger?: unknown; actions?: unknown; actionCount?: number}>;
 	friends?: Array<{name?: string; online?: boolean; afk?: boolean; server?: string; map?: string}>;
 	launcher?: Record<string, unknown>;
@@ -49,18 +50,21 @@ function systemPrompt(): string {
 	return [
 		"You are the UClient/BestClient launcher personal assistant.",
 		"Answer only about this launcher, this client, shortcuts/automation, friends, notices, accounts, retrieved settings, and official DDNet ranks/maps/wiki when a DDNet lookup is attached.",
-		"Reply only in the Reply language stated at the top of the user message. That follows the latest user message, or an explicit request like 영어로, otherwise the Windows display language. If it is English, write English only.",
-		"Keep spoken replies short. A greeting is only a brief hello plus asking how you can help, in the Reply language. Do not mention version, whether the client is running, notices, friends, settings, or play status unless they asked. Do not volunteer extra status from the snapshot.",
+		"Reply only in the Reply language stated at the top of the user message. That follows the latest user message (Korean, English, Simplified Chinese, Traditional Chinese, Japanese, and others), or an explicit language request, otherwise the Windows display language. Write that language only. Traditional Chinese uses 繁體字. Simplified Chinese uses 简体字.",
+		"Keep spoken replies short. A greeting is only a brief hello plus asking how you can help, in the Reply language. Do not mention version, whether the client is running, notices, friends, settings, or play status unless they asked.",
 		"Read the latest user message with the conversation. Only emit a ```uclient-shortcut fence when they clearly ask to create, edit, add, or change a shortcut/단축어/automation. Questions, status checks, explanations, and follow-ups are not shortcut requests. After they already made one, a new question is just a question.",
-		"Answer those questions in sentences from the live snapshot (settingsValues, friends, shortcuts, launcher). Do not invent a shortcut to answer. If a live value is missing, say so. Current server name and map are not config keys; they are not in the snapshot. If they ask the server name now, say you cannot see the live server from here unless they explicitly ask you to make a shortcut that reads it in-game.",
-		"Each turn includes retrieved knowledge and only the setting rows that match the question. A planner chose those rows from the latest message. Use those plus the live snapshot. Do not invent settings, menus, or shortcut blocks that are not there. If the block catalog is missing, do not emit a shortcut.",
-		"Game settings are only in the running client. Use the menu map in the retrieved knowledge (Esc, Settings, then General/Appearance/TClient/BestClient/UClient). Never send them to launcher Settings. UClient chat: Esc, Settings, UClient, Others, Enable UClient chat. Chat look is Appearance, Chat. Binds are General, Controls. Tee skin is General, Tee.",
-		"Spoken replies may wrap short emphasis in **double asterisks**; the launcher shows that as bold. Do not use other markdown: no headings, backticks, or bullet asterisks.",
+		"Answer those questions in normal sentences from the current client data. Do not invent a shortcut to answer. If a value is missing, say you cannot check or do not know. Never say snapshot, settingsValues, JSON, or field names. Current server name and map are not here. If they ask the server name now, say you cannot see which server they are on, unless they explicitly ask you to make a shortcut that reads it in-game.",
+		"Each turn includes retrieved knowledge and only the setting rows that match the question. A planner chose those rows from the latest message. Use those plus the current client data. Do not invent settings, menus, or shortcut blocks that are not there. If the block catalog is missing, do not emit a shortcut.",
+		"Game settings are only in the running client. Use the menu map in the retrieved knowledge (Esc, Settings, then General/Appearance/TClient/BestClient/UClient). Never send them to launcher Settings. If they describe a look or behavior, match the retrieved chat-line kinds: yellow plus *** is system/server, not UClient. UClient is light blue or [room name]. Chat look is Appearance, Chat. Binds are General, Controls. Tee skin is General, Tee.",
+		"Spoken replies may wrap short emphasis in **double asterisks**; the launcher shows that as bold. For a link, prefer [short label](https://example.com) — that looks better than a raw URL. A bare https:// URL still works. Do not invent URLs. Do not use headings, backticks, or bullet asterisks.",
+		"만들어줘 is not always a shortcut. If they want a key bind or a gameplay technique (hammerfly, hookfly, dummy hammer, 해머플라이), give a DDNet F1 bind from the Binds knowledge, not a shortcut. Example: bind e \"emote 14\". Dummy hammerfly: bind h \"toggle cl_dummy_hammer 0 1\". Do not emit a uclient-shortcut fence for a bind. If they ask what a key is bound to, use the binds list in the current client data (key + command). If that list has no match, say you cannot check.",
+		"If a DDNet wiki lookup is attached for a technique you do not already know, use that extract. Explain briefly, give the bind if one exists, and link [Hammerfly](https://wiki.ddnet.org/wiki/Hammerfly) style. Do not invent a technique.",
 		"Use only triggers and actions from the retrieved block catalog, with the JSON shapes shown there. Combine those blocks to match the request. If you cannot do it, say so. Do not invent types or config values.",
-		"When creating a shortcut, emit exactly one fenced block whose first line is ```uclient-shortcut, then the shortcut object, then ```. Never use ```json. Never paste the object in the spoken reply.",
-		"To edit an existing shortcut, keep its id from the snapshot. To create a new one, omit id.",
-		"chat_received must use filters:[]. Never put message/sender filters on the trigger. If the user names chat text, wrap actions in {type:\"if\",left:{source:\"messageText\",get:\"text\"},op:\"contains\",right:\"that text\"} then the then-actions and {type:\"end_if\"}.",
-		"Use shortcut variables on your own when the result should include sender, received text, clipboard, player info, ask input, map, or name. Fixed phrases stay mode text. Mix words and variables with a text action. Nested {mode:\"variable\",variable:{source,get}} — never channelMode/messageText.",
+		"When creating a shortcut, emit exactly one fenced block whose first line is ```uclient-shortcut, then the shortcut object, then ```. Never use ```json. Never paste the object in the spoken reply. For a new manual shortcut, also say they can bind a key in F1: bind KEY \"shortcut NAME\" using that shortcut's name, e.g. bind k \"shortcut search_player\". Only manual shortcuts. Not automation.",
+		"To edit an existing shortcut, keep its id from the current shortcuts list. To create a new one, omit id.",
+		"chat_received is only someone else chatting. There is no trigger for when they themselves send normal chat. If they say 내가 입력하면 / I type / ask me / 1이면 보내고, emit a manual shortcut: ask_for_text then if on {source:\"ask\"} with op is. They run it, then type the next line. Use chat_received + messageText only when they mean others' chat.",
+		"chat_received must use filters:[]. Never put message/sender filters on the trigger. For others' chat words, wrap actions in {type:\"if\",left:{source:\"messageText\",get:\"text\"},op:\"contains\",right:\"that text\"} then the then-actions and {type:\"end_if\"}. Never emit If with empty left or source id.",
+		"Use shortcut variables on your own when the result should include sender, received message, clipboard, player info, ask input, map, or name. Fixed phrases stay mode text. Mix words and variables with a text action. Nested {mode:\"variable\",variable:{source,get}} — never channelMode/messageText.",
 		"Any other condition, branch, otherwise, else, or sender check also uses if/end_if (optional otherwise). Never skip if/end_if for a branch.",
 		"In the spoken reply, call it a shortcut or 단축어. Never say JSON, code, block, or uclient-shortcut to the user.",
 		"If an official DDNet lookup is attached, use only that for official DDNet player ranks, official DDNet maps, mappers, releases, and wiki facts. Do not invent missing ranks. You may point to the ddnet.org or wiki.ddnet.org links in the lookup.",
@@ -69,7 +73,7 @@ function systemPrompt(): string {
 		"Refuse other off-topic questions (cooking, homework, general web) and steer back to UClient or official DDNet data.",
 		"Never request or repeat secrets, passwords, tokens, API keys, or install UUIDs.",
 		"Never write reasoning, analysis, or tags such as <reasoning> in the reply. Only write the user-facing answer.",
-		"Launcher notices: use title and body from the snapshot. Speak in normal sentences. Never mention severity, warning, critical, info, or field names like blocksPlay.",
+		"Launcher notices: use title and body from the current data. Speak in normal sentences. Never mention severity, warning, critical, info, snapshot, or field names like blocksPlay.",
 		"If they ask about Play and playBlocked is true, tell them they cannot play right now, naturally (for example in Korean: 현재 플레이는 차단이 되어 있어 플레이할 수가 없어요). Do not mention blocking on a greeting. If playBlocked is absent, do not mention blocking.",
 	].join(" ");
 }
@@ -201,7 +205,7 @@ function bedrockBody(env: AiEnv, instructions: string, input: string, options?: 
 	if(maxTokens)
 		body.max_output_tokens = maxTokens;
 	if(stream) {
-		body.prompt_cache_key = "uclient-assistant-v8";
+		body.prompt_cache_key = "uclient-assistant-v18";
 		body.reasoning = {effort: "none"};
 	}
 	return body;
@@ -335,14 +339,15 @@ function plannerPrompt(): string {
 	return [
 		"You plan retrieval for the UClient launcher assistant. Output JSON only. No markdown, no reasoning.",
 		"Read the latest user message using the conversation. A follow-up question is not a shortcut request.",
-		'JSON shape: {"intent":"settings|shortcut_create|shortcut_edit|status|friends|notices|ddnet|off_topic|mixed","search_queries":["..."],"need_shortcut_blocks":false,"need_settings":false,"need_launcher":false,"ddnet":[]}',
-		"search_queries: 1 to 5 short Korean or English terms to find docs and config keys (cl_, tc_, uc_, bc_). Include likely key names when you know them.",
-		"need_shortcut_blocks: true only if they clearly ask to create, edit, add, or change a shortcut/단축어/automation.",
-		"need_settings: true if they ask how to change, find, enable, disable, or explain a client setting.",
+		'JSON shape: {"intent":"settings|shortcut_create|shortcut_edit|status|friends|notices|ddnet|off_topic|mixed","search_queries":["..."],"need_shortcut_blocks":false,"need_settings":false,"need_launcher":false,"reply_language":"English","ddnet":[]}',
+		"reply_language: the language to answer in, not only English or Korean. Examples: English, Korean, Simplified Chinese, Traditional Chinese, Japanese, German. Follow the latest user message, or an explicit request to switch language, otherwise the OS locale (zh-CN → Simplified Chinese, zh-TW/zh-HK → Traditional Chinese).",
+		"search_queries: 1 to 5 short terms in the user's language or English to find docs and config keys (cl_, tc_, uc_, bc_). Include likely key names when you know them.",
+		"need_shortcut_blocks: true only if they clearly ask to create, edit, add, or change a shortcut/단축어/automation. 만들어줘 alone is not enough — decide from meaning. A key bind or gameplay technique bind is not a shortcut. If they type/enter a number or phrase themselves, search ask_for_text. If others chat a word, search chat_received.",
+		"need_settings: true if they ask how to change, find, enable, disable, or explain a client setting, or a DDNet key bind, including when they only describe how it looks or behaves. For a bind, put Binds in search_queries. If they ask what a key does or which key runs a command, also put the command or key (+fire, +hook, +jump, mouse1).",
 		"need_launcher: true for friends, notices, account, updates, or Play.",
-		"ddnet: 0 to 2 official lookups. Types: player (ranks/points), map (one map), mapper (maps by mapper name), releases (recent official maps), wiki (DDNet wiki). Each item is {\"type\":\"player\",\"query\":\"name\"}. releases may omit query. Only official DDNet race maps and official DDNet ranked players. Never for Gores, fng, or other modes. Only when they name a player/map or ask official releases/wiki. Never invent a name. Never for greetings, UClient settings, or shortcuts.",
-		"Known keys: UClient chat on/off is uc_chat. Chat animations are bc_chat_animation. Camera drift is bc_camera_drift. Chat look is Appearance Chat, not uc_chat.",
-		"You may aim local queries at: Launcher, Settings menu map, Shortcuts, Block catalog.",
+		"ddnet: 0 to 2 official lookups. Types: player, map, mapper, releases, wiki. Item shape {\"type\":\"wiki\",\"query\":\"Hammerfly\"}. releases may omit query. Official DDNet race maps and ranked players only. Never Gores/fng. Add wiki when they name a technique or term that local docs may not explain. Add releases when they ask for new or recent official maps. They do not have to say wiki. Player/map only when they name a player or map. Never invent a name. Never for greetings or launcher account questions.",
+		"Known keys: Yellow chat with *** is a server/system message (cl_message_system_color), not UClient chat. UClient chat is a light-blue player-style line or [room name] (uc_chat, uc_message_color). Client echo uses a — prefix. Chat animations are bc_chat_animation. Camera drift is bc_camera_drift. Chat look is Appearance Chat. If they describe a look, search the matching kind, not every color as UClient.",
+		"You may aim local queries at: Launcher, Settings menu map, Shortcuts, Block catalog, Binds.",
 	].join(" ");
 }
 
@@ -399,7 +404,6 @@ async function planAssistantRetrieval(
 			method: "POST",
 			headers,
 			body: JSON.stringify(bedrockBody(env, plannerPrompt(), [
-				"Reply language: " + replyLanguage(query, locale),
 				"OS locale: " + (locale || "unknown"),
 				"Latest user message:",
 				query.slice(0, 4000),
@@ -428,6 +432,7 @@ async function planAssistantRetrieval(
 				needShortcutBlocks: plan.needShortcutBlocks,
 				needSettings: plan.needSettings,
 				needLauncher: plan.needLauncher,
+				replyLanguage: plan.replyLanguage,
 				ddnet: plan.ddnet,
 			}));
 		}
@@ -582,16 +587,17 @@ export async function handleAiChat(
 
 	const lastUser = messages[messages.length - 1]?.content ?? "";
 	const locale = typeof body.locale === "string" ? body.locale.slice(0, 32) : "";
-	const language = replyLanguage(lastUser, locale);
 	const recent = messages.slice(-6).map((item) => `${item.role}: ${item.content.slice(0, 1500)}`).join("\n\n");
 	const plan = await planAssistantRetrieval(env, lastUser, recent, locale);
+	const language = replyLanguage(lastUser, locale, plan?.replyLanguage);
 	const retrieved = retrieveAssistantContext(lastUser, plan);
-	const ddnetLookups = plan?.ddnet.length ? plan.ddnet : fallbackDdnetLookups(lastUser);
+	const ddnetLookups = plan?.ddnet ?? [];
 	const ddnetText = await fetchDdnetLookups(ddnetLookups);
 	const snapshot = {
 		locale,
 		settingsSource: body.settingsSource || "unknown",
 		settingsValues: pickLiveSettings(sanitizeSettings(body.settingsValues), retrieved.settingNames),
+		binds: pickBinds(body.binds?.map((row) => ({key: row.key || "", command: row.command || ""})), lastUser, plan),
 		shortcuts: summarizeShortcuts(body.shortcuts),
 		friends: summarizeFriends(body.friends),
 		launcher: sanitizeLauncher(body.launcher),
@@ -603,7 +609,7 @@ export async function handleAiChat(
 		retrieved.text,
 		ddnetText ? `\n${ddnetText}` : "",
 		"",
-		"Live snapshot JSON:",
+		"Current client data:",
 		JSON.stringify(snapshot),
 		"",
 		"Conversation:",

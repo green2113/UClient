@@ -978,6 +978,31 @@ void CTranslate::Translate(int Id, bool ShowProgress)
 	Translate(Player.m_aName, ShowProgress);
 }
 
+static bool IsIncomingChatTranslationCandidate(const CChat::CLine &Line)
+{
+	if(!Line.m_Initialized || Line.m_aText[0] == '\0' || Line.m_aName[0] == '\0')
+		return false;
+	if(Line.m_ServerAnnouncement)
+		return false;
+	if(Line.m_UClient)
+		return !Line.m_UClientMine;
+	if(Line.m_ClientId < 0)
+		return false;
+	return true;
+}
+
+static bool IsLocalIncomingChatLine(const CGameClient *pGameClient, const CChat::CLine &Line)
+{
+	if(Line.m_UClient)
+		return Line.m_UClientMine;
+	for(int Id : pGameClient->m_aLocalIds)
+	{
+		if(Id >= 0 && Id == Line.m_ClientId)
+			return true;
+	}
+	return false;
+}
+
 void CTranslate::Translate(const char *pName, bool ShowProgress)
 {
 	CChat::CLine *pLineBest = nullptr;
@@ -989,18 +1014,9 @@ void CTranslate::Translate(const char *pName, bool ShowProgress)
 			CChat::CLine *pLine = &GameClient()->m_Chat.m_aLines[((GameClient()->m_Chat.m_CurrentLine - i) + CChat::MAX_LINES) % CChat::MAX_LINES];
 			if(pLine->m_pTranslateResponse != nullptr)
 				continue;
-			if(pLine->m_ClientId == CChat::CLIENT_MSG)
+			if(!IsIncomingChatTranslationCandidate(*pLine))
 				continue;
-			bool IsLocalLine = false;
-			for(int Id : GameClient()->m_aLocalIds)
-			{
-				if(pLine->m_ClientId == Id)
-				{
-					IsLocalLine = true;
-					break;
-				}
-			}
-			if(IsLocalLine)
+			if(IsLocalIncomingChatLine(GameClient(), *pLine))
 				continue;
 			int Score = 0;
 			if(pName)
@@ -1192,13 +1208,10 @@ void CTranslate::AutoTranslate(CChat::CLine &Line)
 		return;
 	if(IsAutoLanguage(IncomingTargetLanguage()))
 		return;
-	if(Line.m_ClientId < 0 || Line.m_aName[0] == '\0')
+	if(!IsIncomingChatTranslationCandidate(Line))
 		return;
-	for(const int Id : GameClient()->m_aLocalIds)
-	{
-		if(Id >= 0 && Id == Line.m_ClientId)
-			return;
-	}
+	if(IsLocalIncomingChatLine(GameClient(), Line))
+		return;
 	if(LanguagesEqual(IncomingSourceLanguage(), IncomingTargetLanguage()))
 		return;
 	TranslateLine(Line, false, true);

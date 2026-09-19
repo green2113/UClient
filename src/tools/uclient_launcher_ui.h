@@ -1023,6 +1023,8 @@ body.dev-build #dev-panel{display:block}
 .ai-msg.user .bubble{background:rgba(124,108,240,.28);color:#fff;border-radius:22px 22px 8px 22px;white-space:pre-wrap}
 .ai-msg.assistant .bubble{background:rgba(255,255,255,.06);color:var(--text);border-radius:22px 22px 22px 8px}
 .ai-msg .bubble strong{font-weight:700;color:inherit}
+.ai-msg .bubble a.ai-link{color:#b8adff;text-decoration:underline;cursor:pointer;word-break:break-all}
+.ai-msg .bubble a.ai-link:hover{color:#fff}
 .ai-err{color:#ffb4b4;font-size:13px;padding:4px 2px 10px}
 #ai-suggests{display:none;padding:0 14px 8px;flex-direction:column;align-items:flex-end;gap:8px}
 #ai-suggests.on{display:flex}
@@ -5499,13 +5501,19 @@ function aiSanitizeTrigger(t) {
   if (!t || !t.type || !aiCatalogHas(SC_TRIGGERS, t.type)) return null;
   return scCleanTriggerForSave(t);
 }
-function aiSanitizeActions(actions) {
+function aiSanitizeActions(actions, trigger) {
   if (!Array.isArray(actions) || !actions.length) return null;
   var out = [];
-  for (var i = 0; i < actions.length; i++) {
-    var a = actions[i];
-    if (!a || !a.type || !aiCatalogHas(SC_ACTIONS, a.type)) return null;
-    out.push(scCleanActionForSave(a, i));
+  var prevEditing = scEditing;
+  scEditing = {trigger: trigger || null, actions: actions};
+  try {
+    for (var i = 0; i < actions.length; i++) {
+      var a = actions[i];
+      if (!a || !a.type || !aiCatalogHas(SC_ACTIONS, a.type)) return null;
+      out.push(scCleanActionForSave(a, i));
+    }
+  } finally {
+    scEditing = prevEditing;
   }
   return out;
 }
@@ -5525,7 +5533,7 @@ function aiNormalizeShortcut(raw) {
     if (!t) return null;
     entry.trigger = t;
   }
-  var actions = aiSanitizeActions(raw.actions);
+  var actions = aiSanitizeActions(raw.actions, kind === "automation" ? raw.trigger : null);
   if (!actions) return null;
   entry.actions = actions;
   return aiPromoteChatFiltersToIf(entry);
@@ -5587,8 +5595,35 @@ function aiActionPreview(actions) {
   if (actions.length > 4) titles.push("+" + (actions.length - 4));
   return titles.join(" \u2192 ");
 }
+function aiSafeHttpUrl(url) {
+  var u = String(url || "").trim();
+  if (!/^https?:\/\//i.test(u)) return "";
+  if (/\s/.test(u) || u.length > 1024) return "";
+  if (/^(javascript|data|file|vbscript):/i.test(u)) return "";
+  return u;
+}
+function aiLinkHtml(label, url) {
+  var safe = aiSafeHttpUrl(String(url || "").replace(/&amp;/g, "&"));
+  if (!safe) return label;
+  return '<a class="ai-link" href="#" data-url="' + esc(safe) + '" rel="noreferrer">' + label + "</a>";
+}
+function aiAutolinkBare(html) {
+  var parts = String(html || "").split(/(<a\b[^>]*>[\s\S]*?<\/a>)/i);
+  for (var i = 0; i < parts.length; i++) {
+    if (/^<a\b/i.test(parts[i])) continue;
+    parts[i] = parts[i].replace(/https?:\/\/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=\-]+(?:&amp;[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=\-]*)*/g, function (url) {
+      var cleaned = url.replace(/[.,;:!?]+$/g, "");
+      return aiLinkHtml(cleaned, cleaned);
+    });
+  }
+  return parts.join("");
+}
 function aiRenderText(text) {
-  return esc(text).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>");
+  var html = esc(text).replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, function (_, label, url) {
+    var linked = aiLinkHtml(label, url);
+    return linked === label ? _ : linked;
+  });
+  return aiAutolinkBare(html).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>");
 }
 function aiRenderShortcutCard(rawText) {
   var parsed;
@@ -5927,6 +5962,13 @@ $("ai-suggests").addEventListener("click", function (e) {
   if (suggest) aiSendText(suggest.getAttribute("data-ai-q") || "");
 });
 $("ai-log").addEventListener("click", function (e) {
+  var link = e.target.closest("a.ai-link");
+  if (link) {
+    e.preventDefault();
+    var href = aiSafeHttpUrl(link.getAttribute("data-url") || "");
+    if (href) send({cmd: "openUrl", url: href});
+    return;
+  }
   var btn = e.target.closest(".ai-add-sc");
   if (!btn || btn.disabled) return;
   var card = btn.closest(".ai-card");

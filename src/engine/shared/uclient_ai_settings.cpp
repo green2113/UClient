@@ -101,7 +101,7 @@ static void DumpOneVariable(const SConfigVariable *pVariable, void *pUser)
 		pCtx->m_Json += "null";
 }
 
-void UClientAi_PollLiveSettingsDump(IConfigManager *pConfig, IStorage *pStorage)
+void UClientAi_PollLiveSettingsDump(IConfigManager *pConfig, IStorage *pStorage, const char *pBindsJson)
 {
 	if(!pConfig || !pStorage)
 		return;
@@ -111,7 +111,9 @@ void UClientAi_PollLiveSettingsDump(IConfigManager *pConfig, IStorage *pStorage)
 	SDumpContext Ctx;
 	Ctx.m_Json = "{\"source\":\"memory\",\"values\":{";
 	pConfig->PossibleConfigVariables("", CFGFLAG_CLIENT, DumpOneVariable, &Ctx);
-	Ctx.m_Json += "}}";
+	Ctx.m_Json += "},\"binds\":";
+	Ctx.m_Json += (pBindsJson && pBindsJson[0] == '[') ? pBindsJson : "[]";
+	Ctx.m_Json += "}";
 
 	IOHANDLE File = pStorage->OpenFile(UCLIENT_AI_SETTINGS_LIVE_FILE, IOFLAG_WRITE, IStorage::TYPE_SAVE);
 	if(File)

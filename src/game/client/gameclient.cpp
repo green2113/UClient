@@ -908,7 +908,7 @@ void CGameClient::OnUpdate()
 		if(Now - s_LastAiSettingsPoll >= time_freq() * 120 / 1000)
 		{
 			s_LastAiSettingsPoll = Now;
-			UClientAi_PollLiveSettingsDump(ConfigManager(), Storage());
+			UClientAi_PollLiveSettingsDump(ConfigManager(), Storage(), m_Binds.BindsJson().c_str());
 		}
 	}
 }
