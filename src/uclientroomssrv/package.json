@@ -8,6 +8,7 @@
     "check": "wrangler deploy --dry-run",
     "dev": "wrangler dev",
     "keygen": "node scripts/generate-signing-key.mjs",
+    "catalog": "python ../../scripts/generate_ai_knowledge.py",
     "test": "vitest run",
     "types": "wrangler types src/worker-configuration.d.ts"
   },

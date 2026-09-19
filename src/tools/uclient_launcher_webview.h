@@ -116,6 +116,16 @@ inline void PostAutomationRun(const std::string &JsonUtf8)
 	detail::g_pWebView->ExecuteScript(Script.c_str(), nullptr);
 }
 
+inline void PostAiEvent(const std::string &JsonUtf8)
+{
+	if(!detail::g_Ready || !detail::g_pWebView)
+		return;
+	std::wstring Script = L"if(window.__aiEvent)window.__aiEvent(";
+	Script += detail::Widen(JsonUtf8);
+	Script += L");";
+	detail::g_pWebView->ExecuteScript(Script.c_str(), nullptr);
+}
+
 inline void Shutdown()
 {
 	detail::g_Ready = false;

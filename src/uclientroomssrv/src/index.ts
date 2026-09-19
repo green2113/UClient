@@ -11,6 +11,7 @@ import {
 	postShortcutShare,
 	serveSharePage,
 } from "./shortcuts-share";
+import {handleAiChat} from "./ai";
 
 interface Env extends Cloudflare.Env {
 	ACCOUNT_PEPPER: string;
@@ -20,6 +21,11 @@ interface Env extends Cloudflare.Env {
 	ADMIN_TOKEN?: string;
 	ADMIN_PASSWORD?: string;
 	CFG_BACKUPS: R2Bucket;
+	BEDROCK_API_KEY?: string;
+	BEDROCK_REGION?: string;
+	BEDROCK_MODEL_ID?: string;
+	BEDROCK_ENDPOINT?: string;
+	BEDROCK_PROJECT_ID?: string;
 }
 
 interface AccountInput {
@@ -1268,6 +1274,12 @@ export default {
 				return internalBans(request, env);
 			if(request.method === "GET" && url.pathname === "/launcher/notices")
 				return publicNotices(env);
+			if(request.method === "POST" && url.pathname === "/ai/chat") {
+				const authenticated = await authenticate(request, env);
+				if(authenticated instanceof Response)
+					return authenticated;
+				return handleAiChat(request, env, authenticated.installId);
+			}
 			if(request.method === "GET" && url.pathname === "/admin")
 			{
 				if(env.ASSETS)

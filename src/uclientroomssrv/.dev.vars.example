@@ -3,3 +3,5 @@ ACCOUNT_PEPPER=replace-with-a-long-random-secret
 GRACE_PRIVATE_KEY_SEED_HEX=replace-with-64-hex-characters
 RELAY_SECRET=replace-with-a-long-random-secret
 RELAY_INVALIDATE_SECRET=replace-with-a-long-random-secret
+# Amazon Bedrock API key for the launcher assistant (gpt-oss-120b).
+BEDROCK_API_KEY=

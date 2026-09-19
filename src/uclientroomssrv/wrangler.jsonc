@@ -31,10 +31,16 @@
 	],
 	"vars": {
 		"ENVIRONMENT": "development",
-		"RELAY_INVALIDATE_URL": ""
+		"RELAY_INVALIDATE_URL": "",
+		"BEDROCK_REGION": "us-east-1",
+		"BEDROCK_ENDPOINT": "runtime",
+		"BEDROCK_MODEL_ID": "openai.gpt-oss-120b-1:0"
 	},
 	"assets": {
 		"directory": "./public",
 		"binding": "ASSETS"
+	},
+	"placement": {
+		"region": "aws:us-east-1"
 	}
 }

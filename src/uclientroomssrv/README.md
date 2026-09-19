@@ -66,3 +66,26 @@ npx wrangler secret put ADMIN_TOKEN
 ```
 
 Then open `https://uclient.under1111.com/admin`, sign in with the token, and create notices. Use **Blocks Play** for maintenance windows that should disable the launcher Play button.
+
+## Launcher assistant
+
+Authenticated endpoint:
+
+- `POST /ai/chat` — streams the UClient personal assistant (`Authorization: Bearer` + `x-uclient-install-id`)
+
+The Worker calls Amazon Bedrock `gpt-oss-120b` through `bedrock-runtime` Chat Completions (`openai.gpt-oss-120b-1:0`). GPT-5.6 Terra/Luna/Sol are often listed in the console but still return `not available for this account` until AWS grants them. Console long-term API keys use `AmazonBedrockLimitedAccess`, which works on that endpoint. Put the key in a secret, not in source:
+
+```bash
+npx wrangler secret put BEDROCK_API_KEY
+```
+
+Generate the key in **N. Virginia (us-east-1)** → Bedrock → API keys → Long-term. Do not wrap it in quotes.
+
+The Worker is placed near `aws:us-east-1` so GPT-5.x OpenAI geo checks see a US caller. Korean users often hit the Hong Kong colo otherwise, and OpenAI blocks Hong Kong. Open-weight `gpt-oss` is sold by AWS and does not use that OpenAI country list.
+
+`BEDROCK_REGION`, `BEDROCK_ENDPOINT`, and `BEDROCK_MODEL_ID` are wrangler vars. Mantle needs `AmazonBedrockMantleInferenceAccess` on the key's IAM user. Rebuild the cached catalog after shortcut or config changes:
+
+```bash
+python ../../scripts/generate_ai_knowledge.py
+```
+

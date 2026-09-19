@@ -26,6 +26,7 @@
 #include <cstring>
 #include <ctime>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -335,6 +336,7 @@ static constexpr ULONG_PTR COPYDATA_FORWARD_LAUNCH_ARG = 0x55434C46;
 
 #define WM_SHARE_IMPORT_READY (WM_APP + 10)
 #define WM_SHARE_UPLOAD_READY (WM_APP + 11)
+#define WM_AI_EVENT (WM_APP + 12)
 
 #define ANIM_TIMER_ID 1
 #define LAUNCH_TIMER_ID 2
@@ -369,6 +371,7 @@ static void QueueShareImportFetch(const std::string &ShareId);
 static void ClearShareImportState();
 static void ProcessUclientShareLaunchArgs();
 static bool BackupCredentials(std::string &InstallId, std::string &Secret);
+static bool IsAccountReady();
 static std::wstring SingleInstanceMutexName(const std::wstring &InstallDir);
 static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallDir, const std::vector<std::wstring> &ForwardArgs);
 static bool RunUpdateDownload(LauncherArgs *pA, const UpdateMetadata &Metadata);
@@ -2910,6 +2913,483 @@ static std::wstring AccountAuthHeaders(const std::string &InstallId, const std::
 {
 	return L"Authorization: Bearer " + Utf8ToWide(Secret.c_str()) + L"\r\nx-uclient-install-id: " + Utf8ToWide(InstallId.c_str()) + L"\r\n";
 }
+
+#ifdef UCLIENT_LAUNCHER_WEBVIEW
+static std::atomic<bool> g_AiAbort{false};
+static std::atomic<bool> g_AiBusy{false};
+static std::vector<std::string> g_AiEvents;
+
+static bool SettingNameLooksSecret(const std::string &Name)
+{
+	auto Has = [&](const char *pNeedle) {
+		return Name.find(pNeedle) != std::string::npos;
+	};
+	std::string Lower = Name;
+	for(char &Ch : Lower)
+		Ch = (char)tolower((unsigned char)Ch);
+	return Lower.find("password") != std::string::npos ||
+		Lower.find("token") != std::string::npos ||
+		Lower.find("secret") != std::string::npos ||
+		Lower.find("_key") != std::string::npos ||
+		Lower.find("apikey") != std::string::npos ||
+		Lower.find("uuid") != std::string::npos ||
+		Has("giphy");
+}
+
+static std::wstring GetAiSettingsRequestPath()
+{
+	const std::wstring Root = ResolveGameUserDataRoot();
+	return Root.empty() ? std::wstring{} : JoinPath(Root, L"uclient_ai_settings_request.json");
+}
+
+static std::wstring GetAiSettingsLivePath()
+{
+	const std::wstring Root = ResolveGameUserDataRoot();
+	return Root.empty() ? std::wstring{} : JoinPath(Root, L"uclient_ai_settings_live.json");
+}
+
+static void ParseCfgAssignments(const std::string &Text, std::map<std::string, std::string> &Out)
+{
+	size_t LineStart = 0;
+	while(LineStart <= Text.size())
+	{
+		size_t LineEnd = Text.find('\n', LineStart);
+		if(LineEnd == std::string::npos)
+			LineEnd = Text.size();
+		std::string Line = Text.substr(LineStart, LineEnd - LineStart);
+		if(!Line.empty() && Line.back() == '\r')
+			Line.pop_back();
+		size_t i = 0;
+		while(i < Line.size() && isspace((unsigned char)Line[i]))
+			++i;
+		if(i >= Line.size() || Line[i] == '#' || Line[i] == '/')
+		{
+			LineStart = LineEnd + 1;
+			continue;
+		}
+		const size_t KeyStart = i;
+		while(i < Line.size() && !isspace((unsigned char)Line[i]))
+			++i;
+		std::string Key = Line.substr(KeyStart, i - KeyStart);
+		while(i < Line.size() && isspace((unsigned char)Line[i]))
+			++i;
+		std::string Value = Line.substr(i);
+		if(Value.size() >= 2 && Value.front() == '"' && Value.back() == '"')
+			Value = JsonUnescapeValue(Value.substr(1, Value.size() - 2));
+		if(!Key.empty() && !SettingNameLooksSecret(Key))
+			Out[Key] = Value;
+		if(LineEnd == Text.size())
+			break;
+		LineStart = LineEnd + 1;
+	}
+}
+
+static std::string SettingsMapToJson(const std::map<std::string, std::string> &Values)
+{
+	std::string Json = "{";
+	bool First = true;
+	for(const auto &Pair : Values)
+	{
+		if(!First)
+			Json += ",";
+		First = false;
+		Json += "\"";
+		Json += JsonEscapeValue(Pair.first);
+		Json += "\":\"";
+		Json += JsonEscapeValue(Pair.second);
+		Json += "\"";
+	}
+	Json += "}";
+	return Json;
+}
+
+static int CountJsonArrayObjects(const std::string &ArrayJson)
+{
+	int Count = 0;
+	if(ArrayJson.size() < 2 || ArrayJson[0] != '[')
+		return 0;
+	size_t Pos = 1;
+	while(Pos < ArrayJson.size())
+	{
+		while(Pos < ArrayJson.size() && isspace((unsigned char)ArrayJson[Pos]))
+			++Pos;
+		if(Pos >= ArrayJson.size() || ArrayJson[Pos] == ']')
+			break;
+		if(ArrayJson[Pos] != '{')
+		{
+			++Pos;
+			continue;
+		}
+		const size_t End = JsonObjectEnd(ArrayJson, Pos);
+		if(End == std::string::npos)
+			break;
+		++Count;
+		Pos = End;
+	}
+	return Count;
+}
+
+static std::string CollectShortcutSummariesJson()
+{
+	EnsureShortcutsLoaded();
+	std::string ArrayJson;
+	if(!ExtractJsonRawValue(g_ShortcutsFileJson, "shortcuts", ArrayJson) || ArrayJson.size() < 2)
+		return "[]";
+	std::string Out = "[";
+	bool First = true;
+	int Emitted = 0;
+	size_t Pos = 1;
+	while(Pos < ArrayJson.size() && Emitted < 80)
+	{
+		while(Pos < ArrayJson.size() && isspace((unsigned char)ArrayJson[Pos]))
+			++Pos;
+		if(Pos >= ArrayJson.size() || ArrayJson[Pos] == ']')
+			break;
+		if(ArrayJson[Pos] != '{')
+		{
+			++Pos;
+			continue;
+		}
+		const size_t ObjStart = Pos;
+		const size_t ObjEnd = JsonObjectEnd(ArrayJson, ObjStart);
+		if(ObjEnd == std::string::npos)
+			break;
+		Pos = ObjEnd;
+		std::string Obj = ArrayJson.substr(ObjStart, Pos - ObjStart);
+		if(!First)
+			Out += ",";
+		First = false;
+		++Emitted;
+		Out += Obj;
+	}
+	Out += "]";
+	return Out;
+}
+
+static std::string CollectDiskSettingsJson()
+{
+	static const wchar_t *Files[] = {
+		L"settings_ddnet.cfg",
+		L"settings_tclient.cfg",
+		L"settings_BestClient.cfg",
+		L"settings_uclient.cfg",
+	};
+	std::map<std::string, std::string> Values;
+	const std::wstring Root = ResolveGameUserDataRoot();
+	for(const wchar_t *pName : Files)
+	{
+		std::string Text;
+		if(Root.empty() || !ReadUtf8File(JoinPath(Root, pName), Text))
+			continue;
+		ParseCfgAssignments(Text, Values);
+	}
+	return SettingsMapToJson(Values);
+}
+
+static std::string CollectLiveSettingsJson(std::string &Source)
+{
+	Source = "disk";
+	const bool GameRunning = EffectiveGameRunning();
+	if(!GameRunning)
+		return CollectDiskSettingsJson();
+
+	const std::wstring RequestPath = GetAiSettingsRequestPath();
+	const std::wstring LivePath = GetAiSettingsLivePath();
+	DeleteFileW(LivePath.c_str());
+	WriteUtf8FileAtomic(RequestPath, "{\"t\":1}");
+	for(int i = 0; i < 20; ++i)
+	{
+		Sleep(100);
+		std::string Live;
+		if(ReadUtf8File(LivePath, Live) && Live.find("\"values\"") != std::string::npos)
+		{
+			std::string Values;
+			if(ExtractJsonRawValue(Live, "values", Values))
+			{
+				Source = "memory";
+				DeleteFileW(LivePath.c_str());
+				DeleteFileW(RequestPath.c_str());
+				return Values;
+			}
+		}
+	}
+	DeleteFileW(RequestPath.c_str());
+	Source = "disk-stale";
+	return CollectDiskSettingsJson();
+}
+
+static std::string CollectLocale()
+{
+	wchar_t aName[85] = {};
+	if(GetUserDefaultLocaleName(aName, 85) > 0)
+		return WideToUtf8(aName);
+	return "en";
+}
+
+static void QueueAiEvent(const std::string &Json)
+{
+	EnterCriticalSection(&g_Lock);
+	g_AiEvents.push_back(Json);
+	LeaveCriticalSection(&g_Lock);
+	if(g_hWnd)
+		PostMessage(g_hWnd, WM_AI_EVENT, 0, 0);
+}
+
+struct AiChatWork
+{
+	std::string MessagesJson;
+	std::string LocaleOverride;
+};
+
+static bool HttpSsePost(const std::wstring &Url, const std::string &Body, const std::wstring &ExtraHeaders)
+{
+	URL_COMPONENTS Uc = {};
+	Uc.dwStructSize = sizeof(Uc);
+	wchar_t aHost[256];
+	wchar_t aPath[2048];
+	wchar_t aExtra[2048];
+	Uc.lpszHostName = aHost;
+	Uc.dwHostNameLength = 256;
+	Uc.lpszUrlPath = aPath;
+	Uc.dwUrlPathLength = 2048;
+	Uc.lpszExtraInfo = aExtra;
+	Uc.dwExtraInfoLength = 2048;
+	if(!WinHttpCrackUrl(Url.c_str(), 0, 0, &Uc))
+		return false;
+	std::wstring RequestPath(aPath, Uc.dwUrlPathLength);
+	if(Uc.dwExtraInfoLength)
+		RequestPath.append(aExtra, Uc.dwExtraInfoLength);
+
+	const std::wstring Ua = Utf8ToWide((std::string("UClientLauncher/") + UCLIENT_LAUNCHER_VERSION).c_str());
+	HINTERNET hSession = WinHttpOpen(Ua.c_str(), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+	if(!hSession)
+		return false;
+	WinHttpSetTimeouts(hSession, 15000, 15000, 30000, 120000);
+	HINTERNET hConnect = WinHttpConnect(hSession, aHost, Uc.nPort, 0);
+	if(!hConnect)
+	{
+		WinHttpCloseHandle(hSession);
+		return false;
+	}
+	DWORD Flags = (Uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
+	HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST", RequestPath.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, Flags);
+	if(!hRequest)
+	{
+		WinHttpCloseHandle(hConnect);
+		WinHttpCloseHandle(hSession);
+		return false;
+	}
+	std::wstring Headers = L"Accept: text/event-stream\r\nContent-Type: application/json\r\n";
+	Headers += ExtraHeaders;
+	BOOL Ok = WinHttpSendRequest(hRequest, Headers.c_str(), (DWORD)-1L,
+		Body.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)Body.data(), (DWORD)Body.size(), (DWORD)Body.size(), 0);
+	if(Ok)
+		Ok = WinHttpReceiveResponse(hRequest, nullptr);
+	DWORD StatusCode = 0;
+	if(Ok)
+	{
+		DWORD StatusSize = sizeof(StatusCode);
+		WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+			WINHTTP_HEADER_NAME_BY_INDEX, &StatusCode, &StatusSize, WINHTTP_NO_HEADER_INDEX);
+	}
+	if(!Ok || StatusCode < 200 || StatusCode >= 300)
+	{
+		std::vector<unsigned char> ErrBody;
+		DWORD Avail = 0;
+		while(WinHttpQueryDataAvailable(hRequest, &Avail) && Avail > 0)
+		{
+			const size_t Old = ErrBody.size();
+			ErrBody.resize(Old + Avail);
+			DWORD Read = 0;
+			if(!WinHttpReadData(hRequest, ErrBody.data() + Old, Avail, &Read))
+				break;
+			ErrBody.resize(Old + Read);
+		}
+		std::string Err((const char *)ErrBody.data(), ErrBody.size());
+		std::string Message = "The assistant could not complete that request.";
+		ExtractJsonString(Err, "message", Message);
+		QueueAiEvent(std::string("{\"error\":\"") + JsonEscapeValue(Message) + "\"}");
+		WinHttpCloseHandle(hRequest);
+		WinHttpCloseHandle(hConnect);
+		WinHttpCloseHandle(hSession);
+		return false;
+	}
+
+	std::string Carry;
+	DWORD Avail = 0;
+	while(!g_AiAbort.load() && WinHttpQueryDataAvailable(hRequest, &Avail))
+	{
+		if(Avail == 0)
+		{
+			Sleep(15);
+			if(!WinHttpQueryDataAvailable(hRequest, &Avail) || Avail == 0)
+				break;
+		}
+		std::string Chunk(Avail, '\0');
+		DWORD Read = 0;
+		if(!WinHttpReadData(hRequest, Chunk.data(), Avail, &Read) || Read == 0)
+			break;
+		Chunk.resize(Read);
+		Carry += Chunk;
+		size_t Sep;
+		while((Sep = Carry.find("\n\n")) != std::string::npos)
+		{
+			std::string Event = Carry.substr(0, Sep);
+			Carry.erase(0, Sep + 2);
+			size_t Line = 0;
+			while(Line < Event.size())
+			{
+				size_t Nl = Event.find('\n', Line);
+				if(Nl == std::string::npos)
+					Nl = Event.size();
+				std::string One = Event.substr(Line, Nl - Line);
+				if(!One.empty() && One.back() == '\r')
+					One.pop_back();
+				if(One.rfind("data:", 0) == 0)
+				{
+					std::string Data = One.substr(5);
+					while(!Data.empty() && (Data.front() == ' '))
+						Data.erase(Data.begin());
+					if(!Data.empty() && Data != "[DONE]")
+						QueueAiEvent(Data);
+				}
+				Line = Nl + 1;
+			}
+		}
+	}
+	WinHttpCloseHandle(hRequest);
+	WinHttpCloseHandle(hConnect);
+	WinHttpCloseHandle(hSession);
+	return true;
+}
+
+static DWORD WINAPI AiChatThread(LPVOID pData)
+{
+	std::unique_ptr<AiChatWork> Work((AiChatWork *)pData);
+	std::string InstallId, Secret;
+	if(!BackupCredentials(InstallId, Secret) || !IsAccountReady())
+	{
+		QueueAiEvent("{\"error\":\"Sign in to use the assistant.\"}");
+		g_AiBusy = false;
+		return 0;
+	}
+
+	std::string SettingsSource;
+	const std::string SettingsJson = CollectLiveSettingsJson(SettingsSource);
+	const std::string ShortcutsArray = CollectShortcutSummariesJson();
+
+	std::vector<FriendView> Friends;
+	std::vector<NoticeView> Notices;
+	EAccountState AccountState = EAccountState::Checking;
+	EnterCriticalSection(&g_Lock);
+	Friends = g_Friends;
+	Notices = g_Notices;
+	AccountState = g_AccountState;
+	LeaveCriticalSection(&g_Lock);
+
+	std::string FriendsJson = "[";
+	for(size_t i = 0; i < Friends.size(); ++i)
+	{
+		if(i)
+			FriendsJson += ",";
+		FriendsJson += "{\"name\":\"" + JsonEscapeValue(Friends[i].Name) + "\",\"online\":";
+		FriendsJson += Friends[i].Online ? "true" : "false";
+		FriendsJson += ",\"afk\":";
+		FriendsJson += Friends[i].Afk ? "true" : "false";
+		FriendsJson += ",\"server\":\"" + JsonEscapeValue(Friends[i].ServerName) + "\",\"map\":\"";
+		FriendsJson += JsonEscapeValue(Friends[i].MapName) + "\"}";
+	}
+	FriendsJson += "]";
+
+	std::string NoticesJson = "[";
+	for(size_t i = 0; i < Notices.size(); ++i)
+	{
+		if(i)
+			NoticesJson += ",";
+		NoticesJson += "{\"title\":\"" + JsonEscapeValue(Notices[i].Title) +
+			"\",\"body\":\"" + JsonEscapeValue(Notices[i].Body) + "\",\"blocksPlay\":";
+		NoticesJson += Notices[i].BlocksPlay ? "true" : "false";
+		NoticesJson += "}";
+	}
+	NoticesJson += "]";
+
+	const char *pPhase = "checking";
+	if(g_Phase == EUiPhase::Updating)
+		pPhase = "updating";
+	else if(g_Phase == EUiPhase::Ready)
+		pPhase = "ready";
+	else if(g_Phase == EUiPhase::Launching)
+		pPhase = "launching";
+	const char *pAccount = "checking";
+	switch(AccountState)
+	{
+	case EAccountState::NeedsOnboarding: pAccount = "needs_onboarding"; break;
+	case EAccountState::ReadyAnonymous: pAccount = "ready_anonymous"; break;
+	case EAccountState::ReadyEmail: pAccount = "ready_email"; break;
+	case EAccountState::Busy: pAccount = "busy"; break;
+	case EAccountState::Error: pAccount = "error"; break;
+	case EAccountState::Banned: pAccount = "banned"; break;
+	default: break;
+	}
+
+	std::string Locale = Work->LocaleOverride;
+	if(Locale.empty())
+		Locale = CollectLocale();
+
+	std::string Body = "{\"locale\":\"" + JsonEscapeValue(Locale) + "\",\"settingsSource\":\"" + JsonEscapeValue(SettingsSource) +
+		"\",\"settingsValues\":" + SettingsJson + ",\"shortcuts\":" + ShortcutsArray + ",\"friends\":" + FriendsJson +
+		",\"launcher\":{\"gameRunning\":" + (EffectiveGameRunning() ? "true" : "false") +
+		",\"playBlocked\":" + (EffectivePlayBlocked() ? "true" : "false") +
+		",\"phase\":\"" + JsonEscapeValue(pPhase) + "\",\"updateAvailable\":" + (EffectiveUpdateAvailable() ? "true" : "false") +
+		",\"version\":\"" + JsonEscapeValue(UCLIENT_LAUNCHER_VERSION) + "\",\"accountState\":\"" + JsonEscapeValue(pAccount) +
+		"\",\"emailLinked\":" + (AccountState == EAccountState::ReadyEmail ? "true" : "false") +
+		",\"notices\":" + NoticesJson + "},\"messages\":" +
+		(Work->MessagesJson.empty() ? "[]" : Work->MessagesJson) + "}";
+
+	const std::wstring Url = Utf8ToWide((std::string(UCLIENT_API_BASE_URL) + "/ai/chat").c_str());
+	HttpSsePost(Url, Body, AccountAuthHeaders(InstallId, Secret));
+	QueueAiEvent("{\"done\":true}");
+	g_AiBusy = false;
+	return 0;
+}
+
+static void StartAiChat(const std::string &MessagesJson, const std::string &Locale)
+{
+	if(g_AiBusy.exchange(true))
+	{
+		QueueAiEvent("{\"error\":\"The assistant is already answering.\"}");
+		return;
+	}
+	g_AiAbort = false;
+	auto *pWork = new AiChatWork();
+	pWork->MessagesJson = MessagesJson;
+	pWork->LocaleOverride = Locale;
+	HANDLE hThread = CreateThread(nullptr, 0, AiChatThread, pWork, 0, nullptr);
+	if(hThread)
+		CloseHandle(hThread);
+	else
+	{
+		delete pWork;
+		g_AiBusy = false;
+		QueueAiEvent("{\"error\":\"Could not start the assistant.\"}");
+	}
+}
+
+static void AbortAiChat()
+{
+	g_AiAbort = true;
+}
+
+static void DrainAiEvents()
+{
+	std::vector<std::string> Events;
+	EnterCriticalSection(&g_Lock);
+	Events.swap(g_AiEvents);
+	LeaveCriticalSection(&g_Lock);
+	for(const std::string &Event : Events)
+		WebUi::PostAiEvent(Event);
+}
+#endif
 
 static uint64_t ExtractJsonUint64(const std::string &Json, const char *pKey)
 {
@@ -5790,6 +6270,17 @@ static void OnWebMessage(const std::string &Json)
 			PushWebState(true);
 		}
 	}
+	else if(Cmd == "aiChat")
+	{
+		std::string MessagesJson, Locale;
+		ExtractJsonRawValue(Json, "messages", MessagesJson);
+		ExtractWebString(Json, "locale", Locale);
+		StartAiChat(MessagesJson, Locale);
+	}
+	else if(Cmd == "aiChatAbort")
+	{
+		AbortAiChat();
+	}
 	else if(Cmd == "shortcutsShareDismiss")
 	{
 		ClearShareImportState();
@@ -6780,6 +7271,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 	case WM_FRIENDS_READY:
 		InvalidateRect(hWnd, nullptr, FALSE);
 		PushWebState();
+		return 0;
+	case WM_AI_EVENT:
+#ifdef UCLIENT_LAUNCHER_WEBVIEW
+		DrainAiEvents();
+#endif
 		return 0;
 	case WM_NOTICES_READY:
 		InvalidateRect(hWnd, nullptr, FALSE);

@@ -3,7 +3,9 @@
 //
 // Contract with the host (uclient_launcher.cpp):
 //   C++ -> JS   window.__setState(stateObject)
+//               window.__aiEvent({text}|{done}|{error})
 //   JS  -> C++  window.chrome.webview.postMessage(JSON.stringify({cmd: ...}))
+//               aiChat {messages, locale?}, aiChatAbort
 //
 // State fields: phase, buttonLabel, version, status, percent, failed,
 //               autoLaunch, autoUpdate, discordRpc, logoUrl, mascotUrl, friendsLoading, friendsLoaded,
@@ -158,6 +160,7 @@ body{
   position:relative;z-index:30;background:rgba(9,9,13,.82);
   border-right:1px solid var(--line);backdrop-filter:blur(18px);
   display:flex;flex-direction:column;align-items:center;padding:48px 0 18px;
+  grid-column:1;grid-row:1;
 }
 #mascot{width:34px;height:34px;object-fit:contain;margin-top:6px;
   filter:drop-shadow(0 3px 10px rgba(0,0,0,.6));animation:pop .6s var(--ease) both}
@@ -174,8 +177,8 @@ body{
 .rail-btn.on::before,#btn-gear.on::before{content:"";position:absolute;left:-14px;top:11px;width:3px;height:22px;border-radius:2px;background:var(--accent)}
 #btn-gear:hover svg{transform:rotate(60deg)}
 #rail-nav{display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:18px}
-#shell.shortcuts-mode #main,#shell.shortcuts-mode #friends{display:none}
-#shortcuts-view{display:none;grid-column:2/4;min-width:0;padding:56px 34px 34px 44px;flex-direction:column;background:linear-gradient(160deg,#12141c 0%,#08090d 100%);position:relative;overflow:hidden;font-family:var(--font-apple-round);letter-spacing:-.01em}
+#shell.shortcuts-mode #main,#shell.shortcuts-mode #friends,#shell.shortcuts-mode #assistant{display:none}
+#shortcuts-view{display:none;grid-column:2/4;grid-row:1;min-width:0;padding:56px 34px 34px 44px;flex-direction:column;background:linear-gradient(160deg,#12141c 0%,#08090d 100%);position:relative;overflow:hidden;font-family:var(--font-apple-round);letter-spacing:-.01em}
 #shell.shortcuts-mode #shortcuts-view{display:flex}
 #sc-editor{font-family:var(--font-apple-round);letter-spacing:-.01em}
 .sc-toast{font-family:var(--font-apple-round)}
@@ -593,7 +596,7 @@ body{
 .sc-stepper-sep{width:1px;margin:6px 0;background:rgba(255,255,255,.1);flex:0 0 auto}
 .sc-stepper-pill{cursor:pointer}
 @supports (corner-shape:squircle){
-  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search-wrap,.sc-drawer-search-chip,.sc-drawer-filter-pick,.sc-chip,.sc-catalog,.sc-tile,.sc-tile-ico,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.sc-text-var-chip,.sc-text-composer .sc-text-var-inline,.modal-box,.opt,.confirm-box,.confirm-files,#share-link-url{corner-shape:squircle}
+  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search-wrap,.sc-drawer-search-chip,.sc-drawer-filter-pick,.sc-chip,.sc-catalog,.sc-tile,.sc-tile-ico,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.sc-text-var-chip,.sc-text-composer .sc-text-var-inline,.modal-box,.opt,.confirm-box,.confirm-files,#share-link-url,#assistant,#ai-input,#ai-send,#ai-stop,.ai-card,.ai-msg .bubble,.ai-suggest{corner-shape:squircle}
   .confirm-actions .primary,.confirm-actions .secondary,.confirm-actions .danger,.confirm-box .row-actions .primary,.confirm-box .row-actions .secondary{corner-shape:squircle}
   .sc-ed-back,.sc-ed-icon,.sc-ed-delete,.sc-ed-save{corner-shape:round;border-radius:50%}
 }
@@ -601,7 +604,7 @@ body{
 .sc-toast.on{opacity:1}
 
 /* -- main -------------------------------------------------------------- */
-#main{position:relative;z-index:20;padding:56px 34px 34px 44px;display:flex;flex-direction:column;min-width:0;overflow:visible}
+#main{position:relative;z-index:20;padding:56px 34px 34px 44px;display:flex;flex-direction:column;min-width:0;overflow:visible;grid-column:2;grid-row:1}
 #tabs{position:relative;align-self:center;display:flex;background:rgba(255,255,255,.045);border:1px solid var(--line);border-radius:999px;padding:5px;backdrop-filter:blur(10px)}
 .tab{
   position:relative;z-index:1;border:0;background:transparent;cursor:pointer;
@@ -949,7 +952,7 @@ body.dev-build #dev-panel{display:block}
 /* -- friends ----------------------------------------------------------- */
 #friends{position:relative;z-index:20;margin:52px 24px 24px 0;background:var(--panel);border:1px solid var(--line);
   border-radius:20px;backdrop-filter:blur(26px);display:flex;flex-direction:column;overflow:hidden;
-  box-shadow:0 24px 60px -24px rgba(0,0,0,.8);animation:pop .6s .04s var(--ease) both}
+  box-shadow:0 24px 60px -24px rgba(0,0,0,.8);animation:pop .6s .04s var(--ease) both;grid-column:3;grid-row:1}
 #fr-head{padding:24px 24px 16px;border-bottom:1px solid var(--line)}
 #fr-title{display:flex;align-items:center;justify-content:space-between}
 #fr-head h2{font:600 22px/1 inherit}
@@ -1001,6 +1004,69 @@ body.dev-build #dev-panel{display:block}
 .sk .c u:first-child{width:46%}
 .sk .c u:last-child{width:72%;height:9px;margin-top:7px;opacity:.6}
 @keyframes shim{to{background-position:-220% 0}}
+
+/* -- assistant --------------------------------------------------------- */
+#assistant{display:none;position:relative;z-index:20;margin:52px 24px 24px 0;background:var(--panel);border:1px solid var(--line);
+  border-radius:28px;backdrop-filter:blur(26px);flex-direction:column;overflow:hidden;
+  box-shadow:0 24px 60px -24px rgba(0,0,0,.8);animation:pop .6s .04s var(--ease) both;
+  font-family:var(--font-apple-round);letter-spacing:-.01em;grid-column:3;grid-row:1}
+#shell.assistant-mode #friends{display:none}
+#shell.assistant-mode #assistant{display:flex}
+#ai-head{padding:24px 24px 16px;border-bottom:1px solid var(--line)}
+#ai-head h2{font:600 22px/1 inherit}
+#ai-log{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px 16px 12px;user-select:text;cursor:text}
+#ai-log::-webkit-scrollbar{width:9px}
+#ai-log::-webkit-scrollbar-thumb{background:rgba(255,255,255,.13);border-radius:9px;border:3px solid transparent;background-clip:content-box}
+.ai-msg{margin:0 0 12px;max-width:100%}
+.ai-msg.user{display:flex;justify-content:flex-end}
+.ai-msg .bubble{border-radius:22px;padding:10px 14px;font-size:14px;line-height:1.45;word-break:break-word}
+.ai-msg.user .bubble{background:rgba(124,108,240,.28);color:#fff;border-radius:22px 22px 8px 22px;white-space:pre-wrap}
+.ai-msg.assistant .bubble{background:rgba(255,255,255,.06);color:var(--text);border-radius:22px 22px 22px 8px}
+.ai-msg .bubble strong{font-weight:700;color:inherit}
+.ai-err{color:#ffb4b4;font-size:13px;padding:4px 2px 10px}
+#ai-suggests{display:none;padding:0 14px 8px;flex-direction:column;align-items:flex-end;gap:8px}
+#ai-suggests.on{display:flex}
+.ai-suggest{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:var(--text);
+  border-radius:16px;padding:10px 14px;font:550 13.5px/1.35 inherit;cursor:pointer;text-align:right;
+  max-width:100%;user-select:none}
+.ai-suggest:hover{background:rgba(124,108,240,.18);border-color:rgba(124,108,240,.34)}
+.ai-suggest:focus{outline:none;border-color:var(--accent)}
+.ai-card{margin:10px 0 0;padding:12px 14px;border:1px solid var(--glass-edge);border-radius:22px;background:rgba(18,20,28,.72)}
+.ai-card b{display:block;font-size:15px;margin-bottom:4px}
+.ai-card small{display:block;color:var(--muted);font-size:12px;line-height:1.4;margin-bottom:10px}
+.ai-card button{border:0;border-radius:14px;padding:8px 12px;background:var(--accent);color:#fff;font:650 13px/1 inherit;cursor:pointer}
+.ai-card button:disabled{opacity:.6;cursor:default;background:rgba(255,255,255,.12)}
+.ai-card.bad{border-color:rgba(255,120,120,.28)}
+.ai-card.bad small{color:#ffb4b4}
+#ai-gate{padding:18px 20px 22px}
+#ai-gate p{color:var(--dim);font-size:14px;margin:0 0 14px;line-height:1.45}
+#ai-composer{display:flex;gap:8px;align-items:flex-start;padding:12px 14px 16px;border-top:1px solid var(--line)}
+#ai-input{flex:1;min-height:44px;max-height:132px;height:44px;resize:none;overflow-y:hidden;border:1px solid rgba(255,255,255,.13);border-radius:18px;
+  background:rgba(0,0,0,.25);color:#fff;padding:11px 13px;font:inherit;line-height:1.45;box-sizing:border-box;user-select:text;outline:none;
+  color-scheme:dark;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}
+#ai-input:focus{border-color:var(--accent)}
+#ai-input::-webkit-scrollbar{width:8px}
+#ai-input::-webkit-scrollbar-track{background:transparent;margin:8px 0}
+#ai-input::-webkit-scrollbar-thumb{min-height:28px;border:2px solid transparent;border-radius:999px;background:rgba(255,255,255,.2);background-clip:padding-box}
+#ai-input::-webkit-scrollbar-thumb:hover{background:rgba(124,108,240,.6);background-clip:padding-box}
+#ai-input::-webkit-scrollbar-button{display:none;width:0;height:0}
+#ai-input::-webkit-scrollbar-corner{background:transparent}
+#ai-send,#ai-stop{flex:0 0 auto;align-self:flex-start;width:44px;height:44px;border:0;border-radius:16px;cursor:pointer;color:#fff;display:grid;place-items:center}
+#ai-send{background:var(--accent)}
+#ai-send:disabled{opacity:.4;cursor:default}
+#ai-stop{background:rgba(255,255,255,.1)}
+.ai-cursor{display:inline-block;width:7px;height:14px;margin-left:2px;background:var(--accent-hi);border-radius:2px;vertical-align:-2px;animation:ai-blink 1s step-end infinite}
+@keyframes ai-blink{50%{opacity:0}}
+.ai-msg.streaming.wait .bubble{background:transparent;padding-left:4px;padding-right:4px}
+.ai-wait{display:inline-block;position:relative;font-size:13.5px;font-weight:550;letter-spacing:.01em;
+  color:rgba(255,255,255,.38);transition:opacity .38s ease;white-space:nowrap}
+.ai-wait.out{opacity:0}
+.ai-wait::after{content:attr(data-text);position:absolute;left:0;top:0;white-space:nowrap;pointer-events:none;
+  background-image:linear-gradient(90deg,transparent 0%,rgba(255,255,255,.95) 50%,transparent 100%);
+  background-size:42% 100%;background-repeat:no-repeat;
+  -webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;
+  animation:ai-shimmer 1.8s linear infinite}
+@keyframes ai-shimmer{0%{background-position:-50% 0}100%{background-position:150% 0}}
 
 /* -- account onboarding and backups ----------------------------------- */
 .account-view{overflow-y:auto;padding-right:8px}
@@ -1158,26 +1224,26 @@ body.dev-build #dev-panel{display:block}
 }
 #share-link-layer .share-link-copied.on{opacity:1}
 
-:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,.confirm-files){
+:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,#ai-log,#ai-input,.confirm-files){
   scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent;
 }
-:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,.confirm-files)::-webkit-scrollbar{
+:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,#ai-log,#ai-input,.confirm-files)::-webkit-scrollbar{
   width:10px;height:10px;
 }
-:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,.confirm-files)::-webkit-scrollbar-track{
+:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,#ai-log,#ai-input,.confirm-files)::-webkit-scrollbar-track{
   background:transparent;
 }
-:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,.confirm-files)::-webkit-scrollbar-thumb{
+:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,#ai-log,#ai-input,.confirm-files)::-webkit-scrollbar-thumb{
   min-height:36px;border:3px solid transparent;border-radius:999px;
   background:rgba(255,255,255,.18);background-clip:padding-box;
 }
-:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,.confirm-files)::-webkit-scrollbar-thumb:hover{
+:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,#ai-log,#ai-input,.confirm-files)::-webkit-scrollbar-thumb:hover{
   background:rgba(124,108,240,.62);background-clip:padding-box;
 }
-:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list)::-webkit-scrollbar-button{
+:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,#ai-log,#ai-input)::-webkit-scrollbar-button{
   display:none;width:0;height:0;
 }
-:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list)::-webkit-scrollbar-corner{
+:is(.settings-pane,.backup-list,.account-view,.onboard-box,#play-hint-flyout-inner,#alert-flyout-inner,#fr-list,#ai-log,#ai-input)::-webkit-scrollbar-corner{
   background:transparent;
 }
 
@@ -1213,6 +1279,12 @@ body.dev-build #dev-panel{display:block}
       <button class="rail-btn" id="btn-shortcuts" type="button" title="Shortcuts">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M7 4h10a2 2 0 0 1 2 2v3H5V6a2 2 0 0 1 2-2zm-2 7h14v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-9z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <button class="rail-btn" id="btn-assistant" type="button" title="Assistant">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 3.2 13.4 8l4.8 1.4L13.4 10.8 12 15.6l-1.4-4.8L5.8 9.4 10.6 8 12 3.2z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+          <path d="M18.2 14.2 19 16.4l2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
         </svg>
       </button>
     </div>
@@ -1324,6 +1396,27 @@ body.dev-build #dev-panel{display:block}
       <div id="fr-hint">Double-click a friend to join their server</div>
     </div>
     <div id="fr-list"></div>
+  </aside>
+
+  <aside id="assistant" aria-hidden="true">
+    <div id="ai-head">
+      <h2>Assistant</h2>
+    </div>
+    <div id="ai-log"></div>
+    <div id="ai-gate" hidden>
+      <p>Sign in to use the assistant. Your UClient account is required.</p>
+      <button class="primary" id="ai-signin" type="button">Open account</button>
+    </div>
+    <div id="ai-suggests" hidden></div>
+    <form id="ai-composer">
+      <textarea id="ai-input" rows="1" maxlength="4000" placeholder="Ask about UClient" autocomplete="off"></textarea>
+      <button id="ai-send" type="submit" title="Send" aria-label="Send">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h12M13 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="ai-stop" type="button" title="Stop" aria-label="Stop" hidden>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+      </button>
+    </form>
   </aside>
 
   <section id="shortcuts-view" aria-hidden="true" data-sc-lib="shortcuts">
@@ -3007,7 +3100,7 @@ function scCleanTriggerForSave(t) {
     return t;
   }
   if (t.type === "chat_received") {
-    return {type: "chat_received", channel: "all", filters: []};
+    return {type: "chat_received", channel: t.channel || "all", filters: t.filters || []};
   }
   return t;
 }
@@ -3022,7 +3115,23 @@ function scNormalizeTrigger(t) {
     return {type: "server_connect", targets: targets};
   }
   if (t.type === "chat_received") {
-    return {type: "chat_received", channel: "all", filters: []};
+    var filters = [];
+    if (t.filters && Array.isArray(t.filters)) {
+      t.filters.forEach(function (f) {
+        if (!f || !f.kind) return;
+        if (f.kind === "message") {
+          var match = f.match === "equals" || f.match === "starts_with" ? f.match : "contains";
+          filters.push({kind: "message", match: match, text: f.text == null ? "" : String(f.text)});
+        } else if (f.kind === "sender") {
+          filters.push(scNormalizeSenderFilter(f));
+        } else if (f.kind === "chat_channel") {
+          filters.push({kind: "chat_channel", channel: f.channel || "all"});
+        } else if (f.kind === "uclient_room") {
+          filters.push({kind: "uclient_room", room: f.room == null ? "" : String(f.room)});
+        }
+      });
+    }
+    return {type: "chat_received", channel: t.channel || "all", filters: filters};
   }
   return t;
 }
@@ -3035,8 +3144,50 @@ function scTriggerWhenPreview(t) {
     if (targets.length === 1) return "When connecting to " + targets[0];
     return "When connecting to " + targets.join(" or ");
   }
-  if (t.type === "chat_received") return "When a chat message is received from others";
+  if (t.type === "chat_received") {
+    var filters = Array.isArray(t.filters) ? t.filters : [];
+    for (var i = 0; i < filters.length; i++) {
+      var f = filters[i];
+      if (f && f.kind === "message" && f.text) {
+        var match = f.match || "contains";
+        return "When chat " + String(match).replace(/_/g, " ") + " \"" + String(f.text) + "\"";
+      }
+    }
+    return "When a chat message is received from others";
+  }
   return "When something happens";
+}
+function scIfOpPreview(op) {
+  if (op === "is") return "is";
+  if (op === "is_not") return "is not";
+  if (op === "starts_with") return "starts with";
+  if (op === "ends_with") return "ends with";
+  if (op === "not_contains") return "does not contain";
+  return "contains";
+}
+function scIfRowPreview(row) {
+  if (!row) return "";
+  var src = scVarRefSourceId(row.left);
+  var right = row.right == null ? "" : String(row.right);
+  if (!src || !right) return "";
+  var op = scIfOpPreview(row.op);
+  if (src === "messageText" || src === "message") return "When chat " + op + " \"" + right + "\"";
+  if (src === "messageSender" || src === "senderName" || src === "sender") return "When sender " + op + " " + right;
+  if (src === "messageChannel") return "When channel " + op + " " + right;
+  return "";
+}
+function scAutomationWhenPreview(sc) {
+  if (!sc) return "When something happens";
+  if (sc.kind === "manual" || !sc.trigger) return "Manual shortcut";
+  var acts = sc.actions || [];
+  if (acts[0] && acts[0].type === "if") {
+    var row = acts[0];
+    if (scIfIsMulti(row) && row.conditions && row.conditions.length)
+      row = row.conditions[0];
+    var fromIf = scIfRowPreview(row);
+    if (fromIf) return fromIf;
+  }
+  return scTriggerWhenPreview(sc.trigger);
 }
 function scCatalogMatches(def, q, isTrigger) {
   if (!q) return true;
@@ -5129,14 +5280,23 @@ function scAppendTextVariable(idx, kind, varId) {
 function setRailView(view) {
   activeRailView = view;
   $("shell").classList.toggle("shortcuts-mode", view === "shortcuts");
+  $("shell").classList.toggle("assistant-mode", view === "assistant");
   $("btn-home").classList.toggle("on", view === "home");
   $("btn-shortcuts").classList.toggle("on", view === "shortcuts");
+  $("btn-assistant").classList.toggle("on", view === "assistant");
   $("shortcuts-view").setAttribute("aria-hidden", view === "shortcuts" ? "false" : "true");
+  $("assistant").setAttribute("aria-hidden", view === "assistant" ? "false" : "true");
   if (view === "shortcuts") requestAnimationFrame(scLayoutLibTabIndicator);
+  if (view === "assistant") {
+    aiRender();
+    var input = $("ai-input");
+    if (input && !input.disabled) requestAnimationFrame(function () { input.focus(); });
+  }
   if (settingsOpen) toggleSettings(false);
 }
 $("btn-home").addEventListener("click", function () { setRailView("home"); });
 $("btn-shortcuts").addEventListener("click", function () { setRailView("shortcuts"); });
+$("btn-assistant").addEventListener("click", function () { setRailView("assistant"); });
 
 function scEntryKind(sc) {
   if (sc && sc.kind === "manual") return "manual";
@@ -5242,7 +5402,7 @@ function renderShortcutsList() {
   list.innerHTML = automations.map(function (sc) {
     var on = sc.enabled !== false;
     var trigTitle = sc.trigger ? scTriggerDef(sc.trigger.type).title : "Automation";
-    var trigWhen = sc.trigger ? scTriggerWhenPreview(sc.trigger) : "";
+    var trigWhen = scAutomationWhenPreview(sc);
     return '<div class="sc-row' + (on ? "" : " off") + '" data-id="' + esc(sc.id) + '">' +
       '<div class="sc-flow"><span class="sc-ico chat">\u2709</span><span class="sc-arrow">\u2192</span><span class="sc-ico action">\u2699</span></div>' +
       '<div class="sc-text"><b>' + esc(sc.name || trigTitle) + '</b><small>' + esc(trigWhen) + '</small></div>' +
@@ -5300,6 +5460,528 @@ function scSaveAll() {
   send({cmd: "shortcutsSave", shortcuts: shortcutsLocal});
   scToast("Saved");
 }
+
+var aiMessages = [];
+var aiBusy = false;
+var aiStreamText = "";
+var aiShownLen = 0;
+var aiStreamDone = false;
+var aiTypeRaf = 0;
+var aiWaitTimer = 0;
+var aiWaitFade = 0;
+var aiWaitLine = "";
+var aiError = "";
+var aiSavedKeys = {};
+var aiCardEntries = [];
+var AI_WAIT_LINES = [
+  "Generating a reply...",
+  "Thinking about what to say...",
+  "One sec, assembling words...",
+  "Still here, still thinking...",
+  "Warming up a useful answer...",
+  "Give me a moment...",
+  "Putting this into words...",
+  "Almost there...",
+  "Working on it...",
+  "Let me think..."
+];
+function aiAccountReady() {
+  var st = lastState || {};
+  return st.accountState === "ready_anonymous" || st.accountState === "ready_email";
+}
+function aiCatalogHas(list, type) {
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].id === type || (list[i].defaults && list[i].defaults.type === type)) return true;
+  }
+  return false;
+}
+function aiSanitizeTrigger(t) {
+  if (!t || !t.type || !aiCatalogHas(SC_TRIGGERS, t.type)) return null;
+  return scCleanTriggerForSave(t);
+}
+function aiSanitizeActions(actions) {
+  if (!Array.isArray(actions) || !actions.length) return null;
+  var out = [];
+  for (var i = 0; i < actions.length; i++) {
+    var a = actions[i];
+    if (!a || !a.type || !aiCatalogHas(SC_ACTIONS, a.type)) return null;
+    out.push(scCleanActionForSave(a, i));
+  }
+  return out;
+}
+function aiNormalizeShortcut(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  var kind = raw.kind === "manual" || raw.kind === "automation" ? raw.kind : (raw.trigger ? "automation" : "manual");
+  var entry = {
+    id: raw.id ? String(raw.id) : "",
+    name: String(raw.name || "").trim() || (kind === "manual" ? "New Shortcut" : "New Automation"),
+    kind: kind,
+    enabled: raw.enabled !== false,
+    trigger: null,
+    actions: []
+  };
+  if (kind === "automation") {
+    var t = aiSanitizeTrigger(raw.trigger);
+    if (!t) return null;
+    entry.trigger = t;
+  }
+  var actions = aiSanitizeActions(raw.actions);
+  if (!actions) return null;
+  entry.actions = actions;
+  return aiPromoteChatFiltersToIf(entry);
+}
+function aiChatFilterToIfRow(f) {
+  if (!f || !f.kind) return null;
+  if (f.kind === "message" && f.text) {
+    var op = f.match === "equals" ? "is" : (f.match === "starts_with" ? "starts_with" : "contains");
+    return {left: {source: "messageText", get: "text"}, op: op, right: String(f.text)};
+  }
+  if (f.kind === "sender") {
+    var names = Array.isArray(f.names) ? f.names : (f.senderName ? [f.senderName] : []);
+    var name = "";
+    for (var i = 0; i < names.length; i++) {
+      if (names[i]) { name = String(names[i]); break; }
+    }
+    if (!name) return null;
+    return {left: {source: "messageSender", get: "name"}, op: "is", right: name};
+  }
+  if (f.kind === "chat_channel" && f.channel)
+    return {left: {source: "messageChannel"}, op: "is", right: String(f.channel)};
+  if (f.kind === "uclient_room" && f.room)
+    return {left: {source: "messageUClientRoom"}, op: "contains", right: String(f.room)};
+  return null;
+}
+function aiPromoteChatFiltersToIf(entry) {
+  if (!entry || !entry.trigger || entry.trigger.type !== "chat_received") return entry;
+  var filters = Array.isArray(entry.trigger.filters) ? entry.trigger.filters : [];
+  var conds = [];
+  for (var i = 0; i < filters.length; i++) {
+    var row = aiChatFilterToIfRow(filters[i]);
+    if (row) conds.push(row);
+  }
+  entry.trigger.filters = [];
+  if (!conds.length) return entry;
+  if (entry.actions[0] && entry.actions[0].type === "if") return entry;
+  var ifAct = conds.length === 1
+    ? {type: "if", left: conds[0].left, op: conds[0].op, right: conds[0].right}
+    : {type: "if", match: "all", conditions: conds};
+  entry.actions = [ifAct].concat(entry.actions, [{type: "end_if"}]);
+  return entry;
+}
+function aiShortcutKey(entry) {
+  return JSON.stringify({id: entry.id || "", name: entry.name, kind: entry.kind, trigger: entry.trigger, actions: entry.actions});
+}
+function aiExistingShortcutIndex(id) {
+  if (!id) return -1;
+  for (var i = 0; i < shortcutsLocal.length; i++) {
+    if (shortcutsLocal[i] && shortcutsLocal[i].id === id) return i;
+  }
+  return -1;
+}
+function aiActionPreview(actions) {
+  if (!actions || !actions.length) return "No actions";
+  var titles = [];
+  for (var i = 0; i < actions.length && titles.length < 4; i++) {
+    titles.push(scActionDef(actions[i].type).title);
+  }
+  if (actions.length > 4) titles.push("+" + (actions.length - 4));
+  return titles.join(" \u2192 ");
+}
+function aiRenderText(text) {
+  return esc(text).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>");
+}
+function aiRenderShortcutCard(rawText) {
+  var parsed;
+  try { parsed = JSON.parse(rawText); }
+  catch (e) {
+    return '<div class="ai-card bad"><b>Shortcut</b><small>Could not read this shortcut. Ask the assistant to fix it.</small></div>';
+  }
+  var entry = aiNormalizeShortcut(parsed);
+  if (!entry) {
+    return '<div class="ai-card bad"><b>Shortcut</b><small>This shortcut uses an unknown trigger or action. It was not saved.</small></div>';
+  }
+  var key = aiShortcutKey(entry);
+  var saved = !!aiSavedKeys[key];
+  var idx = aiCardEntries.length;
+  aiCardEntries.push(entry);
+  var isEdit = aiExistingShortcutIndex(entry.id) >= 0;
+  var when = entry.kind === "automation" ? scAutomationWhenPreview(entry) : "Manual shortcut";
+  return '<div class="ai-card" data-ai-idx="' + idx + '">' +
+    "<b>" + esc(entry.name) + "</b>" +
+    "<small>" + esc(entry.kind === "automation" ? "Automation" : "Shortcut") + " \u00b7 " + esc(when) + "<br>" + esc(aiActionPreview(entry.actions)) + "</small>" +
+    '<button type="button" class="ai-add-sc"' + (saved ? " disabled" : "") + ">" +
+    (saved ? (isEdit ? "Updated" : "Added") : (isEdit ? "Save changes" : "Add to library")) + "</button></div>";
+}
+function aiLooksLikeShortcut(obj) {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
+  if (obj.kind === "manual" || obj.kind === "automation") return true;
+  return Array.isArray(obj.actions) && obj.actions.length > 0;
+}
+function aiParseShortcutJson(raw) {
+  try {
+    var parsed = JSON.parse(String(raw || "").trim());
+    return aiLooksLikeShortcut(parsed) ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+function aiRenderNakedShortcuts(text) {
+  var html = "";
+  var start = 0;
+  while (start < text.length) {
+    var brace = text.indexOf("{", start);
+    if (brace < 0) {
+      html += aiRenderText(text.slice(start));
+      break;
+    }
+    var depth = 0;
+    var inStr = false;
+    var esc = false;
+    var end = -1;
+    for (var i = brace; i < text.length; i++) {
+      var ch = text.charAt(i);
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === "\\") esc = true;
+        else if (ch === "\"") inStr = false;
+        continue;
+      }
+      if (ch === "\"") { inStr = true; continue; }
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) { end = i; break; }
+      }
+    }
+    if (end < 0) {
+      html += aiRenderText(text.slice(start));
+      break;
+    }
+    var chunk = text.slice(brace, end + 1);
+    if (aiParseShortcutJson(chunk)) {
+      html += aiRenderText(text.slice(start, brace));
+      html += aiRenderShortcutCard(chunk);
+      start = end + 1;
+    } else {
+      html += aiRenderText(text.slice(start, brace + 1));
+      start = brace + 1;
+    }
+  }
+  return html;
+}
+function aiRenderAssistantBody(text, streaming) {
+  var re = /```([^\n]*)\n([\s\S]*?)```/g;
+  var html = "";
+  var last = 0;
+  var m;
+  while ((m = re.exec(text))) {
+    html += aiRenderNakedShortcuts(text.slice(last, m.index));
+    var label = String(m[1] || "").trim().toLowerCase();
+    var body = String(m[2] || "").trim();
+    if (label === "uclient-shortcut" || aiParseShortcutJson(body))
+      html += aiRenderShortcutCard(body);
+    else
+      html += aiRenderText(m[0]);
+    last = m.index + m[0].length;
+  }
+  html += aiRenderNakedShortcuts(text.slice(last));
+  if (streaming) html += '<span class="ai-cursor"></span>';
+  return html;
+}
+function aiSyncComposer() {
+  var ready = aiAccountReady();
+  var gate = $("ai-gate");
+  var composer = $("ai-composer");
+  if (gate) gate.hidden = ready;
+  if (composer) composer.hidden = !ready;
+  var input = $("ai-input");
+  var sendBtn = $("ai-send");
+  var stopBtn = $("ai-stop");
+  if (input) input.disabled = !ready || aiBusy;
+  if (sendBtn) {
+    sendBtn.disabled = !ready || aiBusy;
+    sendBtn.hidden = aiBusy;
+  }
+  if (stopBtn) stopBtn.hidden = !aiBusy;
+}
+function aiStopType() {
+  if (aiTypeRaf) cancelAnimationFrame(aiTypeRaf);
+  aiTypeRaf = 0;
+}
+function aiPickWaitLine() {
+  var next = AI_WAIT_LINES[Math.floor(Math.random() * AI_WAIT_LINES.length)];
+  if (AI_WAIT_LINES.length > 1) {
+    var guard = 0;
+    while (next === aiWaitLine && guard < 8) {
+      next = AI_WAIT_LINES[Math.floor(Math.random() * AI_WAIT_LINES.length)];
+      guard++;
+    }
+  }
+  aiWaitLine = next;
+}
+function aiWaitHtml() {
+  var line = aiWaitLine || AI_WAIT_LINES[0];
+  return '<span class="ai-wait" data-text="' + esc(line) + '">' + esc(line) + "</span>";
+}
+function aiStopWait() {
+  if (aiWaitTimer) clearInterval(aiWaitTimer);
+  aiWaitTimer = 0;
+  if (aiWaitFade) clearTimeout(aiWaitFade);
+  aiWaitFade = 0;
+}
+function aiSwapWaitLine() {
+  if (!aiBusy || aiShownLen) {
+    aiStopWait();
+    return;
+  }
+  var el = document.querySelector("#ai-log .ai-wait");
+  if (!el) {
+    aiPickWaitLine();
+    aiPatchStreamBubble();
+    return;
+  }
+  el.classList.add("out");
+  aiWaitFade = setTimeout(function () {
+    aiWaitFade = 0;
+    if (!aiBusy || aiShownLen) return;
+    aiPickWaitLine();
+    el.textContent = aiWaitLine;
+    el.setAttribute("data-text", aiWaitLine);
+    el.classList.remove("out");
+  }, 380);
+}
+function aiStartWait() {
+  aiStopWait();
+  aiPickWaitLine();
+  aiWaitTimer = setInterval(aiSwapWaitLine, 2600);
+}
+function aiVisibleStream() {
+  return aiStreamText.slice(0, aiShownLen);
+}
+function aiFinishStream() {
+  aiStopType();
+  aiStopWait();
+  if (aiStreamText) {
+    aiMessages.push({role: "assistant", content: aiStreamText});
+    aiStreamText = "";
+  }
+  aiShownLen = 0;
+  aiStreamDone = false;
+  aiBusy = false;
+  aiRender();
+}
+function aiPatchStreamBubble() {
+  var log = $("ai-log");
+  if (!log) return;
+  var msg = log.querySelector(".ai-msg.assistant.streaming");
+  var bubble = msg ? msg.querySelector(".bubble") : null;
+  if (!bubble) {
+    aiRender();
+    return;
+  }
+  var shown = aiVisibleStream();
+  if (shown) {
+    aiStopWait();
+    msg.classList.remove("wait");
+    bubble.innerHTML = aiRenderAssistantBody(shown, true);
+  } else {
+    msg.classList.add("wait");
+    bubble.innerHTML = aiWaitHtml();
+  }
+  log.scrollTop = log.scrollHeight;
+}
+function aiAdvanceShown() {
+  aiTypeRaf = 0;
+  var behind = aiStreamText.length - aiShownLen;
+  if (behind > 0) {
+    var step = 1;
+    if (behind > 80) step = 12;
+    else if (behind > 24) step = 3;
+    else if (behind > 8) step = 2;
+    aiShownLen = Math.min(aiStreamText.length, aiShownLen + step);
+    aiPatchStreamBubble();
+    aiTypeRaf = requestAnimationFrame(aiAdvanceShown);
+    return;
+  }
+  if (aiStreamDone) aiFinishStream();
+}
+function aiEnsureTyping() {
+  if (!aiTypeRaf) aiTypeRaf = requestAnimationFrame(aiAdvanceShown);
+}
+var AI_SUGGEST_POOL = [
+  {label: "Make a shortcut", send: "Make a shortcut"},
+  {label: "Search for a player", send: "Search for a player"},
+  {label: "Tell me about a map", send: "Tell me about a map"},
+  {label: "How to turn off UClient chat", send: "How do I turn off UClient chat?"},
+  {label: "How to turn off chat animations", send: "How do I turn off chat animations?"}
+];
+var aiSuggestPicked = null;
+function aiPickSuggests() {
+  if (aiSuggestPicked && aiSuggestPicked.length)
+    return aiSuggestPicked;
+  var pool = AI_SUGGEST_POOL.slice();
+  var picked = [];
+  while (picked.length < 3 && pool.length) {
+    var idx = Math.floor(Math.random() * pool.length);
+    picked.push(pool.splice(idx, 1)[0]);
+  }
+  aiSuggestPicked = picked;
+  return picked;
+}
+function aiSyncSuggests() {
+  var box = $("ai-suggests");
+  if (!box) return;
+  var show = !aiMessages.length && !aiStreamText && !aiError && !aiBusy;
+  box.hidden = !show;
+  box.classList.toggle("on", show);
+  if (!show) return;
+  if (box.childElementCount) return;
+  var items = aiPickSuggests();
+  var html = "";
+  for (var i = 0; i < items.length; i++) {
+    html += '<button type="button" class="ai-suggest" data-ai-q="' + esc(items[i].send) + '">' + esc(items[i].label) + "</button>";
+  }
+  box.innerHTML = html;
+}
+function aiRender() {
+  var log = $("ai-log");
+  if (!log) return;
+  aiCardEntries = [];
+  aiSyncComposer();
+  aiSyncSuggests();
+  if (!aiMessages.length && !aiStreamText && !aiError) {
+    log.innerHTML = "";
+    return;
+  }
+  var html = "";
+  aiMessages.forEach(function (msg) {
+    if (msg.role === "user") {
+      html += '<div class="ai-msg user"><div class="bubble">' + aiRenderText(msg.content) + "</div></div>";
+    } else {
+      html += '<div class="ai-msg assistant"><div class="bubble">' + aiRenderAssistantBody(msg.content, false) + "</div></div>";
+    }
+  });
+  if (aiBusy) {
+    var shown = aiVisibleStream();
+    html += '<div class="ai-msg assistant streaming' + (shown ? "" : " wait") + '"><div class="bubble">' + (shown ? aiRenderAssistantBody(shown, true) : aiWaitHtml()) + "</div></div>";
+  }
+  if (aiError) html += '<div class="ai-err">' + esc(aiError) + "</div>";
+  log.innerHTML = html;
+  log.scrollTop = log.scrollHeight;
+}
+function aiResizeInput() {
+  var el = $("ai-input");
+  if (!el) return;
+  el.style.height = "auto";
+  var max = 132;
+  var next = Math.max(44, Math.min(el.scrollHeight, max));
+  el.style.height = next + "px";
+  el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
+}
+function aiSendText(text) {
+  if (aiBusy) return;
+  if (!aiAccountReady()) {
+    openSettingsAccount();
+    return;
+  }
+  text = String(text || "").trim();
+  if (!text) return;
+  aiError = "";
+  aiStopType();
+  aiStreamText = "";
+  aiShownLen = 0;
+  aiStreamDone = false;
+  aiMessages.push({role: "user", content: text});
+  if (aiMessages.length > 16) aiMessages = aiMessages.slice(-16);
+  aiBusy = true;
+  aiStartWait();
+  aiRender();
+  send({cmd: "aiChat", messages: aiMessages});
+}
+function aiSendCurrent() {
+  var input = $("ai-input");
+  var text = input ? String(input.value || "").trim() : "";
+  if (!text) return;
+  input.value = "";
+  aiResizeInput();
+  aiSendText(text);
+}
+$("ai-composer").addEventListener("submit", function (e) {
+  e.preventDefault();
+  aiSendCurrent();
+});
+$("ai-input").addEventListener("input", aiResizeInput);
+$("ai-input").addEventListener("keydown", function (e) {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    aiSendCurrent();
+  }
+});
+$("ai-stop").addEventListener("click", function () {
+  if (!aiBusy) return;
+  send({cmd: "aiChatAbort"});
+});
+$("ai-signin").addEventListener("click", function () { openSettingsAccount(); });
+$("ai-suggests").addEventListener("click", function (e) {
+  var suggest = e.target.closest(".ai-suggest");
+  if (suggest) aiSendText(suggest.getAttribute("data-ai-q") || "");
+});
+$("ai-log").addEventListener("click", function (e) {
+  var btn = e.target.closest(".ai-add-sc");
+  if (!btn || btn.disabled) return;
+  var card = btn.closest(".ai-card");
+  if (!card) return;
+  var idx = parseInt(card.getAttribute("data-ai-idx") || "-1", 10);
+  var entry = idx >= 0 ? aiCardEntries[idx] : null;
+  if (!entry) { scToast("Could not save this shortcut."); return; }
+  entry = JSON.parse(JSON.stringify(entry));
+  entry = aiNormalizeShortcut(entry);
+  if (!entry) { scToast("Could not save this shortcut."); return; }
+  var existingIdx = aiExistingShortcutIndex(entry.id);
+  if (existingIdx >= 0) {
+    entry.id = shortcutsLocal[existingIdx].id;
+    shortcutsLocal[existingIdx] = entry;
+  } else {
+    entry.id = scUuid();
+    if (entry.kind === "manual") entry.name = scUniqueManualShortcutName(entry.name, entry.id);
+    shortcutsLocal.push(entry);
+  }
+  shortcutsSig = JSON.stringify(shortcutsLocal);
+  aiSavedKeys[aiShortcutKey(entry)] = true;
+  scSaveAll();
+  renderShortcutsGallery();
+  renderShortcutsList();
+  btn.disabled = true;
+  btn.textContent = existingIdx >= 0 ? "Updated" : "Added";
+});
+window.__aiEvent = function (ev) {
+  if (!ev) return;
+  if (ev.error) {
+    aiStopType();
+    aiStopWait();
+    aiError = String(ev.error);
+    if (aiStreamText) {
+      aiMessages.push({role: "assistant", content: aiStreamText});
+      aiStreamText = "";
+    }
+    aiShownLen = 0;
+    aiStreamDone = false;
+    aiBusy = false;
+    aiRender();
+    return;
+  }
+  if (ev.text) {
+    aiError = "";
+    aiStreamText += String(ev.text);
+    aiEnsureTyping();
+  }
+  if (ev.done) {
+    aiStreamDone = true;
+    if (aiShownLen >= aiStreamText.length) aiFinishStream();
+    else aiEnsureTyping();
+  }
+};
+
 function scClosePop() {
   scClearStepperHold();
   scSetEditorTitleMenuOpen(false);
@@ -6189,7 +6871,9 @@ function scSenderNamesHtml(filter, filterIdx) {
   return html;
 }
 function scTriggerFilterRowHtml(filter, filterIdx) {
-  var opTxt = filter.kind === "message" ? "contains" : "is";
+  var opHtml = filter.kind === "message"
+    ? scPill("match", filter.match || "contains", filterIdx, "trigger-filter")
+    : scTxt("is");
   var valueHtml = "";
   if (filter.kind === "sender") {
     valueHtml = scSenderNamesHtml(filter, filterIdx);
@@ -6203,7 +6887,7 @@ function scTriggerFilterRowHtml(filter, filterIdx) {
   var removeBtn = '<button type="button" class="sc-filter-del" data-remove-filter="' + filterIdx + '" aria-label="Remove filter">\u2212</button>';
   return '<div class="sc-block-filter" data-filter-idx="' + filterIdx + '">' +
     scPill("kind", filter.kind, filterIdx, "trigger-filter") +
-    scTxt(opTxt) + valueHtml + removeBtn + '</div>';
+    opHtml + valueHtml + removeBtn + '</div>';
 }
 function scTriggerBlockHtml(data, enter) {
   data = scNormalizeTrigger(JSON.parse(JSON.stringify(data)));
@@ -6876,6 +7560,7 @@ function scSetFilterField(filterIdx, field, value) {
 function scAddTriggerFilter() {
   if (!scEditing || !scEditing.trigger) return;
   scEditing.trigger = scPrepareTriggerForEdit(scEditing.trigger);
+  if (!Array.isArray(scEditing.trigger.filters)) scEditing.trigger.filters = [];
   var kinds = ["sender", "message", "chat_channel", "uclient_room"];
   for (var i = 0; i < kinds.length; i++) {
     var k = kinds[i];
@@ -8198,6 +8883,16 @@ $("sc-ed-canvas").addEventListener("click", function (e) {
     if (ctx) scShowVarDetailMenu(ctx);
     return;
   }
+  var addFilter = e.target.closest("[data-add-filter]");
+  if (addFilter) {
+    scAddTriggerFilter();
+    return;
+  }
+  var remFilter = e.target.closest("[data-remove-filter]");
+  if (remFilter) {
+    scRemoveTriggerFilter(Number(remFilter.dataset.removeFilter));
+    return;
+  }
   var addSenderName = e.target.closest("[data-add-sender-name]");
   if (addSenderName) {
     scAddSenderNameSlot(Number(addSenderName.dataset.addSenderName));
@@ -8487,6 +9182,7 @@ window.__setState = function (st) {
   for (var i = 0; i < all.length; i++) if (all[i].online) online++;
   $("fr-count").textContent = online + " online";
   renderFriends(st);
+  aiSyncComposer();
   // Nothing will report progress once the game is gone, so drop the run.
   if (scRunActive() && !st.gameRunning) scStopRun(true);
   scUpdatePlayButton();

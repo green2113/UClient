@@ -597,4 +597,42 @@ describe("shortcut share", () => {
 		expect(page.status).toBe(200);
 		expect(page.headers.get("content-type") ?? "").toContain("text/html");
 	});
+
+	it("hides gpt-oss reasoning tags from assistant replies", async () => {
+		const {visibleAssistantText} = await import("../src/ai");
+		expect(visibleAssistantText(
+			"<reasoning>The user is repeatedly saying \"안녕\" (Hello). According to policy, we should respond, but also should not go off-topic. Likely just greet back. We can respond politely in Korean.\n\n</reasoning><reasoning>No request for launcher. We can politely ask how can help with UClient.</reasoning>안녕하세요! UClient 런처나 BestClient/DDNet와 관련해서 도움이 필요하시면 말씀해 주세요. 어떤 작업을 도와드릴까요?",
+		)).toBe("안녕하세요! UClient 런처나 BestClient/DDNet와 관련해서 도움이 필요하시면 말씀해 주세요. 어떤 작업을 도와드릴까요?");
+		const filter = (await import("../src/ai")).createHiddenTagFilter();
+		expect(filter.feed("hello <reason") + filter.feed("ing>secret</reasoning> world") + filter.flush()).toBe("hello  world");
+	});
+
+	it("requires an account for the launcher assistant", async () => {
+		const assistant = {
+			install_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+			secret: "assistant-secret-with-at-least-32-characters",
+		};
+		const register = await SELF.fetch(jsonRequest("/account/register", {
+			...assistant,
+			player_name: "Assistant",
+			version: "test",
+		}));
+		expect(register.status).toBe(201);
+
+		const unauthenticated = await SELF.fetch(new Request("https://worker.test/ai/chat", {
+			method: "POST",
+			headers: {"content-type": "application/json"},
+			body: JSON.stringify({messages: [{role: "user", content: "hello"}]}),
+		}));
+		expect(unauthenticated.status).toBe(401);
+
+		const missingMessage = await SELF.fetch(jsonRequest("/ai/chat", {messages: []}, assistant));
+		expect(missingMessage.status).toBe(400);
+
+		const unconfigured = await SELF.fetch(jsonRequest("/ai/chat", {
+			messages: [{role: "user", content: "What is Camera Drift?"}],
+			locale: "en",
+		}, assistant));
+		expect([502, 503]).toContain(unconfigured.status);
+	});
 });

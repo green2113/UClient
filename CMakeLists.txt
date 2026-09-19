@@ -2474,6 +2474,8 @@ set_src(ENGINE_SHARED GLOB_RECURSE src/engine/shared
   uclient_presence_protocol.h
   uclient_launch_gate.cpp
   uclient_launch_gate.h
+  uclient_ai_settings.cpp
+  uclient_ai_settings.h
   compression.cpp
   compression.h
   config.cpp

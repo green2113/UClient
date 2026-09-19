@@ -66,6 +66,7 @@
 #include <engine/shared/csv.h>
 #include <engine/sound.h>
 #include <engine/storage.h>
+#include <engine/shared/uclient_ai_settings.h>
 #include <engine/textrender.h>
 #include <engine/updater.h>
 
@@ -899,6 +900,16 @@ void CGameClient::OnUpdate()
 	for(auto &pComponent : m_vpAll)
 	{
 		pComponent->OnUpdate();
+	}
+
+	{
+		static int64_t s_LastAiSettingsPoll = 0;
+		const int64_t Now = time_get();
+		if(Now - s_LastAiSettingsPoll >= time_freq() * 120 / 1000)
+		{
+			s_LastAiSettingsPoll = Now;
+			UClientAi_PollLiveSettingsDump(ConfigManager(), Storage());
+		}
 	}
 }
 
