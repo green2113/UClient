@@ -66,7 +66,7 @@ function systemPrompt(): string {
 		"chat_received must use filters:[]. Never put message/sender filters on the trigger. For others' chat words, wrap actions in {type:\"if\",left:{source:\"messageText\",get:\"text\"},op:\"contains\",right:\"that text\"} then the then-actions and {type:\"end_if\"}. Never emit If with empty left or source id.",
 		"Use shortcut variables on your own when the result should include sender, received message, clipboard, player info, ask input, map, or name. Fixed phrases stay mode text. Mix words and variables with a text action. Nested {mode:\"variable\",variable:{source,get}} — never channelMode/messageText.",
 		"Any other condition, branch, otherwise, else, or sender check also uses if/end_if (optional otherwise). Never skip if/end_if for a branch.",
-		"In the spoken reply, call it a shortcut or 단축어. Never say JSON, code, block, or uclient-shortcut to the user.",
+		"In the spoken reply, call it a shortcut or 단축어. Never say JSON, code, block, or uclient-shortcut to the user. Never say internal keys or values: enabled, kind, trigger, actions, id, op, left, right, source, filters, true, false, null. enabled false means it is turned off; enabled true means it is on. kind automation is 자동화; kind manual is a shortcut they run. chat_received is when someone else chats. ask_for_text is Ask for Input. Say what it does in normal words, not field names or backticks.",
 		"If an official DDNet lookup is attached, use only that for official DDNet player ranks, official DDNet maps, mappers, releases, and wiki facts. Do not invent missing ranks. You may point to the ddnet.org or wiki.ddnet.org links in the lookup.",
 		"Map and player lookup is official DDNet only. If they ask about Gores, fng, or any other mode map or player, say you only know official DDNet maps and official DDNet ranked players. Do not guess those.",
 		"If they ask to make a shortcut but do not say what it should do, ask what they want. Do not emit a shortcut fence yet. If they ask to search a player or a map but give no name, ask for the official DDNet name.",
@@ -205,7 +205,7 @@ function bedrockBody(env: AiEnv, instructions: string, input: string, options?: 
 	if(maxTokens)
 		body.max_output_tokens = maxTokens;
 	if(stream) {
-		body.prompt_cache_key = "uclient-assistant-v18";
+		body.prompt_cache_key = "uclient-assistant-v19";
 		body.reasoning = {effort: "none"};
 	}
 	return body;
@@ -609,7 +609,7 @@ export async function handleAiChat(
 		retrieved.text,
 		ddnetText ? `\n${ddnetText}` : "",
 		"",
-		"Current client data:",
+		"Current client data (do not repeat these keys to the user: enabled, kind, trigger, actions, id, true, false):",
 		JSON.stringify(snapshot),
 		"",
 		"Conversation:",

@@ -978,7 +978,7 @@ void CTranslate::Translate(int Id, bool ShowProgress)
 	Translate(Player.m_aName, ShowProgress);
 }
 
-static bool IsIncomingChatTranslationCandidate(const CChat::CLine &Line)
+bool CTranslate::IsIncomingChatTranslationCandidate(const CChat::CLine &Line)
 {
 	if(!Line.m_Initialized || Line.m_aText[0] == '\0' || Line.m_aName[0] == '\0')
 		return false;
@@ -991,11 +991,11 @@ static bool IsIncomingChatTranslationCandidate(const CChat::CLine &Line)
 	return true;
 }
 
-static bool IsLocalIncomingChatLine(const CGameClient *pGameClient, const CChat::CLine &Line)
+bool CTranslate::IsLocalIncomingChatLine(const CChat::CLine &Line) const
 {
 	if(Line.m_UClient)
 		return Line.m_UClientMine;
-	for(int Id : pGameClient->m_aLocalIds)
+	for(int Id : GameClient()->m_aLocalIds)
 	{
 		if(Id >= 0 && Id == Line.m_ClientId)
 			return true;
@@ -1016,7 +1016,7 @@ void CTranslate::Translate(const char *pName, bool ShowProgress)
 				continue;
 			if(!IsIncomingChatTranslationCandidate(*pLine))
 				continue;
-			if(IsLocalIncomingChatLine(GameClient(), *pLine))
+			if(IsLocalIncomingChatLine(*pLine))
 				continue;
 			int Score = 0;
 			if(pName)
@@ -1210,7 +1210,7 @@ void CTranslate::AutoTranslate(CChat::CLine &Line)
 		return;
 	if(!IsIncomingChatTranslationCandidate(Line))
 		return;
-	if(IsLocalIncomingChatLine(GameClient(), Line))
+	if(IsLocalIncomingChatLine(Line))
 		return;
 	if(LanguagesEqual(IncomingSourceLanguage(), IncomingTargetLanguage()))
 		return;

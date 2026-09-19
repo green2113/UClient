@@ -61,6 +61,8 @@ class CTranslate : public CComponent
 	bool HasPendingJobs() const;
 	bool CanStartRequest() const;
 	void TranslateLine(CChat::CLine &Line, bool ShowProgress, bool RespectIgnoredIncomingLanguages);
+	static bool IsIncomingChatTranslationCandidate(const CChat::CLine &Line);
+	bool IsLocalIncomingChatLine(const CChat::CLine &Line) const;
 
 public:
 	int Sizeof() const override { return sizeof(*this); }
