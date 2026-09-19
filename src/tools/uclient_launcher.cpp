@@ -375,6 +375,8 @@ static bool IsAccountReady();
 static std::wstring SingleInstanceMutexName(const std::wstring &InstallDir);
 static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallDir, const std::vector<std::wstring> &ForwardArgs);
 static bool RunUpdateDownload(LauncherArgs *pA, const UpdateMetadata &Metadata);
+static bool ExtractJsonString(const std::string &Json, const char *Key, std::string &Out);
+static bool ValidComponentVersion(const std::string &Version);
 static std::wstring ResolveGameUserDataRoot();
 static void MigrateTeeworldsUserDataIfNeeded();
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
@@ -1106,7 +1108,7 @@ static void SaveLauncherSettings(const std::wstring &InstallDir)
 	WriteTextFile(Path, Text);
 }
 
-// Prefer the on-disk client stamp and migrate the legacy pending filename once.
+// Installed client only — never the version baked into this launcher exe.
 static std::string ResolveLocalClientVersion(const std::wstring &InstallDir)
 {
 	const std::wstring VersionPath = JoinPath(InstallDir, kVersionFile);
@@ -1132,12 +1134,21 @@ static std::string ResolveLocalClientVersion(const std::wstring &InstallDir)
 		}
 	}
 
-	std::string OnDisk;
-	if(ReadTextFile(VersionPath, OnDisk))
+	std::string Manifest;
+	std::string ManifestVersion;
+	std::string ManifestComponent;
+	if(ReadTextFile(JoinPath(InstallDir, kBuildManifestFile), Manifest) &&
+		ExtractJsonString(Manifest, "clientVersion", ManifestVersion) &&
+		ValidComponentVersion(ManifestVersion))
 	{
-		if(CompareVersions(OnDisk, UCLIENT_CLIENT_VERSION) >= 0)
-			return OnDisk;
+		ExtractJsonString(Manifest, "component", ManifestComponent);
+		if(ManifestComponent.empty() || _stricmp(ManifestComponent.c_str(), "client") == 0)
+			return ManifestVersion;
 	}
+
+	std::string OnDisk;
+	if(ReadTextFile(VersionPath, OnDisk) && ValidComponentVersion(OnDisk))
+		return OnDisk;
 	return UCLIENT_CLIENT_VERSION;
 }
 
@@ -5486,29 +5497,12 @@ static DWORD WINAPI UpdateCheckThread(LPVOID)
 		return 0;
 	}
 
-	UpdateMetadata LauncherMetadata;
-	if(FetchLauncherUpdateMetadata(LauncherMetadata) &&
-		CompareVersions(LauncherMetadata.Version, UCLIENT_LAUNCHER_VERSION) > 0)
-	{
-		EnterCriticalSection(&g_Lock);
-		g_PendingLauncherPollUpdate = LauncherMetadata;
-		g_UpdateCheckRefreshing = false;
-		LeaveCriticalSection(&g_Lock);
-		if(g_hWnd)
-			PostMessage(g_hWnd, WM_LAUNCHER_POLL_UPDATE, 0, 0);
-		return 0;
-	}
-
 	const std::string LocalVersion = ResolveLocalClientVersion(g_pArgs->InstallDir);
 	UpdateMetadata Metadata;
 	bool NeedUpdate = false;
-	if(FetchClientUpdateMetadata(Metadata))
-	{
-		if((Metadata.MinLauncherVersion.empty() ||
-			   CompareVersions(UCLIENT_LAUNCHER_VERSION, Metadata.MinLauncherVersion) >= 0) &&
-			CompareVersions(Metadata.Version, LocalVersion) > 0)
-			NeedUpdate = true;
-	}
+	if(FetchClientUpdateMetadata(Metadata) &&
+		CompareVersions(Metadata.Version, LocalVersion) > 0)
+		NeedUpdate = true;
 
 	EnterCriticalSection(&g_Lock);
 	g_UpdateAvailable = NeedUpdate;
@@ -5653,12 +5647,10 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 	{
 		if(ApplyLauncherUpdate(pA, LauncherMetadata))
 			return 0;
-		SetPhase(EUiPhase::Ready);
-		g_UpdateStage = EUpdateStage::None;
-		SetButtonLabel(kPlayLabel);
-		SyncButtonHint();
-		PostMessage(g_hWnd, WM_UPDATE_READY, 0, 0);
-		return 0;
+		// Keep going so a failed launcher apply still offers the client update.
+		SetPhase(EUiPhase::Checking);
+		g_UpdateStage = EUpdateStage::Check;
+		SetButtonLabel(L"Checking for updates");
 	}
 
 	const std::string LocalVersion = ResolveLocalClientVersion(pA->InstallDir);
@@ -5670,13 +5662,7 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 
 	if(FetchClientUpdateMetadata(ClientMetadata))
 	{
-		if(!ClientMetadata.MinLauncherVersion.empty() &&
-			CompareVersions(UCLIENT_LAUNCHER_VERSION, ClientMetadata.MinLauncherVersion) < 0)
-		{
-			SetStatus(L"This client update requires a newer launcher");
-			g_Failed = true;
-		}
-		else if(CompareVersions(ClientMetadata.Version, LocalVersion) > 0)
+		if(CompareVersions(ClientMetadata.Version, LocalVersion) > 0)
 			NeedUpdate = true;
 	}
 	else
@@ -5698,7 +5684,10 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 
 	RestorePendingArgs(pA);
 	const std::string FinalVersion = ResolveLocalClientVersion(pA->InstallDir);
-	WriteTextFile(JoinPath(pA->InstallDir, kVersionFile), FinalVersion);
+	const std::wstring VersionPath = JoinPath(pA->InstallDir, kVersionFile);
+	std::string Stamped;
+	if(!ReadTextFile(VersionPath, Stamped) || !ValidComponentVersion(Stamped))
+		WriteTextFile(VersionPath, FinalVersion);
 	SetVersionLabel(FinalVersion);
 	SetPercent(100);
 	SetPhase(EUiPhase::Ready);

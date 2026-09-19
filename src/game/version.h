@@ -27,7 +27,7 @@ extern const char *GIT_SHORTREV_HASH;
 
 // UClient Launcher
 #ifndef UCLIENT_LAUNCHER_VERSION
-#define UCLIENT_LAUNCHER_VERSION "1.2.0"
+#define UCLIENT_LAUNCHER_VERSION "1.2.1"
 #endif
 
 // TClient
