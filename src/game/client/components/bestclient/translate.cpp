@@ -485,7 +485,7 @@ protected:
 public:
 	bool IsRateLimited() const override
 	{
-		return m_pHttpRequest && m_pHttpRequest->StatusCode() == 429;
+		return m_pHttpRequest && m_pHttpRequest->State() == EHttpState::DONE && m_pHttpRequest->StatusCode() == 429;
 	}
 
 	std::optional<bool> Update(CTranslateResponse &Out) override
@@ -498,9 +498,14 @@ public:
 			str_copy(Out.m_Text, "Aborted");
 			return false;
 		}
+		if(m_pHttpRequest->State() == EHttpState::ERROR)
+		{
+			str_copy(Out.m_Text, Localize("Translation failed (network timeout or service blocked)"));
+			return false;
+		}
 		if(m_pHttpRequest->State() != EHttpState::DONE)
 		{
-			str_copy(Out.m_Text, "Curl error, see console");
+			str_copy(Out.m_Text, Localize("Translation request did not complete"));
 			return false;
 		}
 		if(m_pHttpRequest->StatusCode() != 200 && !ParseHttpError())
@@ -1143,8 +1148,11 @@ void CTranslate::OnRender()
 					m_RateLimitUntil = time() + time_freq() * 30;
 				else
 					m_NextRequestTime = time() + time_freq();
+				if(Job.m_pTranslateResponse->m_Text[0] != '\0')
+					GameClient()->m_Chat.Echo(Job.m_pTranslateResponse->m_Text);
+				GameClient()->m_Chat.SendTranslatedChatQueued(Job.m_Team, Job.m_aOriginalText);
 				Job.m_pBackend.reset();
-				return false;
+				return true;
 			}
 
 			char aTranslated[MAX_LINE_LENGTH] = "";
