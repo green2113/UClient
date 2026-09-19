@@ -649,6 +649,7 @@ jobs:
       run: echo "released_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
     - name: Merge legacy distribution latest.json
+      if: env.PUBLISH_FULL == 'true' || env.PUBLISH_CLIENT == 'true'
       shell: bash
       run: |
         set -euo pipefail
@@ -829,9 +830,11 @@ jobs:
           copy artifacts/update-meta/launcher-versions.json "uclient/launcher/versions.json"
         fi
 
-        copy artifacts/update-meta/legacy-latest.json "uclient/latest.json"
-        copy artifacts/update-meta/legacy-latest.json "uclient/${CLIENT_VERSION}/latest.json"
-        copy artifacts/update-meta/legacy-versions.json "uclient/versions.json"
+        if [[ "$PUBLISH_FULL" == "true" || "$PUBLISH_CLIENT" == "true" ]]; then
+          copy artifacts/update-meta/legacy-latest.json "uclient/latest.json"
+          copy artifacts/update-meta/legacy-latest.json "uclient/${CLIENT_VERSION}/latest.json"
+          copy artifacts/update-meta/legacy-versions.json "uclient/versions.json"
+        fi
 
     - name: Skip R2 publish (missing secrets)
       if: env.CF_R2_ACCOUNT_ID == '' || env.CF_R2_ACCESS_KEY_ID == '' || env.CF_R2_SECRET_ACCESS_KEY == ''
