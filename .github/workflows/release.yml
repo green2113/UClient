@@ -551,6 +551,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
+        mkdir -p artifacts/update-meta
         base="${R2_PUBLIC_BASE_URL%/}"
         released_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
         jq -n \
@@ -617,6 +618,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
+        mkdir -p artifacts/update-meta
         base="${R2_PUBLIC_BASE_URL%/}"
         released_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
         jq -n \
