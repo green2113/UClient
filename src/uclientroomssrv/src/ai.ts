@@ -32,7 +32,7 @@ const JSON_HEADERS = {
 } as const;
 const AI_WINDOW_SECONDS = 60;
 const AI_LIMIT_PER_MINUTE = 20;
-const AI_DAY_SECONDS = 24 * 60 * 60;
+const UTC_DAY_SECONDS = 24 * 60 * 60;
 const AI_LIMIT_PER_DAY = 200;
 const AI_MAX_BODY_BYTES = 256 * 1024;
 const AI_MAX_TURNS = 16;
@@ -142,6 +142,10 @@ function sanitizeLauncher(launcher: Record<string, unknown> | undefined): Record
 	return out;
 }
 
+function utcDayStart(now: number): number {
+	return Math.floor(now / UTC_DAY_SECONDS) * UTC_DAY_SECONDS;
+}
+
 async function rateLimited(db: D1Database, installId: string, now: number): Promise<boolean> {
 	const minute = await db.prepare(
 		"SELECT COUNT(*) AS count FROM ai_requests WHERE install_id = ?1 AND created_at > ?2",
@@ -149,8 +153,8 @@ async function rateLimited(db: D1Database, installId: string, now: number): Prom
 	if((minute?.count ?? 0) >= AI_LIMIT_PER_MINUTE)
 		return true;
 	const day = await db.prepare(
-		"SELECT COUNT(*) AS count FROM ai_requests WHERE install_id = ?1 AND created_at > ?2",
-	).bind(installId, now - AI_DAY_SECONDS).first<{count: number}>();
+		"SELECT COUNT(*) AS count FROM ai_requests WHERE install_id = ?1 AND created_at >= ?2",
+	).bind(installId, utcDayStart(now)).first<{count: number}>();
 	return (day?.count ?? 0) >= AI_LIMIT_PER_DAY;
 }
 
@@ -582,8 +586,8 @@ export async function handleAiChat(
 		"INSERT INTO ai_requests(install_id, created_at) VALUES (?1, ?2)",
 	).bind(installId, now).run();
 	await env.DB.prepare(
-		"DELETE FROM ai_requests WHERE created_at <= ?1",
-	).bind(now - AI_DAY_SECONDS).run();
+		"DELETE FROM ai_requests WHERE created_at < ?1",
+	).bind(utcDayStart(now)).run();
 
 	const lastUser = messages[messages.length - 1]?.content ?? "";
 	const locale = typeof body.locale === "string" ? body.locale.slice(0, 32) : "";

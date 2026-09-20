@@ -276,6 +276,7 @@ set(CMAKE_SHARED_LINKER_FLAGS_DEVRELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE}" 
 set(CMAKE_MODULE_LINKER_FLAGS_DEVRELEASE "${CMAKE_MODULE_LINKER_FLAGS_RELEASE}" CACHE STRING "Module linker flags for DevRelease" FORCE)
 
 option(UCLIENT_DEV_BUILD "Enable UClient developer features (uc_voice_id, uc_voice_team visible in console)" OFF)
+option(UCLIENT_LAUNCHER_DEV_BUILD "Show UClient launcher Developer Tools panel (also enabled for DevRelease builds)" OFF)
 
 set(DBG $<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>)
 
@@ -3383,6 +3384,10 @@ if(CLIENT)
       UCLIENT_API_BASE_URL="https://uclient.under1111.com"
       $<$<CONFIG:DevRelease>:CONF_UCLIENT_LAUNCHER_DEV>
     )
+    if(CMAKE_BUILD_TYPE STREQUAL "DevRelease" OR UCLIENT_LAUNCHER_DEV_BUILD OR UCLIENT_DEV_BUILD)
+      target_compile_definitions(uclient-launcher PRIVATE CONF_UCLIENT_LAUNCHER_DEV)
+      message(STATUS "UClient launcher: Developer Tools enabled (CONF_UCLIENT_LAUNCHER_DEV)")
+    endif()
 
     # The launcher UI is HTML/CSS hosted in WebView2. The SDK is a NuGet
     # package fetched at configure time; if anything here is unavailable the

@@ -9,8 +9,9 @@
 //
 // State fields: phase, buttonLabel, version, status, percent, failed,
 //               autoLaunch, autoUpdate, discordRpc, logoUrl, mascotUrl, friendsLoading, friendsLoaded,
-//               playBlocked, updateAvailable, gameRunning, buttonHint,
-//               devBuild, devForceUpdate, devForcePlayBlocked, devForceGameRunning, devInjectNotice,
+//               playBlocked, updateAvailable, launcherUpdateAvailable, launcherUpdateVersion,
+//               clientUpdateBusy, gameRunning, buttonHint,
+//               devBuild, devForceUpdate, devForceLauncherUpdate, devForcePlayBlocked, devForceGameRunning, devInjectNotice,
 //               notices[] {id, title, body, severity, blocksPlay, expiresAt?},
 //               shortcuts[] {id, name, kind, enabled, trigger?, actions[]},
 //               updateStage, downloadDone, downloadTotal, downloadSpeed, etaSeconds,
@@ -165,17 +166,25 @@ body{
 #mascot{width:34px;height:34px;object-fit:contain;margin-top:6px;
   filter:drop-shadow(0 3px 10px rgba(0,0,0,.6));animation:pop .6s var(--ease) both}
 #rail .spacer{flex:1}
-.rail-btn,#btn-gear{
+.rail-btn,#btn-gear,#btn-launcher-update{
   width:44px;height:44px;border:0;background:transparent;border-radius:13px;color:var(--muted);
   display:grid;place-items:center;cursor:pointer;position:relative;
   transition:background .18s var(--ease),color .18s var(--ease);
 }
 .rail-btn{margin-top:8px}
-.rail-btn svg,#btn-gear svg{transition:transform .5s var(--ease)}
+.rail-btn svg,#btn-gear svg,#btn-launcher-update svg{transition:transform .5s var(--ease)}
 .rail-btn:hover,#btn-gear:hover{background:rgba(255,255,255,.07);color:#fff}
 .rail-btn.on,#btn-gear.on{color:#fff;background:rgba(124,108,240,.16)}
 .rail-btn.on::before,#btn-gear.on::before{content:"";position:absolute;left:-14px;top:11px;width:3px;height:22px;border-radius:2px;background:var(--accent)}
 #btn-gear:hover svg{transform:rotate(60deg)}
+#rail-bottom{display:flex;flex-direction:column;align-items:center;gap:2px;flex-shrink:0}
+#btn-launcher-update{color:#43b581;margin-bottom:2px}
+#btn-launcher-update:hover:not(:disabled){background:rgba(67,181,129,.14);color:#5fd99a}
+#btn-launcher-update:disabled{
+  opacity:1;color:#4a5c54;cursor:not-allowed;pointer-events:auto;
+}
+#btn-launcher-update:disabled:hover{background:transparent;color:#4a5c54}
+#btn-launcher-update svg{display:block}
 #rail-nav{display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:18px}
 #shell.shortcuts-mode #main,#shell.shortcuts-mode #friends,#shell.shortcuts-mode #assistant{display:none}
 #shortcuts-view{display:none;grid-column:2/4;grid-row:1;min-width:0;padding:56px 34px 34px 44px;flex-direction:column;background:linear-gradient(160deg,#12141c 0%,#08090d 100%);position:relative;overflow:hidden;font-family:var(--font-apple-round);letter-spacing:-.01em}
@@ -907,6 +916,14 @@ body{
 .notice-block+.notice-block{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
 .notice-block h4{font:700 16px/1.25 inherit;letter-spacing:-.01em;color:#fff;margin-bottom:8px}
 .notice-block p{color:var(--dim);font-size:14px;line-height:1.55;white-space:pre-wrap}
+body:has(.modal.on) #alert-wrap,
+body:has(.confirm-layer.on) #alert-wrap{pointer-events:none}
+body:has(.modal.on) #alert-wrap.flyout-open,
+body:has(.confirm-layer.on) #alert-wrap.flyout-open{background:transparent}
+body:has(.modal.on) #alert-flyout,
+body:has(.confirm-layer.on) #alert-flyout{
+  opacity:0!important;visibility:hidden!important;pointer-events:none!important;
+}
 
 /* -- dev panel (DevRelease only; hidden unless devBuild) ---------------- */
 #dev-panel{
@@ -1178,7 +1195,14 @@ body.dev-build #dev-panel{display:block}
   top:-4px;border-top:1px solid rgba(255,255,255,.1);border-left:1px solid rgba(255,255,255,.1);
   border-top-left-radius:2.5px;
 }
+.logout-tooltip[data-side="right"]{--tip-lift:-5px;transform-origin:0 var(--tip-arrow,50%)}
+.logout-tooltip[data-side="right"]::after{
+  left:-4px;top:var(--tip-arrow,50%);margin-left:0;margin-top:-4.5px;
+  border-left:1px solid rgba(255,255,255,.1);border-bottom:1px solid rgba(255,255,255,.1);
+  border-bottom-left-radius:2.5px;
+}
 .logout-tooltip.is-out{animation:logout-tooltip-out 110ms cubic-bezier(.23,1,.32,1) both}
+.logout-tooltip[data-side="right"].is-out{animation:logout-tooltip-out-right 110ms cubic-bezier(.23,1,.32,1) both}
 @keyframes logout-tooltip-in{
   from{opacity:0;transform:scale(.92) translateY(var(--tip-lift,3px))}
   to{opacity:1;transform:scale(1) translateY(0)}
@@ -1186,6 +1210,14 @@ body.dev-build #dev-panel{display:block}
 @keyframes logout-tooltip-out{
   from{opacity:1;transform:scale(1) translateY(0)}
   to{opacity:0;transform:scale(.96) translateY(var(--tip-lift,3px))}
+}
+@keyframes logout-tooltip-in-right{
+  from{opacity:0;transform:scale(.92) translateX(var(--tip-lift,-5px))}
+  to{opacity:1;transform:scale(1) translateX(0)}
+}
+@keyframes logout-tooltip-out-right{
+  from{opacity:1;transform:scale(1) translateX(0)}
+  to{opacity:0;transform:scale(.96) translateX(var(--tip-lift,-5px))}
 }
 .confirm-layer{
   position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;
@@ -1291,13 +1323,21 @@ body.dev-build #dev-panel{display:block}
       </button>
     </div>
     <div class="spacer"></div>
-    <button id="btn-gear" title="Settings">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-        <path d="M12 15.4a3.4 3.4 0 100-6.8 3.4 3.4 0 000 6.8z" stroke="currentColor" stroke-width="1.7"/>
-        <path d="M19.5 12c0-.5-.05-1-.13-1.47l1.9-1.35-1.9-3.29-2.2.85c-.74-.6-1.6-1.06-2.53-1.33L14.3 3h-3.8l-.34 2.41c-.93.27-1.79.73-2.53 1.33l-2.2-.85-1.9 3.29 1.9 1.35a8.7 8.7 0 000 2.94l-1.9 1.35 1.9 3.29 2.2-.85c.74.6 1.6 1.06 2.53 1.33L10.5 21h3.8l.34-2.41a7.7 7.7 0 002.53-1.33l2.2.85 1.9-3.29-1.9-1.35c.08-.47.13-.97.13-1.47z"
-          stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
-      </svg>
-    </button>
+    <div id="rail-bottom">
+      <button id="btn-launcher-update" type="button" hidden aria-label="Install launcher update">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 3v10m0 0 3.5-3.5M12 13 8.5 9.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M5 15v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <button id="btn-gear" title="Settings">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <path d="M12 15.4a3.4 3.4 0 100-6.8 3.4 3.4 0 000 6.8z" stroke="currentColor" stroke-width="1.7"/>
+          <path d="M19.5 12c0-.5-.05-1-.13-1.47l1.9-1.35-1.9-3.29-2.2.85c-.74-.6-1.6-1.06-2.53-1.33L14.3 3h-3.8l-.34 2.41c-.93.27-1.79.73-2.53 1.33l-2.2-.85-1.9 3.29 1.9 1.35a8.7 8.7 0 000 2.94l-1.9 1.35 1.9 3.29 2.2-.85c.74.6 1.6 1.06 2.53 1.33L10.5 21h3.8l.34-2.41a7.7 7.7 0 002.53-1.33l2.2.85 1.9-3.29-1.9-1.35c.08-.47.13-.97.13-1.47z"
+            stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </div>
   </aside>
 
   <main id="main">
@@ -1743,6 +1783,7 @@ body.dev-build #dev-panel{display:block}
   </div>
   <div id="dev-body">
     <div class="dev-row"><label><input type="checkbox" id="dev-force-update"> Force Update button</label></div>
+    <div class="dev-row"><label><input type="checkbox" id="dev-force-launcher-update"> Force launcher update icon</label></div>
     <div class="dev-row"><label><input type="checkbox" id="dev-force-blocked"> Force Play blocked</label></div>
     <div class="dev-row"><label><input type="checkbox" id="dev-force-game"> Force game running</label></div>
     <div class="dev-row"><label><input type="checkbox" id="dev-inject-notice"> Inject test notice</label></div>
@@ -1887,21 +1928,37 @@ function isAlertFlyoutTarget(el) {
     !!(flyout && (flyout === el || flyout.contains(el)));
 }
 
-function pointerOverAlertZone(clientX, clientY) {
+function isLauncherOverlayOpen() {
+  return !!(document.querySelector(".modal.on") || document.querySelector(".confirm-layer.on"));
+}
+
+function pointerHitsAlertZone(clientX, clientY) {
+  var wrap = $("alert-wrap");
+  var flyout = $("alert-flyout");
+  if (!wrap || !wrap.classList.contains("on")) return false;
   var el = document.elementFromPoint(clientX, clientY);
   if (isAlertFlyoutTarget(el)) return true;
   var strip = $("alert-strip");
   if (!strip) return false;
   var a = strip.getBoundingClientRect();
-  if (clientX >= a.left && clientX <= a.right && clientY >= a.top && clientY <= a.bottom) return true;
-  var flyout = $("alert-flyout");
-  if (!flyout || !flyout.classList.contains("flyout-open")) return false;
-  var b = flyout.getBoundingClientRect();
-  var left = Math.min(a.left, b.left);
-  var right = Math.max(a.right, b.right);
-  var top = Math.min(a.top, b.top);
-  var bottom = Math.max(a.bottom, b.bottom);
-  return clientX >= left && clientX <= right && clientY >= top && clientY <= bottom;
+  if (clientX < a.left || clientX > a.right || clientY < a.top || clientY > a.bottom) {
+    if (!flyout || !flyout.classList.contains("flyout-open")) return false;
+    var b = flyout.getBoundingClientRect();
+    var left = Math.min(a.left, b.left);
+    var right = Math.max(a.right, b.right);
+    var top = Math.min(a.top, b.top);
+    var bottom = Math.max(a.bottom, b.bottom);
+    if (clientX < left || clientX > right || clientY < top || clientY > bottom) return false;
+    el = document.elementFromPoint(clientX, clientY);
+    return isAlertFlyoutTarget(el);
+  }
+  el = document.elementFromPoint(clientX, clientY);
+  return isAlertFlyoutTarget(el);
+}
+
+function pointerOverAlertZone(clientX, clientY) {
+  if (isLauncherOverlayOpen()) return false;
+  return pointerHitsAlertZone(clientX, clientY);
 }
 
 function positionPlayHintFlyout() {
@@ -2017,8 +2074,16 @@ function showView(name) {
       if (alertFlyoutOpen) setAlertFlyoutOpen(false);
       return;
     }
+    if (isLauncherOverlayOpen()) {
+      if (alertFlyoutOpen) setAlertFlyoutOpen(false);
+      return;
+    }
     setAlertFlyoutOpen(pointerOverAlertZone(clientX, clientY));
   }
+
+  document.addEventListener("uclient-close-alert-flyout", function () {
+    setAlertFlyoutOpen(false);
+  });
 
   var lastAlertPointerX;
   var lastAlertPointerY;
@@ -2094,6 +2159,7 @@ function toggleSettings(on) {
   settingsOpen = on === undefined ? !settingsOpen : on;
   $("btn-gear").classList.toggle("on", settingsOpen);
   $("settings-modal").classList.toggle("on", settingsOpen);
+  if (settingsOpen) document.dispatchEvent(new Event("uclient-close-alert-flyout"));
   if (!settingsOpen) {
     hideLogoutTooltip(true);
     setBackupFilterOpen(false);
@@ -2122,6 +2188,20 @@ document.querySelector(".modal-nav").addEventListener("click", function (e) {
 $("btn-gear").addEventListener("click", function () { toggleSettings(); });
 $("settings-close").addEventListener("click", function () { toggleSettings(false); });
 $("settings-dim").addEventListener("click", function () { toggleSettings(false); });
+(function () {
+  var btn = $("btn-launcher-update");
+  if (!btn) return;
+  btn.addEventListener("pointerenter", function () {
+    if (btn.hidden || btn.disabled) return;
+    showActionTooltip(btn, launcherUpdateTooltipLabel(btn.dataset.version), "right");
+  });
+  btn.addEventListener("pointerleave", function () { hideLogoutTooltip(false); });
+  btn.addEventListener("click", function () {
+    if (btn.disabled || btn.hidden) return;
+    hideLogoutTooltip(true);
+    send({cmd: "launcherUpdate"});
+  });
+})();
 
 /* -- dev panel --------------------------------------------------------- */
 function sendDev(action, value) {
@@ -2202,6 +2282,9 @@ function bindDevPanel() {
   $("dev-force-update").addEventListener("change", function (e) {
     sendDev("forceUpdate", e.target.checked);
   });
+  $("dev-force-launcher-update").addEventListener("change", function (e) {
+    sendDev("forceLauncherUpdate", e.target.checked);
+  });
   $("dev-force-blocked").addEventListener("change", function (e) {
     sendDev("forcePlayBlocked", e.target.checked);
   });
@@ -2219,6 +2302,7 @@ function renderDev(st) {
   if (!st.devBuild) return;
   bindDevPanel();
   $("dev-force-update").checked = !!st.devForceUpdate;
+  $("dev-force-launcher-update").checked = !!st.devForceLauncherUpdate;
   $("dev-force-blocked").checked = !!st.devForcePlayBlocked;
   $("dev-force-game").checked = !!st.devForceGameRunning;
   $("dev-inject-notice").checked = !!st.devInjectNotice;
@@ -2271,6 +2355,18 @@ function positionLogoutTooltip() {
   var box = bubble.getBoundingClientRect();
   var gap = 8;
   var margin = 8;
+  var side = bubble.dataset.side || "auto";
+  if (side === "right") {
+    var top = from.top + from.height / 2 - box.height / 2;
+    top = Math.min(Math.max(top, margin), window.innerHeight - box.height - margin);
+    bubble.style.left = (from.right + gap) + "px";
+    bubble.style.top = top + "px";
+    bubble.style.setProperty("--tip-arrow", (from.top + from.height / 2 - top) + "px");
+    if (!bubble.classList.contains("is-out")) {
+      bubble.style.animation = "logout-tooltip-in-right 140ms cubic-bezier(.23,1,.32,1) both";
+    }
+    return;
+  }
   var above = from.top > box.height + gap;
   var centred = from.left + from.width / 2 - box.width / 2;
   var left = Math.min(Math.max(centred, margin), window.innerWidth - box.width - margin);
@@ -2278,16 +2374,33 @@ function positionLogoutTooltip() {
   bubble.style.left = left + "px";
   bubble.style.top = (above ? from.top - box.height - gap : from.bottom + gap) + "px";
   bubble.style.setProperty("--tip-arrow", (from.left + from.width / 2 - left) + "px");
+  bubble.style.animation = "";
 }
-function showActionTooltip(anchor, label) {
+function showActionTooltip(anchor, label, side) {
   if (!anchor) return;
   clearTimeout(logoutTooltipExitTimer);
   tooltipAnchor = anchor;
   var bubble = $("logout-tooltip");
   bubble.textContent = label;
   bubble.classList.remove("is-out");
+  bubble.dataset.side = side || "auto";
   bubble.hidden = false;
   positionLogoutTooltip();
+}
+function launcherUpdateTooltipLabel(version) {
+  var v = String(version || "").trim();
+  if (!v) return "Launcher update available";
+  if (v.charAt(0).toLowerCase() !== "v") v = "v" + v;
+  return v + " update available";
+}
+function syncLauncherUpdateButton(st) {
+  var btn = $("btn-launcher-update");
+  if (!btn) return;
+  var hasUpdate = !!st.launcherUpdateAvailable;
+  btn.hidden = !hasUpdate;
+  btn.disabled = !hasUpdate || !!st.clientUpdateBusy || st.phase !== "ready";
+  btn.dataset.version = st.launcherUpdateVersion || "";
+  if (btn.disabled && tooltipAnchor === btn) hideLogoutTooltip(true);
 }
 function showLogoutTooltip() {
   var button = $("account-logout");
@@ -2296,18 +2409,24 @@ function showLogoutTooltip() {
 }
 function hideLogoutTooltip(immediate) {
   clearTimeout(logoutTooltipExitTimer);
+  var wasLauncherTip = tooltipAnchor && tooltipAnchor.id === "btn-launcher-update";
   tooltipAnchor = null;
   var bubble = $("logout-tooltip");
   if (bubble.hidden) return;
   if (immediate) {
     bubble.hidden = true;
     bubble.classList.remove("is-out");
+    bubble.style.animation = "";
+    bubble.dataset.side = "auto";
     return;
   }
   bubble.classList.add("is-out");
+  if (wasLauncherTip) bubble.dataset.side = "right";
   logoutTooltipExitTimer = setTimeout(function () {
     bubble.hidden = true;
     bubble.classList.remove("is-out");
+    bubble.style.animation = "";
+    bubble.dataset.side = "auto";
   }, 110);
 }
 var logoutFooter = $("account-logout").parentElement;
@@ -9179,8 +9298,10 @@ window.__setState = function (st) {
 
   $("play-version").textContent = st.version || "";
   var launcherVersion = String(st.launcherVersion || "");
-  $("settings-launcher-version").textContent = launcherVersion ?
+  var launcherVersionLabel = launcherVersion ?
     (launcherVersion.charAt(0).toLowerCase() === "v" ? launcherVersion : "v" + launcherVersion) : "";
+  if (launcherVersionLabel && st.devBuild) launcherVersionLabel += " (dev)";
+  $("settings-launcher-version").textContent = launcherVersionLabel;
   var playWrap = $("play-wrap");
   var showHint = st.phase === "ready" && play.disabled && !!st.buttonHint && !playHintRedundantWithAlert(st);
   playWrap.classList.toggle("hint-on", showHint);
@@ -9188,6 +9309,7 @@ window.__setState = function (st) {
   $("play-hint-flyout-inner").textContent = showHint ? st.buttonHint : "";
   if (showHint) requestAnimationFrame(positionPlayHintFlyout);
   renderAlerts(st);
+  syncLauncherUpdateButton(st);
   syncShortcutsFromState(st);
   handleShareResult(st.shareResult);
   handleShareImport(st.shareImport);

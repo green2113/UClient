@@ -257,6 +257,7 @@ public:
 	const SHA256_DIGEST &ResultSha256() const;
 
 	int StatusCode() const;
+	int StatusCodeOr(int Default) const;
 	std::optional<int64_t> ResultAgeSeconds() const;
 	std::optional<int64_t> ResultLastModified() const;
 };

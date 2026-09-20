@@ -584,6 +584,13 @@ int CHttpRequest::StatusCode() const
 	return m_StatusCode;
 }
 
+int CHttpRequest::StatusCodeOr(int Default) const
+{
+	if(m_State.load(std::memory_order_acquire) != EHttpState::DONE)
+		return Default;
+	return m_StatusCode;
+}
+
 std::optional<int64_t> CHttpRequest::ResultAgeSeconds() const
 {
 	dbg_assert(State() == EHttpState::DONE, "Request not done");

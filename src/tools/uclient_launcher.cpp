@@ -258,14 +258,16 @@ static bool g_NoticesRefreshing = false;
 static bool g_UpdateCheckRefreshing = false;
 static std::atomic<bool> g_UpdateDownloadRunning{false};
 static bool g_UpdateAvailable = false;
+static bool g_LauncherUpdateAvailable = false;
 static bool g_GameRunning = false;
 static UpdateMetadata g_PendingClientUpdate;
-static UpdateMetadata g_PendingLauncherPollUpdate;
+static UpdateMetadata g_PendingLauncherUpdate;
 static std::wstring g_ButtonHint;
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
 static struct
 {
 	bool ForceUpdateAvailable = false;
+	bool ForceLauncherUpdateAvailable = false;
 	bool ForcePlayBlocked = false;
 	bool ForceGameRunning = false;
 	bool InjectNotice = false;
@@ -360,6 +362,7 @@ static void SyncButtonHint();
 static void RefreshGameRunningState();
 static void RequestUpdateCheck();
 static void RequestUpdateDownload();
+static void RequestLauncherUpdate();
 static void TryStartupAutoUpdate();
 static void RequestAccountCheck();
 static void ShowLauncherWindow(HWND hWnd);
@@ -5285,6 +5288,8 @@ static void HandleDevCommand(const std::string &Json)
 	const bool Value = Json.find("\"value\":true") != std::string::npos;
 	if(Action == "forceUpdate")
 		g_Dev.ForceUpdateAvailable = Value;
+	else if(Action == "forceLauncherUpdate")
+		g_Dev.ForceLauncherUpdateAvailable = Value;
 	else if(Action == "forcePlayBlocked")
 		g_Dev.ForcePlayBlocked = Value;
 	else if(Action == "forceGameRunning")
@@ -5441,6 +5446,51 @@ static DWORD WINAPI UpdateDownloadThread(LPVOID)
 	return 0;
 }
 
+static bool RestartLauncherForUpdate()
+{
+	if(!g_pArgs)
+		return false;
+
+	if(g_hSingleInstanceMutex)
+	{
+		CloseHandle(g_hSingleInstanceMutex);
+		g_hSingleInstanceMutex = nullptr;
+	}
+
+	HANDLE hNewProcess = nullptr;
+	if(!LaunchProcess(g_pArgs->SelfPath, g_pArgs->ForwardArgs, g_pArgs->InstallDir, false, &hNewProcess))
+	{
+		g_hSingleInstanceMutex = CreateMutexW(nullptr, TRUE, SingleInstanceMutexName(g_pArgs->InstallDir).c_str());
+		SetStatus(L"Could not restart launcher");
+		g_Failed = true;
+		return false;
+	}
+	if(hNewProcess)
+		CloseHandle(hNewProcess);
+	if(g_hWnd)
+		PostMessage(g_hWnd, WM_CLOSE, 0, 0);
+	return true;
+}
+
+static void RequestLauncherUpdate()
+{
+	if(!g_pArgs || g_Phase != EUiPhase::Ready || g_UpdateDownloadRunning.load())
+		return;
+
+	EnterCriticalSection(&g_Lock);
+	const bool HasUpdate = g_LauncherUpdateAvailable && !g_PendingLauncherUpdate.Version.empty();
+	LeaveCriticalSection(&g_Lock);
+#ifdef CONF_UCLIENT_LAUNCHER_DEV
+	if(!HasUpdate && !g_Dev.ForceLauncherUpdateAvailable)
+		return;
+#else
+	if(!HasUpdate)
+		return;
+#endif
+
+	RestartLauncherForUpdate();
+}
+
 static void RequestUpdateDownload()
 {
 	if(g_UpdateDownloadRunning.load() || !g_pArgs || g_Phase != EUiPhase::Ready || EffectivePlayBlocked() || EffectiveGameRunning() || !EffectiveUpdateAvailable())
@@ -5504,14 +5554,23 @@ static DWORD WINAPI UpdateCheckThread(LPVOID)
 		CompareVersions(Metadata.Version, LocalVersion) > 0)
 		NeedUpdate = true;
 
+	UpdateMetadata LauncherMetadata;
+	bool NeedLauncherUpdate = false;
+	if(FetchLauncherUpdateMetadata(LauncherMetadata) &&
+		CompareVersions(LauncherMetadata.Version, UCLIENT_LAUNCHER_VERSION) > 0)
+		NeedLauncherUpdate = true;
+
 	EnterCriticalSection(&g_Lock);
 	g_UpdateAvailable = NeedUpdate;
 	if(NeedUpdate)
-	{
 		g_PendingClientUpdate = Metadata;
-	}
 	else
 		g_PendingClientUpdate = {};
+	g_LauncherUpdateAvailable = NeedLauncherUpdate;
+	if(NeedLauncherUpdate)
+		g_PendingLauncherUpdate = LauncherMetadata;
+	else
+		g_PendingLauncherUpdate = {};
 	g_UpdateCheckRefreshing = false;
 	LeaveCriticalSection(&g_Lock);
 
@@ -5647,7 +5706,6 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 	{
 		if(ApplyLauncherUpdate(pA, LauncherMetadata))
 			return 0;
-		// Keep going so a failed launcher apply still offers the client update.
 		SetPhase(EUiPhase::Checking);
 		g_UpdateStage = EUpdateStage::Check;
 		SetButtonLabel(L"Checking for updates");
@@ -5868,6 +5926,8 @@ static std::string BuildStateJson()
 	bool FriendsLoaded = false;
 	bool PlayBlocked = false;
 	bool UpdateAvailable = false;
+	bool LauncherUpdateAvailable = false;
+	std::string LauncherUpdateVersion;
 	bool GameRunning = false;
 	std::wstring ButtonHint;
 	EAccountState AccountState;
@@ -5893,6 +5953,9 @@ static std::string BuildStateJson()
 	FriendsLoaded = g_FriendsLoaded;
 	PlayBlocked = g_PlayBlocked;
 	UpdateAvailable = g_UpdateAvailable;
+	LauncherUpdateAvailable = g_LauncherUpdateAvailable;
+	if(!g_PendingLauncherUpdate.Version.empty())
+		LauncherUpdateVersion = g_PendingLauncherUpdate.Version;
 	GameRunning = g_GameRunning;
 	ButtonHint = g_ButtonHint;
 	AccountState = g_AccountState;
@@ -5919,6 +5982,13 @@ static std::string BuildStateJson()
 	PlayBlocked = EffectivePlayBlocked();
 	UpdateAvailable = EffectiveUpdateAvailable();
 	GameRunning = EffectiveGameRunning();
+#ifdef CONF_UCLIENT_LAUNCHER_DEV
+	if(g_Dev.ForceLauncherUpdateAvailable)
+	{
+		LauncherUpdateAvailable = true;
+		LauncherUpdateVersion = "9.9.9-dev";
+	}
+#endif
 
 	const char *pPhase = "checking";
 	if(g_Phase == EUiPhase::Updating)
@@ -5963,6 +6033,10 @@ static std::string BuildStateJson()
 	Json += FriendsLoaded ? "\"friendsLoaded\":true," : "\"friendsLoaded\":false,";
 	Json += PlayBlocked ? "\"playBlocked\":true," : "\"playBlocked\":false,";
 	Json += UpdateAvailable ? "\"updateAvailable\":true," : "\"updateAvailable\":false,";
+	Json += LauncherUpdateAvailable ? "\"launcherUpdateAvailable\":true," : "\"launcherUpdateAvailable\":false,";
+	JsonAddString(Json, "launcherUpdateVersion", LauncherUpdateVersion);
+	const bool ClientUpdateBusy = g_UpdateDownloadRunning.load() || g_Phase == EUiPhase::Updating || g_Phase == EUiPhase::Checking;
+	Json += ClientUpdateBusy ? "\"clientUpdateBusy\":true," : "\"clientUpdateBusy\":false,";
 	Json += GameRunning ? "\"gameRunning\":true," : "\"gameRunning\":false,";
 	Json += HasSavedAccount ? "\"hasSavedAccount\":true," : "\"hasSavedAccount\":false,";
 	Json += BackupBusy ? "\"backupBusy\":true," : "\"backupBusy\":false,";
@@ -5974,6 +6048,7 @@ static std::string BuildStateJson()
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
 	Json += "\"devBuild\":true,";
 	Json += g_Dev.ForceUpdateAvailable ? "\"devForceUpdate\":true," : "\"devForceUpdate\":false,";
+	Json += g_Dev.ForceLauncherUpdateAvailable ? "\"devForceLauncherUpdate\":true," : "\"devForceLauncherUpdate\":false,";
 	Json += g_Dev.ForcePlayBlocked ? "\"devForcePlayBlocked\":true," : "\"devForcePlayBlocked\":false,";
 	Json += g_Dev.ForceGameRunning ? "\"devForceGameRunning\":true," : "\"devForceGameRunning\":false,";
 	Json += g_Dev.InjectNotice ? "\"devInjectNotice\":true," : "\"devInjectNotice\":false,";
@@ -6181,6 +6256,10 @@ static void OnWebMessage(const std::string &Json)
 	else if(Cmd == "update")
 	{
 		RequestUpdateDownload();
+	}
+	else if(Cmd == "launcherUpdate")
+	{
+		RequestLauncherUpdate();
 	}
 #ifdef CONF_UCLIENT_LAUNCHER_DEV
 	else if(Cmd == "dev")
@@ -7360,14 +7439,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		PushWebState(true);
 		return 0;
 	case WM_LAUNCHER_POLL_UPDATE:
-		if(g_pArgs && g_Phase == EUiPhase::Ready && !EffectiveGameRunning() && !EffectivePlayBlocked() &&
-			!g_PendingLauncherPollUpdate.Version.empty())
-		{
-			const UpdateMetadata Metadata = g_PendingLauncherPollUpdate;
-			g_PendingLauncherPollUpdate = {};
-			if(ApplyLauncherUpdate(g_pArgs, Metadata))
-				return 0;
-		}
+		RequestLauncherUpdate();
 		return 0;
 	case WM_ACCOUNT_READY:
 		InvalidateRect(hWnd, nullptr, FALSE);

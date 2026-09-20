@@ -485,32 +485,37 @@ protected:
 public:
 	bool IsRateLimited() const override
 	{
-		return m_pHttpRequest && m_pHttpRequest->State() == EHttpState::DONE && m_pHttpRequest->StatusCode() == 429;
+		return m_pHttpRequest && m_pHttpRequest->StatusCodeOr(0) == 429;
 	}
 
 	std::optional<bool> Update(CTranslateResponse &Out) override
 	{
 		dbg_assert(m_pHttpRequest != nullptr, "m_pHttpRequest is nullptr");
-		if(m_pHttpRequest->State() == EHttpState::RUNNING || m_pHttpRequest->State() == EHttpState::QUEUED)
+		const EHttpState State = m_pHttpRequest->State();
+		if(State == EHttpState::RUNNING || State == EHttpState::QUEUED)
 			return std::nullopt;
-		if(m_pHttpRequest->State() == EHttpState::ABORTED)
+		if(State == EHttpState::ABORTED)
 		{
 			str_copy(Out.m_Text, "Aborted");
 			return false;
 		}
-		if(m_pHttpRequest->State() == EHttpState::ERROR)
+		if(State == EHttpState::ERROR)
 		{
 			str_copy(Out.m_Text, Localize("Translation failed (network timeout or service blocked)"));
 			return false;
 		}
-		if(m_pHttpRequest->State() != EHttpState::DONE)
+		if(State != EHttpState::DONE)
 		{
 			str_copy(Out.m_Text, Localize("Translation request did not complete"));
 			return false;
 		}
-		if(m_pHttpRequest->StatusCode() != 200 && !ParseHttpError())
+		const int HttpStatus = m_pHttpRequest->StatusCodeOr(-1);
+		if(HttpStatus != 200 && !ParseHttpError())
 		{
-			str_format(Out.m_Text, sizeof(Out.m_Text), "Got http code %d", m_pHttpRequest->StatusCode());
+			if(HttpStatus < 0)
+				str_copy(Out.m_Text, Localize("Translation request did not complete"));
+			else
+				str_format(Out.m_Text, sizeof(Out.m_Text), "Got http code %d", HttpStatus);
 			return false;
 		}
 		return ParseResponse(Out);
