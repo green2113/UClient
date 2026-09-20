@@ -12,6 +12,12 @@ import {
 	serveSharePage,
 } from "./shortcuts-share";
 import {handleAiChat} from "./ai";
+import {
+	consumeEmailVerification,
+	loadEmailVerification,
+	mailLocale,
+	startEmailVerification,
+} from "./email-verify";
 
 interface Env extends Cloudflare.Env {
 	ACCOUNT_PEPPER: string;
@@ -26,6 +32,9 @@ interface Env extends Cloudflare.Env {
 	BEDROCK_MODEL_ID?: string;
 	BEDROCK_ENDPOINT?: string;
 	BEDROCK_PROJECT_ID?: string;
+	ENVIRONMENT?: string;
+	RESEND_API_KEY?: string;
+	RESEND_FROM?: string;
 }
 
 interface AccountInput {
@@ -33,6 +42,7 @@ interface AccountInput {
 	secret: string;
 	player_name?: string;
 	version?: string;
+	launcher_version?: string;
 }
 
 interface AuthenticatedAccount {
@@ -46,6 +56,7 @@ interface EmailAccountInput {
 	install_id?: string;
 	secret: string;
 	version?: string;
+	launcher_version?: string;
 }
 
 interface AccountProfileRow {
@@ -131,6 +142,14 @@ async function readJson<T>(request: Request): Promise<T | null> {
 
 function validText(value: unknown, min: number, max: number): value is string {
 	return typeof value === "string" && value.trim().length >= min && value.trim().length <= max;
+}
+
+function validOptionalVersion(value: unknown): boolean {
+	return value === undefined || validText(value, 0, 64);
+}
+
+function trimmedVersion(value: unknown): string {
+	return typeof value === "string" ? value.trim() : "";
 }
 
 function clientIp(request: Request): string {
@@ -347,7 +366,7 @@ async function accountInput(request: Request): Promise<AccountInput | null> {
 		return null;
 	if(input.player_name !== undefined && !validText(input.player_name, 0, 64))
 		return null;
-	if(input.version !== undefined && !validText(input.version, 0, 64))
+	if(!validOptionalVersion(input.version) || !validOptionalVersion(input.launcher_version))
 		return null;
 	return input;
 }
@@ -373,9 +392,10 @@ async function register(request: Request, env: Env): Promise<Response> {
 			 SET last_seen_at = ?2,
 			     last_player_name = CASE WHEN ?3 = '' THEN last_player_name ELSE ?3 END,
 			     last_client_version = CASE WHEN ?4 = '' THEN last_client_version ELSE ?4 END,
-			     last_ip = ?5
+			     last_launcher_version = CASE WHEN ?5 = '' THEN last_launcher_version ELSE ?5 END,
+			     last_ip = ?6
 			 WHERE install_id = ?1`,
-		).bind(input.install_id, now, input.player_name?.trim() ?? "", input.version?.trim() ?? "", ip).run();
+		).bind(input.install_id, now, input.player_name?.trim() ?? "", trimmedVersion(input.version), trimmedVersion(input.launcher_version), ip).run();
 		await env.DB.prepare(
 			`INSERT OR IGNORE INTO account_device_credentials(account_install_id, secret_hash, created_at, last_used_at)
 			 VALUES (?1, ?2, ?3, ?3)`,
@@ -394,9 +414,9 @@ async function register(request: Request, env: Env): Promise<Response> {
 	const statements = [
 		env.DB.prepare(
 			`INSERT INTO accounts
-			 (install_id, secret_hash, created_at, last_seen_at, last_player_name, last_client_version, created_ip, last_ip)
-			 VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6, ?6)`,
-		).bind(input.install_id, hash, now, input.player_name?.trim() ?? "", input.version?.trim() ?? "", ip),
+			 (install_id, secret_hash, created_at, last_seen_at, last_player_name, last_client_version, last_launcher_version, created_ip, last_ip)
+			 VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?7)`,
+		).bind(input.install_id, hash, now, input.player_name?.trim() ?? "", trimmedVersion(input.version), trimmedVersion(input.launcher_version), ip),
 		env.DB.prepare(
 			`INSERT INTO account_device_credentials(account_install_id, secret_hash, created_at, last_used_at)
 			 VALUES (?1, ?2, ?3, ?3)`,
@@ -441,9 +461,10 @@ async function verify(request: Request, env: Env): Promise<Response> {
 			 SET last_seen_at = ?2,
 			     last_player_name = CASE WHEN ?3 = '' THEN last_player_name ELSE ?3 END,
 			     last_client_version = CASE WHEN ?4 = '' THEN last_client_version ELSE ?4 END,
-			     last_ip = ?5
+			     last_launcher_version = CASE WHEN ?5 = '' THEN last_launcher_version ELSE ?5 END,
+			     last_ip = ?6
 			 WHERE install_id = ?1`,
-		).bind(input.install_id, now, input.player_name?.trim() ?? "", input.version?.trim() ?? "", clientIp(request)),
+		).bind(input.install_id, now, input.player_name?.trim() ?? "", trimmedVersion(input.version), trimmedVersion(input.launcher_version), clientIp(request)),
 		env.DB.prepare(
 			`INSERT OR IGNORE INTO account_device_credentials(account_install_id, secret_hash, created_at, last_used_at)
 			 VALUES (?1, ?2, ?3, ?3)`,
@@ -456,15 +477,16 @@ async function verify(request: Request, env: Env): Promise<Response> {
 	return accountSuccess(env, input.install_id, now);
 }
 
-async function registerEmail(request: Request, env: Env): Promise<Response> {
-	const input = await readJson<EmailAccountInput>(request);
+async function startRegisterEmail(request: Request, env: Env): Promise<Response> {
+	const input = await readJson<EmailAccountInput & {locale?: string; purpose?: string}>(request);
 	const email = normalizedEmail(input?.email);
 	if(!input
 		|| !email
 		|| !validPassword(input.password)
 		|| !UUID_RE.test(input.install_id ?? "")
 		|| !validText(input.secret, 32, 256)
-		|| (input.version !== undefined && !validText(input.version, 0, 64)))
+		|| !validOptionalVersion(input.version)
+		|| !validOptionalVersion(input.launcher_version))
 		return error(400, "invalid_request", "A valid email, password, install UUID, and device secret are required.");
 
 	const now = Math.floor(Date.now() / 1000);
@@ -476,29 +498,75 @@ async function registerEmail(request: Request, env: Env): Promise<Response> {
 		if((attempts?.count ?? 0) >= REGISTRATION_LIMIT_PER_IP)
 			return error(429, "registration_rate_limited", "Too many accounts were registered from this network.");
 	}
-	const rateKey = await authRateKey("register-email", email, request);
-	if(await authRateLimited(env.DB, "register-email", rateKey, now))
-		return error(429, "auth_rate_limited", "Too many authentication attempts. Try again later.");
 	const duplicate = await env.DB.prepare(
 		"SELECT install_id, email_normalized FROM accounts WHERE install_id = ?1 OR email_normalized = ?2 LIMIT 1",
 	).bind(input.install_id, email).first<AccountProfileRow>();
-	if(duplicate) {
-		await recordAuthAttempt(env.DB, "register-email", rateKey, false, now);
+	if(duplicate)
 		return error(409, duplicate.email_normalized === email ? "email_exists" : "account_exists",
 			duplicate.email_normalized === email ? "This email is already registered." : "This install UUID is already registered.");
-	}
 
 	const [deviceHash, storedPassword] = await Promise.all([
 		secretHash(input.secret, env.ACCOUNT_PEPPER),
 		passwordHash(input.password),
 	]);
+	return startEmailVerification(env, {
+		email,
+		purpose: "register",
+		passwordHash: storedPassword,
+		installId: input.install_id,
+		secretHash: deviceHash,
+		locale: mailLocale(input.locale),
+		version: trimmedVersion(input.launcher_version) || trimmedVersion(input.version),
+		ip,
+	});
+}
+
+async function confirmRegisterEmail(request: Request, env: Env): Promise<Response> {
+	const input = await readJson<EmailAccountInput & {code?: string}>(request);
+	const email = normalizedEmail(input?.email);
+	const code = typeof input?.code === "string" ? input.code.trim() : "";
+	if(!input
+		|| !email
+		|| !/^\d{6}$/.test(code)
+		|| !UUID_RE.test(input.install_id ?? "")
+		|| !validText(input.secret, 32, 256))
+		return error(400, "invalid_request", "A valid email, verification code, install UUID, and device secret are required.");
+
+	const now = Math.floor(Date.now() / 1000);
+	const ip = clientIp(request);
+	if(ip) {
+		const attempts = await env.DB.prepare(
+			"SELECT COUNT(*) AS count FROM registration_attempts WHERE ip = ?1 AND created_at > ?2",
+		).bind(ip, now - REGISTRATION_WINDOW_SECONDS).first<{count: number}>();
+		if((attempts?.count ?? 0) >= REGISTRATION_LIMIT_PER_IP)
+			return error(429, "registration_rate_limited", "Too many accounts were registered from this network.");
+	}
+	const pending = await loadEmailVerification(env, email, "register", now);
+	if(!pending)
+		return error(400, "code_expired", "This verification code has expired.");
+	if(pending.install_id !== input.install_id)
+		return error(403, "invalid_credentials", "Account credentials are invalid.");
+	const deviceHash = await secretHash(input.secret, env.ACCOUNT_PEPPER);
+	if(pending.secret_hash !== deviceHash)
+		return error(403, "invalid_credentials", "Account credentials are invalid.");
+	const consumed = await consumeEmailVerification(env, pending, code, env.ACCOUNT_PEPPER, now);
+	if(consumed)
+		return consumed;
+
+	const duplicate = await env.DB.prepare(
+		"SELECT install_id, email_normalized FROM accounts WHERE install_id = ?1 OR email_normalized = ?2 LIMIT 1",
+	).bind(input.install_id, email).first<AccountProfileRow>();
+	if(duplicate)
+		return error(409, duplicate.email_normalized === email ? "email_exists" : "account_exists",
+			duplicate.email_normalized === email ? "This email is already registered." : "This install UUID is already registered.");
+
 	const statements = [
 		env.DB.prepare(
 			`INSERT INTO accounts
 			 (install_id, secret_hash, email_normalized, password_hash, created_at, last_seen_at,
-			  last_player_name, last_client_version, created_ip, last_ip)
-			 VALUES (?1, ?2, ?3, ?4, ?5, ?5, '', ?6, ?7, ?7)`,
-		).bind(input.install_id, deviceHash, email, storedPassword, now, input.version?.trim() ?? "", ip),
+			  last_player_name, last_client_version, last_launcher_version, created_ip, last_ip)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?5, '', '', ?6, ?7, ?7)`,
+		).bind(input.install_id, deviceHash, email, pending.password_hash, now, pending.version ?? "", ip),
 		env.DB.prepare(
 			`INSERT INTO account_device_credentials(account_install_id, secret_hash, created_at, last_used_at)
 			 VALUES (?1, ?2, ?3, ?3)`,
@@ -508,8 +576,64 @@ async function registerEmail(request: Request, env: Env): Promise<Response> {
 	if(ip)
 		statements.push(env.DB.prepare("INSERT INTO registration_attempts(ip, created_at) VALUES (?1, ?2)").bind(ip, now));
 	await env.DB.batch(statements);
-	await recordAuthAttempt(env.DB, "register-email", rateKey, true, now);
 	return accountSuccess(env, input.install_id!, now, 201);
+}
+
+async function startLinkEmail(request: Request, env: Env, installId: string): Promise<Response> {
+	const input = await readJson<{email?: string; password?: string; locale?: string}>(request);
+	const email = normalizedEmail(input?.email);
+	if(!input || !email || !validPassword(input.password))
+		return error(400, "invalid_request", "A valid email and password are required.");
+
+	const existing = await env.DB.prepare(
+		"SELECT install_id, email_normalized FROM accounts WHERE email_normalized = ?1 OR install_id = ?2 ORDER BY install_id = ?2 DESC",
+	).bind(email, installId).all<AccountProfileRow>();
+	const account = existing.results.find(row => row.install_id === installId);
+	if(account?.email_normalized)
+		return error(409, "email_already_linked", "This account already has an email.");
+	if(existing.results.some(row => row.install_id !== installId))
+		return error(409, "email_exists", "This email is already registered.");
+
+	const storedPassword = await passwordHash(input.password);
+	return startEmailVerification(env, {
+		email,
+		purpose: "link",
+		passwordHash: storedPassword,
+		installId,
+		locale: mailLocale(input.locale),
+		ip: clientIp(request),
+	});
+}
+
+async function confirmLinkEmail(request: Request, env: Env, installId: string): Promise<Response> {
+	const input = await readJson<{email?: string; code?: string}>(request);
+	const email = normalizedEmail(input?.email);
+	const code = typeof input?.code === "string" ? input.code.trim() : "";
+	if(!email || !/^\d{6}$/.test(code))
+		return error(400, "invalid_request", "A valid email and verification code are required.");
+
+	const now = Math.floor(Date.now() / 1000);
+	const pending = await loadEmailVerification(env, email, "link", now);
+	if(!pending || pending.install_id !== installId)
+		return error(400, "code_expired", "This verification code has expired.");
+	const consumed = await consumeEmailVerification(env, pending, code, env.ACCOUNT_PEPPER, now);
+	if(consumed)
+		return consumed;
+
+	const existing = await env.DB.prepare(
+		"SELECT install_id, email_normalized FROM accounts WHERE email_normalized = ?1 OR install_id = ?2 ORDER BY install_id = ?2 DESC",
+	).bind(email, installId).all<AccountProfileRow>();
+	const account = existing.results.find(row => row.install_id === installId);
+	if(account?.email_normalized)
+		return error(409, "email_already_linked", "This account already has an email.");
+	if(existing.results.some(row => row.install_id !== installId))
+		return error(409, "email_exists", "This email is already registered.");
+
+	await env.DB.prepare(
+		`UPDATE accounts SET email_normalized = ?2, password_hash = ?3
+		 WHERE install_id = ?1 AND email_normalized IS NULL`,
+	).bind(installId, email, pending.password_hash).run();
+	return accountSuccess(env, installId, now);
 }
 
 async function loginEmail(request: Request, env: Env): Promise<Response> {
@@ -519,7 +643,8 @@ async function loginEmail(request: Request, env: Env): Promise<Response> {
 		|| !email
 		|| !validPassword(input.password)
 		|| !validText(input.secret, 32, 256)
-		|| (input.version !== undefined && !validText(input.version, 0, 64)))
+		|| !validOptionalVersion(input.version)
+		|| !validOptionalVersion(input.launcher_version))
 		return error(400, "invalid_request", "A valid email, password, and device secret are required.");
 
 	const now = Math.floor(Date.now() / 1000);
@@ -551,35 +676,13 @@ async function loginEmail(request: Request, env: Env): Promise<Response> {
 			`UPDATE accounts
 			 SET last_seen_at = ?2,
 			     last_client_version = CASE WHEN ?3 = '' THEN last_client_version ELSE ?3 END,
-			     last_ip = ?4
+			     last_launcher_version = CASE WHEN ?4 = '' THEN last_launcher_version ELSE ?4 END,
+			     last_ip = ?5
 			 WHERE install_id = ?1`,
-		).bind(account!.install_id, now, input.version?.trim() ?? "", clientIp(request)),
+		).bind(account!.install_id, now, trimmedVersion(input.version), trimmedVersion(input.launcher_version), clientIp(request)),
 	]);
 	await recordAuthAttempt(env.DB, "login-email", rateKey, true, now);
 	return accountSuccess(env, account!.install_id, now);
-}
-
-async function linkEmail(request: Request, env: Env, installId: string): Promise<Response> {
-	const input = await readJson<{email?: string; password?: string}>(request);
-	const email = normalizedEmail(input?.email);
-	if(!input || !email || !validPassword(input.password))
-		return error(400, "invalid_request", "A valid email and password are required.");
-
-	const existing = await env.DB.prepare(
-		"SELECT install_id, email_normalized FROM accounts WHERE email_normalized = ?1 OR install_id = ?2 ORDER BY install_id = ?2 DESC",
-	).bind(email, installId).all<AccountProfileRow>();
-	const account = existing.results.find(row => row.install_id === installId);
-	if(account?.email_normalized)
-		return error(409, "email_already_linked", "This account already has an email.");
-	if(existing.results.some(row => row.install_id !== installId))
-		return error(409, "email_exists", "This email is already registered.");
-
-	const storedPassword = await passwordHash(input.password);
-	await env.DB.prepare(
-		`UPDATE accounts SET email_normalized = ?2, password_hash = ?3
-		 WHERE install_id = ?1 AND email_normalized IS NULL`,
-	).bind(installId, email, storedPassword).run();
-	return accountSuccess(env, installId, Math.floor(Date.now() / 1000));
 }
 
 async function authenticate(request: Request, env: Env): Promise<AuthenticatedAccount | Response> {
@@ -1252,16 +1355,34 @@ export default {
 				return register(request, env);
 			if(request.method === "POST" && url.pathname === "/account/verify")
 				return verify(request, env);
+			if(request.method === "POST" && url.pathname === "/account/email-verify/start") {
+				const purpose = new URL(request.url).searchParams.get("purpose");
+				const body = await request.clone().json().catch(() => null) as {purpose?: string} | null;
+				const kind = purpose || body?.purpose;
+				if(kind === "link") {
+					const authenticated = await authenticate(request, env);
+					if(authenticated instanceof Response)
+						return authenticated;
+					return startLinkEmail(request, env, authenticated.installId);
+				}
+				return startRegisterEmail(request, env);
+			}
+			if(request.method === "POST" && url.pathname === "/account/email-verify/confirm") {
+				const body = await request.clone().json().catch(() => null) as {purpose?: string} | null;
+				if(body?.purpose === "link") {
+					const authenticated = await authenticate(request, env);
+					if(authenticated instanceof Response)
+						return authenticated;
+					return confirmLinkEmail(request, env, authenticated.installId);
+				}
+				return confirmRegisterEmail(request, env);
+			}
 			if(request.method === "POST" && url.pathname === "/account/register-email")
-				return registerEmail(request, env);
+				return error(410, "verification_required", "Email accounts must be verified before they are created.");
 			if(request.method === "POST" && url.pathname === "/account/login-email")
 				return loginEmail(request, env);
-			if(request.method === "POST" && url.pathname === "/account/link-email") {
-				const authenticated = await authenticate(request, env);
-				if(authenticated instanceof Response)
-					return authenticated;
-				return linkEmail(request, env, authenticated.installId);
-			}
+			if(request.method === "POST" && url.pathname === "/account/link-email")
+				return error(410, "verification_required", "Email accounts must be verified before they are linked.");
 			if(request.method === "GET" && url.pathname === "/account/profile") {
 				const authenticated = await authenticate(request, env);
 				if(authenticated instanceof Response)

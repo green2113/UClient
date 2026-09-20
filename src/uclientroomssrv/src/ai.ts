@@ -74,6 +74,7 @@ function systemPrompt(): string {
 		"Never request or repeat secrets, passwords, tokens, API keys, or install UUIDs.",
 		"Never write reasoning, analysis, or tags such as <reasoning> in the reply. Only write the user-facing answer.",
 		"Launcher notices: use title and body from the current data. Speak in normal sentences. Never mention severity, warning, critical, info, snapshot, or field names like blocksPlay.",
+		"If they ask about an account, email, password, File Backup, restore, sharing shortcuts, auto-update, or why the assistant is locked, use the retrieved launcher knowledge. File backup, shortcut sharing, and this assistant need email and password. Settings is the launcher gear: General for Install client updates automatically (startup only), Account for email, File Backup for upload and restore. If they ask whether auto-update is on, use the launcher current data and say on or off; never say autoUpdate. Connecting email on a UUID device account adds login to the same account; it is not a new account. Lost passwords cannot be recovered. For support they cannot solve here, send them to [UClient Discord](https://discord.gg/EN4yYypsPs). Do not invent other contact links.",
 		"If they ask about Play and playBlocked is true, tell them they cannot play right now, naturally (for example in Korean: 현재 플레이는 차단이 되어 있어 플레이할 수가 없어요). Do not mention blocking on a greeting. If playBlocked is absent, do not mention blocking.",
 	].join(" ");
 }
@@ -209,7 +210,7 @@ function bedrockBody(env: AiEnv, instructions: string, input: string, options?: 
 	if(maxTokens)
 		body.max_output_tokens = maxTokens;
 	if(stream) {
-		body.prompt_cache_key = "uclient-assistant-v19";
+		body.prompt_cache_key = "uclient-assistant-v21";
 		body.reasoning = {effort: "none"};
 	}
 	return body;
@@ -348,10 +349,10 @@ function plannerPrompt(): string {
 		"search_queries: 1 to 5 short terms in the user's language or English to find docs and config keys (cl_, tc_, uc_, bc_). Include likely key names when you know them.",
 		"need_shortcut_blocks: true only if they clearly ask to create, edit, add, or change a shortcut/단축어/automation. 만들어줘 alone is not enough — decide from meaning. A key bind or gameplay technique bind is not a shortcut. If they type/enter a number or phrase themselves, search ask_for_text. If others chat a word, search chat_received.",
 		"need_settings: true if they ask how to change, find, enable, disable, or explain a client setting, or a DDNet key bind, including when they only describe how it looks or behaves. For a bind, put Binds in search_queries. If they ask what a key does or which key runs a command, also put the command or key (+fire, +hook, +jump, mouse1).",
-		"need_launcher: true for friends, notices, account, updates, or Play.",
+		"need_launcher: true for friends, notices, account, File Backup, restore, sharing shortcuts, support, Discord, updates, auto-update, auto-launch, or Play. For account questions put Account in search_queries. For backup or restore put File Backup. For auto-update or launcher Settings put Launcher.",
 		"ddnet: 0 to 2 official lookups. Types: player, map, mapper, releases, wiki. Item shape {\"type\":\"wiki\",\"query\":\"Hammerfly\"}. releases may omit query. Official DDNet race maps and ranked players only. Never Gores/fng. Add wiki when they name a technique or term that local docs may not explain. Add releases when they ask for new or recent official maps. They do not have to say wiki. Player/map only when they name a player or map. Never invent a name. Never for greetings or launcher account questions.",
 		"Known keys: Yellow chat with *** is a server/system message (cl_message_system_color), not UClient chat. UClient chat is a light-blue player-style line or [room name] (uc_chat, uc_message_color). Client echo uses a — prefix. Chat animations are bc_chat_animation. Camera drift is bc_camera_drift. Chat look is Appearance Chat. If they describe a look, search the matching kind, not every color as UClient.",
-		"You may aim local queries at: Launcher, Settings menu map, Shortcuts, Block catalog, Binds.",
+		"You may aim local queries at: Launcher, Account, File Backup, Settings menu map, Shortcuts, Block catalog, Binds.",
 	].join(" ");
 }
 
@@ -560,6 +561,11 @@ export async function handleAiChat(
 ): Promise<Response> {
 	if(request.method !== "POST")
 		return error(405, "method_not_allowed", "Use POST.");
+	const account = await env.DB.prepare(
+		"SELECT email_normalized FROM accounts WHERE install_id = ?1",
+	).bind(installId).first<{email_normalized: string | null}>();
+	if(!account?.email_normalized)
+		return error(403, "email_required", "Connect an email to your account before using the assistant.");
 	const now = Math.floor(Date.now() / 1000);
 	if(await rateLimited(env.DB, installId, now))
 		return error(429, "rate_limited", "Too many assistant requests. Try again shortly.");

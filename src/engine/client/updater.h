@@ -64,6 +64,7 @@ class CUpdater : public IUpdater
 	ETaskKind m_TaskKind = ETaskKind::NONE;
 
 	bool m_CheckCompleted = false;
+	bool m_TriedFallbackLatest = false;
 
 	char m_aLatestVersion[64];
 	char m_aArchiveName[128];
@@ -73,6 +74,7 @@ class CUpdater : public IUpdater
 
 	void ResetTask() REQUIRES(!m_Lock);
 	void StartReleaseFetch() REQUIRES(!m_Lock);
+	void StartReleaseFetchFrom(const char *pUrl) REQUIRES(!m_Lock);
 	void ParseReleaseTask() REQUIRES(!m_Lock);
 	void StartArchiveDownload() REQUIRES(!m_Lock);
 	bool ValidateDownloadedArchive() REQUIRES(!m_Lock);

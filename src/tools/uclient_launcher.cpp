@@ -55,13 +55,22 @@
 #define UCLIENT_CLIENT_VERSION "0.0.0"
 #endif
 #ifndef UCLIENT_UPDATE_LATEST_URL
-#define UCLIENT_UPDATE_LATEST_URL "https://ddnet.under1111.com/api/uclient/update/latest"
+#define UCLIENT_UPDATE_LATEST_URL "https://api.uclient.app/uclient/update/latest"
+#endif
+#ifndef UCLIENT_UPDATE_LATEST_URL_LEGACY
+#define UCLIENT_UPDATE_LATEST_URL_LEGACY "https://ddnet.under1111.com/api/uclient/update/latest"
 #endif
 #ifndef UCLIENT_CLIENT_UPDATE_LATEST_URL
-#define UCLIENT_CLIENT_UPDATE_LATEST_URL "https://ddnet.under1111.com/uclient/client/latest.json"
+#define UCLIENT_CLIENT_UPDATE_LATEST_URL "https://uclient.app/uclient/client/latest.json"
+#endif
+#ifndef UCLIENT_CLIENT_UPDATE_LATEST_URL_LEGACY
+#define UCLIENT_CLIENT_UPDATE_LATEST_URL_LEGACY "https://ddnet.under1111.com/uclient/client/latest.json"
 #endif
 #ifndef UCLIENT_LAUNCHER_UPDATE_LATEST_URL
-#define UCLIENT_LAUNCHER_UPDATE_LATEST_URL "https://ddnet.under1111.com/uclient/launcher/latest.json"
+#define UCLIENT_LAUNCHER_UPDATE_LATEST_URL "https://uclient.app/uclient/launcher/latest.json"
+#endif
+#ifndef UCLIENT_LAUNCHER_UPDATE_LATEST_URL_LEGACY
+#define UCLIENT_LAUNCHER_UPDATE_LATEST_URL_LEGACY "https://ddnet.under1111.com/uclient/launcher/latest.json"
 #endif
 #ifndef UCLIENT_API_BASE_URL
 #define UCLIENT_API_BASE_URL "https://uclient.under1111.com"
@@ -229,6 +238,7 @@ static std::atomic<uint64_t> g_DownloadTotal = 0;
 static std::atomic<uint64_t> g_DownloadSpeed = 0; // bytes per second
 static std::atomic<int> g_EtaSeconds = -1;
 static bool g_ShowSettings = false;
+static bool g_HoldLauncherWindowHidden = true;
 static bool g_AutoLaunch = false; // default off
 static bool g_AutoUpdate = false; // default off; startup check only
 static bool g_TryStartupAutoUpdate = false;
@@ -285,6 +295,13 @@ static bool g_AccountWorkerRunning = false;
 static bool g_AccountSignedOut = false;
 static bool g_HasSavedAccount = false;
 static std::string g_SavedAccountInstallId;
+static bool g_PendingEmailVerify = false;
+static std::string g_PendingEmail;
+static std::string g_PendingEmailPurpose;
+static std::string g_PendingVerifyInstallId;
+static std::string g_PendingVerifySecret;
+static std::string g_PendingVerifyPassword;
+static std::string g_PendingVerifyLocale;
 static bool g_BackupBusy = false;
 static std::string g_BackupError;
 static std::vector<BackupFileView> g_BackupFiles;
@@ -366,6 +383,7 @@ static void RequestLauncherUpdate();
 static void TryStartupAutoUpdate();
 static void RequestAccountCheck();
 static void ShowLauncherWindow(HWND hWnd);
+static void RevealLauncherWindow(HWND hWnd);
 static void ActivateExistingLauncherWindow(HWND hWnd);
 static bool IsForwardableShellArg(const std::wstring &Arg);
 static bool IsUclientShellArg(const std::wstring &Arg);
@@ -1619,7 +1637,7 @@ static bool AllowedUpdateUrl(const std::string &Url)
 		return false;
 	std::wstring Host(aHost, Components.dwHostNameLength);
 	std::transform(Host.begin(), Host.end(), Host.begin(), [](wchar_t Ch) { return (wchar_t)towlower(Ch); });
-	return Host == L"ddnet.under1111.com";
+	return Host == L"uclient.app" || Host == L"www.uclient.app" || Host == L"ddnet.under1111.com";
 }
 
 static bool ValidSha256(const std::string &Sha256)
@@ -1699,10 +1717,12 @@ static bool FetchUpdateMetadata(const char *pUrl, const char *pComponent, bool A
 
 static bool FetchClientUpdateMetadata(UpdateMetadata &Out)
 {
-	if(FetchUpdateMetadata(UCLIENT_CLIENT_UPDATE_LATEST_URL, "client", false, Out))
+	if(FetchUpdateMetadata(UCLIENT_CLIENT_UPDATE_LATEST_URL, "client", false, Out) ||
+		FetchUpdateMetadata(UCLIENT_CLIENT_UPDATE_LATEST_URL_LEGACY, "client", false, Out))
 		return true;
 	UpdateMetadata Legacy;
-	if(FetchUpdateMetadata(UCLIENT_UPDATE_LATEST_URL, "client", true, Legacy))
+	if(FetchUpdateMetadata(UCLIENT_UPDATE_LATEST_URL, "client", true, Legacy) ||
+		FetchUpdateMetadata(UCLIENT_UPDATE_LATEST_URL_LEGACY, "client", true, Legacy))
 	{
 		Out = std::move(Legacy);
 		return true;
@@ -1712,13 +1732,24 @@ static bool FetchClientUpdateMetadata(UpdateMetadata &Out)
 
 static bool FetchLauncherUpdateMetadata(UpdateMetadata &Out)
 {
-	if(FetchUpdateMetadata(UCLIENT_LAUNCHER_UPDATE_LATEST_URL, "launcher", false, Out))
+	if(FetchUpdateMetadata(UCLIENT_LAUNCHER_UPDATE_LATEST_URL, "launcher", false, Out) ||
+		FetchUpdateMetadata(UCLIENT_LAUNCHER_UPDATE_LATEST_URL_LEGACY, "launcher", false, Out))
 		return true;
 
 	std::string Body;
 	char aUrl[768];
-	_snprintf_s(aUrl, _TRUNCATE, "%s?t=%lld", UCLIENT_UPDATE_LATEST_URL, (long long)time(nullptr));
-	if(!HttpGetToString(Utf8ToWide(aUrl), Body))
+	const char *const apMetaUrls[] = {UCLIENT_UPDATE_LATEST_URL, UCLIENT_UPDATE_LATEST_URL_LEGACY};
+	bool GotBody = false;
+	for(const char *pMetaUrl : apMetaUrls)
+	{
+		_snprintf_s(aUrl, _TRUNCATE, "%s?t=%lld", pMetaUrl, (long long)time(nullptr));
+		if(HttpGetToString(Utf8ToWide(aUrl), Body))
+		{
+			GotBody = true;
+			break;
+		}
+	}
+	if(!GotBody)
 		return false;
 
 	std::string RemoteLauncherVersion;
@@ -1727,9 +1758,14 @@ static bool FetchLauncherUpdateMetadata(UpdateMetadata &Out)
 		CompareVersions(RemoteLauncherVersion, UCLIENT_LAUNCHER_VERSION) <= 0)
 		return false;
 
-	_snprintf_s(aUrl, _TRUNCATE, "https://ddnet.under1111.com/uclient/launcher/%s/latest.json",
+	char aVersioned[768];
+	_snprintf_s(aVersioned, _TRUNCATE, "https://uclient.app/uclient/launcher/%s/latest.json",
 		RemoteLauncherVersion.c_str());
-	return FetchUpdateMetadata(aUrl, "launcher", false, Out);
+	if(FetchUpdateMetadata(aVersioned, "launcher", false, Out))
+		return true;
+	_snprintf_s(aVersioned, _TRUNCATE, "https://ddnet.under1111.com/uclient/launcher/%s/latest.json",
+		RemoteLauncherVersion.c_str());
+	return FetchUpdateMetadata(aVersioned, "launcher", false, Out);
 }
 
 static bool ExtractJsonBool(const std::string &Json, const char *Key, bool &Out)
@@ -2146,6 +2182,11 @@ static std::string JsonEscapeValue(const std::string &In)
 		}
 	}
 	return Out;
+}
+
+static std::string LauncherVersionJsonField()
+{
+	return "\"launcher_version\":\"" + JsonEscapeValue(UCLIENT_LAUNCHER_VERSION) + "\"";
 }
 
 static std::string JsonUnescapeValue(const std::string &In)
@@ -3365,10 +3406,16 @@ static DWORD WINAPI AiChatThread(LPVOID pData)
 	std::vector<FriendView> Friends;
 	std::vector<NoticeView> Notices;
 	EAccountState AccountState = EAccountState::Checking;
+	bool AutoUpdate = false;
+	bool AutoLaunch = false;
+	bool LauncherUpdateAvailable = false;
 	EnterCriticalSection(&g_Lock);
 	Friends = g_Friends;
 	Notices = g_Notices;
 	AccountState = g_AccountState;
+	AutoUpdate = g_AutoUpdate;
+	AutoLaunch = g_AutoLaunch;
+	LauncherUpdateAvailable = g_LauncherUpdateAvailable;
 	LeaveCriticalSection(&g_Lock);
 
 	std::string FriendsJson = "[";
@@ -3426,6 +3473,9 @@ static DWORD WINAPI AiChatThread(LPVOID pData)
 		",\"launcher\":{\"gameRunning\":" + (EffectiveGameRunning() ? "true" : "false") +
 		",\"playBlocked\":" + (EffectivePlayBlocked() ? "true" : "false") +
 		",\"phase\":\"" + JsonEscapeValue(pPhase) + "\",\"updateAvailable\":" + (EffectiveUpdateAvailable() ? "true" : "false") +
+		",\"autoUpdate\":" + (AutoUpdate ? "true" : "false") +
+		",\"autoLaunch\":" + (AutoLaunch ? "true" : "false") +
+		",\"launcherUpdateAvailable\":" + (LauncherUpdateAvailable ? "true" : "false") +
 		",\"version\":\"" + JsonEscapeValue(UCLIENT_LAUNCHER_VERSION) + "\",\"accountState\":\"" + JsonEscapeValue(pAccount) +
 		"\",\"emailLinked\":" + (AccountState == EAccountState::ReadyEmail ? "true" : "false") +
 		",\"notices\":" + NoticesJson + "},\"messages\":" +
@@ -3538,6 +3588,9 @@ enum class EAccountOp
 	LoginSaved,
 	RegisterAnonymous,
 	LinkEmail,
+	ConfirmEmail,
+	ResendEmail,
+	CancelVerify,
 	Logout,
 };
 
@@ -3548,6 +3601,8 @@ struct AccountWork
 	std::string Password;
 	std::string InstallId;
 	std::string Secret;
+	std::string Locale;
+	std::string Code;
 };
 
 static void SecureClear(std::string &Value)
@@ -3555,6 +3610,32 @@ static void SecureClear(std::string &Value)
 	if(!Value.empty())
 		SecureZeroMemory(Value.data(), Value.size());
 	Value.clear();
+}
+
+static void ClearPendingEmailVerify()
+{
+	g_PendingEmailVerify = false;
+	g_PendingEmail.clear();
+	g_PendingEmailPurpose.clear();
+	g_PendingVerifyInstallId.clear();
+	SecureClear(g_PendingVerifySecret);
+	SecureClear(g_PendingVerifyPassword);
+	g_PendingVerifyLocale.clear();
+}
+
+static const char *EmailVerifyError(int Status, const char *pFallback)
+{
+	if(Status == 409)
+		return "This email is already registered.";
+	if(Status == 429)
+		return "Too many attempts. Try again later.";
+	if(Status == 403)
+		return "That verification code is incorrect.";
+	if(Status == 400)
+		return "This verification code has expired. Request a new one.";
+	if(Status == 502)
+		return "Could not send the verification email.";
+	return pFallback;
 }
 
 static void MarkAccountSignedIn()
@@ -3595,6 +3676,7 @@ static DWORD WINAPI AccountThread(LPVOID pData)
 		g_AccountInstallId.clear();
 		g_BackupFiles.clear();
 		g_BackupVersions.clear();
+		ClearPendingEmailVerify();
 		LeaveCriticalSection(&g_Lock);
 		PublishAccount(EAccountState::NeedsOnboarding);
 		return 0;
@@ -3620,7 +3702,8 @@ static DWORD WINAPI AccountThread(LPVOID pData)
 			PublishAccount(EAccountState::NeedsOnboarding, {}, "signin:");
 			return 0;
 		}
-		Body = "{\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"}";
+		Body = "{\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"," +
+			LauncherVersionJsonField() + "}";
 		if(!HttpJsonRequest(L"POST", Base + L"/account/verify", Body, Response, Status))
 		{
 			PublishAccount(EAccountState::Error, {}, "Could not verify this account. Check your connection.");
@@ -3689,7 +3772,8 @@ static DWORD WINAPI AccountThread(LPVOID pData)
 			PublishAccount(EAccountState::NeedsOnboarding, {}, "signin:Saved account credentials are unavailable.");
 			return 0;
 		}
-		Body = "{\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"}";
+		Body = "{\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"," +
+			LauncherVersionJsonField() + "}";
 		HttpJsonRequest(L"POST", Base + L"/account/verify", Body, Response, Status);
 		if(Status >= 200 && Status < 300 && ParseAndSaveAccountResponse(Response, InstallId, Secret, Email, HasEmail))
 		{
@@ -3714,16 +3798,149 @@ static DWORD WINAPI AccountThread(LPVOID pData)
 		return 0;
 	}
 
-	if(Work->Op == EAccountOp::LinkEmail)
+	if(Work->Op == EAccountOp::CancelVerify)
 	{
-		Body = "{\"email\":\"" + JsonEscapeValue(Work->Email) + "\",\"password\":\"" + JsonEscapeValue(Work->Password) + "\"}";
-		HttpJsonRequest(L"POST", Base + L"/account/link-email", Body, Response, Status, AccountAuthHeaders(InstallId, Secret));
+		EnterCriticalSection(&g_Lock);
+		const EAccountState Resume = g_AccountInstallId.empty() ? EAccountState::NeedsOnboarding : EAccountState::ReadyAnonymous;
+		ClearPendingEmailVerify();
+		LeaveCriticalSection(&g_Lock);
+		PublishAccount(Resume);
+		return 0;
+	}
+
+	if(Work->Op == EAccountOp::LinkEmail || Work->Op == EAccountOp::RegisterEmail || Work->Op == EAccountOp::ResendEmail)
+	{
+		std::string Email = Work->Email;
+		std::string Password = Work->Password;
+		std::string Locale = Work->Locale.empty() ? "en" : Work->Locale;
+		if(Work->Op == EAccountOp::ResendEmail)
+		{
+			EnterCriticalSection(&g_Lock);
+			Email = g_PendingEmail;
+			Password = g_PendingVerifyPassword;
+			InstallId = g_PendingVerifyInstallId;
+			Secret = g_PendingVerifySecret;
+			Locale = g_PendingVerifyLocale.empty() ? Locale : g_PendingVerifyLocale;
+			const std::string Purpose = g_PendingEmailPurpose;
+			LeaveCriticalSection(&g_Lock);
+			Work->Op = Purpose == "link" ? EAccountOp::LinkEmail : EAccountOp::RegisterEmail;
+		}
+		if(Work->Op == EAccountOp::LinkEmail)
+		{
+			if(InstallId.empty() || Secret.empty())
+				BackupCredentials(InstallId, Secret);
+			Body = "{\"email\":\"" + JsonEscapeValue(Email) + "\",\"password\":\"" + JsonEscapeValue(Password) +
+				"\",\"locale\":\"" + JsonEscapeValue(Locale) + "\",\"purpose\":\"link\"}";
+			HttpJsonRequest(L"POST", Base + L"/account/email-verify/start", Body, Response, Status, AccountAuthHeaders(InstallId, Secret));
+			SecureClear(Body);
+			if(Status >= 200 && Status < 300)
+			{
+				EnterCriticalSection(&g_Lock);
+				g_PendingEmailVerify = true;
+				g_PendingEmail = Email;
+				g_PendingEmailPurpose = "link";
+				g_PendingVerifyInstallId = InstallId;
+				g_PendingVerifySecret = Secret;
+				g_PendingVerifyPassword = Password;
+				g_PendingVerifyLocale = Locale;
+				LeaveCriticalSection(&g_Lock);
+				SecureClear(Password);
+				PublishAccount(EAccountState::ReadyAnonymous);
+			}
+			else
+			{
+				SecureClear(Password);
+				PublishAccount(EAccountState::ReadyAnonymous, {}, EmailVerifyError(Status, "Could not send the verification email."));
+			}
+			return 0;
+		}
+
+		if(InstallId.empty() || Secret.empty())
+		{
+			if(!GenerateAccountCredentials(InstallId, Secret))
+			{
+				SecureClear(Password);
+				PublishAccount(EAccountState::NeedsOnboarding, {}, "register:Secure credential generation failed.");
+				return 0;
+			}
+		}
+		Body = "{\"email\":\"" + JsonEscapeValue(Email) + "\",\"password\":\"" + JsonEscapeValue(Password) +
+			"\",\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) +
+			"\",\"locale\":\"" + JsonEscapeValue(Locale) + "\",\"purpose\":\"register\"," +
+			LauncherVersionJsonField() + "}";
+		HttpJsonRequest(L"POST", Base + L"/account/email-verify/start", Body, Response, Status);
 		SecureClear(Body);
-		SecureClear(Work->Password);
 		if(Status >= 200 && Status < 300)
-			PublishAccount(EAccountState::ReadyEmail, Work->Email);
+		{
+			EnterCriticalSection(&g_Lock);
+			g_PendingEmailVerify = true;
+			g_PendingEmail = Email;
+			g_PendingEmailPurpose = "register";
+			g_PendingVerifyInstallId = InstallId;
+			g_PendingVerifySecret = Secret;
+			g_PendingVerifyPassword = Password;
+			g_PendingVerifyLocale = Locale;
+			LeaveCriticalSection(&g_Lock);
+			SecureClear(Password);
+			PublishAccount(EAccountState::NeedsOnboarding);
+		}
 		else
-			PublishAccount(EAccountState::ReadyAnonymous, {}, Status == 409 ? "That email is already in use." : "Could not link the email.");
+		{
+			SecureClear(Password);
+			PublishAccount(EAccountState::NeedsOnboarding, {},
+				std::string("register:") + EmailVerifyError(Status, "Could not send the verification email."));
+		}
+		return 0;
+	}
+
+	if(Work->Op == EAccountOp::ConfirmEmail)
+	{
+		EnterCriticalSection(&g_Lock);
+		const std::string PendingEmail = g_PendingEmail;
+		const std::string Purpose = g_PendingEmailPurpose;
+		InstallId = g_PendingVerifyInstallId;
+		Secret = g_PendingVerifySecret;
+		LeaveCriticalSection(&g_Lock);
+		if(PendingEmail.empty() || Work->Code.empty())
+		{
+			PublishAccount(Purpose == "link" ? EAccountState::ReadyAnonymous : EAccountState::NeedsOnboarding, {},
+				Purpose == "link" ? "Enter the verification code." : "register:Enter the verification code.");
+			return 0;
+		}
+		if(Purpose == "link")
+		{
+			Body = "{\"email\":\"" + JsonEscapeValue(PendingEmail) + "\",\"code\":\"" + JsonEscapeValue(Work->Code) + "\",\"purpose\":\"link\"}";
+			HttpJsonRequest(L"POST", Base + L"/account/email-verify/confirm", Body, Response, Status, AccountAuthHeaders(InstallId, Secret));
+		}
+		else
+		{
+			Body = "{\"email\":\"" + JsonEscapeValue(PendingEmail) + "\",\"code\":\"" + JsonEscapeValue(Work->Code) +
+				"\",\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) +
+				"\",\"purpose\":\"register\"}";
+			HttpJsonRequest(L"POST", Base + L"/account/email-verify/confirm", Body, Response, Status);
+		}
+		SecureClear(Body);
+		SecureClear(Work->Code);
+		if(Status >= 200 && Status < 300 && ParseAndSaveAccountResponse(Response, InstallId, Secret, Email, HasEmail))
+		{
+			EnterCriticalSection(&g_Lock);
+			ClearPendingEmailVerify();
+			g_HasSavedAccount = true;
+			g_SavedAccountInstallId = g_AccountInstallId;
+			LeaveCriticalSection(&g_Lock);
+			MarkAccountSignedIn();
+			PublishAccount(EAccountState::ReadyEmail, Email.empty() ? PendingEmail : Email);
+		}
+		else if(Status == 423)
+			PublishAccount(EAccountState::Banned, {}, "This account is suspended.");
+		else
+		{
+			const char *pErr = EmailVerifyError(Status, "Could not verify the email.");
+			if(Purpose == "link")
+				PublishAccount(EAccountState::ReadyAnonymous, {}, pErr);
+			else
+				PublishAccount(EAccountState::NeedsOnboarding, {}, std::string("register:") + pErr);
+		}
 		return 0;
 	}
 
@@ -3734,22 +3951,17 @@ static DWORD WINAPI AccountThread(LPVOID pData)
 		return 0;
 	}
 	std::wstring Endpoint;
-	if(Work->Op == EAccountOp::RegisterEmail)
-	{
-		Endpoint = L"/account/register-email";
-		Body = "{\"email\":\"" + JsonEscapeValue(Work->Email) + "\",\"password\":\"" + JsonEscapeValue(Work->Password) +
-			"\",\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"}";
-	}
-	else if(Work->Op == EAccountOp::LoginEmail)
+	if(Work->Op == EAccountOp::LoginEmail)
 	{
 		Endpoint = L"/account/login-email";
 		Body = "{\"email\":\"" + JsonEscapeValue(Work->Email) + "\",\"password\":\"" + JsonEscapeValue(Work->Password) +
-			"\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"}";
+			"\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"," + LauncherVersionJsonField() + "}";
 	}
 	else
 	{
 		Endpoint = L"/account/register";
-		Body = "{\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"}";
+		Body = "{\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"," +
+			LauncherVersionJsonField() + "}";
 	}
 	HttpJsonRequest(L"POST", Base + Endpoint, Body, Response, Status);
 	SecureClear(Body);
@@ -5631,6 +5843,7 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 	{
 		SetPhase(EUiPhase::Updating);
 		g_UpdateStage = EUpdateStage::Apply;
+		RevealLauncherWindow(g_hWnd);
 		SetButtonLabel(L"Applying update");
 		if(pA->WaitPid != 0)
 		{
@@ -5933,6 +6146,8 @@ static std::string BuildStateJson()
 	EAccountState AccountState;
 	std::string AccountEmail, AccountError, SavedAccountInstallId, AccountInstallId, BackupError;
 	bool HasSavedAccount = false;
+	bool PendingEmailVerify = false;
+	std::string PendingEmail, PendingEmailPurpose;
 	bool BackupBusy = false;
 	uint64_t BackupUsed = 0, BackupLimit = 0;
 	std::vector<BackupFileView> BackupFiles;
@@ -5963,6 +6178,9 @@ static std::string BuildStateJson()
 	AccountError = g_AccountError;
 	HasSavedAccount = g_HasSavedAccount;
 	SavedAccountInstallId = g_SavedAccountInstallId;
+	PendingEmailVerify = g_PendingEmailVerify;
+	PendingEmail = g_PendingEmail;
+	PendingEmailPurpose = g_PendingEmailPurpose;
 	AccountInstallId = g_AccountInstallId;
 	BackupBusy = g_BackupBusy;
 	BackupError = g_BackupError;
@@ -6039,6 +6257,9 @@ static std::string BuildStateJson()
 	Json += ClientUpdateBusy ? "\"clientUpdateBusy\":true," : "\"clientUpdateBusy\":false,";
 	Json += GameRunning ? "\"gameRunning\":true," : "\"gameRunning\":false,";
 	Json += HasSavedAccount ? "\"hasSavedAccount\":true," : "\"hasSavedAccount\":false,";
+	Json += PendingEmailVerify ? "\"pendingEmailVerify\":true," : "\"pendingEmailVerify\":false,";
+	JsonAddString(Json, "pendingEmail", PendingEmail);
+	JsonAddString(Json, "pendingEmailPurpose", PendingEmailPurpose);
 	Json += BackupBusy ? "\"backupBusy\":true," : "\"backupBusy\":false,";
 	_snprintf_s(aNum, sizeof(aNum), _TRUNCATE, "\"backupUsed\":%llu,", (unsigned long long)BackupUsed);
 	Json += aNum;
@@ -6305,8 +6526,30 @@ static void OnWebMessage(const std::string &Json)
 			(Cmd == "accountLoginEmail" ? EAccountOp::LoginEmail : EAccountOp::LinkEmail);
 		ExtractWebString(Json, "email", pWork->Email);
 		ExtractWebString(Json, "password", pWork->Password);
+		ExtractWebString(Json, "locale", pWork->Locale);
 		if(pWork->Op == EAccountOp::LinkEmail)
 			BackupCredentials(pWork->InstallId, pWork->Secret);
+		StartAccountWork(pWork);
+	}
+	else if(Cmd == "accountVerifyEmail")
+	{
+		auto *pWork = new AccountWork();
+		pWork->Op = EAccountOp::ConfirmEmail;
+		ExtractWebString(Json, "code", pWork->Code);
+		ExtractWebString(Json, "locale", pWork->Locale);
+		StartAccountWork(pWork);
+	}
+	else if(Cmd == "accountVerifyResend")
+	{
+		auto *pWork = new AccountWork();
+		pWork->Op = EAccountOp::ResendEmail;
+		ExtractWebString(Json, "locale", pWork->Locale);
+		StartAccountWork(pWork);
+	}
+	else if(Cmd == "accountVerifyCancel")
+	{
+		auto *pWork = new AccountWork();
+		pWork->Op = EAccountOp::CancelVerify;
 		StartAccountWork(pWork);
 	}
 	else if(Cmd == "accountLoginKey")
@@ -7472,6 +7715,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		PushWebState(true);
 		return 0;
 	case WM_UPDATE_READY:
+		RevealLauncherWindow(hWnd);
 		InvalidateRect(hWnd, nullptr, FALSE);
 		PushWebState();
 		RequestFriendsRefresh();
@@ -7683,10 +7927,21 @@ static HWND FindLauncherWindow()
 	return FindWindowW(L"UClientLauncher", L"UClient Launcher");
 }
 
+static void RevealLauncherWindow(HWND hWnd)
+{
+	if(!hWnd || !IsWindow(hWnd))
+		return;
+	if(!g_HoldLauncherWindowHidden)
+		return;
+	g_HoldLauncherWindowHidden = false;
+	ShowLauncherWindow(hWnd);
+}
+
 static void ShowLauncherWindow(HWND hWnd)
 {
 	if(!hWnd || !IsWindow(hWnd))
 		return;
+	g_HoldLauncherWindowHidden = false;
 	if(g_ShowSettings)
 	{
 		g_ShowSettings = false;
@@ -7929,7 +8184,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 	int Y = 0;
 	ConfigureWindowBounds(X, Y);
 	g_hWnd = CreateWindowExW(WS_EX_APPWINDOW, L"UClientLauncher", L"UClient Launcher",
-		WS_POPUP | WS_VISIBLE, X, Y, g_WindowW, g_WindowH, nullptr, nullptr, hInst, nullptr);
+		WS_POPUP, X, Y, g_WindowW, g_WindowH, nullptr, nullptr, hInst, nullptr);
 	if(!g_hWnd)
 		return 1;
 	ApplyWindowRoundCorners(g_hWnd);

@@ -37,8 +37,9 @@ static bool StrEndsWithNoCase(const char *pStr, const char *pSuffix)
 	return str_comp_nocase(pStr + StrLen - SuffixLen, pSuffix) == 0;
 }
 
-static constexpr const char *DEFAULT_UPDATE_LATEST_URL = "https://ddnet.under1111.com/uclient/client/latest.json";
-static constexpr const char *LEGACY_UPDATE_LATEST_URL = "https://ddnet.under1111.com/api/uclient/update/latest";
+static constexpr const char *DEFAULT_UPDATE_LATEST_URL = "https://uclient.app/uclient/client/latest.json";
+static constexpr const char *LEGACY_UPDATE_LATEST_URL = "https://ddnet.under1111.com/uclient/client/latest.json";
+static constexpr const char *LEGACY_API_UPDATE_LATEST_URL = "https://ddnet.under1111.com/api/uclient/update/latest";
 static constexpr const char *GITHUB_LATEST_RELEASE_URL = "https://github.com/BestProjectTeam/BestClient/releases/latest";
 static constexpr const char *UPDATE_SCRIPT_PATH = "update/apply_uclient_update.ps1";
 #if defined(CONF_PLATFORM_ANDROID)
@@ -62,15 +63,12 @@ static const char *CurrentPlatformKey()
 #endif
 }
 
-static void BuildUpdateLatestUrl(char *pBuf, int BufSize)
+static const char *ConfiguredLatestUrl()
 {
-	const char *pBase =
-		g_Config.m_UcUpdateLatestUrl[0] != '\0' &&
-			str_comp(g_Config.m_UcUpdateLatestUrl, LEGACY_UPDATE_LATEST_URL) != 0 ?
-		g_Config.m_UcUpdateLatestUrl :
-		DEFAULT_UPDATE_LATEST_URL;
-	const char *pSeparator = str_find(pBase, "?") ? "&" : "?";
-	str_format(pBuf, BufSize, "%s%st=%lld", pBase, pSeparator, (long long)time_timestamp());
+	if(g_Config.m_UcUpdateLatestUrl[0] != '\0' &&
+		str_comp(g_Config.m_UcUpdateLatestUrl, LEGACY_API_UPDATE_LATEST_URL) != 0)
+		return g_Config.m_UcUpdateLatestUrl;
+	return DEFAULT_UPDATE_LATEST_URL;
 }
 
 static std::string ToLowerAscii(const char *pStr)
@@ -469,7 +467,7 @@ void CUpdater::ResetTask()
 	m_TaskKind = ETaskKind::NONE;
 }
 
-void CUpdater::StartReleaseFetch()
+void CUpdater::StartReleaseFetchFrom(const char *pUrl)
 {
 	ResetTask();
 	m_ExpectedArchiveSize = 0;
@@ -478,7 +476,8 @@ void CUpdater::StartReleaseFetch()
 	SetCurrentState(IUpdater::GETTING_MANIFEST);
 
 	char aUrl[2304];
-	BuildUpdateLatestUrl(aUrl, sizeof(aUrl));
+	const char *pSeparator = str_find(pUrl, "?") ? "&" : "?";
+	str_format(aUrl, sizeof(aUrl), "%s%st=%lld", pUrl, pSeparator, (long long)time_timestamp());
 	m_TaskKind = ETaskKind::FETCH_RELEASE;
 	m_pCurrentTask = HttpGet(aUrl);
 	m_pCurrentTask->HeaderString("Accept", "application/json");
@@ -490,17 +489,29 @@ void CUpdater::StartReleaseFetch()
 	m_pHttp->Run(m_pCurrentTask);
 }
 
+void CUpdater::StartReleaseFetch()
+{
+	StartReleaseFetchFrom(ConfiguredLatestUrl());
+}
+
 void CUpdater::ParseReleaseTask()
 {
-	m_CheckCompleted = true;
-
 	json_value *pJson = m_pCurrentTask ? m_pCurrentTask->ResultJson() : nullptr;
 	if(!pJson)
 	{
+		if(!m_TriedFallbackLatest)
+		{
+			m_TriedFallbackLatest = true;
+			StartReleaseFetchFrom(LEGACY_UPDATE_LATEST_URL);
+			return;
+		}
+		m_CheckCompleted = true;
 		SetStatus("Failed to parse release info");
 		SetCurrentState(IUpdater::FAIL);
 		return;
 	}
+
+	m_CheckCompleted = true;
 
 	char aVersion[64] = "";
 	char aArchiveName[128] = "";
@@ -837,6 +848,7 @@ void CUpdater::CheckForUpdate()
 	m_aLatestVersion[0] = '\0';
 	m_aArchiveName[0] = '\0';
 	m_aArchiveUrl[0] = '\0';
+	m_TriedFallbackLatest = false;
 	StartReleaseFetch();
 }
 

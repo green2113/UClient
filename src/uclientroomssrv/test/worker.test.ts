@@ -75,6 +75,7 @@ describe("rooms Worker integration", () => {
 				...account,
 				player_name: playerName,
 				version: "test",
+				launcher_version: "launcher-test",
 			}));
 			expect(registerResponse.status).toBe(201);
 			expect((await responseJson<{grace_token: string}>(registerResponse)).grace_token).toContain(".");
@@ -87,9 +88,12 @@ describe("rooms Worker integration", () => {
 		expect(retryRegisterResponse.status).toBe(200);
 		expect((await responseJson<{grace_token: string}>(retryRegisterResponse)).grace_token).toContain(".");
 		const ownerVersion = await testEnv.DB.prepare(
-			"SELECT last_client_version FROM accounts WHERE install_id = ?1",
-		).bind(owner.install_id).first<{last_client_version: string}>();
-		expect(ownerVersion?.last_client_version).toBe("test");
+			"SELECT last_client_version, last_launcher_version FROM accounts WHERE install_id = ?1",
+		).bind(owner.install_id).first<{last_client_version: string; last_launcher_version: string}>();
+		expect(ownerVersion).toMatchObject({
+			last_client_version: "test",
+			last_launcher_version: "launcher-test",
+		});
 		const conflictingRegisterResponse = await SELF.fetch(jsonRequest("/account/register", {
 			install_id: owner.install_id,
 			secret: "different-secret-with-at-least-32-characters",
@@ -339,9 +343,18 @@ describe("email accounts", () => {
 		};
 		expect((await SELF.fetch(jsonRequest("/account/register", legacy))).status).toBe(201);
 
-		const linkResponse = await SELF.fetch(jsonRequest("/account/link-email", {
+		const startLink = await SELF.fetch(jsonRequest("/account/email-verify/start", {
 			email: "  Legacy.User@Example.COM ",
 			password: "a-secure-password",
+			purpose: "link",
+			locale: "en",
+		}, legacy));
+		expect(startLink.status).toBe(202);
+		const startedLink = await responseJson<{debug_code: string}>(startLink);
+		const linkResponse = await SELF.fetch(jsonRequest("/account/email-verify/confirm", {
+			email: "  Legacy.User@Example.COM ",
+			code: startedLink.debug_code,
+			purpose: "link",
 		}, legacy));
 		expect(linkResponse.status).toBe(200);
 		expect(await responseJson<{install_id: string; has_email: boolean; email: string}>(linkResponse)).toMatchObject({
@@ -379,31 +392,63 @@ describe("email accounts", () => {
 		});
 	});
 
-	it("supports email signup, rejects duplicates and invalid passwords, and rate limits bad logins", async () => {
+	it("supports email signup, rejects duplicates and invalid passwords, and rate limits bad logins", {timeout: 20000}, async () => {
 		const emailAccount = {
 			install_id: "44444444-4444-4444-8444-444444444444",
 			secret: "email-signup-secret-with-at-least-32-characters",
 			email: "Signup.User@Example.com",
 			password: "signup-password",
-			version: "email-test",
+			launcher_version: "email-test",
+			locale: "en",
+			purpose: "register",
 		};
-		const signup = await SELF.fetch(jsonRequest("/account/register-email", emailAccount));
-		expect(signup.status).toBe(201);
-		expect(await responseJson<{install_id: string; email: string}>(signup)).toMatchObject({
+		const start = await SELF.fetch(jsonRequest("/account/email-verify/start", emailAccount));
+		expect(start.status).toBe(202);
+		const started = await responseJson<{ok: boolean; email: string; debug_code: string}>(start);
+		expect(started).toMatchObject({ok: true, email: "signup.user@example.com"});
+		expect(started.debug_code).toMatch(/^\d{6}$/);
+		expect((await testEnv.DB.prepare(
+			"SELECT install_id FROM accounts WHERE email_normalized = ?1",
+		).bind("signup.user@example.com").first()) ).toBeNull();
+
+		const wrongCode = await SELF.fetch(jsonRequest("/account/email-verify/confirm", {
+			email: emailAccount.email,
+			code: started.debug_code === "000000" ? "000001" : "000000",
+			install_id: emailAccount.install_id,
+			secret: emailAccount.secret,
+			purpose: "register",
+		}));
+		expect(wrongCode.status).toBe(403);
+
+		const confirm = await SELF.fetch(jsonRequest("/account/email-verify/confirm", {
+			email: emailAccount.email,
+			code: started.debug_code,
+			install_id: emailAccount.install_id,
+			secret: emailAccount.secret,
+			purpose: "register",
+		}));
+		expect(confirm.status).toBe(201);
+		expect(await responseJson<{install_id: string; email: string}>(confirm)).toMatchObject({
 			install_id: emailAccount.install_id,
 			email: "signup.user@example.com",
 		});
+		expect(await testEnv.DB.prepare(
+			"SELECT last_client_version, last_launcher_version FROM accounts WHERE install_id = ?1",
+		).bind(emailAccount.install_id).first<{last_client_version: string; last_launcher_version: string}>()).toMatchObject({
+			last_client_version: "",
+			last_launcher_version: "email-test",
+		});
 
-		const duplicate = await SELF.fetch(jsonRequest("/account/register-email", {
+		const duplicateStart = await SELF.fetch(jsonRequest("/account/email-verify/start", {
 			...emailAccount,
 			install_id: "55555555-5555-4555-8555-555555555555",
 			secret: "duplicate-secret-with-at-least-32-characters",
 			email: " signup.user@EXAMPLE.COM ",
 		}));
-		expect(duplicate.status).toBe(409);
-		expect(await responseJson<{error: string}>(duplicate)).toMatchObject({error: "email_exists"});
+		expect(duplicateStart.status).toBe(409);
+		expect(await responseJson<{error: string}>(duplicateStart)).toMatchObject({error: "email_exists"});
 
-		const shortPassword = await SELF.fetch(jsonRequest("/account/register-email", {
+		const shortPassword = await SELF.fetch(jsonRequest("/account/email-verify/start", {
 			...emailAccount,
 			install_id: "66666666-6666-4666-8666-666666666666",
 			email: "short@example.com",
@@ -571,9 +616,18 @@ describe("shortcut share", () => {
 			secret: "share-email-secret-with-at-least-32-characters",
 		};
 		expect((await SELF.fetch(jsonRequest("/account/register", account))).status).toBe(201);
-		const link = await SELF.fetch(jsonRequest("/account/link-email", {
+		const start = await SELF.fetch(jsonRequest("/account/email-verify/start", {
 			email: "share.user@example.com",
 			password: "a-secure-password",
+			purpose: "link",
+			locale: "en",
+		}, account));
+		expect(start.status).toBe(202);
+		const started = await responseJson<{debug_code: string}>(start);
+		const link = await SELF.fetch(jsonRequest("/account/email-verify/confirm", {
+			email: "share.user@example.com",
+			code: started.debug_code,
+			purpose: "link",
 		}, account));
 		expect(link.status).toBe(200);
 
@@ -618,6 +672,19 @@ describe("shortcut share", () => {
 			version: "test",
 		}));
 		expect(register.status).toBe(201);
+		const startAssistant = await SELF.fetch(jsonRequest("/account/email-verify/start", {
+			email: "assistant.user@example.com",
+			password: "assistant-password",
+			purpose: "link",
+			locale: "en",
+		}, assistant));
+		expect(startAssistant.status).toBe(202);
+		const startedAssistant = await responseJson<{debug_code: string}>(startAssistant);
+		expect((await SELF.fetch(jsonRequest("/account/email-verify/confirm", {
+			email: "assistant.user@example.com",
+			code: startedAssistant.debug_code,
+			purpose: "link",
+		}, assistant))).status).toBe(200);
 
 		const unauthenticated = await SELF.fetch(new Request("https://worker.test/ai/chat", {
 			method: "POST",

@@ -5,3 +5,5 @@ RELAY_SECRET=replace-with-a-long-random-secret
 RELAY_INVALIDATE_SECRET=replace-with-a-long-random-secret
 # Amazon Bedrock API key for the launcher assistant (gpt-oss-120b).
 BEDROCK_API_KEY=
+# Resend API key for account verification emails. Leave empty locally to skip sending.
+RESEND_API_KEY=

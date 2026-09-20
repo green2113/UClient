@@ -315,9 +315,11 @@ function pickKnowledge(tokens: Set<string>, plan?: RetrievalPlan | null): Knowle
 			selected.set(settings.id, settings);
 	}
 	if(plan?.needLauncher) {
-		const launcher = KNOWLEDGE_CHUNKS.find((chunk) => chunk.id === "launcher");
-		if(launcher)
-			selected.set(launcher.id, launcher);
+		for(const id of ["launcher", "file-backup"]) {
+			const chunk = KNOWLEDGE_CHUNKS.find((item) => item.id === id);
+			if(chunk)
+				selected.set(chunk.id, chunk);
+		}
 	}
 	for(const query of plan?.searchQueries ?? []) {
 		const id = slug(query);

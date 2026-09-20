@@ -3378,9 +3378,12 @@ if(CLIENT)
     target_compile_definitions(uclient-launcher PRIVATE
       UCLIENT_CLIENT_VERSION="${UCLIENT_PACKAGE_VERSION}"
       UCLIENT_LAUNCHER_VERSION="${UCLIENT_LAUNCHER_PACKAGE_VERSION}"
-      UCLIENT_UPDATE_LATEST_URL="https://ddnet.under1111.com/api/uclient/update/latest"
-      UCLIENT_CLIENT_UPDATE_LATEST_URL="https://ddnet.under1111.com/uclient/client/latest.json"
-      UCLIENT_LAUNCHER_UPDATE_LATEST_URL="https://ddnet.under1111.com/uclient/launcher/latest.json"
+      UCLIENT_UPDATE_LATEST_URL="https://api.uclient.app/uclient/update/latest"
+      UCLIENT_UPDATE_LATEST_URL_LEGACY="https://ddnet.under1111.com/api/uclient/update/latest"
+      UCLIENT_CLIENT_UPDATE_LATEST_URL="https://uclient.app/uclient/client/latest.json"
+      UCLIENT_CLIENT_UPDATE_LATEST_URL_LEGACY="https://ddnet.under1111.com/uclient/client/latest.json"
+      UCLIENT_LAUNCHER_UPDATE_LATEST_URL="https://uclient.app/uclient/launcher/latest.json"
+      UCLIENT_LAUNCHER_UPDATE_LATEST_URL_LEGACY="https://ddnet.under1111.com/uclient/launcher/latest.json"
       UCLIENT_API_BASE_URL="https://uclient.under1111.com"
       $<$<CONFIG:DevRelease>:CONF_UCLIENT_LAUNCHER_DEV>
     )

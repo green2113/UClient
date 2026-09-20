@@ -21,7 +21,10 @@ npx wrangler secret put ACCOUNT_PEPPER
 npx wrangler secret put GRACE_PRIVATE_KEY_SEED_HEX
 npx wrangler secret put RELAY_SECRET
 npx wrangler secret put RELAY_INVALIDATE_SECRET
+npx wrangler secret put RESEND_API_KEY
 ```
+
+`RESEND_FROM` is a Worker variable, default `UClient <noreply@uclient.app>`. Verify the domain in Resend and add DNS records for `uclient.app` before sending production mail. Without `RESEND_API_KEY`, local/dev start responses include `debug_code` so tests can confirm signup without sending mail.
 
 `RELAY_INVALIDATE_URL` is a non-secret Worker variable containing the relay's `/internal/rooms/invalidate` URL.
 

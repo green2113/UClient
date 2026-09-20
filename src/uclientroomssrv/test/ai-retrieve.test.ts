@@ -49,6 +49,56 @@ describe("retrieveAssistantContext", () => {
 		expect(retrieved.text).toContain("cannot see which server they are on");
 	});
 
+	it("loads File Backup steps when the planner asks for launcher backup", () => {
+		const retrieved = retrieveAssistantContext("파일 백업이랑 복구 어떻게 해", {
+			intent: "status",
+			searchQueries: ["File Backup"],
+			needShortcutBlocks: false,
+			needSettings: false,
+			needLauncher: true,
+			replyLanguage: "Korean",
+			ddnet: [],
+		});
+		expect(retrieved.knowledgeIds).toContain("file-backup");
+		expect(retrieved.knowledgeIds).toContain("launcher");
+		expect(retrieved.text).toContain("File Backup → Backup tab");
+		expect(retrieved.text).toContain("two versions of the same file");
+		expect(retrieved.text).toContain("10 MB");
+		expect(retrieved.text).toContain("copied aside first");
+	});
+
+	it("loads auto-update steps from Launcher", () => {
+		const retrieved = retrieveAssistantContext("클라이언트 자동 업데이트 어떻게 켜", {
+			intent: "status",
+			searchQueries: ["Launcher"],
+			needShortcutBlocks: false,
+			needSettings: false,
+			needLauncher: true,
+			replyLanguage: "Korean",
+			ddnet: [],
+		});
+		expect(retrieved.knowledgeIds).toContain("launcher");
+		expect(retrieved.text).toContain("Install client updates automatically");
+		expect(retrieved.text).toContain("startup only");
+		expect(retrieved.text).toContain("Default is off");
+	});
+
+	it("loads Account help when the planner asks for it", () => {
+		const retrieved = retrieveAssistantContext("이메일 계정 어떻게 만들어", {
+			intent: "status",
+			searchQueries: ["Account", "email"],
+			needShortcutBlocks: false,
+			needSettings: false,
+			needLauncher: true,
+			replyLanguage: "Korean",
+			ddnet: [],
+		});
+		expect(retrieved.knowledgeIds).toContain("account");
+		expect(retrieved.text).toContain("Connect email");
+		expect(retrieved.text).toContain("discord.gg/EN4yYypsPs");
+		expect(retrieved.text).toContain("does not create a new");
+	});
+
 	it("finds system/server chat from planner keys, not UClient", () => {
 		const retrieved = retrieveAssistantContext("노란색으로 메세지가 뜨는 건 뭐야? 앞에 *도 붙어있어", {
 			intent: "settings",

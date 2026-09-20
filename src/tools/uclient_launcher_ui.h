@@ -605,7 +605,7 @@ body{
 .sc-stepper-sep{width:1px;margin:6px 0;background:rgba(255,255,255,.1);flex:0 0 auto}
 .sc-stepper-pill{cursor:pointer}
 @supports (corner-shape:squircle){
-  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search-wrap,.sc-drawer-search-chip,.sc-drawer-filter-pick,.sc-chip,.sc-catalog,.sc-tile,.sc-tile-ico,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.sc-text-var-chip,.sc-text-composer .sc-text-var-inline,.modal-box,.opt,.confirm-box,.confirm-files,#share-link-url,#assistant,#ai-input,#ai-send,#ai-stop,.ai-card,.ai-msg .bubble,.ai-suggest{corner-shape:squircle}
+  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search-wrap,.sc-drawer-search-chip,.sc-drawer-filter-pick,.sc-chip,.sc-catalog,.sc-tile,.sc-tile-ico,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.sc-text-var-chip,.sc-text-composer .sc-text-var-inline,.modal-box,.opt,.confirm-box,.confirm-files,#share-link-url,#assistant,#ai-input,#ai-send,#ai-stop,.ai-card,.ai-msg .bubble,.ai-suggest,.onboard-box,.onboard-box .card,.choice,.field,.onboard-box .primary,.onboard-box .secondary,.on-back,.code-boxes input{corner-shape:squircle}
   .confirm-actions .primary,.confirm-actions .secondary,.confirm-actions .danger,.confirm-box .row-actions .primary,.confirm-box .row-actions .secondary{corner-shape:squircle}
   .sc-ed-back,.sc-ed-icon,.sc-ed-delete,.sc-ed-save{corner-shape:round;border-radius:50%}
 }
@@ -1092,7 +1092,7 @@ body.dev-build #dev-panel{display:block}
 .page-title{font:800 36px/1.1 inherit;letter-spacing:-.5px}
 .page-sub{color:var(--dim);margin-top:10px}
 .card{margin-top:24px;padding:22px;border:1px solid var(--line);border-radius:16px;background:rgba(20,22,28,.7)}
-.form{display:flex;flex-direction:column;gap:12px;max-width:470px}
+.form{display:flex;flex-direction:column;gap:12px}
 .form label{color:var(--dim);font-size:13px}
 .field{width:100%;margin-top:5px;border:1px solid rgba(255,255,255,.13);border-radius:10px;background:rgba(0,0,0,.25);
   color:#fff;padding:11px 13px;font:inherit;user-select:text;outline:none}
@@ -1104,18 +1104,53 @@ body.dev-build #dev-panel{display:block}
 #account-logout:hover:not(:disabled){background:rgba(190,76,76,.18);color:#efaaaa}
 #account-logout:disabled{color:var(--muted);opacity:.45;cursor:default}
 .primary:disabled,.secondary:disabled,.danger:disabled{opacity:.45;cursor:default}
+.primary.is-loading,.secondary.is-loading{
+  position:relative;color:transparent!important;opacity:1;pointer-events:none;cursor:default;
+}
+.primary.is-loading::after,.secondary.is-loading::after{
+  content:"";position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;
+  border:2px solid rgba(255,255,255,.28);border-top-color:#fff;border-radius:50%;
+  animation:btn-spin .7s linear infinite;
+}
+@keyframes btn-spin{to{transform:rotate(360deg)}}
+#onboarding.is-busy .on-back,#onboarding.is-busy .choice,#onboarding.is-busy .field,
+#onboarding.is-busy .code-boxes input,#onboarding.is-busy .primary:not(.is-loading),
+#onboarding.is-busy .secondary:not(.is-loading){pointer-events:none;opacity:.45}
+#onboarding.is-busy .primary.is-loading,#onboarding.is-busy .secondary.is-loading{opacity:1}
+#settings-account.is-busy .field,#settings-account.is-busy .code-boxes input,
+#settings-account.is-busy .primary:not(.is-loading),#settings-account.is-busy .secondary:not(.is-loading){pointer-events:none;opacity:.45}
+#settings-account.is-busy .primary.is-loading,#settings-account.is-busy .secondary.is-loading{opacity:1}
 .row-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
 .fine{font-size:13px;color:var(--muted);line-height:1.5}.warn{color:#f2bd72}.err{color:#ff7a6e;min-height:20px}
 #onboarding{position:fixed;inset:0;z-index:35;background:radial-gradient(circle at 70% 10%,#252047,#08090d 58%);
   display:none;align-items:center;justify-content:center;padding:50px}
 #onboarding.on{display:flex}
 .onboard-box{width:min(720px,94vw);max-height:88vh;overflow-y:auto;padding:34px;border:1px solid rgba(255,255,255,.12);
-  border-radius:20px;background:rgba(13,14,19,.94);box-shadow:0 28px 90px rgba(0,0,0,.8)}
+  border-radius:28px;background:rgba(13,14,19,.94);box-shadow:0 28px 90px rgba(0,0,0,.8);
+  font-family:var(--font-apple-round);letter-spacing:-.01em}
 .onboard-box h1{font:800 34px/1.15 inherit}.onboard-box h2{font:700 23px/1.2 inherit;margin-bottom:8px}
+.onboard-box .card{border-radius:22px}
+.onboard-box .field{border-radius:14px}
+.onboard-box .primary,.onboard-box .secondary{border-radius:14px}
 .choice-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:26px}
-.choice{border:1px solid var(--line);border-radius:14px;padding:22px;background:rgba(255,255,255,.04);color:#fff;text-align:left;cursor:pointer}
+.choice{border:1px solid var(--line);border-radius:20px;padding:22px;background:rgba(255,255,255,.04);color:#fff;text-align:left;cursor:pointer}
 .choice:hover{border-color:var(--accent);background:rgba(124,108,240,.1)}.choice b{display:block;font-size:18px}.choice small{display:block;color:var(--dim);margin-top:8px}
-.on-step{display:none}.on-step.on{display:block}.on-back{margin-bottom:18px}
+.on-step{display:none}.on-step.on{display:block}
+.code-label{display:block;color:var(--dim);font-size:13px;margin-bottom:8px}
+.code-boxes{display:flex;gap:7px;width:max-content;max-width:100%}
+.code-boxes input{
+  flex:0 0 auto;width:42px;height:50px;margin:0;padding:0;border:1px solid rgba(255,255,255,.13);
+  border-radius:12px;background:rgba(0,0,0,.25);color:#fff;text-align:center;
+  font:800 20px/1 var(--font-apple-round);letter-spacing:0;caret-color:var(--accent);outline:none;
+}
+.code-boxes input:focus{border-color:var(--accent);background:rgba(0,0,0,.25)}
+.on-back{
+  width:36px;height:36px;margin:0 0 18px;padding:0;border:0;border-radius:12px;
+  background:transparent;color:#fff;display:grid;place-items:center;cursor:pointer;
+  transition:background .16s var(--ease);
+}
+.on-back:hover{background:rgba(255,255,255,.09)}
+.on-back svg{width:18px;height:18px;display:block}
 .backup-toolbar{position:relative;display:flex;justify-content:space-between;align-items:center;gap:12px}.usage{color:var(--dim);font-size:13px}
 .backup-list{display:flex;flex-direction:column;gap:8px;margin-top:14px;max-height:205px;overflow:auto;overscroll-behavior-y:contain;padding-right:4px}
 .backup-row{display:flex;align-items:center;gap:11px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.025)}
@@ -1446,7 +1481,7 @@ body.dev-build #dev-panel{display:block}
     </div>
     <div id="ai-log"></div>
     <div id="ai-gate" hidden>
-      <p>Sign in to use the assistant. Your UClient account is required.</p>
+      <p>Connect an email on the Account page to use the assistant.</p>
       <button class="primary" id="ai-signin" type="button">Open account</button>
     </div>
     <div id="ai-suggests" hidden></div>
@@ -1575,12 +1610,14 @@ body.dev-build #dev-panel{display:block}
         <button class="primary" id="login-saved-account" type="button">Continue with saved UUID</button>
       </div>
       <div class="choice-grid">
-        <button class="choice" type="button" data-on-step="on-existing"><b>Existing UClient user</b><small>Sign in with email or an existing UUID and account key.</small></button>
+        <button class="choice" type="button" data-on-step="on-existing"><b>Existing UClient user</b><small>Sign in with email.</small></button>
         <button class="choice" type="button" data-on-step="on-new"><b>Create a new account</b><small>Register with email or create a limited anonymous account.</small></button>
       </div>
     </div>
     <div class="on-step" id="on-existing">
-      <button class="secondary on-back" type="button">Back</button><h2>Existing UClient user</h2>
+      <button class="on-back" type="button" aria-label="Back">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 5 8 12l7 7" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button><h2>Existing UClient user</h2>
       <div class="card">
         <form class="form" id="login-email-form">
           <h3>Email sign in</h3>
@@ -1589,31 +1626,47 @@ body.dev-build #dev-panel{display:block}
           <button class="primary" type="submit">Sign in</button>
         </form>
       </div>
-      <div class="card">
-        <form class="form" id="login-key-form">
-          <h3>UUID and account key</h3>
-          <label>Install UUID<input class="field" id="login-install-id" required autocomplete="off"></label>
-          <label>Account key<input class="field" id="login-account-key" type="password" minlength="32" maxlength="128" required autocomplete="off"></label>
-          <button class="secondary" type="submit">Use account key</button>
-        </form>
-      </div>
     </div>
     <div class="on-step" id="on-new">
-      <button class="secondary on-back" type="button">Back</button><h2>Create a new account</h2>
+      <button class="on-back" type="button" aria-label="Back">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 5 8 12l7 7" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button><h2>Create a new account</h2>
       <div class="card">
         <form class="form" id="register-email-form">
           <h3>Register with email</h3>
           <label>Email<input class="field" id="register-email" type="email" required autocomplete="email"></label>
           <label>Password<input class="field" id="register-password" type="password" minlength="10" maxlength="128" required autocomplete="new-password"></label>
-          <p class="fine">Email verification is not currently available, and lost passwords cannot be recovered.</p>
+          <p class="fine">We will send a verification code to this email. Lost passwords cannot be recovered.</p>
           <button class="primary" type="submit">Create account</button>
         </form>
       </div>
       <div class="card">
         <h3>Create without email</h3>
         <p class="fine warn">Creating an account without an email and password may prevent you from using some features.</p>
-        <p class="fine" lang="ko">&#xC774;&#xBA54;&#xC77C;&#xACFC; &#xBE44;&#xBC00;&#xBC88;&#xD638; &#xC5C6;&#xC774; &#xACC4;&#xC815;&#xC744; &#xC0DD;&#xC131;&#xD558;&#xBA74; &#xC77C;&#xBD80; &#xAE30;&#xB2A5;&#xC744; &#xC0AC;&#xC6A9;&#xD558;&#xC9C0; &#xBABB;&#xD560; &#xC218; &#xC788;&#xC2B5;&#xB2C8;&#xB2E4;.</p>
         <button class="secondary" id="register-anonymous" type="button" style="margin-top:14px">Create anonymous account</button>
+      </div>
+    </div>
+    <div class="on-step" id="on-verify">
+      <button class="on-back" type="button" id="verify-back" aria-label="Back">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 5 8 12l7 7" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button><h2>Check your email</h2>
+      <div class="card">
+        <p class="fine" style="margin:0 0 16px">We sent a 6-digit code to <b id="verify-email"></b>.</p>
+        <form class="form" id="verify-email-form">
+          <div>
+            <span class="code-label">Verification code</span>
+            <div class="code-boxes" id="verify-code-boxes">
+              <input maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" aria-label="Digit 1" data-code-index="0">
+              <input maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Digit 2" data-code-index="1">
+              <input maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Digit 3" data-code-index="2">
+              <input maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Digit 4" data-code-index="3">
+              <input maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Digit 5" data-code-index="4">
+              <input maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Digit 6" data-code-index="5">
+            </div>
+          </div>
+          <button class="primary" type="submit">Verify</button>
+        </form>
+        <button class="secondary" id="verify-resend" type="button" style="margin-top:12px">Resend code</button>
       </div>
     </div>
     <div class="on-step" id="on-wait"><h2 id="on-wait-title">Checking your account...</h2><p class="page-sub">Please wait.</p></div>
@@ -1668,7 +1721,7 @@ body.dev-build #dev-panel{display:block}
         </div>
       </div>
       <div class="settings-pane" id="settings-account">
-        <p class="page-sub">Manage your UClient account. Email sign-in is required for cloud backup and sharing shortcuts.</p>
+		<p class="page-sub">Manage your UClient account. Email sign-in is required for cloud backup, sharing shortcuts, and the assistant.</p>
         <div class="card" id="account-profile-card">
           <h3 id="account-profile-title">Account</h3>
           <p class="fine" id="account-profile-email" style="margin:8px 0 4px"></p>
@@ -1676,12 +1729,35 @@ body.dev-build #dev-panel{display:block}
         </div>
         <div id="account-link-card" class="card">
           <h3>Connect email</h3>
-          <p class="fine" style="margin:8px 0 16px">Link an email and password to use cloud backup and shortcut sharing.</p>
+          <p class="fine" style="margin:8px 0 16px">Link an email and password to this account to use cloud backup, shortcut sharing, and the assistant. This does not create a new account.</p>
           <form class="form" id="account-link-form">
             <label>Email<input class="field" id="link-email" type="email" required autocomplete="email"></label>
             <label>Password<input class="field" id="link-password" type="password" minlength="10" maxlength="128" required autocomplete="new-password"></label>
+            <p class="fine">We will send a verification code to this email.</p>
             <button class="primary" type="submit">Connect email</button>
           </form>
+        </div>
+        <div id="account-verify-card" class="card" style="display:none">
+          <h3>Check your email</h3>
+          <p class="fine" style="margin:8px 0 16px">We sent a 6-digit code to <b id="account-verify-email"></b>.</p>
+          <form class="form" id="account-verify-form">
+            <div>
+              <span class="code-label">Verification code</span>
+              <div class="code-boxes" id="account-verify-code-boxes">
+                <input maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" aria-label="Digit 1" data-code-index="0">
+                <input maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Digit 2" data-code-index="1">
+                <input maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Digit 3" data-code-index="2">
+                <input maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Digit 4" data-code-index="3">
+                <input maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Digit 5" data-code-index="4">
+                <input maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Digit 6" data-code-index="5">
+              </div>
+            </div>
+            <button class="primary" type="submit">Verify</button>
+          </form>
+          <div class="row-actions">
+            <button class="secondary" id="account-verify-resend" type="button">Resend code</button>
+            <button class="secondary" id="account-verify-cancel" type="button">Back</button>
+          </div>
         </div>
       </div>
       <div class="settings-pane" id="settings-backup">
@@ -2483,62 +2559,214 @@ $("fr-refresh").addEventListener("click", function () {
 });
 
 /* -- account and backup actions --------------------------------------- */
+var accountBusyId = "";
+function accountActionBusy() { return !!accountBusyId; }
+function busyButton(id) {
+  var el = $(id);
+  if (!el) return null;
+  if (el.tagName === "BUTTON") return el;
+  return el.querySelector("button[type=submit]") || el.querySelector("button.primary");
+}
+function syncAccountBusy(busy) {
+  var ids = ["login-email-form", "register-email-form", "register-anonymous", "login-saved-account",
+    "verify-email-form", "verify-resend", "account-link-form", "account-verify-form", "account-verify-resend"];
+  for (var i = 0; i < ids.length; i++) {
+    var btn = busyButton(ids[i]);
+    if (!btn) continue;
+    var on = busy && accountBusyId === ids[i];
+    btn.classList.toggle("is-loading", on);
+    btn.disabled = on;
+    if (on) btn.setAttribute("aria-busy", "true");
+    else btn.removeAttribute("aria-busy");
+  }
+  $("onboarding").classList.toggle("is-busy", busy && !!accountBusyId);
+  $("settings-account").classList.toggle("is-busy", busy && (
+    accountBusyId === "account-link-form" || accountBusyId === "account-verify-form" || accountBusyId === "account-verify-resend"));
+}
+function markAccountBusy(id) {
+  if (accountBusyId && accountBusyId !== id) return false;
+  accountBusyId = id;
+  syncAccountBusy(true);
+  return true;
+}
+function clearAccountBusy() {
+  accountBusyId = "";
+  syncAccountBusy(false);
+}
 function setOnStep(id) {
+  var current = "";
   var steps = document.querySelectorAll(".on-step");
-  for (var i = 0; i < steps.length; i++) steps[i].classList.toggle("on", steps[i].id === id);
+  for (var i = 0; i < steps.length; i++) {
+    if (steps[i].classList.contains("on")) current = steps[i].id;
+    steps[i].classList.toggle("on", steps[i].id === id);
+  }
   $("on-error").textContent = "";
+  if (id === "on-verify" && current !== "on-verify") {
+    clearCodeBoxes("verify-code-boxes");
+    focusCodeBoxes("verify-code-boxes");
+  }
 }
 document.querySelectorAll("[data-on-step]").forEach(function (b) {
-  b.addEventListener("click", function () { setOnStep(b.dataset.onStep); });
+  b.addEventListener("click", function () {
+    if (accountActionBusy()) return;
+    setOnStep(b.dataset.onStep);
+  });
 });
 document.querySelectorAll(".on-back").forEach(function (b) {
-  b.addEventListener("click", function () { setOnStep("on-choice"); });
+  if (b.id === "verify-back") return;
+  b.addEventListener("click", function () {
+    if (accountActionBusy()) return;
+    setOnStep("on-choice");
+  });
 });
+function accountLocale() {
+  var lang = String(navigator.language || "en").toLowerCase();
+  return lang.indexOf("ko") === 0 ? "ko" : "en";
+}
 function sendPasswordForm(formId, cmd, emailId, passwordId) {
   $(formId).addEventListener("submit", function (e) {
     e.preventDefault();
+    if (!markAccountBusy(formId)) return;
     var password = $(passwordId).value;
-    send({cmd: cmd, email: $(emailId).value, password: password});
+    send({cmd: cmd, email: $(emailId).value, password: password, locale: accountLocale()});
     $(passwordId).value = "";
     password = "";
-    setOnStep("on-wait");
   });
 }
 sendPasswordForm("login-email-form", "accountLoginEmail", "login-email", "login-password");
 sendPasswordForm("register-email-form", "accountRegisterEmail", "register-email", "register-password");
-$("login-key-form").addEventListener("submit", function (e) {
-  e.preventDefault();
-  var key = $("login-account-key").value;
-  send({cmd: "accountLoginKey", installId: $("login-install-id").value, accountKey: key});
-  $("login-account-key").value = "";
-  key = "";
-  setOnStep("on-wait");
-});
 $("register-anonymous").addEventListener("click", function () {
+  if (accountActionBusy()) return;
   openConfirmDialog(
     "Create without email?",
     "Accounts without an email cannot use every feature.",
     "Create account",
     false,
     function () {
+      if (!markAccountBusy("register-anonymous")) return;
       send({cmd: "accountRegisterAnonymous"});
-      setOnStep("on-wait");
     }
   );
 });
+function codeBoxInputs(rootId) {
+  return Array.prototype.slice.call(document.querySelectorAll("#" + rootId + " input"));
+}
+function readCodeBoxes(rootId) {
+  return codeBoxInputs(rootId).map(function (input) {
+    return String(input.value || "").replace(/\D/g, "");
+  }).join("");
+}
+function clearCodeBoxes(rootId) {
+  codeBoxInputs(rootId).forEach(function (input) { input.value = ""; });
+}
+function focusCodeBoxes(rootId) {
+  var first = codeBoxInputs(rootId)[0];
+  if (first) first.focus();
+}
+function fillCodeBoxes(rootId, digits) {
+  var inputs = codeBoxInputs(rootId);
+  var value = String(digits || "").replace(/\D/g, "").slice(0, inputs.length);
+  for (var i = 0; i < inputs.length; i++) inputs[i].value = value[i] || "";
+  return value.length;
+}
+function bindCodeBoxes(rootId, onComplete) {
+  var inputs = codeBoxInputs(rootId);
+  var submitting = false;
+  inputs.forEach(function (input, index) {
+    input.addEventListener("input", function () {
+      var digits = String(input.value || "").replace(/\D/g, "");
+      if (digits.length > 1) {
+        var filled = fillCodeBoxes(rootId, digits);
+        inputs[Math.min(filled, inputs.length) - 1].focus();
+      } else {
+        input.value = digits.slice(-1);
+        if (input.value && index < inputs.length - 1) inputs[index + 1].focus();
+      }
+      if (!submitting && readCodeBoxes(rootId).length === inputs.length && onComplete) {
+        submitting = true;
+        onComplete();
+        submitting = false;
+      }
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Backspace" && !input.value && index > 0) {
+        inputs[index - 1].value = "";
+        inputs[index - 1].focus();
+        e.preventDefault();
+      } else if (e.key === "ArrowLeft" && index > 0) {
+        inputs[index - 1].focus();
+        e.preventDefault();
+      } else if (e.key === "ArrowRight" && index < inputs.length - 1) {
+        inputs[index + 1].focus();
+        e.preventDefault();
+      }
+    });
+    input.addEventListener("paste", function (e) {
+      var text = ((e.clipboardData || window.clipboardData).getData("text") || "").replace(/\D/g, "").slice(0, inputs.length);
+      if (!text) return;
+      e.preventDefault();
+      fillCodeBoxes(rootId, text);
+      inputs[Math.min(text.length, inputs.length) - 1].focus();
+      if (!submitting && text.length === inputs.length && onComplete) {
+        submitting = true;
+        onComplete();
+        submitting = false;
+      }
+    });
+    input.addEventListener("focus", function () { input.select(); });
+  });
+}
+function submitEmailCode(boxesId, busyId) {
+  if (accountActionBusy()) return;
+  var code = readCodeBoxes(boxesId);
+  if (code.length !== 6) return;
+  if (!markAccountBusy(busyId)) return;
+  send({cmd: "accountVerifyEmail", code: code, locale: accountLocale()});
+}
+$("verify-email-form").addEventListener("submit", function (e) {
+  e.preventDefault();
+  submitEmailCode("verify-code-boxes", "verify-email-form");
+});
+bindCodeBoxes("verify-code-boxes", function () { submitEmailCode("verify-code-boxes", "verify-email-form"); });
+$("verify-resend").addEventListener("click", function () {
+  if (!markAccountBusy("verify-resend")) return;
+  send({cmd: "accountVerifyResend", locale: accountLocale()});
+});
+$("verify-back").addEventListener("click", function () {
+  if (accountActionBusy()) return;
+  send({cmd: "accountVerifyCancel"});
+  setOnStep("on-new");
+});
 $("account-link-form").addEventListener("submit", function (e) {
   e.preventDefault();
+  if (!markAccountBusy("account-link-form")) return;
   var password = $("link-password").value;
-  send({cmd: "accountLinkEmail", email: $("link-email").value, password: password});
+  send({cmd: "accountLinkEmail", email: $("link-email").value, password: password, locale: accountLocale()});
   $("link-password").value = "";
   password = "";
+});
+$("account-verify-form").addEventListener("submit", function (e) {
+  e.preventDefault();
+  submitEmailCode("account-verify-code-boxes", "account-verify-form");
+});
+bindCodeBoxes("account-verify-code-boxes", function () { submitEmailCode("account-verify-code-boxes", "account-verify-form"); });
+$("account-verify-resend").addEventListener("click", function () {
+  if (!markAccountBusy("account-verify-resend")) return;
+  send({cmd: "accountVerifyResend", locale: accountLocale()});
+});
+$("account-verify-cancel").addEventListener("click", function () {
+  if (accountActionBusy()) return;
+  send({cmd: "accountVerifyCancel"});
 });
 $("account-logout").addEventListener("click", function () {
   if (lastState && lastState.gameRunning) return;
   toggleSettings(false);
   send({cmd: "accountLogout"});
 });
-$("login-saved-account").addEventListener("click", function () { send({cmd: "accountLoginSaved"}); });
+$("login-saved-account").addEventListener("click", function () {
+  if (!markAccountBusy("login-saved-account")) return;
+  send({cmd: "accountLoginSaved"});
+});
 $("backup-refresh").addEventListener("click", function () { send({cmd: "backupRefresh"}); });
 $("backup-main").addEventListener("click", function (e) {
   if (e.target.closest(".backup-filter-menu, .backup-filter-button"))
@@ -3004,29 +3232,68 @@ function renderAccountAndBackup(st) {
   var ready = state === "ready_anonymous" || state === "ready_email";
   $("onboarding").classList.toggle("on", !ready);
   if (state === "checking" || state === "busy") {
-    setOnStep("on-wait");
-    $("on-wait-title").textContent = state === "busy" ? "Completing your account request..." : "Checking your account...";
+    if ($("on-wait").classList.contains("on"))
+      setOnStep("on-choice");
+    syncAccountBusy(!!accountBusyId);
   } else if (state === "needs_onboarding") {
     var signIn = (st.accountError || "").indexOf("signin:") === 0;
-    if ($("on-wait").classList.contains("on")) setOnStep(signIn ? "on-existing" : "on-choice");
-    $("on-error").textContent = signIn ? (st.accountError || "").slice(7) : (st.accountError || "");
+    var registerErr = (st.accountError || "").indexOf("register:") === 0;
+    if (st.pendingEmailVerify)
+      setOnStep("on-verify");
+    else if ($("on-wait").classList.contains("on") || ($("on-verify").classList.contains("on") && !st.pendingEmailVerify))
+      setOnStep(signIn ? "on-existing" : (registerErr ? "on-new" : "on-choice"));
+    var err = st.accountError || "";
+    if (signIn) err = err.slice(7);
+    else if (registerErr) err = err.slice(9);
+    $("on-error").textContent = err;
+    var verifyFailed = accountActionBusy() && !!err && $("on-verify").classList.contains("on");
+    clearAccountBusy();
+    if (verifyFailed) {
+      clearCodeBoxes("verify-code-boxes");
+      focusCodeBoxes("verify-code-boxes");
+    }
   } else if (state === "error") {
-    setOnStep("on-wait");
-    $("on-wait-title").textContent = "Account check failed";
-    $("on-error").innerHTML = esc(st.accountError || "Could not check the account.") +
-      '<div class="row-actions"><button class="secondary" type="button" id="account-retry">Retry</button></div>';
-    $("account-retry").onclick = function () { send({cmd: "accountRetry"}); };
+    var stayOnForm = $("on-existing").classList.contains("on") || $("on-new").classList.contains("on") ||
+      $("on-verify").classList.contains("on") || $("on-choice").classList.contains("on");
+    clearAccountBusy();
+    if (stayOnForm) {
+      $("on-error").textContent = st.accountError || "Could not check the account.";
+    } else {
+      setOnStep("on-wait");
+      $("on-wait-title").textContent = "Account check failed";
+      $("on-error").innerHTML = esc(st.accountError || "Could not check the account.") +
+        '<div class="row-actions"><button class="secondary" type="button" id="account-retry">Retry</button></div>';
+      $("account-retry").onclick = function () { send({cmd: "accountRetry"}); };
+    }
   } else if (state === "banned") {
+    clearAccountBusy();
     setOnStep("on-wait");
     $("on-wait-title").textContent = "Account suspended";
     $("on-error").textContent = st.accountError || "This account cannot use UClient.";
+  } else {
+    var settingsVerifyFailed = accountActionBusy() && accountBusyId === "account-verify-form" && !!(st.accountError);
+    clearAccountBusy();
+    if (settingsVerifyFailed) {
+      clearCodeBoxes("account-verify-code-boxes");
+      focusCodeBoxes("account-verify-code-boxes");
+    }
   }
   $("on-saved-account").style.display = st.hasSavedAccount ? "block" : "none";
   $("saved-account-id").textContent = st.savedAccountInstallId ? ("UUID: " + st.savedAccountInstallId) : "";
   var emailReady = state === "ready_email";
+  var linking = !!st.pendingEmailVerify && st.pendingEmailPurpose === "link";
   $("backup-gate").style.display = emailReady ? "none" : "block";
   $("backup-main").style.display = emailReady ? "block" : "none";
-  $("account-link-card").style.display = emailReady ? "none" : "block";
+  $("account-link-card").style.display = emailReady || linking ? "none" : "block";
+  var verifyCard = $("account-verify-card");
+  var verifyWasHidden = verifyCard.style.display === "none";
+  verifyCard.style.display = linking ? "block" : "none";
+  if (linking && verifyWasHidden) {
+    clearCodeBoxes("account-verify-code-boxes");
+    focusCodeBoxes("account-verify-code-boxes");
+  }
+  $("verify-email").textContent = st.pendingEmail || "";
+  $("account-verify-email").textContent = st.pendingEmail || "";
   $("account-profile-title").textContent = emailReady ? "Signed in" : "Anonymous account";
   $("account-profile-email").textContent = emailReady && st.accountEmail ?
     ("Email: " + st.accountEmail) : "No email connected yet.";
@@ -5608,7 +5875,7 @@ var AI_WAIT_LINES = [
 ];
 function aiAccountReady() {
   var st = lastState || {};
-  return st.accountState === "ready_anonymous" || st.accountState === "ready_email";
+  return st.accountState === "ready_email";
 }
 function aiCatalogHas(list, type) {
   for (var i = 0; i < list.length; i++) {
