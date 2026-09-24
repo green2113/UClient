@@ -397,6 +397,7 @@ static std::wstring SingleInstanceMutexName(const std::wstring &InstallDir);
 static bool AcquireSingleInstanceOrActivateExisting(const std::wstring &InstallDir, const std::vector<std::wstring> &ForwardArgs);
 static bool RunUpdateDownload(LauncherArgs *pA, const UpdateMetadata &Metadata);
 static bool ExtractJsonString(const std::string &Json, const char *Key, std::string &Out);
+static void ParseCfgAssignments(const std::string &Text, std::map<std::string, std::string> &Out);
 static bool ValidComponentVersion(const std::string &Version);
 static std::wstring ResolveGameUserDataRoot();
 static void MigrateTeeworldsUserDataIfNeeded();
@@ -2441,7 +2442,7 @@ static void RequestNoticesRefresh()
 	}
 }
 
-// ─── Friends (settings_ddnet.cfg + master servers.json) ───────────────────────
+// ─── Friends (settings_ddnet.cfg + presence + master servers.json) ───────────
 
 static std::wstring GetDdnetSettingsPath()
 {
@@ -2679,7 +2680,24 @@ static std::string FriendLookupKey(std::string Name)
 	return Name;
 }
 
-static void MatchFriendsOnline(std::vector<FriendView> &Friends, const std::string &Json)
+static std::string NormalizeServerAddress(std::string Address)
+{
+	Address = StripTwAddress(std::move(Address));
+	for(char &Ch : Address)
+		Ch = (char)tolower((unsigned char)Ch);
+	return Address;
+}
+
+static void SortFriends(std::vector<FriendView> &Friends)
+{
+	std::stable_sort(Friends.begin(), Friends.end(), [](const FriendView &A, const FriendView &B) {
+		if(A.Online != B.Online)
+			return A.Online > B.Online;
+		return _stricmp(A.Name.c_str(), B.Name.c_str()) < 0;
+	});
+}
+
+static void MatchFriendsOnline(std::vector<FriendView> &Friends, const std::string &Json, std::unordered_map<std::string, PlayerLoc> &ByAddress)
 {
 	std::unordered_map<std::string, PlayerLoc> ByName;
 	size_t Pos = 0;
@@ -2712,6 +2730,9 @@ static void MatchFriendsOnline(std::vector<FriendView> &Friends, const std::stri
 			Pos = AddrArrEnd + 1;
 			continue;
 		}
+
+		PlayerLoc Server;
+		Server.Address = Address;
 
 		const size_t InfoKey = Json.find("\"info\"", AddrArrEnd);
 		if(InfoKey == std::string::npos)
@@ -2780,6 +2801,9 @@ static void MatchFriendsOnline(std::vector<FriendView> &Friends, const std::stri
 			}
 		}
 
+		Server.ServerName = ServerName;
+		Server.MapName = MapName;
+		ByAddress[NormalizeServerAddress(Address)] = std::move(Server);
 		Pos = InfoEnd + 1;
 	}
 
@@ -2794,21 +2818,130 @@ static void MatchFriendsOnline(std::vector<FriendView> &Friends, const std::stri
 		F.MapName = It->second.MapName;
 		F.Afk = It->second.Afk;
 	}
+}
 
-	std::stable_sort(Friends.begin(), Friends.end(), [](const FriendView &A, const FriendView &B) {
-		if(A.Online != B.Online)
-			return A.Online > B.Online;
-		return _stricmp(A.Name.c_str(), B.Name.c_str()) < 0;
-	});
+static std::string ReadPresenceListUrl()
+{
+	const char *pDefault = "https://ddnet.under1111.com/api/presence";
+	static const wchar_t *Files[] = {
+		L"settings_uclient.cfg",
+		L"settings_BestClient.cfg",
+		L"settings_ddnet.cfg",
+	};
+	const std::wstring Root = ResolveGameUserDataRoot();
+	for(const wchar_t *pName : Files)
+	{
+		std::string Text;
+		if(Root.empty() || !ReadEntireFile(JoinPath(Root, pName), Text))
+			continue;
+		std::map<std::string, std::string> Values;
+		ParseCfgAssignments(Text, Values);
+		const auto It = Values.find("uc_presence_api_base_url");
+		if(It != Values.end() && !It->second.empty())
+			return It->second;
+	}
+	return pDefault;
+}
+
+static void ApplyPresenceFriends(std::vector<FriendView> &Friends, const std::string &Json, const std::unordered_map<std::string, PlayerLoc> &ByAddress)
+{
+	struct PresenceHit
+	{
+		std::string Address;
+		uint64_t LastSeen = 0;
+	};
+	std::unordered_map<std::string, PresenceHit> ByName;
+	size_t Pos = 0;
+	while(true)
+	{
+		const size_t PlayersKey = Json.find("\"players\"", Pos);
+		if(PlayersKey == std::string::npos)
+			break;
+		const size_t Marker = Json.rfind("\":{", PlayersKey);
+		if(Marker == std::string::npos || PlayersKey - Marker > 320)
+		{
+			Pos = PlayersKey + 9;
+			continue;
+		}
+		const size_t KeyOpen = Marker == 0 ? std::string::npos : Json.rfind('"', Marker - 1);
+		if(KeyOpen == std::string::npos || KeyOpen >= Marker)
+		{
+			Pos = PlayersKey + 9;
+			continue;
+		}
+		const std::string Address = StripTwAddress(Json.substr(KeyOpen + 1, Marker - KeyOpen - 1));
+		const size_t Arr = Json.find('[', PlayersKey);
+		if(Arr == std::string::npos)
+			break;
+		const size_t ArrEnd = FindMatchingBracket(Json, Arr, '[', ']');
+		if(ArrEnd == std::string::npos)
+			break;
+
+		size_t CPos = Arr;
+		while(CPos < ArrEnd)
+		{
+			const size_t Obj = Json.find('{', CPos);
+			if(Obj == std::string::npos || Obj >= ArrEnd)
+				break;
+			const size_t ObjEnd = FindMatchingBracket(Json, Obj, '{', '}');
+			if(ObjEnd == std::string::npos || ObjEnd > ArrEnd)
+				break;
+			const std::string Slice = Json.substr(Obj, ObjEnd - Obj + 1);
+			std::string PlayerName;
+			if(ExtractJsonString(Slice, "name", PlayerName) && !PlayerName.empty())
+			{
+				PresenceHit Hit;
+				Hit.Address = Address;
+				const size_t SeenKey = Slice.find("\"last_seen\"");
+				if(SeenKey != std::string::npos)
+				{
+					const size_t Colon = Slice.find(':', SeenKey + 11);
+					if(Colon != std::string::npos)
+						Hit.LastSeen = _strtoui64(Slice.c_str() + Colon + 1, nullptr, 10);
+				}
+				const std::string Key = FriendLookupKey(PlayerName);
+				const auto It = ByName.find(Key);
+				if(It == ByName.end() || Hit.LastSeen >= It->second.LastSeen)
+					ByName[Key] = std::move(Hit);
+			}
+			CPos = ObjEnd + 1;
+		}
+		Pos = ArrEnd + 1;
+	}
+
+	for(FriendView &F : Friends)
+	{
+		const auto It = ByName.find(FriendLookupKey(F.Name));
+		if(It == ByName.end() || It->second.Address.empty())
+			continue;
+		const std::string Norm = NormalizeServerAddress(It->second.Address);
+		const bool SameServer = F.Online && NormalizeServerAddress(F.Address) == Norm;
+		F.Online = true;
+		if(SameServer)
+			continue;
+		F.Address = It->second.Address;
+		F.Afk = false;
+		F.ServerName.clear();
+		F.MapName.clear();
+		const auto Server = ByAddress.find(Norm);
+		if(Server != ByAddress.end())
+		{
+			if(!Server->second.Address.empty())
+				F.Address = Server->second.Address;
+			F.ServerName = Server->second.ServerName;
+			F.MapName = Server->second.MapName;
+		}
+	}
 }
 
 static DWORD WINAPI FriendsThread(LPVOID)
 {
 	std::vector<FriendView> Friends = LoadFriendsFromSettings();
+	std::unordered_map<std::string, PlayerLoc> ByAddress;
 	std::string Body;
 	static const wchar_t *Urls[] = {
-		L"https://master.bestclient.fun/servers.json",
 		L"https://master1.ddnet.org/ddnet/15/servers.json",
+		L"https://master.bestclient.fun/servers.json",
 	};
 	bool Got = false;
 	for(const wchar_t *pUrl : Urls)
@@ -2820,7 +2953,13 @@ static DWORD WINAPI FriendsThread(LPVOID)
 		}
 	}
 	if(Got)
-		MatchFriendsOnline(Friends, Body);
+		MatchFriendsOnline(Friends, Body, ByAddress);
+
+	const std::wstring PresenceUrl = Utf8ToWide(ReadPresenceListUrl().c_str());
+	std::string PresenceBody;
+	if(!PresenceUrl.empty() && HttpGetToString(PresenceUrl, PresenceBody) && PresenceBody.find("\"players\"") != std::string::npos)
+		ApplyPresenceFriends(Friends, PresenceBody, ByAddress);
+	SortFriends(Friends);
 
 	EnterCriticalSection(&g_Lock);
 	g_Friends = std::move(Friends);
