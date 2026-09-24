@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UClient Account Bans</title>
+<style>
+:root{color-scheme:dark;--bg:#0d0f14;--panel:#171a22;--line:#2a2f3a;--text:#eef0f4;--dim:#9aa0ad;--accent:#7c6cf0;--danger:#ff6b6b}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:24px}
+.wrap{max-width:980px;margin:0 auto}
+h1{font-size:24px;margin-bottom:6px}
+.sub{color:var(--dim);margin-bottom:24px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:18px}
+label{display:block;font-size:12px;color:var(--dim);margin:12px 0 6px}
+input,textarea,select{width:100%;background:#0f1218;border:1px solid var(--line);border-radius:10px;color:var(--text);padding:10px 12px;font:inherit}
+textarea{min-height:72px;resize:vertical}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.btn{border:0;border-radius:10px;padding:10px 14px;font:inherit;font-weight:600;cursor:pointer}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.secondary{background:#252933;color:var(--text)}
+.btn.danger{background:rgba(255,107,107,.15);color:var(--danger)}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.account{border-top:1px solid var(--line);padding:14px 0}
+.account:first-child{border-top:0;padding-top:0}
+.account h3{font-size:16px}
+.meta{color:var(--dim);font-size:12px;margin-top:4px;word-break:break-all}
+.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.badge{font-size:11px;padding:2px 8px;border-radius:999px;background:#252933;color:var(--dim)}
+.badge.on{background:rgba(255,107,107,.18);color:var(--danger)}
+.hidden{display:none}
+.error{color:var(--danger);margin-top:10px}
+.ok{color:#7ddba0;margin-top:10px}
+.nav{display:flex;gap:8px;margin:0 0 22px}
+.nav a{color:var(--dim);text-decoration:none;padding:6px 10px;border-radius:999px;border:1px solid var(--line)}
+.nav a.on{color:#fff;border-color:transparent;background:var(--accent)}
+.ban-form{margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="nav"><a href="/admin">Notices</a><a class="on" href="/admin/bans">Bans</a></nav>
+  <h1>Account Bans</h1>
+  <p class="sub">Ban an install. The launcher blocks Play, and the game client stays on the blocked screen.</p>
+
+  <section class="card" id="login-card">
+    <label for="token">Admin token</label>
+    <input id="token" type="password" placeholder="Bearer token configured on the worker">
+    <div class="actions">
+      <button class="btn primary" id="login-btn" type="button">Sign in</button>
+    </div>
+    <div class="error hidden" id="login-error"></div>
+  </section>
+
+  <section class="hidden" id="app">
+    <section class="card">
+      <h2 style="font-size:18px;margin-bottom:8px">Find an account</h2>
+      <form id="search-form">
+        <label for="query">Install id, email, player name, or last IP</label>
+        <input id="query" maxlength="120" required placeholder="name or email">
+        <div class="actions">
+          <button class="btn primary" type="submit">Search</button>
+          <button class="btn secondary" id="logout-btn" type="button">Sign out</button>
+        </div>
+        <div class="error hidden" id="search-error"></div>
+      </form>
+      <div id="results" style="margin-top:16px"></div>
+    </section>
+
+    <section class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <h2 style="font-size:18px">Active bans</h2>
+        <button class="btn secondary" id="refresh-btn" type="button">Refresh</button>
+      </div>
+      <div id="ban-list" style="margin-top:12px"></div>
+      <div class="error hidden" id="list-error"></div>
+    </section>
+  </section>
+</div>
+<script>
+const TOKEN_KEY = "uclient_admin_token";
+const $ = id => document.getElementById(id);
+const show = (el, on) => el.classList.toggle("hidden", !on);
+const authHeaders = () => ({authorization: "Bearer " + localStorage.getItem(TOKEN_KEY), "content-type": "application/json"});
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {...authHeaders(), ...(options.headers || {})},
+  });
+  const body = await response.json().catch(() => ({}));
+  if(!response.ok)
+    throw new Error(body.message || body.error || ("HTTP " + response.status));
+  return body;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, ch => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[ch]));
+}
+
+function formatWhen(unix) {
+  if(!unix) return "unknown";
+  return new Date(unix * 1000).toLocaleString();
+}
+
+function banLabel(ban) {
+  if(!ban) return "Not banned";
+  if(ban.permanent) return "Permanent";
+  return "Until " + formatWhen(ban.expires_at);
+}
+
+function accountCard(account) {
+  const ban = account.ban;
+  return `
+    <article class="account" data-id="${escapeHtml(account.install_id)}">
+      <h3>${escapeHtml(account.player_name || "No player name")}</h3>
+      <div class="meta">${escapeHtml(account.install_id)}</div>
+      <div class="meta">${escapeHtml(account.email || "No email")} · last seen ${escapeHtml(formatWhen(account.last_seen_at))} · ${escapeHtml(account.last_ip || "no ip")}</div>
+      <div class="badges">
+        <span class="badge ${ban ? "on" : ""}">${escapeHtml(banLabel(ban))}</span>
+        ${ban && ban.reason ? `<span class="badge">${escapeHtml(ban.reason)}</span>` : ""}
+      </div>
+      ${ban ? `<div class="actions"><button class="btn secondary unban-btn" type="button">Unban</button></div>` : `
+        <form class="ban-form">
+          <label>Reason</label>
+          <textarea class="reason" maxlength="500" required placeholder="Shown to the player"></textarea>
+          <div class="row">
+            <div>
+              <label>Length</label>
+              <select class="length">
+                <option value="permanent">Permanent</option>
+                <option value="86400">1 day</option>
+                <option value="604800">7 days</option>
+                <option value="2592000">30 days</option>
+                <option value="custom">Custom end</option>
+              </select>
+            </div>
+            <div class="custom-end hidden">
+              <label>Ends</label>
+              <input class="ends" type="datetime-local">
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn danger" type="submit">Ban account</button>
+          </div>
+        </form>`}
+    </article>`;
+}
+
+function renderResults(accounts) {
+  const root = $("results");
+  if(!accounts.length) {
+    root.innerHTML = '<p class="meta">No matching accounts.</p>';
+    return;
+  }
+  root.innerHTML = accounts.map(accountCard).join("");
+}
+
+function renderBans(bans) {
+  const root = $("ban-list");
+  if(!bans.length) {
+    root.innerHTML = '<p class="meta">No active bans.</p>';
+    return;
+  }
+  root.innerHTML = bans.map(ban => `
+    <article class="account" data-id="${escapeHtml(ban.install_id)}">
+      <h3>${escapeHtml(ban.player_name || "No player name")}</h3>
+      <div class="meta">${escapeHtml(ban.install_id)}</div>
+      <div class="meta">${escapeHtml(ban.email || "No email")} · ${escapeHtml(ban.reason)}</div>
+      <div class="badges"><span class="badge on">${escapeHtml(ban.permanent ? "Permanent" : ("Until " + formatWhen(ban.expires_at)))}</span></div>
+      <div class="actions"><button class="btn secondary unban-btn" type="button">Unban</button></div>
+    </article>
+  `).join("");
+}
+
+async function loadBans() {
+  const data = await api("/admin/bans/active");
+  renderBans(data.bans || []);
+  show($("list-error"), false);
+}
+
+async function signIn() {
+  const token = $("token").value.trim();
+  if(!token) return;
+  localStorage.setItem(TOKEN_KEY, token);
+  try {
+    await loadBans();
+    show($("login-card"), false);
+    show($("app"), true);
+    show($("login-error"), false);
+  } catch (error) {
+    localStorage.removeItem(TOKEN_KEY);
+    $("login-error").textContent = error.message;
+    show($("login-error"), true);
+  }
+}
+
+async function unban(installId) {
+  if(!confirm("Remove the active ban for this account?")) return;
+  await api("/admin/bans/" + encodeURIComponent(installId), {method: "DELETE"});
+  await loadBans();
+  const query = $("query").value.trim();
+  if(query) await search();
+}
+
+async function search() {
+  const query = $("query").value.trim();
+  const data = await api("/admin/accounts/search?q=" + encodeURIComponent(query));
+  renderResults(data.accounts || []);
+  show($("search-error"), false);
+}
+
+$("login-btn").addEventListener("click", signIn);
+$("token").addEventListener("keydown", event => { if(event.key === "Enter") signIn(); });
+$("logout-btn").addEventListener("click", () => {
+  localStorage.removeItem(TOKEN_KEY);
+  show($("app"), false);
+  show($("login-card"), true);
+});
+$("refresh-btn").addEventListener("click", () => loadBans().catch(error => {
+  $("list-error").textContent = error.message;
+  show($("list-error"), true);
+}));
+$("search-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  try { await search(); }
+  catch (error) {
+    $("search-error").textContent = error.message;
+    show($("search-error"), true);
+  }
+});
+
+document.body.addEventListener("change", event => {
+  const select = event.target.closest(".length");
+  if(!select) return;
+  const custom = select.closest(".ban-form").querySelector(".custom-end");
+  show(custom, select.value === "custom");
+});
+
+document.body.addEventListener("submit", async event => {
+  const form = event.target.closest(".ban-form");
+  if(!form) return;
+  event.preventDefault();
+  const card = form.closest(".account");
+  const length = form.querySelector(".length").value;
+  let expiresAt = null;
+  if(length === "custom") {
+    const raw = form.querySelector(".ends").value;
+    const time = raw ? Math.floor(new Date(raw).getTime() / 1000) : 0;
+    if(!time) {
+      alert("Choose when the ban ends.");
+      return;
+    }
+    expiresAt = time;
+  } else if(length !== "permanent") {
+    expiresAt = Math.floor(Date.now() / 1000) + Number(length);
+  }
+  try {
+    await api("/admin/bans", {
+      method: "POST",
+      body: JSON.stringify({
+        install_id: card.dataset.id,
+        reason: form.querySelector(".reason").value.trim(),
+        expires_at: expiresAt,
+      }),
+    });
+    await loadBans();
+    await search();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+document.body.addEventListener("click", event => {
+  const button = event.target.closest(".unban-btn");
+  if(!button) return;
+  const installId = button.closest(".account").dataset.id;
+  unban(installId).catch(error => alert(error.message));
+});
+
+if(localStorage.getItem(TOKEN_KEY)) {
+  $("token").value = localStorage.getItem(TOKEN_KEY);
+  signIn();
+}
+</script>
+</body>
+</html>

@@ -1,4 +1,10 @@
 import {
+	adminClearBans,
+	adminCreateBan,
+	adminListBans,
+	adminSearchAccounts,
+} from "./bans";
+import {
 	adminCreateNotice,
 	adminDeleteNotice,
 	adminListNotices,
@@ -1406,6 +1412,23 @@ export default {
 				if(env.ASSETS)
 					return env.ASSETS.fetch(new URL("/admin.html", request.url));
 				return error(404, "not_found", "Admin page is not available.");
+			}
+			if(request.method === "GET" && url.pathname === "/admin/bans")
+			{
+				if(env.ASSETS)
+					return env.ASSETS.fetch(new URL("/admin-bans.html", request.url));
+				return error(404, "not_found", "Ban page is not available.");
+			}
+			if(segments[0] === "admin" && segments[1] === "accounts" && segments[2] === "search" && request.method === "GET")
+				return adminSearchAccounts(request, env);
+			if(segments[0] === "admin" && segments[1] === "bans")
+			{
+				if(segments.length === 3 && segments[2] === "active" && request.method === "GET")
+					return adminListBans(request, env);
+				if(segments.length === 2 && request.method === "POST")
+					return adminCreateBan(request, env);
+				if(segments.length === 3 && request.method === "DELETE")
+					return adminClearBans(request, env, segments[2]!);
 			}
 			if(segments[0] === "admin" && segments[1] === "notices")
 			{

@@ -17,6 +17,7 @@
 #include <game/client/components/controls.h>
 #include <game/client/gameclient.h>
 #include <game/localization.h>
+#include <game/teamscore.h>
 
 // Reading the foreground window title needs the Win32 API. It is included last
 // and lean so its macros cannot leak into any DDNet header.
@@ -214,6 +215,11 @@ static bool ParseTrigger(const json_value *pTrigger, CAutomation::STrigger &Out)
 	{
 		Out.m_Type = CAutomation::ETriggerType::SERVER_CONNECT;
 		return ParseServerTargets(pTrigger, Out);
+	}
+	if(str_comp(pTypeStr, "team_join") == 0)
+	{
+		Out.m_Type = CAutomation::ETriggerType::TEAM_JOIN;
+		return true;
 	}
 	if(str_comp(pTypeStr, "chat_received") != 0)
 		return false;
@@ -1153,6 +1159,8 @@ void CAutomation::OnStateChange(int NewState, int OldState)
 	if(NewState == IClient::STATE_OFFLINE)
 	{
 		m_ServerConnectTriggeredForSession = false;
+		m_TeamBaselineReady = false;
+		m_vLastTeam.clear();
 		if(m_RunnerActive)
 			StopRunner();
 		return;
@@ -1164,6 +1172,95 @@ void CAutomation::OnStateChange(int NewState, int OldState)
 	const NETADDR &ServerAddr = Client()->ServerAddress();
 	m_ServerConnectTriggeredForSession = true;
 	EvaluateServerConnectTriggers(ServerAddr);
+}
+
+void CAutomation::OnTeamJoined(const STeamJoinEvent &Event)
+{
+	if(!IsActive() || m_vShortcuts.empty() || m_RunnerActive)
+		return;
+	for(size_t i = 0; i < m_vShortcuts.size(); ++i)
+	{
+		const SShortcut &Shortcut = m_vShortcuts[i];
+		if(Shortcut.m_Manual || !Shortcut.m_Enabled)
+			continue;
+		if(MatchesTeamJoinTrigger(Shortcut))
+		{
+			StartRunner(i, nullptr, &Event);
+			break;
+		}
+	}
+}
+
+bool CAutomation::MatchesTeamJoinTrigger(const SShortcut &Shortcut) const
+{
+	return Shortcut.m_Trigger.m_Type == ETriggerType::TEAM_JOIN;
+}
+
+void CAutomation::SeedRunnerTeamJoinVariables(const STeamJoinEvent &Event)
+{
+	m_Runner.m_HadTeamJoinEvent = true;
+	m_Runner.m_TeamJoinEvent = Event;
+	m_Runner.m_Variables["joinedPlayer"] = Event.m_Name;
+	char aTeam[16];
+	str_format(aTeam, sizeof(aTeam), "%d", Event.m_Team);
+	m_Runner.m_Variables["joinedTeam"] = aTeam;
+}
+
+void CAutomation::OnNewSnapshot()
+{
+	if(!IsActive())
+	{
+		m_TeamBaselineReady = false;
+		m_vLastTeam.clear();
+		return;
+	}
+
+	std::vector<int> aTeam(MAX_CLIENTS, -1);
+	for(int i = 0; i < MAX_CLIENTS; ++i)
+	{
+		if(GameClient()->m_Snap.m_apPlayerInfos[i])
+			aTeam[i] = GameClient()->m_Teams.Team(i);
+	}
+	if(!m_TeamBaselineReady || (int)m_vLastTeam.size() != MAX_CLIENTS)
+	{
+		m_vLastTeam = aTeam;
+		m_TeamBaselineReady = true;
+		return;
+	}
+
+	std::vector<STeamJoinEvent> vJoins;
+	for(int i = 0; i < MAX_CLIENTS; ++i)
+	{
+		const int Prev = m_vLastTeam[i];
+		const int Now = aTeam[i];
+		m_vLastTeam[i] = Now;
+		if(Now == Prev || Now <= TEAM_FLOCK || Now >= TEAM_SUPER)
+			continue;
+		bool IsMe = false;
+		for(int LocalId : GameClient()->m_aLocalIds)
+		{
+			if(LocalId >= 0 && LocalId == i)
+			{
+				IsMe = true;
+				break;
+			}
+		}
+		if(IsMe)
+			continue;
+		const char *pName = GameClient()->m_aClients[i].m_aName;
+		if(!pName || !pName[0])
+			continue;
+		STeamJoinEvent Event;
+		Event.m_ClientId = i;
+		Event.m_Name = pName;
+		Event.m_Team = Now;
+		vJoins.push_back(Event);
+	}
+	// A full teams-state sync on connect changes many clients at once.
+	if(vJoins.size() >= 4)
+		return;
+	for(const STeamJoinEvent &Event : vJoins)
+		OnTeamJoined(Event);
 }
 
 bool CAutomation::MatchesChatTrigger(const SShortcut &Shortcut, const SChatEvent &Event) const
@@ -1233,7 +1330,7 @@ void CAutomation::SeedRunnerChatVariables(const SChatEvent &Event)
 	m_Runner.m_Variables["message"] = Event.m_Text;
 }
 
-void CAutomation::StartRunner(size_t ShortcutIndex, const SChatEvent *pChatEvent)
+void CAutomation::StartRunner(size_t ShortcutIndex, const SChatEvent *pChatEvent, const STeamJoinEvent *pTeamEvent)
 {
 	if(ShortcutIndex >= m_vShortcuts.size())
 		return;
@@ -1243,6 +1340,8 @@ void CAutomation::StartRunner(size_t ShortcutIndex, const SChatEvent *pChatEvent
 	m_Runner.m_ActionIndex = 0;
 	if(pChatEvent)
 		SeedRunnerChatVariables(*pChatEvent);
+	if(pTeamEvent)
+		SeedRunnerTeamJoinVariables(*pTeamEvent);
 	if(g_Config.m_PlayerName[0])
 		m_Runner.m_Variables["name"] = g_Config.m_PlayerName;
 	char aNearestPlayer[MAX_NAME_LENGTH];
@@ -1913,6 +2012,11 @@ static bool IsSenderVariableKey(const char *pKey)
 	return str_comp(pKey, "messageSender") == 0 || str_comp(pKey, "senderName") == 0 || str_comp(pKey, "sender") == 0;
 }
 
+static bool IsJoinedPlayerVariableKey(const char *pKey)
+{
+	return str_comp(pKey, "joinedPlayer") == 0;
+}
+
 std::string CAutomation::ResolveVariable(const char *pKey, const char *pGet) const
 {
 	if(!pKey || !pKey[0])
@@ -1927,6 +2031,12 @@ std::string CAutomation::ResolveVariable(const char *pKey, const char *pGet) con
 		{
 			if(m_Runner.m_HadChatEvent)
 				return ChatSenderPropertyValue(pGet, m_Runner.m_ChatEvent.m_ClientId);
+			return std::string();
+		}
+		if(IsJoinedPlayerVariableKey(pKey) && str_comp(pGet, "name") != 0)
+		{
+			if(m_Runner.m_HadTeamJoinEvent)
+				return ChatSenderPropertyValue(pGet, m_Runner.m_TeamJoinEvent.m_ClientId);
 			return std::string();
 		}
 	}
@@ -1953,6 +2063,17 @@ std::string CAutomation::ResolveVariable(const char *pKey, const char *pGet) con
 			return m_Runner.m_ChatEvent.m_UClientRoomName;
 		if(str_comp(pKey, "messageUClientRoomId") == 0)
 			return m_Runner.m_ChatEvent.m_UClientRoomId;
+	}
+	if(m_Runner.m_HadTeamJoinEvent)
+	{
+		if(str_comp(pKey, "joinedPlayer") == 0)
+			return m_Runner.m_TeamJoinEvent.m_Name;
+		if(str_comp(pKey, "joinedTeam") == 0)
+		{
+			char aTeam[16];
+			str_format(aTeam, sizeof(aTeam), "%d", m_Runner.m_TeamJoinEvent.m_Team);
+			return aTeam;
+		}
 	}
 	if(str_comp(pKey, "name") == 0 && g_Config.m_PlayerName[0])
 		return g_Config.m_PlayerName;

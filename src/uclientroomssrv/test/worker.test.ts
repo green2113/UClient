@@ -331,6 +331,53 @@ describe("launcher notices", () => {
 	});
 });
 
+describe("account bans admin", () => {
+	beforeAll(async () => {
+		await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
+	});
+
+	it("searches an account, bans it, and clears the ban", async () => {
+		const banned = {
+			install_id: "99999999-9999-4999-8999-999999999999",
+			secret: "banned-secret-with-at-least-32-characters",
+			player_name: "BanTarget",
+		};
+		expect((await SELF.fetch(jsonRequest("/account/register", banned))).status).toBe(201);
+
+		const unauthorized = await SELF.fetch(new Request("https://worker.test/admin/bans/active"));
+		expect(unauthorized.status).toBe(401);
+
+		const searchResponse = await SELF.fetch(adminRequest("/admin/accounts/search?q=BanTarget", "GET"));
+		expect(searchResponse.status).toBe(200);
+		const found = await responseJson<{accounts: Array<{install_id: string; ban: unknown}>}>(searchResponse);
+		expect(found.accounts.some(account => account.install_id === banned.install_id)).toBe(true);
+		expect(found.accounts.find(account => account.install_id === banned.install_id)?.ban).toBeNull();
+
+		const createResponse = await SELF.fetch(adminRequest("/admin/bans", "POST", {
+			install_id: banned.install_id,
+			reason: "test ban",
+			expires_at: null,
+		}));
+		expect(createResponse.status).toBe(201);
+		const created = await responseJson<{account: {ban: {permanent: boolean; reason: string}}}>(createResponse);
+		expect(created.account.ban.permanent).toBe(true);
+		expect(created.account.ban.reason).toBe("test ban");
+
+		const verifyResponse = await SELF.fetch(jsonRequest("/account/verify", banned));
+		expect(verifyResponse.status).toBe(423);
+
+		const listResponse = await SELF.fetch(adminRequest("/admin/bans/active", "GET"));
+		expect(listResponse.status).toBe(200);
+		const listed = await responseJson<{bans: Array<{install_id: string}>}>(listResponse);
+		expect(listed.bans.some(ban => ban.install_id === banned.install_id)).toBe(true);
+
+		const clearResponse = await SELF.fetch(adminRequest(`/admin/bans/${banned.install_id}`, "DELETE"));
+		expect(clearResponse.status).toBe(200);
+		const clearedVerify = await SELF.fetch(jsonRequest("/account/verify", banned));
+		expect(clearedVerify.status).toBe(200);
+	});
+});
+
 describe("email accounts", () => {
 	beforeAll(async () => {
 		await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);

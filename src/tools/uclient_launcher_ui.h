@@ -1007,6 +1007,19 @@ body.dev-build #dev-panel{display:block}
 .fr.on::before{content:"";position:absolute;left:0;top:50%;width:3px;height:0;border-radius:2px;background:var(--accent);
   transform:translateY(-50%);transition:height .2s var(--ease)}
 .fr.on:hover::before{height:26px}
+.fr-sec{display:flex;align-items:center;gap:8px;width:100%;border:0;background:transparent;color:var(--muted);
+  font:600 12px/1 inherit;letter-spacing:.04em;text-transform:uppercase;padding:12px 8px 6px;cursor:pointer}
+.fr-sec .chev{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid currentColor;
+  transition:transform .15s var(--ease)}
+.fr-sec.folded .chev{transform:rotate(-90deg)}
+.fr-group.folded .fr-body{display:none}
+.fr-sec .n{margin-left:auto;letter-spacing:0;text-transform:none;color:var(--dim)}
+#fr-menu{position:fixed;z-index:500;min-width:168px;padding:6px;background:#1c1d24;border:1px solid var(--line);
+  border-radius:12px;box-shadow:0 16px 40px rgba(0,0,0,.45)}
+#fr-menu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;background:transparent;color:var(--text);
+  font:600 13px/1 inherit;padding:10px 12px;border-radius:8px;cursor:pointer}
+#fr-menu button svg{width:16px;height:16px;flex:0 0 auto}
+#fr-menu button:hover{background:rgba(255,255,255,.08)}
 @keyframes rowin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
 .empty{padding:22px 14px;color:var(--muted);font-size:14px}
@@ -1636,7 +1649,6 @@ body.dev-build #dev-panel{display:block}
           <h3>Register with email</h3>
           <label>Email<input class="field" id="register-email" type="email" required autocomplete="email"></label>
           <label>Password<input class="field" id="register-password" type="password" minlength="10" maxlength="128" required autocomplete="new-password"></label>
-          <p class="fine">We will send a verification code to this email. Lost passwords cannot be recovered.</p>
           <button class="primary" type="submit">Create account</button>
         </form>
       </div>
@@ -1733,7 +1745,6 @@ body.dev-build #dev-panel{display:block}
           <form class="form" id="account-link-form">
             <label>Email<input class="field" id="link-email" type="email" required autocomplete="email"></label>
             <label>Password<input class="field" id="link-password" type="password" minlength="10" maxlength="128" required autocomplete="new-password"></label>
-            <p class="fine">We will send a verification code to this email.</p>
             <button class="primary" type="submit">Connect email</button>
           </form>
         </div>
@@ -1870,6 +1881,15 @@ body.dev-build #dev-panel{display:block}
   </div>
 </div>
 
+<div id="fr-menu" hidden>
+  <button type="button" id="fr-menu-pin">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span id="fr-menu-pin-label">Pin to top</span>
+  </button>
+</div>
+
 <script>
 "use strict";
 var $ = function (id) { return document.getElementById(id); };
@@ -1884,7 +1904,8 @@ $("btn-close").addEventListener("click", function () { send({cmd: "close"}); });
 document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
 document.addEventListener("keydown", function (e) {
   if (e.key === "Escape") {
-    if (confirmDialogOpen) closeConfirmDialog(false);
+    if (!$("fr-menu").hidden) hideFriendMenu();
+    else if (confirmDialogOpen) closeConfirmDialog(false);
     else if (backupFilterOpen || restoreFilterOpen) {
       setBackupFilterOpen(false);
       setRestoreFilterOpen(false);
@@ -2935,12 +2956,66 @@ function esc(s) {
   });
 }
 
-function renderFriends(st) {
+var friendPins = [];
+var friendFold = {pin: false, on: false, off: false};
+var friendRenderState = null;
+var friendMenuName = "";
+var friendMenuJustOpened = false;
+
+function friendKey(name) {
+  return String(name || "").toLowerCase();
+}
+function loadFriendUi() {
+  try {
+    var pins = JSON.parse(localStorage.getItem("uclient.friendPins") || "[]");
+    friendPins = Array.isArray(pins) ? pins.map(friendKey).filter(Boolean) : [];
+  } catch (e) { friendPins = []; }
+  try {
+    var fold = JSON.parse(localStorage.getItem("uclient.friendFold") || "{}");
+    friendFold.pin = !!fold.pin;
+    friendFold.on = !!fold.on;
+    friendFold.off = !!fold.off;
+  } catch (e) {}
+}
+function saveFriendPins() {
+  try { localStorage.setItem("uclient.friendPins", JSON.stringify(friendPins)); } catch (e) {}
+}
+function saveFriendFold() {
+  try { localStorage.setItem("uclient.friendFold", JSON.stringify(friendFold)); } catch (e) {}
+}
+function isFriendPinned(name) {
+  return friendPins.indexOf(friendKey(name)) >= 0;
+}
+loadFriendUi();
+
+function friendRowHtml(f, i) {
+  var sub = f.online
+    ? (f.map && f.server ? f.map + MIDDOT + f.server : (f.map || f.server || "In a server"))
+    : "Offline";
+  return '<div class="fr' + (f.online ? " on" : "") + (f.online && f.afk ? " afk" : "") +
+    '" data-name="' + esc(f.name) + '" data-addr="' + esc(f.address || "") + '"' +
+    ' style="animation-delay:' + Math.min(i * 26, 320) + 'ms">' +
+    '<span class="st"></span>' +
+    '<span class="txt"><span class="nm">' + esc(f.name) + '</span>' +
+    '<span class="sv">' + esc(sub) + '</span></span>' +
+    (f.online ? '<span class="go">JOIN</span>' : "") +
+    '</div>';
+}
+function friendSectionHtml(id, label, rows) {
+  if (id === "pin" && !rows.length) return "";
+  var folded = !!friendFold[id];
+  return '<section class="fr-group' + (folded ? " folded" : "") + '" data-group="' + id + '">' +
+    '<button type="button" class="fr-sec' + (folded ? " folded" : "") + '" data-fold="' + id + '">' +
+    '<span class="chev"></span><span>' + label + '</span><span class="n">' + rows.length + '</span></button>' +
+    '<div class="fr-body">' + rows.map(friendRowHtml).join("") + '</div></section>';
+}
+function renderFriends(st, force) {
   var list = $("fr-list");
   var fr = st.friends || [];
+  friendRenderState = st;
   var initialLoading = st.friendsLoading && !st.friendsLoaded;
   var sig = initialLoading ? "initial-loading" : JSON.stringify([st.friendsLoaded, fr]);
-  if (sig === friendSig) return;
+  if (!force && sig === friendSig) return;
   friendSig = sig;
 
   if (initialLoading) {
@@ -2953,19 +3028,28 @@ function renderFriends(st) {
     list.innerHTML = '<div class="empty"><b>No friends yet</b>Add friends in the game client and they will show up here.</div>';
     return;
   }
-  list.innerHTML = fr.map(function (f, i) {
-    var sub = f.online
-      ? (f.map && f.server ? f.map + MIDDOT + f.server : (f.map || f.server || "In a server"))
-      : "Offline";
-    return '<div class="fr' + (f.online ? " on" : "") + (f.online && f.afk ? " afk" : "") +
-      '" data-addr="' + esc(f.address || "") + '"' +
-      ' style="animation-delay:' + Math.min(i * 26, 320) + 'ms">' +
-      '<span class="st"></span>' +
-      '<span class="txt"><span class="nm">' + esc(f.name) + '</span>' +
-      '<span class="sv">' + esc(sub) + '</span></span>' +
-      (f.online ? '<span class="go">JOIN</span>' : "") +
-      '</div>';
-  }).join("");
+  var pinned = [], online = [], offline = [];
+  var byKey = Object.create(null);
+  fr.forEach(function (f) { byKey[friendKey(f.name)] = f; });
+  friendPins.forEach(function (key) {
+    var f = byKey[key];
+    if (f && f.online) pinned.push(f);
+  });
+  fr.forEach(function (f) {
+    if (f.online) {
+      if (!isFriendPinned(f.name)) online.push(f);
+    } else offline.push(f);
+  });
+  var scroll = list.scrollTop;
+  list.innerHTML = friendSectionHtml("pin", "Pinned", pinned) +
+    friendSectionHtml("on", "Online", online) +
+    friendSectionHtml("off", "Offline", offline);
+  list.scrollTop = scroll;
+}
+function hideFriendMenu() {
+  var menu = $("fr-menu");
+  if (menu) menu.hidden = true;
+  friendMenuName = "";
 }
 
 function backupPathKey(path) {
@@ -3320,10 +3404,54 @@ function renderAccountAndBackup(st) {
   renderBackupServer();
 }
 
+$("fr-list").addEventListener("click", function (e) {
+  var sec = e.target.closest(".fr-sec");
+  if (!sec) return;
+  var id = sec.getAttribute("data-fold");
+  if (!id || !Object.prototype.hasOwnProperty.call(friendFold, id)) return;
+  var group = sec.closest(".fr-group");
+  friendFold[id] = !friendFold[id];
+  if (group) group.classList.toggle("folded", friendFold[id]);
+  sec.classList.toggle("folded", friendFold[id]);
+  saveFriendFold();
+});
 $("fr-list").addEventListener("dblclick", function (e) {
   var row = e.target.closest(".fr.on");
   if (!row) return;
   if (row.dataset.addr) send({cmd: "join", address: row.dataset.addr});
+});
+$("fr-list").addEventListener("contextmenu", function (e) {
+  var row = e.target.closest(".fr");
+  if (!row) return;
+  e.preventDefault();
+  e.stopPropagation();
+  friendMenuName = row.getAttribute("data-name") || "";
+  $("fr-menu-pin-label").textContent = isFriendPinned(friendMenuName) ? "Unpin" : "Pin to top";
+  var menu = $("fr-menu");
+  friendMenuJustOpened = true;
+  menu.hidden = false;
+  menu.style.left = e.clientX + "px";
+  menu.style.top = e.clientY + "px";
+  var rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) menu.style.left = Math.max(8, window.innerWidth - rect.width - 8) + "px";
+  if (rect.bottom > window.innerHeight) menu.style.top = Math.max(8, window.innerHeight - rect.height - 8) + "px";
+  setTimeout(function () { friendMenuJustOpened = false; }, 0);
+});
+$("fr-menu-pin").addEventListener("click", function () {
+  var key = friendKey(friendMenuName);
+  hideFriendMenu();
+  if (!key) return;
+  var idx = friendPins.indexOf(key);
+  if (idx >= 0) friendPins.splice(idx, 1);
+  else friendPins.unshift(key);
+  saveFriendPins();
+  if (friendRenderState) renderFriends(friendRenderState, true);
+});
+$("fr-list").addEventListener("scroll", hideFriendMenu);
+document.addEventListener("mousedown", function (e) {
+  if (friendMenuJustOpened || e.button !== 0) return;
+  if (e.target.closest("#fr-menu")) return;
+  hideFriendMenu();
 });
 
 function setArt(st) {
@@ -3371,6 +3499,10 @@ var SC_TRIGGERS = [{
   id: "chat_received", category: "communication", title: "Chat message",
   whenHint: "When a chat message is received from others", icon: "\u2709", tone: "chat",
   defaults: {type: "chat_received", channel: "all", filters: []}
+}, {
+  id: "team_join", category: "communication", title: "Team join",
+  whenHint: "When someone joins a team", icon: "\u2691", tone: "connect",
+  defaults: {type: "team_join"}
 }, {
   id: "server_connect", category: "connection", title: "Server connect",
   whenHint: "When connecting to a specific server", icon: "\u25CE", tone: "connect",
@@ -3470,6 +3602,7 @@ function scNormalizeSenderFilter(f) {
 }
 function scPrepareTriggerForEdit(t) {
   if (!t) return t;
+  if (t.type === "team_join") return scNormalizeTrigger(JSON.parse(JSON.stringify(t)));
   if (t.type === "server_connect") {
     t = scNormalizeTrigger(JSON.parse(JSON.stringify(t)));
     var targets = Array.isArray(t.targets) ? t.targets.slice() : [];
@@ -3490,6 +3623,7 @@ function scCleanTriggerForSave(t) {
   if (t.type === "chat_received") {
     return {type: "chat_received", channel: t.channel || "all", filters: t.filters || []};
   }
+  if (t.type === "team_join") return {type: "team_join"};
   return t;
 }
 function scNormalizeTrigger(t) {
@@ -3521,6 +3655,7 @@ function scNormalizeTrigger(t) {
     }
     return {type: "chat_received", channel: t.channel || "all", filters: filters};
   }
+  if (t.type === "team_join") return {type: "team_join"};
   return t;
 }
 function scTriggerWhenPreview(t) {
@@ -3543,6 +3678,7 @@ function scTriggerWhenPreview(t) {
     }
     return "When a chat message is received from others";
   }
+  if (t.type === "team_join") return "When someone joins a team";
   return "When something happens";
 }
 function scIfOpPreview(op) {
@@ -3562,6 +3698,8 @@ function scIfRowPreview(row) {
   if (src === "messageText" || src === "message") return "When chat " + op + " \"" + right + "\"";
   if (src === "messageSender" || src === "senderName" || src === "sender") return "When sender " + op + " " + right;
   if (src === "messageChannel") return "When channel " + op + " " + right;
+  if (src === "joinedPlayer") return "When player " + op + " " + right;
+  if (src === "joinedTeam") return "When team " + op + " " + right;
   return "";
 }
 function scAutomationWhenPreview(sc) {
@@ -3725,6 +3863,7 @@ function scIfLeftResolvedKind(varRef, beforeIdx) {
   var varId = scVarRefSourceId(varRef);
   if (!varId) return "text";
   if (varId === "messageChannel") return "channel";
+  if (varId === "joinedTeam") return "number";
   if (scIfVarIsYesNo(varId)) return "yesno";
   var effGet = scVarRefEffectiveGet(varRef, beforeIdx);
   if (effGet === "file_size") return "number";
@@ -3781,7 +3920,7 @@ function scIsPlayerInfoVarId(sourceId, beforeIdx) {
 }
 function scResolveVarBaseKind(sourceId, beforeIdx) {
   if (!sourceId) return "scalar";
-  if (sourceId === "messageSender" || sourceId === "senderName" || sourceId === "sender") return "messageSender";
+  if (sourceId === "messageSender" || sourceId === "senderName" || sourceId === "sender" || sourceId === "joinedPlayer") return "messageSender";
   if (sourceId === "messageText" || sourceId === "message") return "messageText";
   if (sourceId === "messageChannel") return "messageChannel";
   if (sourceId === "clipboard") return "clipboard";
@@ -4045,6 +4184,8 @@ function scLabelVariable(id, beforeIdx) {
   if (id === "messageChannel") return "Message Channel";
   if (id === "messageUClientRoom") return "Message UClient Room";
   if (id === "messageUClientRoomId") return "Message UClient Room ID";
+  if (id === "joinedPlayer") return "Joined Player";
+  if (id === "joinedTeam") return "Joined Team";
   if (id === "window_active" || id === "foreground_window_title") return "Foreground Window Title";
   if (id === "game_window_focused") return "Game Window Focused";
   if (id === "connected") return "Connected";
@@ -4067,6 +4208,10 @@ function scAvailableVariables(beforeIdx) {
     vars.push({id: "messageChannel", label: "Message Channel"});
     vars.push({id: "messageUClientRoom", label: "Message UClient Room"});
     vars.push({id: "messageUClientRoomId", label: "Message UClient Room ID"});
+  }
+  if (scEditing && scEditing.trigger && scEditing.trigger.type === "team_join") {
+    vars.push({id: "joinedPlayer", label: "Joined Player"});
+    vars.push({id: "joinedTeam", label: "Joined Team"});
   }
   if (scEditing && scEditing.actions) {
     // Read the raw actions on purpose: normalizing an if block would ask for the
@@ -4452,6 +4597,7 @@ var SC_LUCIDE_PATHS = {
   shirt: '<path d="M20.38 3.46 16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/>',
   palette: '<circle cx="13.5" cy="6.5" r=".5" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>',
   "user-round": '<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
   "user-search": '<circle cx="10" cy="7" r="4"/><path d="M10.3 15H7a4 4 0 0 0-4 4v1"/><circle cx="17" cy="17" r="3"/><path d="m21 21-1.9-1.9"/>',
   footprints: '<path d="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3.11-2 5.66-2 8.68V16a2 2 0 1 1-4 0Z"/><path d="M20 20v-2.38c0-2.12 1.03-3.12 1-5.62-.03-2.72-1.49-6-4.5-6C14.63 6 14 7.8 14 9.5c0 3.11 2 5.66 2 8.68V20a2 2 0 1 0 4 0Z"/><path d="M16 17h4"/><path d="M4 13h4"/>',
   signature: '<path d="m21 17-2.156-1.868A.5.5 0 0 0 18 15.5v.5a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1c0-2.545-3.991-3.97-8.5-4a1 1 0 0 0 0 5c4.153 0 4.745-11.295 5.708-13.5a2.5 2.5 0 1 1 3.31 3.284"/><path d="M3 21h18"/>',
@@ -4468,7 +4614,7 @@ var SC_LUCIDE_PATHS = {
   "circle-check": '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
   crosshair: '<circle cx="12" cy="12" r="10"/><line x1="22" x2="18" y1="12" y2="12"/><line x1="6" x2="2" y1="12" y2="12"/><line x1="12" x2="12" y1="6" y2="2"/><line x1="12" x2="12" y1="22" y2="18"/>'
 };
-var SC_TRIGGER_LUCIDE = {chat_received: "messages-square", server_connect: "server"};
+var SC_TRIGGER_LUCIDE = {chat_received: "messages-square", team_join: "users", server_connect: "server"};
 var SC_ACTION_LUCIDE = {
   get: "app-window", get_os_detail: "app-window", get_game_detail: "server", get_clipboard: "clipboard", get_player_info: "user-search", ask_for_text: "message-square-plus", text: "whole-word", repeat: "repeat", end_repeat: "list-end",
   if: "git-branch", otherwise: "between-horizontal-start", end_if: "git-merge", stop: "circle-stop",
@@ -4659,6 +4805,9 @@ function scVarSourceBlockMeta(sourceId, beforeIdx) {
       id === "messageText" || id === "message" ||
       id === "messageChannel" || id === "messageUClientRoom" || id === "messageUClientRoomId") {
     return {blockKind: "trigger", blockType: "chat_received"};
+  }
+  if (id === "joinedPlayer" || id === "joinedTeam") {
+    return {blockKind: "trigger", blockType: "team_join"};
   }
   if (id === "window_active" || id === "foreground_window_title" || id === "game_window_focused") {
     return {blockKind: "action", blockType: "get_os_detail"};
@@ -6252,7 +6401,7 @@ function aiPickSuggests() {
 function aiSyncSuggests() {
   var box = $("ai-suggests");
   if (!box) return;
-  var show = !aiMessages.length && !aiStreamText && !aiError && !aiBusy;
+  var show = aiAccountReady() && !aiMessages.length && !aiStreamText && !aiError && !aiBusy;
   box.hidden = !show;
   box.classList.toggle("on", show);
   if (!show) return;
@@ -7328,6 +7477,17 @@ function scTriggerBlockHtml(data, enter) {
     '<span class="sc-block-trigger-title">When a chat message is received from others</span>' +
     '</div></div></div>';
 }
+function scTeamJoinBlockHtml(data, enter) {
+  data = scNormalizeTrigger(JSON.parse(JSON.stringify(data)));
+  var enterCls = enter ? " sc-enter" : "";
+  var tdef = scTriggerDef(data.type);
+  return '<div class="sc-block sc-block-trigger' + enterCls + '" data-block-kind="trigger" data-block-idx="0">' +
+    '<div class="sc-block-trigger-main">' +
+    '<div class="sc-block-trigger-head">' +
+    '<span class="sc-block-ico ' + esc(tdef.tone || "connect") + '">' + scBlockIconInner(tdef.tone || "connect", tdef.icon, "trigger", data.type) + '</span>' +
+    '<span class="sc-block-trigger-title">When someone joins a team</span>' +
+    '</div></div></div>';
+}
 function scServerConnectBlockHtml(data, enter) {
   data = scNormalizeTrigger(JSON.parse(JSON.stringify(data)));
   var enterCls = enter ? " sc-enter" : "";
@@ -7365,6 +7525,9 @@ function scBlockHtml(kind, data, idx, enter, ifMeta) {
   }
   if (kind === "trigger" && data.type === "chat_received") {
     return scTriggerBlockHtml(data, enter);
+  }
+  if (kind === "trigger" && data.type === "team_join") {
+    return scTeamJoinBlockHtml(data, enter);
   }
   if (data.type === "send_chat") {
     inner = scTxt("Send") + scMessageValueHtml(data, idx, kind) + scTxt("to") +
@@ -9614,6 +9777,7 @@ window.__setState = function (st) {
   $("fr-count").textContent = online + " online";
   renderFriends(st);
   aiSyncComposer();
+  aiSyncSuggests();
   // Nothing will report progress once the game is gone, so drop the run.
   if (scRunActive() && !st.gameRunning) scStopRun(true);
   scUpdatePlayButton();

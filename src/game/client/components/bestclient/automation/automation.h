@@ -23,6 +23,7 @@ public:
 		NONE,
 		CHAT_RECEIVED,
 		SERVER_CONNECT,
+		TEAM_JOIN,
 	};
 
 	enum class EChatChannel
@@ -193,9 +194,17 @@ public:
 		std::string m_UClientRoomName;
 	};
 
+	struct STeamJoinEvent
+	{
+		int m_ClientId = -1;
+		std::string m_Name;
+		int m_Team = 0;
+	};
+
 	int Sizeof() const override { return sizeof(*this); }
 	void OnInit() override;
 	void OnUpdate() override;
+	void OnNewSnapshot() override;
 	void OnStateChange(int NewState, int OldState) override;
 
 	void OnChatReceived(const SChatEvent &Event);
@@ -253,8 +262,10 @@ private:
 		std::vector<SIfFrame> m_vIfFrames;
 		std::vector<SRepeatFrame> m_vRepeatFrames;
 		bool m_HadChatEvent = false;
+		bool m_HadTeamJoinEvent = false;
 		bool m_TestRun = false;
 		SChatEvent m_ChatEvent;
+		STeamJoinEvent m_TeamJoinEvent;
 		std::unordered_map<std::string, std::string> m_Variables;
 		std::unordered_map<std::string, int> m_PlayerClientIds;
 		std::vector<SRunnerCallFrame> m_vCallStack;
@@ -272,6 +283,8 @@ private:
 	bool m_HasLastChatEvent = false;
 	SChatEvent m_LastChatEvent;
 	bool m_ServerConnectTriggeredForSession = false;
+	bool m_TeamBaselineReady = false;
+	std::vector<int> m_vLastTeam;
 
 	// Test run driven by the launcher through two files in the user directory.
 	std::optional<SShortcut> m_TestShortcut;
@@ -288,12 +301,15 @@ private:
 	void EvaluateServerConnectTriggers(const NETADDR &ServerAddr);
 	bool MatchesServerConnectTrigger(const SShortcut &Shortcut, const NETADDR &ServerAddr) const;
 	bool TargetMatchesServer(const std::string &Target, const NETADDR &ServerAddr) const;
+	void OnTeamJoined(const STeamJoinEvent &Event);
+	bool MatchesTeamJoinTrigger(const SShortcut &Shortcut) const;
+	void SeedRunnerTeamJoinVariables(const STeamJoinEvent &Event);
 	bool MatchesChatTrigger(const SShortcut &Shortcut, const SChatEvent &Event) const;
 	bool ChannelsMatch(EChatChannel TriggerChannel, EChatChannel EventChannel) const;
 	bool MatchesChatFilter(const SChatFilter &Filter, const SChatEvent &Event, bool IsMe) const;
 	bool MatchText(ETextMatch Match, const char *pNeedle, const char *pHaystack) const;
 	void SeedRunnerChatVariables(const SChatEvent &Event);
-	void StartRunner(size_t ShortcutIndex, const SChatEvent *pChatEvent = nullptr);
+	void StartRunner(size_t ShortcutIndex, const SChatEvent *pChatEvent = nullptr, const STeamJoinEvent *pTeamEvent = nullptr);
 	size_t FindShortcutIndexById(const std::string &Id) const;
 	size_t FindManualShortcutIndexByName(const char *pName) const;
 	bool WouldRecurseRunShortcut(const std::string &TargetId) const;

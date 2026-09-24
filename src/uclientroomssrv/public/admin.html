@@ -32,10 +32,14 @@ textarea{min-height:120px;resize:vertical}
 .hidden{display:none}
 .error{color:var(--danger);margin-top:10px}
 .ok{color:#7ddba0;margin-top:10px}
+.nav{display:flex;gap:8px;margin:0 0 22px}
+.nav a{color:var(--dim);text-decoration:none;padding:6px 10px;border-radius:999px;border:1px solid var(--line)}
+.nav a.on{color:#fff;border-color:transparent;background:var(--accent)}
 </style>
 </head>
 <body>
 <div class="wrap">
+  <nav class="nav"><a class="on" href="/admin">Notices</a><a href="/admin/bans">Bans</a></nav>
   <h1>Launcher Notices</h1>
   <p class="sub">Manage global warnings shown in the UClient launcher.</p>
 

@@ -113,6 +113,8 @@ Each line is what the block does and the JSON to emit. `as` is the variable name
 
 - **chat_received** — When someone else sends chat. Always `{type:"chat_received",channel:"all"|"team"|"uclient",filters:[]}`. Do not put message/sender/room in `filters`. Those conditions are If actions on `messageText`, `messageSender`, `messageChannel`, `messageUClientRoom`.
 
+- **team_join** — When someone else joins a DDNet team (1–63). `{type:"team_join"}`. No filters. Who joined is If on `{source:"joinedPlayer",get:"name"}` (also `clan`, `skin_name`, `custom_color`, `body_color`, `feet_color`, `flag`). Which team is If on `{source:"joinedTeam"}` (the team number).
+
 - **server_connect** — When connecting to a server. Empty `targets` means any server. Fill host or host:port they named. `{type:"server_connect",targets:["127.0.0.1:8303"]}`.
 
 ### Flow

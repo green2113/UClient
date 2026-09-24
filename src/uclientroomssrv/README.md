@@ -32,6 +32,18 @@ npx wrangler secret put RESEND_API_KEY
 
 `expires_at` is a Unix timestamp in seconds. Use `NULL` for a permanent ban.
 
+Admin UI:
+
+- `GET /admin/bans` — password-protected ban page (same `ADMIN_TOKEN` as notices)
+- `GET /admin/accounts/search?q=` — find an account by install id, email, player name, or last IP
+- `GET /admin/bans/active` — active bans
+- `POST /admin/bans` — `{install_id, reason, expires_at}` (`expires_at` null is permanent)
+- `DELETE /admin/bans/:install_id` — remove the active ban
+
+Open `https://uclient.under1111.com/admin/bans`, sign in with the admin token, search the account, and ban it. The launcher then blocks Play, and the game client stays on the blocked screen until the ban ends.
+
+SQL still works:
+
 ```sql
 INSERT INTO user_bans(install_id, reason, banned_at, expires_at, banned_by)
 VALUES(
@@ -43,7 +55,7 @@ VALUES(
 );
 ```
 
-Remove all bans for an account:
+Remove the active ban for an account:
 
 ```sql
 DELETE FROM user_bans WHERE install_id = '00000000-0000-0000-0000-000000000000';

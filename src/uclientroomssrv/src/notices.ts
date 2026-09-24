@@ -56,7 +56,7 @@ function timingSafeEqual(left: string, right: string): boolean {
 	return different === 0;
 }
 
-function adminAuthorized(request: Request, env: NoticeEnv): boolean {
+export function adminAuthorized(request: Request, env: NoticeEnv): boolean {
 	const token = env.ADMIN_TOKEN ?? env.ADMIN_PASSWORD ?? "";
 	if(!token)
 		return false;
