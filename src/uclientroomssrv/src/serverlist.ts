@@ -18,6 +18,9 @@ export type ServerHit = {
 	count: number;
 	max: number;
 	password: boolean;
+	player: string;
+	serverName: string;
+	map: string;
 };
 
 export type FriendGroup = {
@@ -25,9 +28,10 @@ export type FriendGroup = {
 	count: number | null;
 	max: number | null;
 	names: string[];
+	players: string[];
 };
 
-type IndexedServer = ServerHit & {norm: string};
+type IndexedServer = ServerHit & {norm: string; players: string[]};
 
 const PROTOCOL_RE = /^(?:tw-0\.[67]\+(?:udp|tcp):\/\/|ddnet:\/\/|ddnet:)/i;
 
@@ -57,12 +61,34 @@ function serversFrom(data: unknown): Record<string, unknown>[] {
 	return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
 }
 
+function textField(value: string): string {
+	return value
+		.replace(/\u0019./g, "")
+		.replace(/\|[0-9A-Fa-f]{6}\|/g, "")
+		.replace(/[\u0000-\u001f]/g, "")
+		.replace(/[*_`]/g, "")
+		.trim();
+}
+
+function infoMapName(info: Record<string, unknown>): string {
+	const map = info.map;
+	if(typeof map === "string")
+		return textField(map);
+	if(map && typeof map === "object" && typeof (map as {name?: unknown}).name === "string")
+		return textField((map as {name: string}).name);
+	return "";
+}
+
+function serverInfo(server: Record<string, unknown>): Record<string, unknown> {
+	return server.info && typeof server.info === "object" ? server.info as Record<string, unknown> : {};
+}
+
 function serverHit(server: Record<string, unknown>): IndexedServer | null {
 	const addresses = Array.isArray(server.addresses) ? server.addresses : [];
 	const rawAddress = addresses.find((item): item is string => typeof item === "string" && stripAddress(item).length > 0);
 	if(!rawAddress)
 		return null;
-	const info = server.info && typeof server.info === "object" ? server.info as Record<string, unknown> : {};
+	const info = serverInfo(server);
 	const clients = Array.isArray(info.clients) ? info.clients : [];
 	const maxClients = typeof info.max_clients === "number" ? info.max_clients : typeof info.max_players === "number" ? info.max_players : clients.length;
 	return {
@@ -71,6 +97,10 @@ function serverHit(server: Record<string, unknown>): IndexedServer | null {
 		count: clients.length,
 		max: maxClients,
 		password: info.passworded === true,
+		player: "",
+		serverName: typeof info.name === "string" ? textField(info.name) : "",
+		map: infoMapName(info),
+		players: clientNames(server),
 	};
 }
 
@@ -97,8 +127,9 @@ export function findPlayerServers(data: unknown, query: string): ServerHit[] {
 		if(!clientNames(server).some(name => normalizeName(name) === needle))
 			continue;
 		const hit = serverHit(server);
-		if(hit)
-			hits.push({address: hit.address, count: hit.count, max: hit.max, password: hit.password});
+		const player = clientNames(server).map(textField).find(name => normalizeName(name) === needle) ?? "";
+		if(hit && player)
+			hits.push({address: hit.address, count: hit.count, max: hit.max, password: hit.password, player, serverName: hit.serverName, map: hit.map});
 	}
 	return hits;
 }
@@ -168,6 +199,7 @@ export function groupOnlineFriends(servers: unknown, presence: unknown, friendNa
 					count: server ? server.count : null,
 					max: server ? server.max : null,
 					names: [],
+					players: server?.players ?? [],
 				};
 				groups.set(norm, group);
 			}
@@ -177,6 +209,32 @@ export function groupOnlineFriends(servers: unknown, presence: unknown, friendNa
 	return [...groups.values()]
 		.map(group => ({...group, names: [...group.names].sort((left, right) => left < right ? -1 : left > right ? 1 : 0)}))
 		.sort((left, right) => left.address < right.address ? -1 : left.address > right.address ? 1 : 0);
+}
+
+export function formatRoster(players: string[], friendNames: string[]): string {
+	const friends = new Set(friendNames.map(normalizeName).filter(Boolean));
+	const source = players.length ? players : friendNames;
+	const names = [...source]
+		.map(name => name.replace(/[*_]/g, "").trim())
+		.filter(Boolean)
+		.sort((left, right) => normalizeName(left) < normalizeName(right) ? -1 : normalizeName(left) > normalizeName(right) ? 1 : 0);
+	const parts: string[] = [];
+	let run: string[] = [];
+	const flush = () => {
+		if(run.length)
+			parts.push(`__**${run.join(", ")}**__`);
+		run = [];
+	};
+	for(const name of names) {
+		if(friends.has(normalizeName(name)))
+			run.push(name);
+		else {
+			flush();
+			parts.push(name);
+		}
+	}
+	flush();
+	return parts.join(", ");
 }
 
 export function formatPlayerLines(hits: ServerHit[]): string {

@@ -1,4 +1,4 @@
-import {findPlayerServers, formatFriendGroups, formatPlayerLines, groupOnlineFriends, loadPresence, loadPublicServers, normalizeName} from "./serverlist";
+import {findPlayerServers, formatRoster, groupOnlineFriends, loadPresence, loadPublicServers, normalizeName} from "./serverlist";
 
 const JSON_HEADERS = {
 	"content-type": "application/json; charset=utf-8",
@@ -15,6 +15,8 @@ const MAX_DISCORD_CONTENT = 2000;
 const MAX_GAME_CHAT = 255;
 const MAX_TOPIC = 1024;
 const EPHEMERAL_FLAG = 64;
+const COMPONENTS_V2_FLAG = 1 << 15;
+const PANEL_COLOR = 0x5865F2;
 
 export const DISCORD_TEXT = {
 	notLoggedIn: "The launcher is not signed in. Sign in, then try again.",
@@ -201,13 +203,31 @@ async function discordFetch(url: string, token: string, body: unknown, method = 
 	}
 }
 
+function componentPanel(blocks: string[], flags: number) {
+	const components: Array<Record<string, unknown>> = [];
+	for(const block of blocks.filter(Boolean).slice(0, 12)) {
+		if(components.length)
+			components.push({type: 14, divider: true, spacing: 1});
+		components.push({type: 10, content: block.slice(0, 4000)});
+	}
+	return {
+		flags,
+		allowed_mentions: {parse: []},
+		components: [{
+			type: 17,
+			accent_color: PANEL_COLOR,
+			components,
+		}],
+	};
+}
+
 async function notifyInteraction(row: ChallengeRow, content: string): Promise<boolean> {
 	const url = `https://discord.com/api/v10/webhooks/${encodeURIComponent(row.application_id)}/${encodeURIComponent(row.interaction_token)}`;
 	try {
 		const response = await fetch(url, {
 			method: "POST",
 			headers: {"content-type": "application/json"},
-			body: JSON.stringify({content, flags: EPHEMERAL_FLAG}),
+			body: JSON.stringify(componentPanel([neutralizeMentions(content)], EPHEMERAL_FLAG | COMPONENTS_V2_FLAG)),
 			signal: AbortSignal.timeout(8000),
 		});
 		return response.ok;
@@ -463,6 +483,8 @@ async function ingest(request: Request, env: DiscordEnv, authenticate: (request:
 	if(!link)
 		return json({ok: true, linked: false, delivered: false, accepted: 0});
 	const now = nowSeconds();
+	if(!await claimGameOwner(env, authenticated.installId, gameClient(request, now), now))
+		return json({ok: true, linked: true, owner: false, delivered: false, accepted: 0});
 	await touchOnline(env, authenticated.installId, now);
 	const body = await readJson<{line?: string; lines?: string[]}>(request);
 	const lines = (Array.isArray(body?.lines) ? body.lines : body?.line ? [body.line] : [])
@@ -520,6 +542,9 @@ async function setTopic(request: Request, env: DiscordEnv, authenticate: (reques
 	const link = await linkForInstall(env, authenticated.installId);
 	if(!link)
 		return json({ok: true, applied: false});
+	const now = nowSeconds();
+	if(!await claimGameOwner(env, authenticated.installId, gameClient(request, now), now))
+		return json({ok: true, applied: false, owner: false});
 	const saved = await env.DB.prepare(
 		"UPDATE discord_message_channels SET topic_desired = ?2 WHERE install_id = ?1",
 	).bind(authenticated.installId, topic).run();
@@ -536,7 +561,10 @@ async function outbound(request: Request, env: DiscordEnv, authenticate: (reques
 	const link = await linkForInstall(env, authenticated.installId);
 	if(!link)
 		return json({linked: false, messages: []});
-	await touchOnline(env, authenticated.installId, nowSeconds());
+	const now = nowSeconds();
+	if(!await claimGameOwner(env, authenticated.installId, gameClient(request, now), now))
+		return json({linked: true, owner: false, messages: []});
+	await touchOnline(env, authenticated.installId, now);
 	ctx.waitUntil(flushDiscordTopic(env, authenticated.installId));
 	const taken = await env.DB.prepare(
 		`DELETE FROM discord_outbound_messages
@@ -698,6 +726,8 @@ export function controlResultMessage(address: string, hadPassword: boolean, code
 		return "Disconnected from the server.";
 	if(code === "started")
 		return "Started the game.";
+	if(code === "already")
+		return DISCORD_TEXT.gameAlreadyRunning;
 	if(code === "stopped")
 		return "Stopped the game.";
 	const reason = detail.trim().slice(0, 300);
@@ -713,7 +743,7 @@ async function editInteraction(applicationId: string, token: string, content: st
 		await fetch(`https://discord.com/api/v10/webhooks/${encodeURIComponent(applicationId)}/${encodeURIComponent(token)}/messages/@original`, {
 			method: "PATCH",
 			headers: {"content-type": "application/json"},
-			body: JSON.stringify({content: neutralizeMentions(content).slice(0, MAX_DISCORD_CONTENT)}),
+			body: JSON.stringify(componentPanel([neutralizeMentions(content)], COMPONENTS_V2_FLAG)),
 			signal: AbortSignal.timeout(8000),
 		});
 	}
@@ -735,6 +765,39 @@ async function presenceForDiscordUser(env: DiscordEnv, discordUserId: string): P
 	return await env.DB.prepare(
 		"SELECT install_id, game_online_at, launcher_seen_at, game_seen_at FROM discord_links WHERE discord_user_id = ?1",
 	).bind(discordUserId).first<PresenceRow>();
+}
+
+const GAME_SESSION_RE = /^[0-9a-f]{32}$/;
+
+function gameClient(request: Request, now: number): {session: string; startedAt: number} | null {
+	const session = request.headers.get("x-uclient-game-session")?.trim().toLowerCase() ?? "";
+	if(!GAME_SESSION_RE.test(session))
+		return null;
+	const started = Number(request.headers.get("x-uclient-game-started"));
+	const startedAt = Number.isInteger(started) && started > 1_600_000_000 && started <= now + 120 ? started : now;
+	return {session, startedAt};
+}
+
+async function claimGameOwner(env: DiscordEnv, installId: string, client: {session: string; startedAt: number} | null, now: number): Promise<boolean> {
+	if(!client) {
+		const row = await env.DB.prepare(
+			"SELECT game_session, game_session_seen_at FROM discord_links WHERE install_id = ?1",
+		).bind(installId).first<{game_session: string; game_session_seen_at: number}>();
+		return !(row?.game_session && presenceFresh(row.game_session_seen_at, now));
+	}
+	const saved = await env.DB.prepare(
+		`UPDATE discord_links
+		 SET game_session = ?2, game_session_started_at = ?3, game_session_seen_at = ?4
+		 WHERE install_id = ?1
+		   AND (
+		     game_session = ?2
+		     OR game_session = ''
+		     OR game_session_seen_at <= ?5
+		     OR game_session_started_at > ?3
+		     OR (game_session_started_at = ?3 AND game_session > ?2)
+		   )`,
+	).bind(installId, client.session, client.startedAt, now, now - PRESENCE_SECONDS).run();
+	return (saved.meta.changes ?? 0) > 0;
 }
 
 async function touchPresence(env: DiscordEnv, installId: string, column: "launcher_seen_at" | "game_seen_at", now: number): Promise<void> {
@@ -868,11 +931,15 @@ async function pollControl(request: Request, env: DiscordEnv, authenticate: (req
 	const link = await presenceForInstall(env, authenticated.installId);
 	if(!link)
 		return json({commands: []});
-	await touchPresence(env, authenticated.installId, target === "launcher" ? "launcher_seen_at" : "game_seen_at", nowSeconds());
+	const now = nowSeconds();
+	await touchPresence(env, authenticated.installId, target === "launcher" ? "launcher_seen_at" : "game_seen_at", now);
+	if(target === "game" && !await claimGameOwner(env, authenticated.installId, gameClient(request, now), now))
+		return json({commands: [], owner: false});
 	const command = await claimControlCommand(env, authenticated.installId, target);
 	if(!command)
-		return json({commands: []});
+		return json({commands: [], owner: target === "game"});
 	return json({
+		owner: target === "game",
 		commands: [{
 			id: command.id,
 			kind: command.kind,
@@ -929,7 +996,19 @@ async function playerSearch(request: Request, env: DiscordEnv): Promise<Response
 		const hits = findPlayerServers(await loadPublicServers(), name);
 		if(!hits.length)
 			return json({ok: true, found: false, message: neutralizeMentions(`No player named "${name}" is on the public server list.`)});
-		return json({ok: true, found: true, message: neutralizeMentions(formatPlayerLines(hits))});
+		return json({
+			ok: true,
+			found: true,
+			hits: hits.slice(0, 25).map(hit => ({
+				player: neutralizeMentions(hit.player),
+				address: hit.address,
+				name: neutralizeMentions(hit.serverName),
+				map: neutralizeMentions(hit.map),
+				count: hit.count,
+				max: hit.max,
+				password: hit.password,
+			})),
+		});
 	}
 	catch {
 		return json({ok: false, message: DISCORD_TEXT.serverListDown});
@@ -977,7 +1056,14 @@ async function onlineFriends(request: Request, env: DiscordEnv): Promise<Respons
 	const groups = groupOnlineFriends(servers ?? {servers: []}, presence, names);
 	if(!groups.length)
 		return json({ok: servers ? true : false, message: servers ? DISCORD_TEXT.noFriendsOnline : DISCORD_TEXT.serverListDown});
-	return json({ok: true, description: neutralizeMentions(formatFriendGroups(groups))});
+	return json({
+		ok: true,
+		groups: groups.slice(0, 10).map(group => ({
+			address: group.address,
+			title: neutralizeMentions(group.count == null || group.max == null ? group.address : `${group.address} (${group.count}/${group.max})`),
+			names: neutralizeMentions(formatRoster(group.players, group.names)),
+		})),
+	});
 }
 
 async function controlResult(request: Request, env: DiscordEnv, authenticate: (request: Request) => Promise<DiscordAuth | Response>): Promise<Response> {

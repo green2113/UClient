@@ -4,13 +4,19 @@
 import {
 	ChannelType,
 	Client,
-	EmbedBuilder,
+	ActionRowBuilder,
+	ButtonBuilder,
+	ButtonStyle,
+	ContainerBuilder,
 	GatewayIntentBits,
 	MessageFlags,
 	PermissionFlagsBits,
 	REST,
 	Routes,
+	SectionBuilder,
+	SeparatorBuilder,
 	SlashCommandBuilder,
+	TextDisplayBuilder,
 } from "discord.js";
 
 const token = process.env.DISCORD_TOKEN ?? "";
@@ -67,8 +73,108 @@ async function userStatus(userId) {
 	return api(`/internal/discord/status?discord_user_id=${encodeURIComponent(userId)}`, {method: "GET"});
 }
 
+const deferredFlags = MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral;
+
+function panel(blocks) {
+	const container = new ContainerBuilder().setAccentColor(0x5865F2);
+	blocks.filter(Boolean).slice(0, 12).forEach((block, index) => {
+		if(index > 0)
+			container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+		container.addTextDisplayComponents(new TextDisplayBuilder().setContent(String(block).slice(0, 4000)));
+	});
+	return {
+		components: [container],
+		flags: MessageFlags.IsComponentsV2,
+	};
+}
+
 function ephemeral(content) {
-	return {content, flags: MessageFlags.Ephemeral};
+	return {...panel([content]), flags: deferredFlags};
+}
+
+function serverAddress(group) {
+	const explicit = typeof group?.address === "string" ? group.address.trim() : "";
+	if(explicit)
+		return explicit;
+	const title = typeof group?.title === "string" ? group.title.trim() : "";
+	return title.split(/\s+/)[0] ?? "";
+}
+
+function onlineList(groups) {
+	const container = new ContainerBuilder().setAccentColor(0x5865F2);
+	container.addTextDisplayComponents(new TextDisplayBuilder().setContent("**Online friends**"));
+	for(const group of groups.slice(0, 9)) {
+		container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+		const address = serverAddress(group);
+		const customId = `connect:${address}`;
+		const section = new SectionBuilder().addTextDisplayComponents(
+			new TextDisplayBuilder().setContent(`**${group.title}**\n${group.names}`.slice(0, 4000)),
+		);
+		if(address && customId.length <= 100) {
+			section.setButtonAccessory(
+				new ButtonBuilder()
+					.setCustomId(customId)
+					.setLabel("Connect")
+					.setStyle(ButtonStyle.Primary),
+			);
+		}
+		container.addSectionComponents(section);
+	}
+	return {
+		components: [container],
+		flags: MessageFlags.IsComponentsV2,
+	};
+}
+
+function shown(value) {
+	const text = String(value ?? "").replace(/[*_`]/g, "").trim();
+	return text || "-";
+}
+
+function playerCard(query, hits, page) {
+	const hit = hits[page] ?? hits[0];
+	const container = new ContainerBuilder().setAccentColor(0x5865F2);
+	container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`**${shown(hit.player)}**`.slice(0, 4000)));
+	container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+	const count = Number.isFinite(hit.count) ? hit.count : "-";
+	const max = Number.isFinite(hit.max) ? hit.max : "-";
+	container.addTextDisplayComponents(new TextDisplayBuilder().setContent([
+		"### Server info",
+		`Name: ${shown(hit.name)}`,
+		`Map: ${shown(hit.map)}`,
+		`Players: ${count}/${max}`,
+		`Password: ${hit.password ? "O" : "X"}`,
+	].join("\n")));
+	const address = typeof hit.address === "string" ? hit.address.trim() : "";
+	const connectId = `connect:${address}`;
+	const player = typeof hit.player === "string" ? hit.player.trim() : "";
+	const profileUrl = player ? `https://ddnet.org/players/${encodeURIComponent(player)}/` : "";
+	const buttons = [];
+	if(address && connectId.length <= 100)
+		buttons.push(new ButtonBuilder().setCustomId(connectId).setLabel("Connect").setStyle(ButtonStyle.Primary));
+	if(profileUrl.length > 0 && profileUrl.length <= 512)
+		buttons.push(new ButtonBuilder().setLabel("Search on the official site").setStyle(ButtonStyle.Link).setURL(profileUrl));
+	if(buttons.length) {
+		container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+		container.addActionRowComponents(new ActionRowBuilder().addComponents(buttons));
+	}
+	const components = [container];
+	const pageId = `find:0:${query}`;
+	if(hits.length > 1 && pageId.length <= 100) {
+		components.push(new ActionRowBuilder().addComponents(
+			new ButtonBuilder()
+				.setCustomId(`find:${page - 1}:${query}`)
+				.setLabel("<")
+				.setStyle(ButtonStyle.Secondary)
+				.setDisabled(page <= 0),
+			new ButtonBuilder()
+				.setCustomId(`find:${page + 1}:${query}`)
+				.setLabel(">")
+				.setStyle(ButtonStyle.Secondary)
+				.setDisabled(page >= hits.length - 1),
+		));
+	}
+	return {components, flags: MessageFlags.IsComponentsV2};
 }
 
 const commands = [
@@ -176,6 +282,59 @@ client.on("interactionCreate", async interaction => {
 		await interaction.respond(choices).catch(() => {});
 		return;
 	}
+	if(interaction.isButton() && interaction.customId.startsWith("find:")) {
+		const rest = interaction.customId.slice("find:".length);
+		const splitAt = rest.indexOf(":");
+		const page = Number(rest.slice(0, splitAt));
+		const name = splitAt >= 0 ? rest.slice(splitAt + 1) : "";
+		try {
+			await interaction.deferUpdate();
+			const result = await api(`/internal/discord/player-search?name=${encodeURIComponent(name)}`, {method: "GET"});
+			const hits = Array.isArray(result.body.hits) ? result.body.hits : [];
+			if(!result.body.found || !hits.length) {
+				await interaction.editReply(panel([result.body.message || "Something went wrong. Try again."]));
+				return;
+			}
+			const index = Number.isInteger(page) ? Math.min(Math.max(page, 0), hits.length - 1) : 0;
+			await interaction.editReply(playerCard(name, hits, index));
+		}
+		catch(errorValue) {
+			console.error(JSON.stringify({
+				event: "discord_command_failed",
+				message: errorValue instanceof Error ? errorValue.message : String(errorValue),
+			}));
+			if(interaction.deferred || interaction.replied)
+				await interaction.editReply(panel(["Something went wrong. Try again."])).catch(() => {});
+		}
+		return;
+	}
+	if(interaction.isButton() && interaction.customId.startsWith("connect:")) {
+		const address = interaction.customId.slice("connect:".length);
+		try {
+			await interaction.deferReply({flags: deferredFlags});
+			const result = await api("/internal/discord/connect", {
+				method: "POST",
+				body: JSON.stringify({
+					discord_user_id: interaction.user.id,
+					application_id: applicationId,
+					interaction_token: interaction.token,
+					address,
+				}),
+			});
+			await interaction.editReply(panel([result.body.message || "Something went wrong. Try again."]));
+		}
+		catch(errorValue) {
+			console.error(JSON.stringify({
+				event: "discord_command_failed",
+				message: errorValue instanceof Error ? errorValue.message : String(errorValue),
+			}));
+			if(interaction.deferred || interaction.replied)
+				await interaction.editReply(panel(["Something went wrong. Try again."])).catch(() => {});
+			else
+				await interaction.reply(ephemeral("Something went wrong. Try again.")).catch(() => {});
+		}
+		return;
+	}
 	if(!interaction.isChatInputCommand())
 		return;
 	try {
@@ -198,33 +357,33 @@ client.on("interactionCreate", async interaction => {
 		}
 
 		if(interaction.commandName === "find-player") {
-			await interaction.deferReply({flags: MessageFlags.Ephemeral});
+			await interaction.deferReply({flags: deferredFlags});
 			const name = interaction.options.getString("name", true).trim();
 			const result = await api(`/internal/discord/player-search?name=${encodeURIComponent(name)}`, {method: "GET"});
-			await interaction.editReply(result.body.message || "Something went wrong. Try again.");
+			const hits = Array.isArray(result.body.hits) ? result.body.hits : [];
+			if(!result.body.found || !hits.length) {
+				await interaction.editReply(panel([result.body.message || "Something went wrong. Try again."]));
+				return;
+			}
+			await interaction.editReply(playerCard(name, hits, 0));
 			return;
 		}
 
 		if(interaction.commandName === "online-list") {
-			await interaction.deferReply({flags: MessageFlags.Ephemeral});
+			await interaction.deferReply({flags: deferredFlags});
 			const result = await api(`/internal/discord/online-friends?discord_user_id=${encodeURIComponent(interaction.user.id)}`, {method: "GET"});
-			if(!result.body.description) {
-				await interaction.editReply(result.body.message || "Something went wrong. Try again.");
+			const groups = Array.isArray(result.body.groups) ? result.body.groups : [];
+			if(!groups.length) {
+				const fallback = result.body.description ? ["**Online friends**", result.body.description] : [result.body.message || "Something went wrong. Try again."];
+				await interaction.editReply(panel(fallback));
 				return;
 			}
-			await interaction.editReply({
-				embeds: [
-					new EmbedBuilder()
-						.setColor(0x5865F2)
-						.setTitle("Online friends")
-						.setDescription(String(result.body.description).slice(0, 4096)),
-				],
-			});
+			await interaction.editReply(onlineList(groups));
 			return;
 		}
 
 		if(interaction.commandName === "connect" || interaction.commandName === "disconnect" || interaction.commandName === "start-game" || interaction.commandName === "stop-game") {
-			await interaction.deferReply({flags: MessageFlags.Ephemeral});
+			await interaction.deferReply({flags: deferredFlags});
 			const body = {
 				discord_user_id: interaction.user.id,
 				application_id: applicationId,
@@ -238,7 +397,7 @@ client.on("interactionCreate", async interaction => {
 				method: "POST",
 				body: JSON.stringify(body),
 			});
-			await interaction.editReply(result.body.message || "Something went wrong. Try again.");
+			await interaction.editReply(panel([result.body.message || "Something went wrong. Try again."]));
 			return;
 		}
 
@@ -372,7 +531,7 @@ client.on("interactionCreate", async interaction => {
 			message: errorValue instanceof Error ? errorValue.message : String(errorValue),
 		}));
 		if(interaction.deferred || interaction.replied) {
-			await interaction.editReply("Something went wrong. Try again.").catch(() => {});
+			await interaction.editReply(panel(["Something went wrong. Try again."])).catch(() => {});
 			return;
 		}
 		await interaction.reply(ephemeral("Something went wrong. Try again.")).catch(() => {});

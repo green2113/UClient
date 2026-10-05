@@ -297,6 +297,8 @@ describe("discord account bridge", () => {
 			const headers: Record<string, string> = {
 				authorization: `Bearer ${account.secret}`,
 				"x-uclient-install-id": account.install_id,
+				"x-uclient-game-session": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"x-uclient-game-started": "1700000000",
 			};
 			if(body !== undefined)
 				headers["content-type"] = "application/json";
@@ -347,6 +349,59 @@ describe("discord account bridge", () => {
 		const rejectedBody = await responseJson<{message: string}>(rejected);
 		expect(rejectedBody.message).toBe("Could not connect to 127.0.0.1:8303. The password was not accepted.");
 		expect(rejectedBody.message).not.toContain("secret-pass");
+	});
+
+	it("gives discord control and chat to the earliest game client", async () => {
+		const gameCall = (session: string, started: string, path: string) => new Request(`https://worker.test${path}`, {
+			method: "GET",
+			headers: {
+				authorization: `Bearer ${account.secret}`,
+				"x-uclient-install-id": account.install_id,
+				"x-uclient-game-session": session,
+				"x-uclient-game-started": started,
+			},
+		});
+		const first = "11111111111111111111111111111111";
+		const second = "22222222222222222222222222222222";
+		await SELF.fetch(new Request("https://worker.test/discord/launcher/commands", {
+			headers: {
+				authorization: `Bearer ${account.secret}`,
+				"x-uclient-install-id": account.install_id,
+			},
+		}));
+		expect((await responseJson<{owner: boolean}>(await SELF.fetch(gameCall(first, "1600000001", "/discord/control")))).owner).toBe(true);
+		expect((await responseJson<{owner: boolean; commands: unknown[]}>(await SELF.fetch(gameCall(second, "1700000100", "/discord/control"))))).toMatchObject({
+			owner: false,
+			commands: [],
+		});
+
+		const queued = await SELF.fetch(botRequest("/internal/discord/connect", {
+			discord_user_id: discordUserId,
+			application_id: "987654321098765432",
+			interaction_token: "interaction-token-with-enough-length",
+			address: "127.0.0.1:8303",
+		}));
+		expect((await responseJson<{queued: boolean}>(queued)).queued).toBe(true);
+		const missed = await responseJson<{owner: boolean; commands: unknown[]}>(await SELF.fetch(gameCall(second, "1700000100", "/discord/control")));
+		expect(missed).toMatchObject({owner: false, commands: []});
+		const claimed = await responseJson<{owner: boolean; commands: Array<{kind: string}>}>(await SELF.fetch(gameCall(first, "1600000001", "/discord/control")));
+		expect(claimed.owner).toBe(true);
+		expect(claimed.commands).toHaveLength(1);
+
+		await testEnv.DB.prepare(
+			"INSERT INTO discord_outbound_messages (install_id, body, created_at, mode, room_id) VALUES (?1, 'hello', ?2, 'all', '')",
+		).bind(account.install_id, 1_700_000_200).run();
+		const ignored = await responseJson<{messages: unknown[]}>(await SELF.fetch(gameCall(second, "1700000100", "/discord/chat/outbound")));
+		expect(ignored.messages).toEqual([]);
+		const taken = await responseJson<{messages: Array<{body: string}>}>(await SELF.fetch(gameCall(first, "1600000001", "/discord/chat/outbound")));
+		expect(taken.messages.map(row => row.body)).toEqual(["hello"]);
+
+		const started = await SELF.fetch(botRequest("/internal/discord/start-game", {
+			discord_user_id: discordUserId,
+			application_id: "987654321098765432",
+			interaction_token: "interaction-token-with-enough-length",
+		}));
+		expect(await responseJson<{message: string}>(started)).toMatchObject({message: DISCORD_TEXT.gameAlreadyRunning});
 	});
 
 	it("stores the launcher friend list for the linked account", async () => {

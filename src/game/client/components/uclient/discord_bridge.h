@@ -38,7 +38,8 @@ private:
 	bool BuildTopic(std::string &Topic) const;
 	bool TopicDue(const std::string &Topic);
 	void FinishRequest();
-	void Auth(CHttpRequest *pRequest) const;
+	void Auth(CHttpRequest *pRequest);
+	void EnsureSession();
 
 	std::shared_ptr<CHttpRequest> m_pRequest;
 	ERequest m_Request = ERequest::NONE;
@@ -65,6 +66,9 @@ private:
 	std::string m_ResultCode;
 	std::string m_ResultDetail;
 	bool m_Linked = false;
+	bool m_Owner = false;
+	char m_aSession[33]{};
+	int64_t m_StartedAt = 0;
 };
 
 #endif

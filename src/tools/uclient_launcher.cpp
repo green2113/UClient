@@ -8138,7 +8138,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		if(Command->Kind == "start-game")
 		{
 			if(EffectiveGameRunning())
-				Code = "started";
+				Code = "already";
 			else
 			{
 				RequestLaunchGame();

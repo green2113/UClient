@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include <base/secure.h>
 #include <base/system.h>
 
 #include <engine/shared/config.h>
@@ -42,12 +43,28 @@ void CDiscordBridge::SubmitServerLine(const char *pLine)
 	m_vPending.emplace_back(pLine);
 }
 
-void CDiscordBridge::Auth(CHttpRequest *pRequest) const
+void CDiscordBridge::EnsureSession()
 {
+	if(m_aSession[0])
+		return;
+	unsigned char aBytes[16];
+	secure_random_fill(aBytes, sizeof(aBytes));
+	for(int i = 0; i < 16; ++i)
+		str_format(m_aSession + i * 2, (int)sizeof(m_aSession) - i * 2, "%02x", aBytes[i]);
+	m_StartedAt = time_timestamp();
+}
+
+void CDiscordBridge::Auth(CHttpRequest *pRequest)
+{
+	EnsureSession();
 	char aAuthorization[192];
 	str_format(aAuthorization, sizeof(aAuthorization), "Bearer %s", GameClient()->m_UClientAccount.Secret());
 	pRequest->HeaderString("Authorization", aAuthorization);
 	pRequest->HeaderString("x-uclient-install-id", GameClient()->m_UClientAccount.InstallId());
+	pRequest->HeaderString("x-uclient-game-session", m_aSession);
+	char aStarted[32];
+	str_format(aStarted, sizeof(aStarted), "%lld", (long long)m_StartedAt);
+	pRequest->HeaderString("x-uclient-game-started", aStarted);
 	pRequest->FailOnErrorStatus(false);
 	pRequest->LogProgress(HTTPLOG::FAILURE);
 	pRequest->Timeout(CTimeout{10000, 20000, 0, 0});
@@ -282,12 +299,22 @@ void CDiscordBridge::FinishRequest()
 		}
 		else
 		{
-			const json_value *pLinked = json_object_get(pRoot, "linked");
-			m_Linked = pLinked && pLinked->type == json_boolean && pLinked->u.boolean;
-			if(!m_Linked)
-				m_vPending.clear();
-			m_NextIngest = time_get();
-			m_NextPoll = time_get();
+			const json_value *pOwner = json_object_get(pRoot, "owner");
+			if(pOwner && pOwner->type == json_boolean && !pOwner->u.boolean)
+			{
+				m_Owner = false;
+				m_vPending.insert(m_vPending.begin(), m_vInflight.begin(), m_vInflight.end());
+				m_NextIngest = time_get() + 2 * time_freq();
+			}
+			else
+			{
+				const json_value *pLinked = json_object_get(pRoot, "linked");
+				m_Linked = pLinked && pLinked->type == json_boolean && pLinked->u.boolean;
+				if(!m_Linked)
+					m_vPending.clear();
+				m_NextIngest = time_get();
+				m_NextPoll = time_get();
+			}
 		}
 		m_vInflight.clear();
 	}
@@ -347,6 +374,17 @@ void CDiscordBridge::FinishRequest()
 	else if(Request == ERequest::CONTROL)
 	{
 		m_NextControl = time_get() + 2 * time_freq();
+		const json_value *pOwner = Ok ? json_object_get(pRoot, "owner") : nullptr;
+		if(pOwner && pOwner->type == json_boolean)
+			m_Owner = pOwner->u.boolean;
+		else if(Ok)
+			m_Owner = true;
+		if(!m_Owner)
+		{
+			if(pRoot)
+				json_value_free(pRoot);
+			return;
+		}
 		const json_value *pCommands = Ok ? json_object_get(pRoot, "commands") : nullptr;
 		const json_value *pItem = pCommands && pCommands->type == json_array && json_array_length(pCommands) > 0 ? json_array_get(pCommands, 0) : nullptr;
 		const json_value *pId = pItem ? json_object_get(pItem, "id") : nullptr;
@@ -416,7 +454,7 @@ void CDiscordBridge::OnUpdate()
 		BeginControl();
 		return;
 	}
-	if(m_AwaitingConnect || m_Held)
+	if(!m_Owner || m_AwaitingConnect || m_Held)
 		return;
 	std::string Topic;
 	const bool SendTopic = BuildTopic(Topic) && TopicDue(Topic);
