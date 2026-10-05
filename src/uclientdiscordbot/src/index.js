@@ -108,15 +108,15 @@ const commands = [
 		.setName("stop-game")
 		.setDescription("Stop the game"),
 	new SlashCommandBuilder()
-		.setName("플레이어-찾기")
+		.setName("find-player")
 		.setDescription("Find which public server a player is on")
 		.addStringOption(option => option
-			.setName("이름")
+			.setName("name")
 			.setDescription("Player name")
 			.setRequired(true)
 			.setMaxLength(64)),
 	new SlashCommandBuilder()
-		.setName("온라인목록")
+		.setName("online-list")
 		.setDescription("Show online friends from the launcher"),
 	new SlashCommandBuilder()
 		.setName("send")
@@ -197,15 +197,15 @@ client.on("interactionCreate", async interaction => {
 			return;
 		}
 
-		if(interaction.commandName === "플레이어-찾기") {
+		if(interaction.commandName === "find-player") {
 			await interaction.deferReply({flags: MessageFlags.Ephemeral});
-			const name = interaction.options.getString("이름", true).trim();
+			const name = interaction.options.getString("name", true).trim();
 			const result = await api(`/internal/discord/player-search?name=${encodeURIComponent(name)}`, {method: "GET"});
 			await interaction.editReply(result.body.message || "Something went wrong. Try again.");
 			return;
 		}
 
-		if(interaction.commandName === "온라인목록") {
+		if(interaction.commandName === "online-list") {
 			await interaction.deferReply({flags: MessageFlags.Ephemeral});
 			const result = await api(`/internal/discord/online-friends?discord_user_id=${encodeURIComponent(interaction.user.id)}`, {method: "GET"});
 			if(!result.body.description) {
