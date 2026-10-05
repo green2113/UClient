@@ -291,6 +291,9 @@ static std::string g_AccountEmail;
 static std::string g_AccountError;
 static std::string g_AccountInstallId;
 static std::string g_AccountSecret;
+static std::string g_DiscordLinkToken;
+static int g_DiscordLinkSerial = 0;
+static bool g_DiscordLinkPrompt = false;
 static bool g_AccountWorkerRunning = false;
 static bool g_AccountSignedOut = false;
 static bool g_HasSavedAccount = false;
@@ -388,6 +391,9 @@ static void ActivateExistingLauncherWindow(HWND hWnd);
 static bool IsForwardableShellArg(const std::wstring &Arg);
 static bool IsUclientShellArg(const std::wstring &Arg);
 static bool TryParseUclientShareUrl(const std::wstring &Arg, std::string &OutShareId);
+static bool TryParseUclientDiscordLinkUrl(const std::wstring &Arg, std::string &OutToken);
+static void QueueDiscordLink(const std::string &Token);
+static void ProcessPendingDiscordLink();
 static void QueueShareImportFetch(const std::string &ShareId);
 static void ClearShareImportState();
 static void ProcessUclientShareLaunchArgs();
@@ -4540,10 +4546,143 @@ static bool TryParseUclientShareUrl(const std::wstring &Arg, std::string &OutSha
 	return true;
 }
 
+static bool ValidDiscordLinkToken(const std::string &Token)
+{
+	if(Token.size() < 20 || Token.size() > 128)
+		return false;
+	for(unsigned char Ch : Token)
+	{
+		const bool Ok = (Ch >= '0' && Ch <= '9') || (Ch >= 'A' && Ch <= 'Z') || (Ch >= 'a' && Ch <= 'z') || Ch == '-' || Ch == '_';
+		if(!Ok)
+			return false;
+	}
+	return true;
+}
+
+static bool TryParseUclientDiscordLinkUrl(const std::wstring &Arg, std::string &OutToken)
+{
+	OutToken.clear();
+	if(Arg.empty())
+		return false;
+	std::wstring Lower = Arg;
+	std::transform(Lower.begin(), Lower.end(), Lower.begin(), [](wchar_t Ch) {
+		return (wchar_t)towlower(Ch);
+	});
+	const wchar_t *pPrefixes[] = {L"uclient://discord/link/", L"uclient:discord/link/"};
+	size_t PrefixLen = 0;
+	for(const wchar_t *pPrefix : pPrefixes)
+	{
+		if(Lower.rfind(pPrefix, 0) == 0)
+		{
+			PrefixLen = wcslen(pPrefix);
+			break;
+		}
+	}
+	if(!PrefixLen)
+		return false;
+	std::wstring TokenWide = Arg.substr(PrefixLen);
+	while(!TokenWide.empty() && (TokenWide.back() == L'/' || TokenWide.back() == L'"'))
+		TokenWide.pop_back();
+	if(TokenWide.size() >= 2 && TokenWide.front() == L'"')
+		TokenWide = TokenWide.substr(1);
+	const size_t Query = TokenWide.find_first_of(L"?#");
+	if(Query != std::wstring::npos)
+		TokenWide = TokenWide.substr(0, Query);
+	const std::string Token = WideToUtf8(TokenWide.c_str());
+	if(!ValidDiscordLinkToken(Token))
+		return false;
+	OutToken = Token;
+	return true;
+}
+
 static bool IsUclientShellArg(const std::wstring &Arg)
 {
 	std::string Ignored;
-	return TryParseUclientShareUrl(Arg, Ignored);
+	return TryParseUclientShareUrl(Arg, Ignored) || TryParseUclientDiscordLinkUrl(Arg, Ignored);
+}
+
+struct DiscordLinkWork
+{
+	std::string Token;
+	std::string Reason;
+	std::string InstallId;
+	std::string Secret;
+};
+
+static DWORD WINAPI DiscordLinkThread(LPVOID pData)
+{
+	std::unique_ptr<DiscordLinkWork> Work((DiscordLinkWork *)pData);
+	std::string Response;
+	int Status = 0;
+	const std::wstring Url = Utf8ToWide((std::string(UCLIENT_API_BASE_URL) + "/discord/link/" + Work->Token + (Work->Reason.empty() ? "/confirm" : "/reject")).c_str());
+	if(Work->Reason.empty())
+		HttpJsonRequest(L"POST", Url, "{}", Response, Status, AccountAuthHeaders(Work->InstallId, Work->Secret));
+	else
+		HttpJsonRequest(L"POST", Url, std::string("{\"reason\":\"") + Work->Reason + "\"}", Response, Status);
+	return 0;
+}
+
+static void StartDiscordLinkThread(const std::string &Token, const std::string &Reason)
+{
+	auto *pWork = new DiscordLinkWork();
+	pWork->Token = Token;
+	pWork->Reason = Reason;
+	if(Reason.empty() && !BackupCredentials(pWork->InstallId, pWork->Secret))
+	{
+		delete pWork;
+		pWork = new DiscordLinkWork();
+		pWork->Token = Token;
+		pWork->Reason = "not_logged_in";
+	}
+	HANDLE hThread = CreateThread(nullptr, 0, DiscordLinkThread, pWork, 0, nullptr);
+	if(hThread)
+		CloseHandle(hThread);
+	else
+		delete pWork;
+}
+
+static void ProcessPendingDiscordLink()
+{
+	std::string Token;
+	EAccountState State = EAccountState::Checking;
+	EnterCriticalSection(&g_Lock);
+	Token = g_DiscordLinkToken;
+	State = g_AccountState;
+	LeaveCriticalSection(&g_Lock);
+	if(Token.empty())
+		return;
+	if(State == EAccountState::Checking || State == EAccountState::Busy)
+		return;
+	if(State == EAccountState::ReadyEmail)
+	{
+		if(g_hWnd)
+			ShowLauncherWindow(g_hWnd);
+		PushWebState(true);
+		return;
+	}
+	EnterCriticalSection(&g_Lock);
+	g_DiscordLinkToken.clear();
+	g_DiscordLinkPrompt = false;
+	LeaveCriticalSection(&g_Lock);
+	StartDiscordLinkThread(Token, State == EAccountState::ReadyAnonymous ? "no_email" : "not_logged_in");
+	PushWebState(true);
+}
+
+static void QueueDiscordLink(const std::string &Token)
+{
+	if(!ValidDiscordLinkToken(Token))
+		return;
+	EnterCriticalSection(&g_Lock);
+	if(!(g_DiscordLinkToken == Token && g_DiscordLinkPrompt))
+	{
+		g_DiscordLinkToken = Token;
+		g_DiscordLinkPrompt = true;
+		++g_DiscordLinkSerial;
+	}
+	LeaveCriticalSection(&g_Lock);
+	if(g_hWnd)
+		ShowLauncherWindow(g_hWnd);
+	ProcessPendingDiscordLink();
 }
 
 static void ClearShareImportState()
@@ -4600,6 +4739,9 @@ static void ProcessUclientShareLaunchArgs()
 		std::string ShareId;
 		if(TryParseUclientShareUrl(Arg, ShareId))
 			QueueShareImportFetch(ShareId);
+		std::string DiscordToken;
+		if(TryParseUclientDiscordLinkUrl(Arg, DiscordToken))
+			QueueDiscordLink(DiscordToken);
 	}
 }
 
@@ -6335,6 +6477,8 @@ static std::string BuildStateJson()
 	ShareUploadBusy = g_ShareUploadBusy;
 	if(!ShareResultJson.empty())
 		g_ShareResultJson.clear();
+	std::string DiscordLinkToken = g_DiscordLinkPrompt ? g_DiscordLinkToken : "";
+	const int DiscordLinkSerial = g_DiscordLinkSerial;
 	LeaveCriticalSection(&g_Lock);
 	PlayBlocked = EffectivePlayBlocked();
 	UpdateAvailable = EffectiveUpdateAvailable();
@@ -6520,6 +6664,15 @@ static std::string BuildStateJson()
 			Json += ShareImportEntryJson;
 		}
 		Json += "}";
+	}
+	if(AccountState == EAccountState::ReadyEmail && !DiscordLinkToken.empty())
+	{
+		Json += ",\"discordLinkToken\":\"";
+		Json += JsonEscape(DiscordLinkToken);
+		Json += "\"";
+		char aSerial[48];
+		_snprintf_s(aSerial, _TRUNCATE, ",\"discordLinkSerial\":%d", DiscordLinkSerial);
+		Json += aSerial;
 	}
 	Json += "}";
 	return Json;
@@ -6710,6 +6863,31 @@ static void OnWebMessage(const std::string &Json)
 		auto *pWork = new AccountWork();
 		pWork->Op = EAccountOp::RegisterAnonymous;
 		StartAccountWork(pWork);
+	}
+	else if(Cmd == "discordLinkConfirm")
+	{
+		std::string Token;
+		if(!ExtractWebString(Json, "token", Token))
+			return;
+		EnterCriticalSection(&g_Lock);
+		const bool Match = g_DiscordLinkToken == Token;
+		if(Match)
+		{
+			g_DiscordLinkToken.clear();
+			g_DiscordLinkPrompt = false;
+		}
+		LeaveCriticalSection(&g_Lock);
+		if(Match)
+			StartDiscordLinkThread(Token, "");
+		PushWebState(true);
+	}
+	else if(Cmd == "discordLinkDismiss")
+	{
+		EnterCriticalSection(&g_Lock);
+		g_DiscordLinkToken.clear();
+		g_DiscordLinkPrompt = false;
+		LeaveCriticalSection(&g_Lock);
+		PushWebState(true);
 	}
 	else if(Cmd == "accountLogout")
 	{
@@ -7787,6 +7965,13 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 			ShowLauncherWindow(hWnd);
 			return TRUE;
 		}
+		std::string DiscordToken;
+		if(TryParseUclientDiscordLinkUrl(Arg, DiscordToken))
+		{
+			QueueDiscordLink(DiscordToken);
+			ShowLauncherWindow(hWnd);
+			return TRUE;
+		}
 		if(!IsForwardableShellArg(Arg))
 			return FALSE;
 		EnterCriticalSection(&g_Lock);
@@ -7826,6 +8011,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 	case WM_ACCOUNT_READY:
 		InvalidateRect(hWnd, nullptr, FALSE);
 		PushWebState(true);
+		ProcessPendingDiscordLink();
 		if(IsAccountReady())
 		{
 			EnterCriticalSection(&g_Lock);

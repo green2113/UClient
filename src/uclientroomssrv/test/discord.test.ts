@@ -1,0 +1,288 @@
+import {applyD1Migrations, env, SELF} from "cloudflare:test";
+import {beforeAll, describe, expect, it} from "vitest";
+
+import {DISCORD_TEXT, discordChatPayload, linkedMessage, neutralizeMentions} from "../src/discord";
+
+interface TestEnv extends Cloudflare.Env {
+	ACCOUNT_PEPPER: string;
+	GRACE_PRIVATE_KEY_SEED_HEX: string;
+	RELAY_SECRET: string;
+	ADMIN_TOKEN: string;
+	DISCORD_INTERNAL_SECRET: string;
+	TEST_MIGRATIONS: D1Migration[];
+}
+
+interface D1Migration {
+	name: string;
+	queries: string[];
+}
+
+const testEnv = env as TestEnv;
+const account = {
+	install_id: "33333333-3333-4333-8333-333333333333",
+	secret: "discord-owner-secret-with-32-characters",
+};
+const discordUserId = "123456789012345678";
+
+function jsonRequest(path: string, body: unknown, method = "POST", accountAuth = false): Request {
+	const headers: Record<string, string> = {"content-type": "application/json"};
+	if(accountAuth) {
+		headers.authorization = `Bearer ${account.secret}`;
+		headers["x-uclient-install-id"] = account.install_id;
+	}
+	return new Request(`https://worker.test${path}`, {method, headers, body: JSON.stringify(body)});
+}
+
+function botRequest(path: string, body?: unknown, method = "POST"): Request {
+	const headers: Record<string, string> = {
+		authorization: `Bearer ${testEnv.DISCORD_INTERNAL_SECRET}`,
+	};
+	if(body !== undefined)
+		headers["content-type"] = "application/json";
+	return new Request(`https://worker.test${path}`, {
+		method,
+		headers,
+		body: body === undefined ? undefined : JSON.stringify(body),
+	});
+}
+
+async function responseJson<T>(response: Response): Promise<T> {
+	return await response.json<T>();
+}
+
+async function startChallenge(): Promise<string> {
+	const response = await SELF.fetch(botRequest("/internal/discord/link/start", {
+		discord_user_id: discordUserId,
+		application_id: "987654321098765432",
+		interaction_token: "interaction-token-with-enough-length",
+		guild_id: "111111111111111111",
+	}));
+	expect(response.status).toBe(200);
+	const body = await responseJson<{url: string}>(response);
+	const token = body.url.split("/").pop() ?? "";
+	expect(token.length).toBeGreaterThan(20);
+	return token;
+}
+
+describe("discord account bridge", () => {
+	beforeAll(async () => {
+		await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
+		const register = await SELF.fetch(jsonRequest("/account/register", {
+			...account,
+			player_name: "Discord",
+			version: "test",
+		}));
+		expect(register.status).toBe(201);
+	});
+
+	it("neutralizes everyone and here mentions", () => {
+		expect(neutralizeMentions("hi @everyone and @here")).toBe("hi @\u200beveryone and @\u200bhere");
+		expect(neutralizeMentions("@EVERYONE")).toBe("@\u200bEVERYONE");
+		const payload = discordChatPayload("say @here");
+		expect(payload.content).toBe("say @\u200bhere");
+		expect(payload.allowed_mentions.parse).toEqual([]);
+	});
+
+	it("rejects a logged-out launcher and an account without email", async () => {
+		const loggedOut = await startChallenge();
+		const loggedOutResponse = await SELF.fetch(jsonRequest(`/discord/link/${loggedOut}/reject`, {reason: "not_logged_in"}));
+		expect(loggedOutResponse.status).toBe(200);
+		expect(await responseJson<{message: string}>(loggedOutResponse)).toMatchObject({message: DISCORD_TEXT.notLoggedIn});
+
+		const noEmail = await startChallenge();
+		const confirmResponse = await SELF.fetch(jsonRequest(`/discord/link/${noEmail}/confirm`, {}, "POST", true));
+		expect(confirmResponse.status).toBe(403);
+		expect(await responseJson<{message: string}>(confirmResponse)).toMatchObject({message: DISCORD_TEXT.noEmail});
+		const stillOpen = await SELF.fetch(`https://worker.test/discord/link/${noEmail}`);
+		expect(stillOpen.status).toBe(200);
+
+		const rejected = await SELF.fetch(jsonRequest(`/discord/link/${noEmail}/reject`, {reason: "no_email"}));
+		expect(rejected.status).toBe(200);
+		expect(await responseJson<{message: string}>(rejected)).toMatchObject({message: DISCORD_TEXT.noEmail});
+	});
+
+	it("links an email account and replaces the previous link", async () => {
+		await testEnv.DB.prepare("UPDATE accounts SET email_normalized = ?1 WHERE install_id = ?2")
+			.bind("discord@example.com", account.install_id).run();
+		const token = await startChallenge();
+		const response = await SELF.fetch(jsonRequest(`/discord/link/${token}/confirm`, {}, "POST", true));
+		expect(response.status).toBe(200);
+		const body = await responseJson<{message: string}>(response);
+		expect(body.message).toBe(linkedMessage(account.install_id));
+		const link = await testEnv.DB.prepare("SELECT install_id FROM discord_links WHERE discord_user_id = ?1")
+			.bind(discordUserId).first<{install_id: string}>();
+		expect(link?.install_id).toBe(account.install_id);
+		const page = await SELF.fetch(`https://worker.test/discord/link/${token}`);
+		expect(page.status).toBe(410);
+	});
+
+	it("rejects an expired challenge", async () => {
+		const token = await startChallenge();
+		await testEnv.DB.prepare("UPDATE discord_link_challenges SET expires_at = 1 WHERE token = ?1").bind(token).run();
+		const response = await SELF.fetch(jsonRequest(`/discord/link/${token}/reject`, {reason: "not_logged_in"}));
+		expect(response.status).toBe(410);
+	});
+
+	it("keeps one message channel and forwards chat only while the game is online", async () => {
+		const missing = await SELF.fetch(botRequest("/internal/discord/status?discord_user_id=999", undefined, "GET"));
+		expect(missing.status).toBe(400);
+
+		const unlinkedStatus = await SELF.fetch(botRequest("/internal/discord/status?discord_user_id=555555555555555555", undefined, "GET"));
+		expect(await responseJson<{message: string}>(unlinkedStatus)).toMatchObject({linked: false, message: DISCORD_TEXT.notLinked});
+
+		const created = await SELF.fetch(botRequest("/internal/discord/channels", {
+			discord_user_id: discordUserId,
+			guild_id: "111111111111111111",
+			channel_id: "222222222222222222",
+		}));
+		expect(created.status).toBe(200);
+		const again = await SELF.fetch(botRequest("/internal/discord/channels", {
+			discord_user_id: discordUserId,
+			guild_id: "111111111111111111",
+			channel_id: "333333333333333333",
+		}));
+		expect(again.status).toBe(409);
+		expect(await responseJson<{message: string}>(again)).toMatchObject({message: DISCORD_TEXT.channelExists});
+
+		const offline = await SELF.fetch(botRequest("/internal/discord/inbound", {
+			channel_id: "222222222222222222",
+			content: "hello from discord",
+		}));
+		expect(offline.status).toBe(200);
+		expect(await responseJson<{message: string}>(offline)).toMatchObject({
+			ok: false,
+			reason: "offline",
+			message: DISCORD_TEXT.notInGame,
+		});
+
+		const poll = await SELF.fetch(new Request("https://worker.test/discord/chat/outbound", {
+			headers: {
+				authorization: `Bearer ${account.secret}`,
+				"x-uclient-install-id": account.install_id,
+			},
+		}));
+		expect(poll.status).toBe(200);
+		expect(await responseJson<{linked: boolean; messages: unknown[]}>(poll)).toMatchObject({linked: true, messages: []});
+
+		const online = await SELF.fetch(botRequest("/internal/discord/inbound", {
+			channel_id: "222222222222222222",
+			content: "  hello from discord  ",
+		}));
+		expect(online.status).toBe(200);
+		expect(await responseJson<{ok: boolean}>(online)).toMatchObject({ok: true});
+
+		const taken = await SELF.fetch(new Request("https://worker.test/discord/chat/outbound", {
+			headers: {
+				authorization: `Bearer ${account.secret}`,
+				"x-uclient-install-id": account.install_id,
+			},
+		}));
+		const takenBody = await responseJson<{messages: Array<{body: string}>}>(taken);
+		expect(takenBody.messages.map(message => message.body)).toEqual(["hello from discord"]);
+		const empty = await SELF.fetch(new Request("https://worker.test/discord/chat/outbound", {
+			headers: {
+				authorization: `Bearer ${account.secret}`,
+				"x-uclient-install-id": account.install_id,
+			},
+		}));
+		expect(await responseJson<{messages: unknown[]}>(empty)).toMatchObject({messages: []});
+
+		await testEnv.DB.prepare(
+			"INSERT INTO rooms (id, name, owner_install_id, invite_code, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+		).bind("room-send-1", "Gores", account.install_id, "SENDCODE1", 1).run();
+		await testEnv.DB.prepare(
+			"INSERT INTO room_members (room_id, install_id, member_id, display_name, role, joined_at) VALUES (?1, ?2, ?3, ?4, 'owner', ?5)",
+		).bind("room-send-1", account.install_id, "member-send-1", "Discord", 1).run();
+		const rooms = await SELF.fetch(botRequest(`/internal/discord/rooms?discord_user_id=${discordUserId}`, undefined, "GET"));
+		expect(rooms.status).toBe(200);
+		expect(await responseJson<{rooms: Array<{id: string; name: string; member_count: number}>}>(rooms)).toMatchObject({
+			rooms: [{id: "room-send-1", name: "Gores", member_count: 1}],
+		});
+		const conflict = await SELF.fetch(botRequest("/internal/discord/send", {
+			discord_user_id: discordUserId,
+			content: "nope",
+			mode: "team",
+			room_id: "room-send-1",
+		}));
+		expect(conflict.status).toBe(400);
+		const missingRoom = await SELF.fetch(botRequest("/internal/discord/send", {
+			discord_user_id: discordUserId,
+			content: "hi",
+			room_id: "missing-room",
+		}));
+		expect(missingRoom.status).toBe(404);
+		const team = await SELF.fetch(botRequest("/internal/discord/send", {
+			discord_user_id: discordUserId,
+			content: "team line",
+			mode: "team",
+		}));
+		expect(team.status).toBe(200);
+		const roomSend = await SELF.fetch(botRequest("/internal/discord/send", {
+			discord_user_id: discordUserId,
+			content: "room line",
+			room_id: "room-send-1",
+		}));
+		expect(roomSend.status).toBe(200);
+		const globalSend = await SELF.fetch(botRequest("/internal/discord/send", {
+			discord_user_id: discordUserId,
+			content: "global line",
+			mode: "uclient",
+		}));
+		expect(globalSend.status).toBe(200);
+		const sentLines = await SELF.fetch(new Request("https://worker.test/discord/chat/outbound", {
+			headers: {
+				authorization: `Bearer ${account.secret}`,
+				"x-uclient-install-id": account.install_id,
+			},
+		}));
+		const sentBody = await responseJson<{messages: Array<{body: string; mode: string; room_id: string}>}>(sentLines);
+		expect(sentBody.messages).toEqual([
+			{id: expect.any(Number), body: "team line", mode: "team", room_id: ""},
+			{id: expect.any(Number), body: "room line", mode: "room", room_id: "room-send-1"},
+			{id: expect.any(Number), body: "global line", mode: "uclient", room_id: ""},
+		]);
+
+		const firstIngest = await SELF.fetch(jsonRequest("/discord/chat/ingest", {
+			lines: ["2026-10-04 23:58:35 I chat/all: same line"],
+		}, "POST", true));
+		expect(firstIngest.status).toBe(200);
+		expect(await responseJson<{accepted: number}>(firstIngest)).toMatchObject({accepted: 1});
+		const repeatIngest = await SELF.fetch(jsonRequest("/discord/chat/ingest", {
+			lines: ["2026-10-04 23:58:35 I chat/all: same line"],
+		}, "POST", true));
+		expect(repeatIngest.status).toBe(200);
+		expect(await responseJson<{accepted: number}>(repeatIngest)).toMatchObject({accepted: 0});
+
+		const topic = await SELF.fetch(jsonRequest("/discord/chat/topic", {
+			topic: "2 players: Ann, @everyone",
+		}, "POST", true));
+		expect(topic.status).toBe(200);
+		expect(await responseJson<{ok: boolean; applied: boolean}>(topic)).toMatchObject({ok: true, applied: true});
+		const stored = await testEnv.DB.prepare(
+			"SELECT topic_desired FROM discord_message_channels WHERE install_id = ?1",
+		).bind(account.install_id).first<{topic_desired: string}>();
+		expect(stored?.topic_desired).toBe("2 players: Ann, @\u200beveryone");
+
+		const shrunk = await SELF.fetch(jsonRequest("/discord/chat/topic", {
+			topic: "1 player: Ann",
+		}, "POST", true));
+		expect(await responseJson<{applied: boolean}>(shrunk)).toMatchObject({applied: true});
+		const shrunkRow = await testEnv.DB.prepare(
+			"SELECT topic_desired FROM discord_message_channels WHERE install_id = ?1",
+		).bind(account.install_id).first<{topic_desired: string}>();
+		expect(shrunkRow?.topic_desired).toBe("1 player: Ann");
+
+		const cleared = await SELF.fetch(jsonRequest("/discord/chat/topic", {topic: ""}, "POST", true));
+		expect(cleared.status).toBe(200);
+		const clearedRow = await testEnv.DB.prepare(
+			"SELECT topic_desired FROM discord_message_channels WHERE install_id = ?1",
+		).bind(account.install_id).first<{topic_desired: string}>();
+		expect(clearedRow?.topic_desired).toBe("");
+
+		const removed = await SELF.fetch(botRequest("/internal/discord/channels", {discord_user_id: discordUserId}, "DELETE"));
+		expect(removed.status).toBe(200);
+		const missingChannel = await SELF.fetch(botRequest("/internal/discord/channels", {discord_user_id: discordUserId}, "DELETE"));
+		expect(missingChannel.status).toBe(404);
+		expect(await responseJson<{message: string}>(missingChannel)).toMatchObject({message: DISCORD_TEXT.noChannel});
+	});
+});

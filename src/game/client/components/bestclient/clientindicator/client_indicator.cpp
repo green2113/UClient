@@ -1502,7 +1502,7 @@ void CClientIndicator::ApplyUcRoomServerJoinBroadcast(const UClientPresence::CRo
 		Join.m_Kind == UClientPresence::SERVER_PRESENCE_MOVE, Join.m_RoomName.c_str(), Join.m_RoomId.c_str());
 }
 
-const char *CClientIndicator::UClientChatUnavailableReason()
+const char *CClientIndicator::UClientChatUnavailableReason(bool IgnoreSelectedRoom)
 {
 	if(!g_Config.m_UcChat)
 		return Localize("UClient chat is disabled.");
@@ -1518,12 +1518,12 @@ const char *CClientIndicator::UClientChatUnavailableReason()
 		return Localize("UClient chat is unavailable: no connection to the presence relay.");
 	if(EffectivePresenceServerAddress()[0] == '\0')
 		return Localize("UClient chat is unavailable: join a server first.");
-	if(g_Config.m_UcChatSendRoom[0] && !GameClient()->m_UClientChatRooms.RoomNameById(g_Config.m_UcChatSendRoom))
+	if(!IgnoreSelectedRoom && g_Config.m_UcChatSendRoom[0] && !GameClient()->m_UClientChatRooms.RoomNameById(g_Config.m_UcChatSendRoom))
 		return Localize("UClient chat is unavailable: the selected room no longer exists or you are no longer a member.");
 	return nullptr;
 }
 
-void CClientIndicator::SendUClientChat(const char *pMessage, const char *pRoomIdOverride)
+void CClientIndicator::SendUClientChat(const char *pMessage, const char *pRoomIdOverride, bool ForceGlobal)
 {
 	if(!pMessage)
 		return;
@@ -1534,7 +1534,7 @@ void CClientIndicator::SendUClientChat(const char *pMessage, const char *pRoomId
 
 	// Tell the sender why the message is going nowhere; a silent drop looks like the
 	// message was sent and lets misconfigured presence settings go unnoticed.
-	if(const char *pReason = UClientChatUnavailableReason())
+	if(const char *pReason = UClientChatUnavailableReason(ForceGlobal || (pRoomIdOverride && pRoomIdOverride[0])))
 	{
 		GameClient()->m_Chat.EchoUClientNotice(pReason);
 		return;
@@ -1548,14 +1548,17 @@ void CClientIndicator::SendUClientChat(const char *pMessage, const char *pRoomId
 	const int SenderClientId = GameClient()->m_Snap.m_LocalClientId;
 	const char *pServerAddress = EffectivePresenceServerAddress();
 
-	const uint8_t Scope = g_Config.m_UcChatSendSameServerOnly ?
+	char aRoomId[64] = "";
+	if(!ForceGlobal)
+	{
+		if(pRoomIdOverride && pRoomIdOverride[0])
+			str_copy(aRoomId, pRoomIdOverride, sizeof(aRoomId));
+		else
+			str_copy(aRoomId, GameClient()->m_UClientChatRooms.SelectedSendRoomId(), sizeof(aRoomId));
+	}
+	const uint8_t Scope = !ForceGlobal && aRoomId[0] == '\0' && g_Config.m_UcChatSendSameServerOnly ?
 				(uint8_t)UClientPresence::CHAT_SCOPE_SAME_SERVER :
 				(uint8_t)UClientPresence::CHAT_SCOPE_GLOBAL;
-	char aRoomId[64] = "";
-	if(pRoomIdOverride && pRoomIdOverride[0])
-		str_copy(aRoomId, pRoomIdOverride, sizeof(aRoomId));
-	else
-		str_copy(aRoomId, GameClient()->m_UClientChatRooms.SelectedSendRoomId(), sizeof(aRoomId));
 	const char *pRoomId = aRoomId;
 	const char *pRoomName = pRoomId[0] ? GameClient()->m_UClientChatRooms.RoomNameById(pRoomId) : nullptr;
 	if(pRoomId[0] && !pRoomName)

@@ -5,6 +5,7 @@ import {
 	summarizePlayer,
 	summarizePlayerMatches,
 	summarizeReleases,
+	summarizeOnlinePlayers,
 	summarizeWikiExtract,
 	summarizeWikiSearch,
 } from "../src/ai-ddnet";
@@ -24,6 +25,10 @@ describe("parseDdnetLookups", () => {
 
 	it("allows releases without a query", () => {
 		expect(parseDdnetLookups([{type: "releases"}])).toEqual([{type: "releases", query: ""}]);
+	});
+
+	it("keeps an online player search", () => {
+		expect(parseDdnetLookups([{type: "online", query: "Under"}])).toEqual([{type: "online", query: "Under"}]);
 	});
 });
 
@@ -92,6 +97,54 @@ describe("summarizeReleases", () => {
 		expect(text).toContain("Old");
 		expect(text).not.toContain("Other");
 		expect(text.indexOf("Cloudberry Fields")).toBeLessThan(text.indexOf("Old"));
+	});
+});
+
+describe("summarizeOnlinePlayers", () => {
+	const sample = {
+		servers: [
+			{
+				location: "as:kr",
+				info: {
+					name: "DDNet KOR",
+					game_type: "DDNet",
+					map: {name: "Multeasystraight"},
+					clients: [
+						{name: "Under", clan: "UCL", afk: false, is_player: true},
+						{name: "Other", clan: "", afk: true, is_player: true},
+					],
+				},
+			},
+			{
+				location: "eu",
+				info: {
+					name: "Community Block",
+					game_type: "Block",
+					map: {name: "Copy box"},
+					clients: [{name: "Underground", clan: "", afk: false, is_player: true}],
+				},
+			},
+		],
+	};
+
+	it("reports the server and map for an exact name", () => {
+		const text = summarizeOnlinePlayers(sample, "under");
+		expect(text).toContain("Playing now");
+		expect(text).toContain("Under");
+		expect(text).toContain("DDNet KOR");
+		expect(text).toContain("Multeasystraight");
+		expect(text).not.toContain("Underground");
+	});
+
+	it("lists close names when there is no exact match", () => {
+		const text = summarizeOnlinePlayers(sample, "Undergr");
+		expect(text).toContain("Closest on the list");
+		expect(text).toContain("Underground");
+		expect(text).toContain("Community Block");
+	});
+
+	it("says missing when the name is not on the list", () => {
+		expect(summarizeOnlinePlayers(sample, "Nobody")).toContain("no player named \"Nobody\"");
 	});
 });
 

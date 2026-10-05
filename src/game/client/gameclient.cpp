@@ -461,6 +461,7 @@ void CGameClient::OnConsoleInit()
 					      &m_Ghost,
 					      &m_BestClient, // BestClient binds
 					      &m_UClientAccount,
+					      &m_DiscordBridge,
 					      &m_UClientChatRooms,
 					      &m_WeaponTrajPolicy,
 					      &m_TimeoutReconnect,

@@ -2779,6 +2779,8 @@ if(CLIENT)
     components/background.h
     components/uclient/account.cpp
     components/uclient/account.h
+    components/uclient/discord_bridge.cpp
+    components/uclient/discord_bridge.h
     components/uclient/chat_rooms.cpp
     components/uclient/chat_rooms.h
     components/uclient/chat_nearby_tab.cpp

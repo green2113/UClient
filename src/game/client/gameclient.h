@@ -30,6 +30,7 @@
 #include "components/background.h"
 #include "components/bestclient/bestclient.h"
 #include "components/uclient/account.h"
+#include "components/uclient/discord_bridge.h"
 #include "components/uclient/chat_rooms.h"
 #include "components/uclient/timeout_reconnect.h"
 #include "components/uclient/uclient.h"
@@ -1169,6 +1170,7 @@ public:
 
 	CUClient m_UClient;
 	CUClientAccount m_UClientAccount;
+	CDiscordBridge m_DiscordBridge;
 	CUClientChatRooms m_UClientChatRooms;
 	CUClientWeaponTrajPolicy m_WeaponTrajPolicy;
 	CUClientSpecTelePreview m_SpecTelePreview;

@@ -1,4 +1,4 @@
-export const DDNET_LOOKUP_TYPES = ["player", "map", "releases", "wiki", "mapper"] as const;
+export const DDNET_LOOKUP_TYPES = ["player", "map", "releases", "wiki", "mapper", "online"] as const;
 
 export type DdnetLookupType = (typeof DDNET_LOOKUP_TYPES)[number];
 
@@ -10,7 +10,13 @@ export type DdnetLookup = {
 const MAX_LOOKUPS = 2;
 const MAX_QUERY = 64;
 const FETCH_MS = 6000;
+const ONLINE_FETCH_MS = 10000;
 const RELEASES_TTL_MS = 10 * 60 * 1000;
+const ONLINE_TTL_MS = 20 * 1000;
+const MASTER_URLS = [
+	"https://master1.ddnet.org/ddnet/15/servers.json",
+	"https://master2.ddnet.org/ddnet/15/servers.json",
+] as const;
 const HEADERS = {
 	accept: "application/json",
 	"user-agent": "UClient-Assistant/1.0 (+https://uclient)",
@@ -18,6 +24,7 @@ const HEADERS = {
 
 type CacheRow = {at: number; text: string};
 let releasesCache: CacheRow | null = null;
+let onlineCache: CacheRow | null = null;
 
 function isLookupType(value: string): value is DdnetLookupType {
 	return (DDNET_LOOKUP_TYPES as readonly string[]).includes(value);
@@ -78,6 +85,76 @@ function rankLine(label: string, value: unknown): string {
 	if(typeof row.total === "number")
 		bits.push(`of ${row.total}`);
 	return bits.join(", ");
+}
+
+function normalizePlayerName(name: string): string {
+	return name
+		.replace(/\u0019./g, "")
+		.replace(/\|[0-9A-Fa-f]{6}\|/g, "")
+		.replace(/[\u0000-\u001f]/g, "")
+		.trim()
+		.toLowerCase();
+}
+
+function serversFromPayload(data: unknown): Record<string, unknown>[] {
+	const raw = Array.isArray(data)
+		? data
+		: data && typeof data === "object" && Array.isArray((data as {servers?: unknown}).servers)
+			? (data as {servers: unknown[]}).servers
+			: [];
+	return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
+}
+
+function infoMapName(info: Record<string, unknown>): string {
+	const map = info.map;
+	if(typeof map === "string")
+		return map;
+	if(map && typeof map === "object" && typeof (map as {name?: unknown}).name === "string")
+		return (map as {name: string}).name;
+	return "";
+}
+
+export function summarizeOnlinePlayers(data: unknown, query: string): string {
+	const needle = normalizePlayerName(query);
+	if(!needle)
+		return "No player name was given for the live server list.";
+	const exact: string[] = [];
+	const partial: string[] = [];
+	for(const server of serversFromPayload(data)) {
+		const info = server.info && typeof server.info === "object" ? server.info as Record<string, unknown> : {};
+		const serverName = typeof info.name === "string" ? info.name : "";
+		const map = infoMapName(info);
+		const gameType = typeof info.game_type === "string" ? info.game_type : "";
+		const location = typeof server.location === "string" ? server.location : "";
+		const clients = Array.isArray(info.clients) ? info.clients : [];
+		for(const client of clients) {
+			if(!client || typeof client !== "object")
+				continue;
+			const row = client as Record<string, unknown>;
+			const name = typeof row.name === "string" ? row.name : "";
+			if(!name)
+				continue;
+			const norm = normalizePlayerName(name);
+			if(!norm)
+				continue;
+			const clan = typeof row.clan === "string" && row.clan ? row.clan : "";
+			const flags = [
+				row.afk === true ? "AFK" : "",
+				row.is_player === false ? "spectator" : "",
+			].filter(Boolean);
+			const line = `- ${name}${clan ? ` [${clan}]` : ""} on ${serverName || "unnamed server"}${map ? ` · ${map}` : ""}${gameType ? ` · ${gameType}` : ""}${location ? ` · ${location}` : ""}${flags.length ? ` (${flags.join(", ")})` : ""}`;
+			if(norm === needle)
+				exact.push(line);
+			else if(needle.length >= 2 && norm.includes(needle))
+				partial.push(line);
+		}
+	}
+	const unique = (rows: string[]) => [...new Set(rows)].slice(0, 8);
+	if(exact.length)
+		return [`Live server list (public DDNet browser). Playing now:`, ...unique(exact)].join("\n");
+	if(partial.length)
+		return [`Live server list: no exact name "${query}". Closest on the list:`, ...unique(partial)].join("\n");
+	return `Live server list: no player named "${query}" on the public DDNet browser right now. They may be offline, on a private/unlisted server, or using a different name.`;
 }
 
 function playerUrl(name: string): string {
@@ -272,10 +349,10 @@ export function summarizeWikiExtract(data: unknown, title: string): string {
 	return "";
 }
 
-async function fetchJson(url: string): Promise<unknown> {
+async function fetchJson(url: string, timeoutMs = FETCH_MS): Promise<unknown> {
 	const upstream = await fetch(url, {
 		headers: HEADERS,
-		signal: AbortSignal.timeout(FETCH_MS),
+		signal: AbortSignal.timeout(timeoutMs),
 	});
 	if(!upstream.ok)
 		throw new Error(`http_${upstream.status}`);
@@ -299,6 +376,43 @@ async function fetchReleases(): Promise<unknown> {
 		releasesCache = null;
 	}
 	return data;
+}
+
+async function fetchOnlineServers(): Promise<unknown> {
+	if(onlineCache && Date.now() - onlineCache.at < ONLINE_TTL_MS) {
+		try {
+			return JSON.parse(onlineCache.text);
+		}
+		catch {
+			onlineCache = null;
+		}
+	}
+	let lastError: unknown;
+	for(const url of MASTER_URLS) {
+		try {
+			const data = await fetchJson(url, ONLINE_FETCH_MS);
+			try {
+				onlineCache = {at: Date.now(), text: JSON.stringify(data)};
+			}
+			catch {
+				onlineCache = null;
+			}
+			return data;
+		}
+		catch(errorValue) {
+			lastError = errorValue;
+		}
+	}
+	throw lastError instanceof Error ? lastError : new Error("master_unreachable");
+}
+
+async function lookupOnline(query: string): Promise<string> {
+	try {
+		return summarizeOnlinePlayers(await fetchOnlineServers(), query);
+	}
+	catch(errorValue) {
+		return `Could not reach the DDNet live server list for "${query}". ${errorValue instanceof Error ? errorValue.message : ""}`.trim();
+	}
 }
 
 async function lookupPlayer(query: string): Promise<string> {
@@ -352,6 +466,8 @@ async function lookupWiki(query: string): Promise<string> {
 }
 
 async function runLookup(item: DdnetLookup): Promise<string> {
+	if(item.type === "online")
+		return lookupOnline(item.query);
 	if(item.type === "player")
 		return lookupPlayer(item.query);
 	if(item.type === "map")
@@ -380,7 +496,7 @@ export async function fetchDdnetLookups(lookups: DdnetLookup[]): Promise<string>
 		}
 	}));
 	return [
-		"Official DDNet lookup (ddnet.org / wiki.ddnet.org). Use only this for ranks, maps, mappers, releases, and wiki facts. Do not invent missing ranks.",
+		"Official DDNet lookup (ddnet.org / wiki.ddnet.org / public server browser). Use only this for ranks, maps, mappers, releases, wiki facts, and whether a named player is on a public server right now. Do not invent missing ranks or a server.",
 		...parts.filter(Boolean),
 	].join("\n\n");
 }

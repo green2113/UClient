@@ -281,14 +281,14 @@ describe("parseRetrievalPlan", () => {
 			need_settings: false,
 			need_launcher: false,
 			ddnet: [
+				{type: "online", query: "Under"},
 				{type: "player", query: "deen"},
-				{type: "map", query: "Multeasystraight"},
 				{type: "http", query: "https://evil.example"},
 			],
 		}));
 		expect(plan?.ddnet).toEqual([
+			{type: "online", query: "Under"},
 			{type: "player", query: "deen"},
-			{type: "map", query: "Multeasystraight"},
 		]);
 		expect(plan?.replyLanguage).toBe("");
 	});

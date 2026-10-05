@@ -890,6 +890,15 @@ void CChat::PrintChatLineToConsole(const CLine &Line)
 		pFrom = "chat/all";
 
 	Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, pFrom, aBuf, ChatLogColor);
+
+	if(Line.m_UClient && Client()->State() != IClient::STATE_DEMOPLAYBACK)
+	{
+		char aTimestamp[64];
+		str_timestamp_format(aTimestamp, sizeof(aTimestamp), TimestampFormat::SPACE);
+		char aLine[1280];
+		str_format(aLine, sizeof(aLine), "%s I %s: %s", aTimestamp, pFrom, aBuf);
+		GameClient()->m_DiscordBridge.SubmitServerLine(aLine);
+	}
 }
 
 void CChat::PopulateParkedServerChatLine(int ClientId, int Team, const char *pText, CLine &Line)
@@ -6942,6 +6951,56 @@ void CChat::DisableMode()
 		}
 	}
 
+void CChat::ForwardDiscordServerChat(int ClientId, int Team, const char *pText)
+{
+	if(!pText || pText[0] == '\0' || Client()->State() == IClient::STATE_DEMOPLAYBACK)
+		return;
+
+	const char *pSystem = "chat/all";
+	char aName[128] = "";
+	bool Colon = true;
+	if(ClientId < 0)
+	{
+		pSystem = "chat/server";
+		str_copy(aName, "*** ", sizeof(aName));
+		Colon = false;
+	}
+	else if(ClientId < MAX_CLIENTS)
+	{
+		const char *pAuthor = GameClient()->m_aClients[ClientId].m_aName;
+		if(Team == TEAM_WHISPER_SEND)
+		{
+			pSystem = "chat/whisper";
+			str_format(aName, sizeof(aName), "→ %s", pAuthor);
+		}
+		else if(Team == TEAM_WHISPER_RECV)
+		{
+			pSystem = "chat/whisper";
+			str_format(aName, sizeof(aName), "← %s", pAuthor);
+		}
+		else if(Team == 1)
+		{
+			pSystem = "chat/team";
+			str_copy(aName, pAuthor, sizeof(aName));
+		}
+		else
+			str_copy(aName, pAuthor, sizeof(aName));
+	}
+	else
+		return;
+
+	char aBody[1024];
+	if(Colon)
+		str_format(aBody, sizeof(aBody), "%s: %s", aName, pText);
+	else
+		str_format(aBody, sizeof(aBody), "%s%s", aName, pText);
+	char aTimestamp[64];
+	str_timestamp_format(aTimestamp, sizeof(aTimestamp), TimestampFormat::SPACE);
+	char aLine[1280];
+	str_format(aLine, sizeof(aLine), "%s I %s: %s", aTimestamp, pSystem, aBody);
+	GameClient()->m_DiscordBridge.SubmitServerLine(aLine);
+}
+
 void CChat::OnMessage(int MsgType, void *pRawMsg)
 {
 	if(GameClient()->m_SuppressEvents)
@@ -6963,6 +7022,7 @@ void CChat::OnMessage(int MsgType, void *pRawMsg)
 			if(Re.error().empty() && Re.test(pMsg->m_pMessage))
 			{
 				const char *pFilteredMSG = FilterText(pMsg->m_pMessage, pMsg->m_ClientId, true);
+				ForwardDiscordServerChat(pMsg->m_ClientId, pMsg->m_Team, pFilteredMSG);
 				AddLine(pMsg->m_ClientId, pMsg->m_Team, pFilteredMSG);
 				return;
 			}
@@ -6986,6 +7046,7 @@ void CChat::OnMessage(int MsgType, void *pRawMsg)
 			AddLine(pMsg->m_ClientId, pMsg->m_Team, pMsg->m_pMessage);
 		*/
 
+		ForwardDiscordServerChat(pMsg->m_ClientId, pMsg->m_Team, pMsg->m_pMessage);
 		AddLine(pMsg->m_ClientId, pMsg->m_Team, pMsg->m_pMessage);
 
 		if(Client()->State() != IClient::STATE_DEMOPLAYBACK &&

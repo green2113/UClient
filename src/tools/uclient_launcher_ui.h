@@ -3,7 +3,7 @@
 //
 // Contract with the host (uclient_launcher.cpp):
 //   C++ -> JS   window.__setState(stateObject)
-//               window.__aiEvent({text}|{done}|{error})
+//               window.__aiEvent({text}|{done}|{error}|{question}|{shortcut})
 //   JS  -> C++  window.chrome.webview.postMessage(JSON.stringify({cmd: ...}))
 //               aiChat {messages, locale?}, aiChatAbort
 //
@@ -605,7 +605,7 @@ body{
 .sc-stepper-sep{width:1px;margin:6px 0;background:rgba(255,255,255,.1);flex:0 0 auto}
 .sc-stepper-pill{cursor:pointer}
 @supports (corner-shape:squircle){
-  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search-wrap,.sc-drawer-search-chip,.sc-drawer-filter-pick,.sc-chip,.sc-catalog,.sc-tile,.sc-tile-ico,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.sc-text-var-chip,.sc-text-composer .sc-text-var-inline,.modal-box,.opt,.confirm-box,.confirm-files,#share-link-url,#assistant,#ai-input,#ai-send,#ai-stop,.ai-card,.ai-msg .bubble,.ai-suggest,.onboard-box,.onboard-box .card,.choice,.field,.onboard-box .primary,.onboard-box .secondary,.on-back,.code-boxes input{corner-shape:squircle}
+  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search-wrap,.sc-drawer-search-chip,.sc-drawer-filter-pick,.sc-chip,.sc-catalog,.sc-tile,.sc-tile-ico,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.sc-text-var-chip,.sc-text-composer .sc-text-var-inline,.modal-box,.opt,.confirm-box,.confirm-files,#share-link-url,#assistant,#ai-input,#ai-send,#ai-stop,.ai-card,.ai-qcard,.ai-qopt,.ai-qskip,.ai-qgo,.ai-msg .bubble,.ai-suggest,.onboard-box,.onboard-box .card,.choice,.field,.onboard-box .primary,.onboard-box .secondary,.on-back,.code-boxes input{corner-shape:squircle}
   .confirm-actions .primary,.confirm-actions .secondary,.confirm-actions .danger,.confirm-box .row-actions .primary,.confirm-box .row-actions .secondary{corner-shape:squircle}
   .sc-ed-back,.sc-ed-icon,.sc-ed-delete,.sc-ed-save{corner-shape:round;border-radius:50%}
 }
@@ -1070,6 +1070,31 @@ body.dev-build #dev-panel{display:block}
 .ai-card button:disabled{opacity:.6;cursor:default;background:rgba(255,255,255,.12)}
 .ai-card.bad{border-color:rgba(255,120,120,.28)}
 .ai-card.bad small{color:#ffb4b4}
+.ai-card.pending small{margin-bottom:0}
+#ai-ask{padding:4px 14px 0;flex:0 0 auto}
+#ai-ask[hidden]{display:none!important}
+#ai-ask .ai-qcard{margin:0}
+#ai-ask:not([hidden]) + #ai-composer{border-top:0;padding-top:8px}
+.ai-qcard{margin:12px 0 0;padding:16px 16px 12px;border:1px solid rgba(255,255,255,.08);border-radius:22px;background:#141414;box-shadow:0 10px 28px -18px rgba(0,0,0,.9)}
+.ai-qcard-kicker{display:block;color:rgba(255,255,255,.42);font:600 12px/1.2 inherit;letter-spacing:-.01em;margin-bottom:8px}
+.ai-qcard-prompt{display:block;color:#fff;font:600 15px/1.45 inherit;margin:0 0 12px}
+.ai-qopts{display:flex;flex-direction:column;gap:2px}
+.ai-qopt{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;color:rgba(255,255,255,.88);border-radius:12px;padding:8px 8px;font:500 14px/1.35 inherit;cursor:pointer;text-align:left}
+.ai-qopt:hover{background:rgba(255,255,255,.05)}
+.ai-qradio{width:16px;height:16px;flex:0 0 auto;border:1.6px solid rgba(255,255,255,.34);border-radius:50%;box-sizing:border-box;position:relative}
+.ai-qopt.on .ai-qradio{border-color:#fff}
+.ai-qopt.on .ai-qradio:after{content:"";position:absolute;inset:3px;border-radius:50%;background:#fff}
+.ai-qletter{flex:0 0 16px;color:rgba(255,255,255,.42);font:650 13px/1 inherit}
+.ai-qlabel{min-width:0;flex:1}
+.ai-qcard-actions{display:flex;justify-content:flex-end;align-items:center;gap:14px;margin-top:14px;padding:2px 2px 2px}
+.ai-qskip,.ai-qgo{border:0;background:transparent;color:rgba(255,255,255,.38);font:650 13px/1 inherit;cursor:pointer;padding:4px 2px}
+.ai-qgo{color:rgba(255,255,255,.82)}
+.ai-qskip:hover{color:rgba(255,255,255,.7)}
+.ai-qgo:hover{color:#fff}
+.ai-qgo:disabled{opacity:.35;cursor:default}
+.ai-qcard.answered .ai-qopt,.ai-qcard.skipped .ai-qopt{cursor:default}
+.ai-qcard.answered .ai-qopt:hover,.ai-qcard.skipped .ai-qopt:hover{background:transparent}
+.ai-qcard.skipped .ai-qopt{opacity:.45}
 #ai-gate{padding:18px 20px 22px}
 #ai-gate p{color:var(--dim);font-size:14px;margin:0 0 14px;line-height:1.45}
 #ai-composer{display:flex;gap:8px;align-items:flex-start;padding:12px 14px 16px;border-top:1px solid var(--line)}
@@ -1283,7 +1308,7 @@ body.dev-build #dev-panel{display:block}
 }
 .confirm-layer.on .confirm-box{transform:none}
 .confirm-box h3{font:700 20px/1.2 var(--font-apple-round);letter-spacing:-.02em;color:#fff}
-.confirm-box p{margin-top:9px;color:var(--dim);font-size:14px;line-height:1.5}
+.confirm-box p{margin-top:9px;color:var(--dim);font-size:14px;line-height:1.5;white-space:pre-line}
 .confirm-files{
   display:flex;flex-direction:column;gap:5px;margin-top:13px;max-height:min(240px,45vh);overflow-y:auto;
   padding:9px 10px;border:1px solid var(--line);border-radius:var(--sc-r-inset);background:rgba(0,0,0,.18);
@@ -1295,6 +1320,10 @@ body.dev-build #dev-panel{display:block}
 .confirm-box .row-actions .primary,.confirm-box .row-actions .secondary{
   border-radius:999px;padding:11px 20px;font:650 14px/1 var(--font-apple-round);
 }
+#confirm-layer.split-actions .confirm-actions{justify-content:stretch;flex-wrap:nowrap;gap:12px}
+#confirm-layer.split-actions .confirm-actions .primary,
+#confirm-layer.split-actions .confirm-actions .secondary,
+#confirm-layer.split-actions .confirm-actions .danger{flex:1 1 0;min-width:0;text-align:center}
 #share-link-layer #share-link-url{
   width:100%;margin-top:14px;border-radius:var(--sc-r-inset);padding:12px 14px;
   font:500 14px/1.35 var(--font-apple-round);border:1px solid rgba(255,255,255,.13);
@@ -1498,6 +1527,7 @@ body.dev-build #dev-panel{display:block}
       <button class="primary" id="ai-signin" type="button">Open account</button>
     </div>
     <div id="ai-suggests" hidden></div>
+    <div id="ai-ask" hidden></div>
     <form id="ai-composer">
       <textarea id="ai-input" rows="1" maxlength="4000" placeholder="Ask about UClient" autocomplete="off"></textarea>
       <button id="ai-send" type="submit" title="Send" aria-label="Send">
@@ -2427,15 +2457,40 @@ function openConfirmDialog(title, message, acceptLabel, danger, action, details)
   $("confirm-layer").setAttribute("aria-hidden", "false");
   $("confirm-cancel").focus();
 }
+var discordLinkTokenPending = "";
 function closeConfirmDialog(accepted) {
   if (!confirmDialogOpen) return;
   var action = confirmAction;
   confirmAction = null;
   confirmDialogOpen = false;
-  $("confirm-layer").classList.remove("on");
+  $("confirm-layer").classList.remove("on", "split-actions");
   $("confirm-layer").setAttribute("aria-hidden", "true");
   if (accepted && action) action();
+  else if (!accepted && discordLinkTokenPending) {
+    discordLinkTokenPending = "";
+    send({cmd: "discordLinkDismiss"});
+  }
 }
+function maybeShowDiscordLink(st) {
+  var serial = st.discordLinkSerial || 0;
+  if (!serial || serial === shownDiscordLinkSerial || !st.discordLinkToken) return;
+  if (confirmDialogOpen) return;
+  shownDiscordLinkSerial = serial;
+  discordLinkTokenPending = st.discordLinkToken;
+  $("confirm-layer").classList.add("split-actions");
+  openConfirmDialog(
+    "Link with Discord",
+    "Discord requested an account link. If this is not the right account, log out of UClient, sign in with the other account, then use /link on Discord again.\n\nThere is currently no way to unlink an account. If you want to unlink, contact an administrator.",
+    "Link",
+    false,
+    function () {
+      var token = discordLinkTokenPending;
+      discordLinkTokenPending = "";
+      send({cmd: "discordLinkConfirm", token: token});
+    }
+  );
+}
+var shownDiscordLinkSerial = 0;
 $("confirm-cancel").addEventListener("click", function () { closeConfirmDialog(false); });
 $("confirm-dim").addEventListener("click", function () { closeConfirmDialog(false); });
 $("confirm-accept").addEventListener("click", function () { closeConfirmDialog(true); });
@@ -6001,6 +6056,8 @@ function scSaveAll() {
 var aiMessages = [];
 var aiBusy = false;
 var aiStreamText = "";
+var aiStreamQuestions = [];
+var aiStreamShortcuts = [];
 var aiShownLen = 0;
 var aiStreamDone = false;
 var aiTypeRaf = 0;
@@ -6160,6 +6217,45 @@ function aiRenderText(text) {
   });
   return aiAutolinkBare(html).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>");
 }
+function aiPendingShortcutCard() {
+  return '<div class="ai-card pending"><b>Shortcut</b><small>Putting this together\u2026</small></div>';
+}
+function aiBrokenShortcutCard() {
+  return '<div class="ai-card bad"><b>Shortcut</b><small>Could not read this shortcut. Ask the assistant to fix it.</small></div>';
+}
+function aiLooksLikePartialShortcut(raw) {
+  var s = String(raw || "");
+  if (s.indexOf("{") < 0 && !/```/.test(s))
+    return false;
+  if (/```\s*uclient/i.test(s) || /```\s*json\b/i.test(s))
+    return true;
+  return /"(?:kind|actions|trigger|name|id)"\s*:/.test(s);
+}
+function aiOpenFence(text) {
+  var openAt = -1;
+  for (var i = 0; i + 2 < text.length; i++) {
+    if (text.charAt(i) === "`" && text.charAt(i + 1) === "`" && text.charAt(i + 2) === "`") {
+      openAt = openAt < 0 ? i : -1;
+      i += 2;
+    }
+  }
+  if (openAt < 0)
+    return null;
+  var rest = text.slice(openAt + 3);
+  var nl = rest.indexOf("\n");
+  var label = (nl < 0 ? rest : rest.slice(0, nl)).replace(/^\s+|\s+$/g, "").toLowerCase();
+  var body = nl < 0 ? "" : rest.slice(nl + 1);
+  return {index: openAt, label: label, body: body};
+}
+function aiFenceIsShortcut(open) {
+  if (!open)
+    return false;
+  if (open.label.indexOf("uclient") === 0 || open.label === "json")
+    return true;
+  if (aiLooksLikePartialShortcut(open.body))
+    return true;
+  return !open.label && /^\s*\{/.test(open.body);
+}
 function aiRenderShortcutCard(rawText) {
   var parsed;
   try { parsed = JSON.parse(rawText); }
@@ -6195,7 +6291,7 @@ function aiParseShortcutJson(raw) {
     return null;
   }
 }
-function aiRenderNakedShortcuts(text) {
+function aiRenderNakedShortcuts(text, streaming) {
   var html = "";
   var start = 0;
   while (start < text.length) {
@@ -6224,7 +6320,16 @@ function aiRenderNakedShortcuts(text) {
       }
     }
     if (end < 0) {
-      html += aiRenderText(text.slice(start));
+      var dangling = text.slice(brace);
+      if (streaming && (aiLooksLikePartialShortcut(dangling) || /^\s*\{\s*["{\n]/.test(dangling))) {
+        html += aiRenderText(text.slice(start, brace));
+        html += aiPendingShortcutCard();
+      } else if (!streaming && aiLooksLikePartialShortcut(dangling)) {
+        html += aiRenderText(text.slice(start, brace));
+        html += aiBrokenShortcutCard();
+      } else {
+        html += aiRenderText(text.slice(start));
+      }
       break;
     }
     var chunk = text.slice(brace, end + 1);
@@ -6239,13 +6344,98 @@ function aiRenderNakedShortcuts(text) {
   }
   return html;
 }
+function aiQuestionHost(msgIndex) {
+  if (msgIndex >= 0 && aiMessages[msgIndex])
+    return aiMessages[msgIndex].questions || null;
+  return aiStreamQuestions;
+}
+function aiRenderQuestionCard(q, msgIndex, qIndex) {
+  if (!q || !q.prompt || !q.options || q.options.length < 2) return "";
+  var answered = q.answered ? String(q.answered) : "";
+  var picked = answered || (q.picked ? String(q.picked) : "");
+  var locked = !!(answered || q.skipped);
+  var letters = "ABCDEFGHIJ";
+  var html = '<div class="ai-qcard' + (answered ? " answered" : "") + (q.skipped ? " skipped" : "") + '" data-ai-msg="' + msgIndex + '" data-ai-q="' + qIndex + '">';
+  html += '<span class="ai-qcard-kicker">Question</span>';
+  html += '<p class="ai-qcard-prompt">' + esc(q.prompt) + "</p><div class=\"ai-qopts\">";
+  var shown = 0;
+  q.options.forEach(function (opt) {
+    var label = String(opt.label || "");
+    if (!label) return;
+    var letter = letters.charAt(shown) || String(shown + 1);
+    html += '<button type="button" class="ai-qopt' + (picked === label ? " on" : "") + '" data-label="' + esc(label) + '"' + (locked ? " disabled" : "") + ">";
+    html += '<span class="ai-qradio" aria-hidden="true"></span>';
+    html += '<span class="ai-qletter">' + letter + "</span>";
+    html += '<span class="ai-qlabel">' + esc(label) + "</span></button>";
+    shown++;
+  });
+  html += "</div>";
+  if (!locked) {
+    html += '<div class="ai-qcard-actions">';
+    html += '<button type="button" class="ai-qskip">Skip</button>';
+    html += '<button type="button" class="ai-qgo"' + (picked ? "" : " disabled") + ">Continue</button>";
+    html += "</div>";
+  }
+  html += "</div>";
+  return html;
+}
+function aiRenderShortcuts(shortcuts) {
+  var html = "";
+  (shortcuts || []).forEach(function (raw) {
+    html += aiRenderShortcutCard(typeof raw === "string" ? raw : JSON.stringify(raw));
+  });
+  return html;
+}
+function aiSpeechWithoutQuestion(text, questions) {
+  var out = String(text || "").trim();
+  if (!out)
+    return "";
+  var compact = out.replace(/\s+/g, "").toLowerCase();
+  for (var i = 0; i < (questions || []).length; i++) {
+    var prompt = questions[i] && questions[i].prompt ? String(questions[i].prompt).replace(/\s+/g, "").toLowerCase() : "";
+    if (prompt && compact === prompt)
+      return "";
+  }
+  return out;
+}
+function aiActiveAskHtml() {
+  var html = "";
+  function add(questions, msgIndex) {
+    (questions || []).forEach(function (q, i) {
+      if (!q || q.answered || q.skipped) return;
+      html += aiRenderQuestionCard(q, msgIndex, i);
+    });
+  }
+  if (aiStreamQuestions.length)
+    add(aiStreamQuestions, -1);
+  else {
+    for (var i = aiMessages.length - 1; i >= 0; i--) {
+      if (aiMessages[i] && aiMessages[i].role === "assistant" && aiMessages[i].questions) {
+        add(aiMessages[i].questions, i);
+        break;
+      }
+    }
+  }
+  return html;
+}
+function aiSyncAsk() {
+  var box = $("ai-ask");
+  if (!box) return;
+  var html = aiActiveAskHtml();
+  box.innerHTML = html;
+  box.hidden = !html;
+}
+function aiClearStreamExtras() {
+  aiStreamQuestions = [];
+  aiStreamShortcuts = [];
+}
 function aiRenderAssistantBody(text, streaming) {
   var re = /```([^\n]*)\n([\s\S]*?)```/g;
   var html = "";
   var last = 0;
   var m;
   while ((m = re.exec(text))) {
-    html += aiRenderNakedShortcuts(text.slice(last, m.index));
+    html += aiRenderNakedShortcuts(text.slice(last, m.index), streaming);
     var label = String(m[1] || "").trim().toLowerCase();
     var body = String(m[2] || "").trim();
     if (label === "uclient-shortcut" || aiParseShortcutJson(body))
@@ -6254,7 +6444,14 @@ function aiRenderAssistantBody(text, streaming) {
       html += aiRenderText(m[0]);
     last = m.index + m[0].length;
   }
-  html += aiRenderNakedShortcuts(text.slice(last));
+  var tail = text.slice(last);
+  var open = aiOpenFence(tail);
+  if (open && aiFenceIsShortcut(open)) {
+    html += aiRenderNakedShortcuts(tail.slice(0, open.index), streaming);
+    html += streaming ? aiPendingShortcutCard() : aiBrokenShortcutCard();
+  } else {
+    html += aiRenderNakedShortcuts(tail, streaming);
+  }
   if (streaming) html += '<span class="ai-cursor"></span>';
   return html;
 }
@@ -6331,10 +6528,15 @@ function aiVisibleStream() {
 function aiFinishStream() {
   aiStopType();
   aiStopWait();
-  if (aiStreamText) {
-    aiMessages.push({role: "assistant", content: aiStreamText});
-    aiStreamText = "";
+  var spoken = aiSpeechWithoutQuestion(aiStreamText, aiStreamQuestions);
+  if (spoken || aiStreamQuestions.length || aiStreamShortcuts.length) {
+    var msg = {role: "assistant", content: spoken || ""};
+    if (aiStreamQuestions.length) msg.questions = aiStreamQuestions;
+    if (aiStreamShortcuts.length) msg.shortcuts = aiStreamShortcuts;
+    aiMessages.push(msg);
   }
+  aiStreamText = "";
+  aiClearStreamExtras();
   aiShownLen = 0;
   aiStreamDone = false;
   aiBusy = false;
@@ -6343,18 +6545,26 @@ function aiFinishStream() {
 function aiPatchStreamBubble() {
   var log = $("ai-log");
   if (!log) return;
+  aiSyncAsk();
   var msg = log.querySelector(".ai-msg.assistant.streaming");
   var bubble = msg ? msg.querySelector(".bubble") : null;
   if (!bubble) {
     aiRender();
     return;
   }
-  var shown = aiVisibleStream();
-  if (shown) {
+  var shown = aiSpeechWithoutQuestion(aiVisibleStream(), aiStreamQuestions);
+  var extras = aiRenderShortcuts(aiStreamShortcuts);
+  if (shown || extras) {
     aiStopWait();
+    msg.style.display = "";
     msg.classList.remove("wait");
-    bubble.innerHTML = aiRenderAssistantBody(shown, true);
+    bubble.innerHTML = (shown ? aiRenderAssistantBody(shown, true) : "") + extras;
+  } else if (aiStreamQuestions.length) {
+    aiStopWait();
+    msg.style.display = "none";
+    bubble.innerHTML = "";
   } else {
+    msg.style.display = "";
     msg.classList.add("wait");
     bubble.innerHTML = aiWaitHtml();
   }
@@ -6419,7 +6629,8 @@ function aiRender() {
   aiCardEntries = [];
   aiSyncComposer();
   aiSyncSuggests();
-  if (!aiMessages.length && !aiStreamText && !aiError) {
+  aiSyncAsk();
+  if (!aiMessages.length && !aiStreamText && !aiStreamQuestions.length && !aiStreamShortcuts.length && !aiError && !aiBusy) {
     log.innerHTML = "";
     return;
   }
@@ -6427,13 +6638,21 @@ function aiRender() {
   aiMessages.forEach(function (msg) {
     if (msg.role === "user") {
       html += '<div class="ai-msg user"><div class="bubble">' + aiRenderText(msg.content) + "</div></div>";
-    } else {
-      html += '<div class="ai-msg assistant"><div class="bubble">' + aiRenderAssistantBody(msg.content, false) + "</div></div>";
+      return;
     }
+    var speech = aiSpeechWithoutQuestion(msg.content, msg.questions);
+    var extras = aiRenderShortcuts(msg.shortcuts);
+    if (!speech && !extras)
+      return;
+    html += '<div class="ai-msg assistant"><div class="bubble">' + (speech ? aiRenderAssistantBody(speech, false) : "") + extras + "</div></div>";
   });
   if (aiBusy) {
-    var shown = aiVisibleStream();
-    html += '<div class="ai-msg assistant streaming' + (shown ? "" : " wait") + '"><div class="bubble">' + (shown ? aiRenderAssistantBody(shown, true) : aiWaitHtml()) + "</div></div>";
+    var shown = aiSpeechWithoutQuestion(aiVisibleStream(), aiStreamQuestions);
+    var extras = aiRenderShortcuts(aiStreamShortcuts);
+    if (shown || extras)
+      html += '<div class="ai-msg assistant streaming"><div class="bubble">' + (shown ? aiRenderAssistantBody(shown, true) + extras : extras) + "</div></div>";
+    else if (!aiStreamQuestions.length)
+      html += '<div class="ai-msg assistant streaming wait"><div class="bubble">' + aiWaitHtml() + "</div></div>";
   }
   if (aiError) html += '<div class="ai-err">' + esc(aiError) + "</div>";
   log.innerHTML = html;
@@ -6459,6 +6678,7 @@ function aiSendText(text) {
   aiError = "";
   aiStopType();
   aiStreamText = "";
+  aiClearStreamExtras();
   aiShownLen = 0;
   aiStreamDone = false;
   aiMessages.push({role: "user", content: text});
@@ -6466,7 +6686,9 @@ function aiSendText(text) {
   aiBusy = true;
   aiStartWait();
   aiRender();
-  send({cmd: "aiChat", messages: aiMessages});
+  send({cmd: "aiChat", messages: aiMessages.map(function (msg) {
+    return {role: msg.role, content: msg.content};
+  })});
 }
 function aiSendCurrent() {
   var input = $("ai-input");
@@ -6495,6 +6717,31 @@ $("ai-signin").addEventListener("click", function () { openSettingsAccount(); })
 $("ai-suggests").addEventListener("click", function (e) {
   var suggest = e.target.closest(".ai-suggest");
   if (suggest) aiSendText(suggest.getAttribute("data-ai-q") || "");
+});
+$("ai-ask").addEventListener("click", function (e) {
+  var qcard = e.target.closest(".ai-qcard");
+  if (!qcard) return;
+  var mid = parseInt(qcard.getAttribute("data-ai-msg") || "-1", 10);
+  var qid = parseInt(qcard.getAttribute("data-ai-q") || "-1", 10);
+  var host = aiQuestionHost(mid);
+  var q = host && host[qid] ? host[qid] : null;
+  if (!q || q.answered || q.skipped) return;
+  var qopt = e.target.closest(".ai-qopt");
+  if (qopt) {
+    q.picked = qopt.getAttribute("data-label") || "";
+    aiSyncAsk();
+    return;
+  }
+  if (e.target.closest(".ai-qskip")) {
+    q.skipped = true;
+    aiSyncAsk();
+    return;
+  }
+  if (e.target.closest(".ai-qgo")) {
+    if (aiBusy || !q.picked) return;
+    q.answered = q.picked;
+    aiSendText(q.picked);
+  }
 });
 $("ai-log").addEventListener("click", function (e) {
   var link = e.target.closest("a.ai-link");
@@ -6541,6 +6788,7 @@ window.__aiEvent = function (ev) {
       aiMessages.push({role: "assistant", content: aiStreamText});
       aiStreamText = "";
     }
+    aiClearStreamExtras();
     aiShownLen = 0;
     aiStreamDone = false;
     aiBusy = false;
@@ -6551,6 +6799,16 @@ window.__aiEvent = function (ev) {
     aiError = "";
     aiStreamText += String(ev.text);
     aiEnsureTyping();
+  }
+  if (ev.question && ev.question.prompt && ev.question.options) {
+    aiError = "";
+    aiStreamQuestions.push(ev.question);
+    aiPatchStreamBubble();
+  }
+  if (ev.shortcut) {
+    aiError = "";
+    aiStreamShortcuts.push(ev.shortcut);
+    aiPatchStreamBubble();
   }
   if (ev.done) {
     aiStreamDone = true;
@@ -9673,6 +9931,7 @@ function playButtonShowsStatus(phase) {
 window.__setState = function (st) {
   if (!st) return;
   lastState = st;
+  maybeShowDiscordLink(st);
   setArt(st);
   renderDev(st);
   renderAccountAndBackup(st);

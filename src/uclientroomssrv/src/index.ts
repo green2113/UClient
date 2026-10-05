@@ -18,6 +18,7 @@ import {
 	serveSharePage,
 } from "./shortcuts-share";
 import {handleAiChat} from "./ai";
+import {handleDiscord} from "./discord";
 import {
 	consumeEmailVerification,
 	loadEmailVerification,
@@ -41,6 +42,8 @@ interface Env extends Cloudflare.Env {
 	ENVIRONMENT?: string;
 	RESEND_API_KEY?: string;
 	RESEND_FROM?: string;
+	DISCORD_BOT_TOKEN?: string;
+	DISCORD_INTERNAL_SECRET?: string;
 }
 
 interface AccountInput {
@@ -1456,6 +1459,8 @@ export default {
 				const redirectUrl = new URL(`/shortcuts/share/${segments[1]!}`, request.url);
 				return Response.redirect(redirectUrl.toString(), 301);
 			}
+			if(segments[0] === "discord" || (segments[0] === "internal" && segments[1] === "discord"))
+				return handleDiscord(request, env, segments, discordRequest => authenticate(discordRequest, env), ctx);
 			if(segments[0] === "rooms")
 				return handleRooms(request, env, ctx, segments);
 			return error(404, "not_found", "Endpoint not found.");

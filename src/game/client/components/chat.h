@@ -861,6 +861,7 @@ public:
 	void Reset();
 	void OnRelease() override;
 	void OnMessage(int MsgType, void *pRawMsg) override;
+	void ForwardDiscordServerChat(int ClientId, int Team, const char *pText);
 	bool OnInput(const IInput::CEvent &Event) override;
 	bool OnCursorMove(float x, float y, IInput::ECursorType CursorType) override;
 	void OnInit() override;
