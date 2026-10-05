@@ -1,3 +1,5 @@
+import {findPlayerServers, formatFriendGroups, formatPlayerLines, groupOnlineFriends, loadPresence, loadPublicServers, normalizeName} from "./serverlist";
+
 const JSON_HEADERS = {
 	"content-type": "application/json; charset=utf-8",
 	"cache-control": "no-store",
@@ -7,6 +9,7 @@ const SNOWFLAKE_RE = /^\d{5,22}$/;
 const TOKEN_RE = /^[A-Za-z0-9_-]{20,128}$/;
 const LINK_TTL_SECONDS = 10 * 60;
 const GAME_ONLINE_SECONDS = 8;
+const PRESENCE_SECONDS = 15;
 const MAX_INGEST_LINES = 20;
 const MAX_DISCORD_CONTENT = 2000;
 const MAX_GAME_CHAT = 255;
@@ -22,6 +25,15 @@ export const DISCORD_TEXT = {
 	notInGame: "You are not connected to a game server.",
 	noRoom: "That room is not available.",
 	modeRoomConflict: "Clear the mode, or set it to UClient, when a room is selected.",
+	launcherDown: "The launcher is not running.",
+	gameDown: "The game is not running. Use /start-game to start the game, then try again.",
+	gameAlreadyRunning: "The game is already running.",
+	messageSent: "The message was sent.",
+	nameEmpty: "Name is empty.",
+	serverListDown: "Could not reach the server list. Try again.",
+	noFriendsSent: "Open the launcher while signed in so it can send your friend list, then try again.",
+	noFriends: "You have no friends in the launcher.",
+	noFriendsOnline: "No friends are online.",
 } as const;
 
 export function linkedMessage(installId: string): string {
@@ -320,6 +332,7 @@ async function confirmLink(env: DiscordEnv, token: string, authenticate: (reques
 	];
 	for(const installId of installIds) {
 		statements.push(env.DB.prepare("DELETE FROM discord_outbound_messages WHERE install_id = ?1").bind(installId));
+		statements.push(env.DB.prepare("DELETE FROM discord_control_commands WHERE install_id = ?1").bind(installId));
 	}
 	await env.DB.batch(statements);
 	const message = linkedMessage(authenticated.installId);
@@ -637,7 +650,359 @@ async function sendCommand(request: Request, env: DiscordEnv): Promise<Response>
 	await env.DB.prepare(
 		"INSERT INTO discord_outbound_messages (install_id, body, created_at, mode, room_id) VALUES (?1, ?2, ?3, ?4, ?5)",
 	).bind(link.install_id, text, now, storedMode, storedRoom).run();
+	return json({ok: true, message: DISCORD_TEXT.messageSent});
+}
+
+interface PresenceRow {
+	install_id: string;
+	game_online_at: number;
+	launcher_seen_at: number;
+	game_seen_at: number;
+}
+
+interface ControlCommandRow {
+	id: number;
+	kind: string;
+	address: string;
+	password: string;
+	had_password: number;
+	application_id: string;
+	interaction_token: string;
+}
+
+function presenceFresh(seenAt: number, now: number): boolean {
+	return seenAt > 0 && now - seenAt <= PRESENCE_SECONDS;
+}
+
+function parseConnectAddress(value: string): string | null {
+	const text = value.trim();
+	const colon = text.lastIndexOf(":");
+	if(colon <= 0 || colon === text.length - 1 || text.length > 128)
+		return null;
+	const host = text.slice(0, colon);
+	const port = Number(text.slice(colon + 1));
+	if(!host || /\s/.test(host) || !Number.isInteger(port) || port < 1 || port > 65535)
+		return null;
+	return `${host}:${port}`;
+}
+
+export function controlResultMessage(address: string, hadPassword: boolean, code: string, detail: string): string {
+	if(code === "connected")
+		return `Connected to ${address}.`;
+	if(code === "password") {
+		if(!hadPassword)
+			return `This server requires a password. Use /connect ${address} <password>.`;
+		return `Could not connect to ${address}. The password was not accepted.`;
+	}
+	if(code === "disconnected")
+		return "Disconnected from the server.";
+	if(code === "started")
+		return "Started the game.";
+	if(code === "stopped")
+		return "Stopped the game.";
+	const reason = detail.trim().slice(0, 300);
+	if(address)
+		return reason ? `Could not connect to ${address}. ${reason}` : `Could not connect to ${address}.`;
+	return reason || "Could not start the game.";
+}
+
+async function editInteraction(applicationId: string, token: string, content: string): Promise<void> {
+	if(!SNOWFLAKE_RE.test(applicationId) || token.length < 20)
+		return;
+	try {
+		await fetch(`https://discord.com/api/v10/webhooks/${encodeURIComponent(applicationId)}/${encodeURIComponent(token)}/messages/@original`, {
+			method: "PATCH",
+			headers: {"content-type": "application/json"},
+			body: JSON.stringify({content: neutralizeMentions(content).slice(0, MAX_DISCORD_CONTENT)}),
+			signal: AbortSignal.timeout(8000),
+		});
+	}
+	catch(errorValue) {
+		console.error(JSON.stringify({
+			event: "discord_edit_failed",
+			message: errorValue instanceof Error ? errorValue.message : String(errorValue),
+		}));
+	}
+}
+
+async function presenceForInstall(env: DiscordEnv, installId: string): Promise<PresenceRow | null> {
+	return await env.DB.prepare(
+		"SELECT install_id, game_online_at, launcher_seen_at, game_seen_at FROM discord_links WHERE install_id = ?1",
+	).bind(installId).first<PresenceRow>();
+}
+
+async function presenceForDiscordUser(env: DiscordEnv, discordUserId: string): Promise<PresenceRow | null> {
+	return await env.DB.prepare(
+		"SELECT install_id, game_online_at, launcher_seen_at, game_seen_at FROM discord_links WHERE discord_user_id = ?1",
+	).bind(discordUserId).first<PresenceRow>();
+}
+
+async function touchPresence(env: DiscordEnv, installId: string, column: "launcher_seen_at" | "game_seen_at", now: number): Promise<void> {
+	const sql = column === "launcher_seen_at" ?
+		"UPDATE discord_links SET launcher_seen_at = ?2 WHERE install_id = ?1" :
+		"UPDATE discord_links SET game_seen_at = ?2 WHERE install_id = ?1";
+	await env.DB.prepare(sql).bind(installId, now).run();
+}
+
+async function claimControlCommand(env: DiscordEnv, installId: string, target: string): Promise<ControlCommandRow | null> {
+	const row = await env.DB.prepare(
+		`SELECT id, kind, address, password, had_password, application_id, interaction_token
+		 FROM discord_control_commands
+		 WHERE install_id = ?1 AND target = ?2 AND status = 'pending'
+		 ORDER BY id ASC
+		 LIMIT 1`,
+	).bind(installId, target).first<ControlCommandRow>();
+	if(!row)
+		return null;
+	const claimed = await env.DB.prepare(
+		"UPDATE discord_control_commands SET status = 'claimed', password = '' WHERE id = ?1 AND status = 'pending'",
+	).bind(row.id).run();
+	if((claimed.meta.changes ?? 0) === 0)
+		return null;
+	return row;
+}
+
+async function queueControlCommand(env: DiscordEnv, installId: string, target: string, kind: string, address: string, password: string, applicationId: string, interactionToken: string, now: number): Promise<void> {
+	await env.DB.prepare(
+		"DELETE FROM discord_control_commands WHERE install_id = ?1 AND status = 'pending'",
+	).bind(installId).run();
+	await env.DB.prepare(
+		`INSERT INTO discord_control_commands
+		 (install_id, target, kind, address, password, had_password, application_id, interaction_token, created_at, status)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'pending')`,
+	).bind(installId, target, kind, address, password, password ? 1 : 0, applicationId, interactionToken, now).run();
+}
+
+async function readControlRequest(request: Request): Promise<{discordUserId: string; applicationId: string; interactionToken: string; address: string; password: string} | Response> {
+	const body = await readJson<{discord_user_id?: string; application_id?: string; interaction_token?: string; address?: string; password?: string}>(request);
+	if(!body || !SNOWFLAKE_RE.test(body.discord_user_id ?? "") || !SNOWFLAKE_RE.test(body.application_id ?? "") || typeof body.interaction_token !== "string" || body.interaction_token.length < 20 || body.interaction_token.length > 2048)
+		return error(400, "invalid_request", "Control request is invalid.");
+	return {
+		discordUserId: body.discord_user_id!,
+		applicationId: body.application_id!,
+		interactionToken: body.interaction_token,
+		address: typeof body.address === "string" ? body.address : "",
+		password: typeof body.password === "string" ? body.password.trim().slice(0, 128) : "",
+	};
+}
+
+async function connectCommand(request: Request, env: DiscordEnv): Promise<Response> {
+	if(!await internalAuthorized(request, env))
+		return error(401, "invalid_bot_secret", "Bot authentication failed.");
+	const parsed = await readControlRequest(request);
+	if(parsed instanceof Response)
+		return parsed;
+	const address = parseConnectAddress(parsed.address);
+	if(!address)
+		return error(400, "invalid_request", "Enter the server as host:port.");
+	const link = await presenceForDiscordUser(env, parsed.discordUserId);
+	if(!link)
+		return json({ok: false, queued: false, message: DISCORD_TEXT.notLinked});
+	const now = nowSeconds();
+	if(!presenceFresh(link.launcher_seen_at, now))
+		return json({ok: false, queued: false, message: DISCORD_TEXT.launcherDown});
+	if(!presenceFresh(link.game_seen_at, now))
+		return json({ok: false, queued: false, message: DISCORD_TEXT.gameDown});
+	await queueControlCommand(env, link.install_id, "game", "connect", address, parsed.password, parsed.applicationId, parsed.interactionToken, now);
+	return json({ok: true, queued: true, message: `Connecting to ${address}...`});
+}
+
+async function disconnectCommand(request: Request, env: DiscordEnv): Promise<Response> {
+	if(!await internalAuthorized(request, env))
+		return error(401, "invalid_bot_secret", "Bot authentication failed.");
+	const parsed = await readControlRequest(request);
+	if(parsed instanceof Response)
+		return parsed;
+	const link = await presenceForDiscordUser(env, parsed.discordUserId);
+	if(!link)
+		return json({ok: false, queued: false, message: DISCORD_TEXT.notLinked});
+	const now = nowSeconds();
+	if(!presenceFresh(link.game_seen_at, now))
+		return json({ok: false, queued: false, message: DISCORD_TEXT.gameDown});
+	if(!gameOnline(link.game_online_at, now))
+		return json({ok: false, queued: false, message: DISCORD_TEXT.notInGame});
+	await queueControlCommand(env, link.install_id, "game", "disconnect", "", "", parsed.applicationId, parsed.interactionToken, now);
+	return json({ok: true, queued: true, message: "Disconnecting from the server..."});
+}
+
+async function startGameCommand(request: Request, env: DiscordEnv): Promise<Response> {
+	if(!await internalAuthorized(request, env))
+		return error(401, "invalid_bot_secret", "Bot authentication failed.");
+	const parsed = await readControlRequest(request);
+	if(parsed instanceof Response)
+		return parsed;
+	const link = await presenceForDiscordUser(env, parsed.discordUserId);
+	if(!link)
+		return json({ok: false, queued: false, message: DISCORD_TEXT.notLinked});
+	const now = nowSeconds();
+	if(!presenceFresh(link.launcher_seen_at, now))
+		return json({ok: false, queued: false, message: DISCORD_TEXT.launcherDown});
+	if(presenceFresh(link.game_seen_at, now))
+		return json({ok: false, queued: false, message: DISCORD_TEXT.gameAlreadyRunning});
+	await queueControlCommand(env, link.install_id, "launcher", "start-game", "", "", parsed.applicationId, parsed.interactionToken, now);
+	return json({ok: true, queued: true, message: "Starting the game..."});
+}
+
+async function stopGameCommand(request: Request, env: DiscordEnv): Promise<Response> {
+	if(!await internalAuthorized(request, env))
+		return error(401, "invalid_bot_secret", "Bot authentication failed.");
+	const parsed = await readControlRequest(request);
+	if(parsed instanceof Response)
+		return parsed;
+	const link = await presenceForDiscordUser(env, parsed.discordUserId);
+	if(!link)
+		return json({ok: false, queued: false, message: DISCORD_TEXT.notLinked});
+	const now = nowSeconds();
+	if(!presenceFresh(link.launcher_seen_at, now))
+		return json({ok: false, queued: false, message: DISCORD_TEXT.launcherDown});
+	if(!presenceFresh(link.game_seen_at, now))
+		return json({ok: false, queued: false, message: DISCORD_TEXT.gameDown});
+	await queueControlCommand(env, link.install_id, "launcher", "stop-game", "", "", parsed.applicationId, parsed.interactionToken, now);
+	return json({ok: true, queued: true, message: "Stopping the game..."});
+}
+
+async function pollControl(request: Request, env: DiscordEnv, authenticate: (request: Request) => Promise<DiscordAuth | Response>, target: "game" | "launcher"): Promise<Response> {
+	const authenticated = await authenticate(request);
+	if(authenticated instanceof Response)
+		return authenticated;
+	const link = await presenceForInstall(env, authenticated.installId);
+	if(!link)
+		return json({commands: []});
+	await touchPresence(env, authenticated.installId, target === "launcher" ? "launcher_seen_at" : "game_seen_at", nowSeconds());
+	const command = await claimControlCommand(env, authenticated.installId, target);
+	if(!command)
+		return json({commands: []});
+	return json({
+		commands: [{
+			id: command.id,
+			kind: command.kind,
+			address: command.address,
+			password: command.password,
+			had_password: command.had_password !== 0,
+		}],
+	});
+}
+
+function cleanFriendNames(value: unknown): string[] | null {
+	if(!Array.isArray(value))
+		return null;
+	const names: string[] = [];
+	const seen = new Set<string>();
+	for(const item of value) {
+		if(typeof item !== "string")
+			continue;
+		const name = item.trim().slice(0, 64);
+		const key = normalizeName(name);
+		if(!key || seen.has(key))
+			continue;
+		seen.add(key);
+		names.push(name);
+		if(names.length >= 200)
+			break;
+	}
+	return names;
+}
+
+async function saveFriends(request: Request, env: DiscordEnv, authenticate: (request: Request) => Promise<DiscordAuth | Response>): Promise<Response> {
+	const authenticated = await authenticate(request);
+	if(authenticated instanceof Response)
+		return authenticated;
+	const body = await readJson<{names?: unknown}>(request);
+	const names = cleanFriendNames(body?.names);
+	if(!names)
+		return error(400, "invalid_request", "Friend list is invalid.");
+	await env.DB.prepare(
+		`INSERT INTO launcher_friends (install_id, names_json, updated_at)
+		 VALUES (?1, ?2, ?3)
+		 ON CONFLICT(install_id) DO UPDATE SET names_json = excluded.names_json, updated_at = excluded.updated_at`,
+	).bind(authenticated.installId, JSON.stringify(names), nowSeconds()).run();
 	return json({ok: true});
+}
+
+async function playerSearch(request: Request, env: DiscordEnv): Promise<Response> {
+	if(!await internalAuthorized(request, env))
+		return error(401, "invalid_bot_secret", "Bot authentication failed.");
+	const name = new URL(request.url).searchParams.get("name")?.trim().slice(0, 64) ?? "";
+	if(!name)
+		return json({ok: false, message: DISCORD_TEXT.nameEmpty});
+	try {
+		const hits = findPlayerServers(await loadPublicServers(), name);
+		if(!hits.length)
+			return json({ok: true, found: false, message: neutralizeMentions(`No player named "${name}" is on the public server list.`)});
+		return json({ok: true, found: true, message: neutralizeMentions(formatPlayerLines(hits))});
+	}
+	catch {
+		return json({ok: false, message: DISCORD_TEXT.serverListDown});
+	}
+}
+
+async function onlineFriends(request: Request, env: DiscordEnv): Promise<Response> {
+	if(!await internalAuthorized(request, env))
+		return error(401, "invalid_bot_secret", "Bot authentication failed.");
+	const discordUserId = new URL(request.url).searchParams.get("discord_user_id") ?? "";
+	if(!SNOWFLAKE_RE.test(discordUserId))
+		return error(400, "invalid_request", "Discord user is invalid.");
+	const link = await presenceForDiscordUser(env, discordUserId);
+	if(!link)
+		return json({ok: false, message: DISCORD_TEXT.notLinked});
+	const row = await env.DB.prepare(
+		"SELECT names_json FROM launcher_friends WHERE install_id = ?1",
+	).bind(link.install_id).first<{names_json: string}>();
+	if(!row)
+		return json({ok: false, message: DISCORD_TEXT.noFriendsSent});
+	let names: string[] = [];
+	try {
+		const parsed = JSON.parse(row.names_json) as unknown;
+		names = Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+	}
+	catch {
+		names = [];
+	}
+	if(!names.length)
+		return json({ok: true, message: DISCORD_TEXT.noFriends});
+	let servers: unknown = null;
+	let presence: unknown = [];
+	try {
+		servers = await loadPublicServers();
+	}
+	catch {
+		servers = null;
+	}
+	try {
+		presence = await loadPresence();
+	}
+	catch {
+		presence = [];
+	}
+	const groups = groupOnlineFriends(servers ?? {servers: []}, presence, names);
+	if(!groups.length)
+		return json({ok: servers ? true : false, message: servers ? DISCORD_TEXT.noFriendsOnline : DISCORD_TEXT.serverListDown});
+	return json({ok: true, description: neutralizeMentions(formatFriendGroups(groups))});
+}
+
+async function controlResult(request: Request, env: DiscordEnv, authenticate: (request: Request) => Promise<DiscordAuth | Response>): Promise<Response> {
+	const authenticated = await authenticate(request);
+	if(authenticated instanceof Response)
+		return authenticated;
+	const body = await readJson<{id?: number; code?: string; detail?: string}>(request);
+	if(!body || typeof body.id !== "number" || typeof body.code !== "string")
+		return error(400, "invalid_request", "Control result is invalid.");
+	const row = await env.DB.prepare(
+		`SELECT id, address, had_password, application_id, interaction_token
+		 FROM discord_control_commands
+		 WHERE id = ?1 AND install_id = ?2 AND status = 'claimed'`,
+	).bind(body.id, authenticated.installId).first<{id: number; address: string; had_password: number; application_id: string; interaction_token: string}>();
+	if(!row)
+		return json({ok: true, ignored: true});
+	const detail = typeof body.detail === "string" ? body.detail : "";
+	const message = controlResultMessage(row.address, row.had_password !== 0, body.code, detail);
+	await env.DB.prepare(
+		"UPDATE discord_control_commands SET status = 'done', password = '' WHERE id = ?1",
+	).bind(row.id).run();
+	if(body.code === "stopped")
+		await env.DB.prepare("UPDATE discord_links SET game_seen_at = 0 WHERE install_id = ?1").bind(authenticated.installId).run();
+	await editInteraction(row.application_id, row.interaction_token, message);
+	return json({ok: true, message});
 }
 
 export async function handleDiscord(
@@ -662,6 +1027,18 @@ export async function handleDiscord(
 			return discordRooms(request, env);
 		if(segments.length === 3 && segments[2] === "send" && request.method === "POST")
 			return sendCommand(request, env);
+		if(segments.length === 3 && segments[2] === "connect" && request.method === "POST")
+			return connectCommand(request, env);
+		if(segments.length === 3 && segments[2] === "disconnect" && request.method === "POST")
+			return disconnectCommand(request, env);
+		if(segments.length === 3 && segments[2] === "start-game" && request.method === "POST")
+			return startGameCommand(request, env);
+		if(segments.length === 3 && segments[2] === "stop-game" && request.method === "POST")
+			return stopGameCommand(request, env);
+		if(segments.length === 3 && segments[2] === "player-search" && request.method === "GET")
+			return playerSearch(request, env);
+		if(segments.length === 3 && segments[2] === "online-friends" && request.method === "GET")
+			return onlineFriends(request, env);
 		return error(404, "not_found", "Endpoint not found.");
 	}
 
@@ -684,5 +1061,13 @@ export async function handleDiscord(
 		return setTopic(request, env, authenticate, ctx);
 	if(segments[1] === "chat" && segments[2] === "outbound" && segments.length === 3 && request.method === "GET")
 		return outbound(request, env, authenticate, ctx);
+	if(segments[1] === "control" && segments.length === 2 && request.method === "GET")
+		return pollControl(request, env, authenticate, "game");
+	if(segments[1] === "control" && segments[2] === "result" && segments.length === 3 && request.method === "POST")
+		return controlResult(request, env, authenticate);
+	if(segments[1] === "launcher" && segments[2] === "commands" && segments.length === 3 && request.method === "GET")
+		return pollControl(request, env, authenticate, "launcher");
+	if(segments[1] === "friends" && segments.length === 2 && request.method === "POST")
+		return saveFriends(request, env, authenticate);
 	return error(404, "not_found", "Endpoint not found.");
 }

@@ -240,6 +240,7 @@ static std::atomic<int> g_EtaSeconds = -1;
 static bool g_ShowSettings = false;
 static bool g_HoldLauncherWindowHidden = true;
 static bool g_AutoLaunch = false; // default off
+static bool g_StartWithWindows = false; // default off
 static bool g_AutoUpdate = false; // default off; startup check only
 static bool g_TryStartupAutoUpdate = false;
 static bool g_DiscordRpc = true; // mirrors tc_discord_rpc (default on)
@@ -359,6 +360,7 @@ static constexpr ULONG_PTR COPYDATA_FORWARD_LAUNCH_ARG = 0x55434C46;
 #define WM_SHARE_IMPORT_READY (WM_APP + 10)
 #define WM_SHARE_UPLOAD_READY (WM_APP + 11)
 #define WM_AI_EVENT (WM_APP + 12)
+#define WM_DISCORD_CONTROL (WM_APP + 13)
 
 #define ANIM_TIMER_ID 1
 #define LAUNCH_TIMER_ID 2
@@ -1092,9 +1094,34 @@ static void LoadDiscordRpcSetting();
 static void SaveDiscordRpcSetting(bool Enabled);
 static void SaveLauncherSettings(const std::wstring &InstallDir);
 
+static void ApplyStartWithWindows(bool Enable)
+{
+	HKEY Key = nullptr;
+	if(RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &Key) != ERROR_SUCCESS)
+		return;
+	if(!Enable)
+	{
+		RegDeleteValueW(Key, L"UClient");
+	}
+	else
+	{
+		wchar_t aPath[MAX_PATH] = {};
+		const DWORD Length = GetModuleFileNameW(nullptr, aPath, MAX_PATH);
+		if(Length > 0 && Length < MAX_PATH)
+		{
+			std::wstring Quoted = L"\"";
+			Quoted += aPath;
+			Quoted += L"\"";
+			RegSetValueExW(Key, L"UClient", 0, REG_SZ, reinterpret_cast<const BYTE *>(Quoted.c_str()), (DWORD)((Quoted.size() + 1) * sizeof(wchar_t)));
+		}
+	}
+	RegCloseKey(Key);
+}
+
 static void LoadLauncherSettings(const std::wstring &InstallDir)
 {
 	g_AutoLaunch = false;
+	g_StartWithWindows = false;
 	g_AccountSignedOut = false;
 	std::string Text;
 	const std::wstring AppPath = GetLauncherSettingsPath();
@@ -1103,6 +1130,8 @@ static void LoadLauncherSettings(const std::wstring &InstallDir)
 	{
 		if(Text.find("auto_launch=1") != std::string::npos)
 			g_AutoLaunch = true;
+		if(Text.find("start_with_windows=1") != std::string::npos)
+			g_StartWithWindows = true;
 		if(Text.find("auto_update=1") != std::string::npos)
 			g_AutoUpdate = true;
 		else if(Text.find("auto_update=0") != std::string::npos)
@@ -1117,8 +1146,9 @@ static void LoadLauncherSettings(const std::wstring &InstallDir)
 	}
 
 	LoadDiscordRpcSetting();
+	ApplyStartWithWindows(g_StartWithWindows);
 
-	if(!AppPath.empty() && (!HasLauncherCfg || Text.find("discord_rpc=") == std::string::npos || Text.find("auto_update=") == std::string::npos))
+	if(!AppPath.empty() && (!HasLauncherCfg || Text.find("discord_rpc=") == std::string::npos || Text.find("auto_update=") == std::string::npos || Text.find("start_with_windows=") == std::string::npos))
 		SaveLauncherSettings(InstallDir);
 }
 
@@ -1130,6 +1160,7 @@ static void SaveLauncherSettings(const std::wstring &InstallDir)
 		return;
 	std::string Text;
 	Text = g_AutoLaunch ? "auto_launch=1\n" : "auto_launch=0\n";
+	Text += g_StartWithWindows ? "start_with_windows=1\n" : "start_with_windows=0\n";
 	Text += g_AutoUpdate ? "auto_update=1\n" : "auto_update=0\n";
 	Text += g_DiscordRpc ? "discord_rpc=1\n" : "discord_rpc=0\n";
 	Text += g_AccountSignedOut ? "account_signed_out=1\n" : "account_signed_out=0\n";
@@ -6528,6 +6559,7 @@ static std::string BuildStateJson()
 	Json += aNum;
 	Json += g_Failed ? "\"failed\":true," : "\"failed\":false,";
 	Json += g_AutoLaunch ? "\"autoLaunch\":true," : "\"autoLaunch\":false,";
+	Json += g_StartWithWindows ? "\"startWithWindows\":true," : "\"startWithWindows\":false,";
 	Json += g_AutoUpdate ? "\"autoUpdate\":true," : "\"autoUpdate\":false,";
 	Json += g_DiscordRpc ? "\"discordRpc\":true," : "\"discordRpc\":false,";
 	Json += FriendsLoading ? "\"friendsLoading\":true," : "\"friendsLoading\":false,";
@@ -6789,6 +6821,13 @@ static void OnWebMessage(const std::string &Json)
 	else if(Cmd == "autolaunch")
 	{
 		g_AutoLaunch = Json.find("\"value\":true") != std::string::npos;
+		SaveLauncherSettings(g_InstallDir);
+		PushWebState(true);
+	}
+	else if(Cmd == "startWithWindows")
+	{
+		g_StartWithWindows = Json.find("\"value\":true") != std::string::npos;
+		ApplyStartWithWindows(g_StartWithWindows);
 		SaveLauncherSettings(g_InstallDir);
 		PushWebState(true);
 	}
@@ -7845,6 +7884,223 @@ static bool StepAnimations()
 	return Active;
 }
 
+struct SDiscordControlCommand
+{
+	int Id = 0;
+	std::string Kind;
+};
+
+struct SDiscordControlResult
+{
+	int Id = 0;
+	std::string Code;
+	std::string Detail;
+};
+
+static std::atomic<bool> g_DiscordControlBusy{false};
+
+static bool ExtractJsonInt(const std::string &Json, const char *Key, int &Out)
+{
+	const std::string Needle = std::string("\"") + Key + "\":";
+	const size_t Pos = Json.find(Needle);
+	if(Pos == std::string::npos)
+		return false;
+	char *End = nullptr;
+	const long Value = strtol(Json.c_str() + Pos + Needle.size(), &End, 10);
+	if(End == Json.c_str() + Pos + Needle.size())
+		return false;
+	Out = (int)Value;
+	return true;
+}
+
+static bool TerminateInstallGame(const std::wstring &InstallDir)
+{
+	if(InstallDir.empty())
+		return false;
+	const std::wstring TargetExe = NormalizePathLower(JoinPath(InstallDir, kGameExe));
+	HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if(hSnap == INVALID_HANDLE_VALUE)
+		return false;
+	PROCESSENTRY32W Entry = {};
+	Entry.dwSize = sizeof(Entry);
+	bool Stopped = false;
+	if(Process32FirstW(hSnap, &Entry))
+	{
+		do
+		{
+			if(_wcsicmp(Entry.szExeFile, kGameExe) != 0)
+				continue;
+			std::wstring ImagePath;
+			if(!GetProcessImagePath(Entry.th32ProcessID, ImagePath) || NormalizePathLower(ImagePath) != TargetExe)
+				continue;
+			HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, Entry.th32ProcessID);
+			if(!hProcess)
+				continue;
+			if(TerminateProcess(hProcess, 0))
+				Stopped = true;
+			CloseHandle(hProcess);
+		} while(Process32NextW(hSnap, &Entry));
+	}
+	CloseHandle(hSnap);
+	return Stopped;
+}
+
+static DWORD WINAPI DiscordControlResultThread(LPVOID pParam)
+{
+	std::unique_ptr<SDiscordControlResult> Work(reinterpret_cast<SDiscordControlResult *>(pParam));
+	std::string InstallId;
+	std::string Secret;
+	if(BackupCredentials(InstallId, Secret))
+	{
+		const std::string Body = "{\"id\":" + std::to_string(Work->Id) + ",\"code\":\"" + JsonEscapeValue(Work->Code) + "\",\"detail\":\"" + JsonEscapeValue(Work->Detail) + "\"}";
+		std::string Response;
+		int Status = 0;
+		const std::wstring Url = Utf8ToWide((std::string(UCLIENT_API_BASE_URL) + "/discord/control/result").c_str());
+		HttpJsonRequest(L"POST", Url, Body, Response, Status, AccountAuthHeaders(InstallId, Secret));
+	}
+	return 0;
+}
+
+static void StartDiscordControlResult(int Id, const std::string &Code, const std::string &Detail)
+{
+	auto *pWork = new SDiscordControlResult();
+	pWork->Id = Id;
+	pWork->Code = Code;
+	pWork->Detail = Detail;
+	HANDLE hThread = CreateThread(nullptr, 0, DiscordControlResultThread, pWork, 0, nullptr);
+	if(hThread)
+		CloseHandle(hThread);
+	else
+		delete pWork;
+}
+
+static DWORD WINAPI DiscordLauncherPollThread(LPVOID)
+{
+	std::string InstallId;
+	std::string Secret;
+	if(BackupCredentials(InstallId, Secret))
+	{
+		std::string Body;
+		int Status = 0;
+		const std::wstring Url = Utf8ToWide((std::string(UCLIENT_API_BASE_URL) + "/discord/launcher/commands").c_str());
+		std::string Kind;
+		int Id = 0;
+		if(HttpJsonRequest(L"GET", Url, {}, Body, Status, AccountAuthHeaders(InstallId, Secret)) && Status == 200 &&
+			ExtractJsonString(Body, "kind", Kind) && ExtractJsonInt(Body, "id", Id) &&
+			(Kind == "start-game" || Kind == "stop-game") && g_hWnd)
+		{
+			auto *pCommand = new SDiscordControlCommand();
+			pCommand->Id = Id;
+			pCommand->Kind = Kind;
+			if(!PostMessage(g_hWnd, WM_DISCORD_CONTROL, 0, (LPARAM)pCommand))
+				delete pCommand;
+		}
+	}
+	g_DiscordControlBusy = false;
+	return 0;
+}
+
+struct FriendUploadWork
+{
+	std::string InstallId;
+	std::string Secret;
+	std::string Names;
+	std::string Key;
+};
+
+static std::string g_UploadedFriendKey;
+static std::atomic<bool> g_FriendUploadBusy{false};
+static std::atomic<bool> g_FriendUploadAgain{false};
+static void QueueFriendNameUpload();
+
+static std::string FriendNamesJson()
+{
+	std::string Json = "[";
+	bool First = true;
+	bool Loaded = false;
+	EnterCriticalSection(&g_Lock);
+	Loaded = g_FriendsLoaded;
+	if(Loaded)
+	{
+		for(const FriendView &Friend : g_Friends)
+		{
+			if(Friend.Name.empty())
+				continue;
+			if(!First)
+				Json += ",";
+			First = false;
+			Json += "\"" + JsonEscapeValue(Friend.Name) + "\"";
+		}
+	}
+	LeaveCriticalSection(&g_Lock);
+	if(!Loaded)
+		return "";
+	Json += "]";
+	return Json;
+}
+
+static DWORD WINAPI FriendNamesUploadThread(LPVOID pParam)
+{
+	std::unique_ptr<FriendUploadWork> Work(reinterpret_cast<FriendUploadWork *>(pParam));
+	std::string Response;
+	int Status = 0;
+	const std::wstring Url = Utf8ToWide((std::string(UCLIENT_API_BASE_URL) + "/discord/friends").c_str());
+	const std::string Body = "{\"names\":" + Work->Names + "}";
+	if(HttpJsonRequest(L"POST", Url, Body, Response, Status, AccountAuthHeaders(Work->InstallId, Work->Secret)) && Status == 200)
+		g_UploadedFriendKey = Work->Key;
+	g_FriendUploadBusy = false;
+	if(g_FriendUploadAgain.exchange(false))
+		QueueFriendNameUpload();
+	return 0;
+}
+
+static void QueueFriendNameUpload()
+{
+	if(g_FriendUploadBusy)
+	{
+		g_FriendUploadAgain = true;
+		return;
+	}
+	if(!IsAccountReady())
+		return;
+	std::string InstallId;
+	std::string Secret;
+	if(!BackupCredentials(InstallId, Secret))
+		return;
+	const std::string Names = FriendNamesJson();
+	if(Names.empty())
+		return;
+	const std::string Key = InstallId + "\n" + Names;
+	if(Key == g_UploadedFriendKey)
+		return;
+	auto *pWork = new FriendUploadWork();
+	pWork->InstallId = InstallId;
+	pWork->Secret = Secret;
+	pWork->Names = Names;
+	pWork->Key = Key;
+	g_FriendUploadBusy = true;
+	HANDLE hThread = CreateThread(nullptr, 0, FriendNamesUploadThread, pWork, 0, nullptr);
+	if(hThread)
+		CloseHandle(hThread);
+	else
+	{
+		g_FriendUploadBusy = false;
+		delete pWork;
+	}
+}
+
+static void PollDiscordLauncherCommands()
+{
+	if(g_DiscordControlBusy || !IsAccountReady())
+		return;
+	g_DiscordControlBusy = true;
+	HANDLE hThread = CreateThread(nullptr, 0, DiscordLauncherPollThread, nullptr, 0, nullptr);
+	if(hThread)
+		CloseHandle(hThread);
+	else
+		g_DiscordControlBusy = false;
+}
+
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 {
 	switch(Msg)
@@ -7872,6 +8128,41 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 			WebUi::Resize(hWnd);
 #endif
 		return 0;
+	case WM_DISCORD_CONTROL:
+	{
+		std::unique_ptr<SDiscordControlCommand> Command(reinterpret_cast<SDiscordControlCommand *>(lParam));
+		if(!Command)
+			return 0;
+		std::string Code = "failed";
+		std::string Detail;
+		if(Command->Kind == "start-game")
+		{
+			if(EffectiveGameRunning())
+				Code = "started";
+			else
+			{
+				RequestLaunchGame();
+				if(g_hLaunchedGame)
+					Code = "started";
+				else
+					Detail = "Could not start the game.";
+			}
+		}
+		else if(Command->Kind == "stop-game")
+		{
+			if(g_pArgs && TerminateInstallGame(g_pArgs->InstallDir))
+			{
+				CloseLaunchedGameHandle();
+				RefreshGameRunningState();
+				PushWebState(true);
+				Code = "stopped";
+			}
+			else
+				Detail = "The game is not running.";
+		}
+		StartDiscordControlResult(Command->Id, Code, Detail);
+		return 0;
+	}
 	case WM_TIMER:
 		if(wParam == ANIM_TIMER_ID)
 		{
@@ -7907,6 +8198,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 				SyncButtonHint();
 				PushWebState(true);
 			}
+			PollDiscordLauncherCommands();
 		}
 		return 0;
 	case WM_SETCURSOR:
@@ -7990,6 +8282,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 	case WM_FRIENDS_READY:
 		InvalidateRect(hWnd, nullptr, FALSE);
 		PushWebState();
+		QueueFriendNameUpload();
 		return 0;
 	case WM_AI_EVENT:
 #ifdef UCLIENT_LAUNCHER_WEBVIEW
@@ -8012,6 +8305,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		InvalidateRect(hWnd, nullptr, FALSE);
 		PushWebState(true);
 		ProcessPendingDiscordLink();
+		QueueFriendNameUpload();
 		if(IsAccountReady())
 		{
 			EnterCriticalSection(&g_Lock);

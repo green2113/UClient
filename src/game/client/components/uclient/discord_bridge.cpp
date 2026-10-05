@@ -153,6 +153,104 @@ void CDiscordBridge::BeginTopic()
 	Http()->Run(m_pRequest);
 }
 
+void CDiscordBridge::BeginControl()
+{
+	char aUrl[512];
+	str_format(aUrl, sizeof(aUrl), "%s/discord/control", g_Config.m_UcApiBaseUrl);
+	auto pRequest = HttpGet(aUrl);
+	Auth(pRequest.get());
+	m_pRequest = std::move(pRequest);
+	m_Request = ERequest::CONTROL;
+	m_NextControl = time_get() + 2 * time_freq();
+	Http()->Run(m_pRequest);
+}
+
+void CDiscordBridge::BeginControlResult()
+{
+	std::string Json = std::string("{\"id\":") + std::to_string(m_ControlId) + ",\"code\":\"" + JsonEscape(m_ResultCode.c_str()) + "\",\"detail\":\"" + JsonEscape(m_ResultDetail.c_str()) + "\"}";
+	char aUrl[512];
+	str_format(aUrl, sizeof(aUrl), "%s/discord/control/result", g_Config.m_UcApiBaseUrl);
+	auto pRequest = HttpPostJson(aUrl, Json.c_str());
+	Auth(pRequest.get());
+	m_pRequest = std::move(pRequest);
+	m_Request = ERequest::CONTROL_RESULT;
+	Http()->Run(m_pRequest);
+}
+
+void CDiscordBridge::ApplyControl(int Id, const char *pKind, const char *pAddress, const char *pPassword)
+{
+	m_ControlId = Id;
+	if(str_comp(pKind, "disconnect") == 0)
+	{
+		if(Client()->State() == IClient::STATE_ONLINE)
+			Client()->Disconnect();
+		m_ResultCode = "disconnected";
+		m_ResultDetail.clear();
+		m_ResultReady = true;
+		m_NextControl = time_get();
+		return;
+	}
+	if(str_comp(pKind, "connect") != 0 || !pAddress || !pAddress[0])
+		return;
+	const char *pPass = pPassword && pPassword[0] ? pPassword : nullptr;
+	Client()->Connect(pAddress, pPass);
+	if(Client()->State() == IClient::STATE_OFFLINE)
+	{
+		const char *pError = Client()->ErrorString();
+		m_ResultDetail.clear();
+		if(pError && str_find_nocase(pError, "password"))
+			m_ResultCode = "password";
+		else
+		{
+			m_ResultCode = "failed";
+			m_ResultDetail = pError && pError[0] ? pError : "Could not resolve the address.";
+		}
+		m_ResultReady = true;
+		m_NextControl = time_get();
+		return;
+	}
+	m_AwaitingConnect = true;
+	m_ControlNotBefore = time_get() + time_freq();
+	m_ControlDeadline = time_get() + 60 * time_freq();
+}
+
+void CDiscordBridge::WatchConnect()
+{
+	if(time_get() < m_ControlNotBefore)
+		return;
+	const int State = Client()->State();
+	if(State == IClient::STATE_ONLINE)
+	{
+		m_AwaitingConnect = false;
+		m_ResultCode = "connected";
+		m_ResultDetail.clear();
+		m_ResultReady = true;
+		return;
+	}
+	if(State == IClient::STATE_OFFLINE)
+	{
+		const char *pError = Client()->ErrorString();
+		m_AwaitingConnect = false;
+		m_ResultDetail.clear();
+		if(pError && str_find_nocase(pError, "password"))
+			m_ResultCode = "password";
+		else
+		{
+			m_ResultCode = "failed";
+			m_ResultDetail = pError && pError[0] ? pError : "Could not connect.";
+		}
+		m_ResultReady = true;
+		return;
+	}
+	if(time_get() >= m_ControlDeadline)
+	{
+		m_AwaitingConnect = false;
+		m_ResultCode = "failed";
+		m_ResultDetail = "The connection timed out.";
+		m_ResultReady = true;
+	}
+}
+
 void CDiscordBridge::BeginPoll()
 {
 	char aUrl[512];
@@ -246,6 +344,56 @@ void CDiscordBridge::FinishRequest()
 				m_NextTopic = time_get() + 30 * time_freq();
 		}
 	}
+	else if(Request == ERequest::CONTROL)
+	{
+		m_NextControl = time_get() + 2 * time_freq();
+		const json_value *pCommands = Ok ? json_object_get(pRoot, "commands") : nullptr;
+		const json_value *pItem = pCommands && pCommands->type == json_array && json_array_length(pCommands) > 0 ? json_array_get(pCommands, 0) : nullptr;
+		const json_value *pId = pItem ? json_object_get(pItem, "id") : nullptr;
+		const json_value *pKind = pItem ? json_object_get(pItem, "kind") : nullptr;
+		if(pId && pId->type == json_integer && pKind && pKind->type == json_string)
+		{
+			const json_value *pAddress = json_object_get(pItem, "address");
+			const json_value *pPassword = json_object_get(pItem, "password");
+			const char *pAddressStr = pAddress && pAddress->type == json_string ? pAddress->u.string.ptr : "";
+			const char *pPasswordStr = pPassword && pPassword->type == json_string ? pPassword->u.string.ptr : "";
+			if(m_AwaitingConnect || m_ResultReady)
+			{
+				m_Held = true;
+				m_HeldId = (int)pId->u.integer;
+				m_HeldKind = pKind->u.string.ptr;
+				m_HeldAddress = pAddressStr;
+				m_HeldPassword = pPasswordStr;
+			}
+			else
+				ApplyControl((int)pId->u.integer, pKind->u.string.ptr, pAddressStr, pPasswordStr);
+		}
+	}
+	else if(Request == ERequest::CONTROL_RESULT)
+	{
+		if(!Ok)
+			m_NextControl = time_get() + 5 * time_freq();
+		else
+		{
+			m_ResultReady = false;
+			m_ControlId = 0;
+			if(m_Held)
+			{
+				m_Held = false;
+				const std::string Kind = m_HeldKind;
+				const std::string Address = m_HeldAddress;
+				const std::string Password = m_HeldPassword;
+				const int Id = m_HeldId;
+				m_HeldKind.clear();
+				m_HeldAddress.clear();
+				m_HeldPassword.clear();
+				m_HeldId = 0;
+				ApplyControl(Id, Kind.c_str(), Address.c_str(), Password.c_str());
+			}
+			else
+				m_NextControl = time_get() + 2 * time_freq();
+		}
+	}
 	if(pRoot)
 		json_value_free(pRoot);
 }
@@ -255,6 +403,20 @@ void CDiscordBridge::OnUpdate()
 	if(m_pRequest && m_pRequest->Done())
 		FinishRequest();
 	if(m_pRequest || !GameClient()->m_UClientAccount.IsReady())
+		return;
+	if(m_AwaitingConnect)
+		WatchConnect();
+	if(m_ResultReady && time_get() >= m_NextControl)
+	{
+		BeginControlResult();
+		return;
+	}
+	if(!m_Held && time_get() >= m_NextControl)
+	{
+		BeginControl();
+		return;
+	}
+	if(m_AwaitingConnect || m_Held)
 		return;
 	std::string Topic;
 	const bool SendTopic = BuildTopic(Topic) && TopicDue(Topic);

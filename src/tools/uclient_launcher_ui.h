@@ -1750,6 +1750,11 @@ body.dev-build #dev-panel{display:block}
           <span><b>Launch game automatically</b>
           <small>Start UClient as soon as the update check finishes.</small></span>
         </div>
+        <div class="opt" id="opt-start-windows">
+          <span class="sw"></span>
+          <span><b>Start launcher when the computer starts</b>
+          <small>Opens the launcher when you sign in to Windows.</small></span>
+        </div>
         <div class="opt" id="opt-auto-update">
           <span class="sw"></span>
           <span><b>Install client updates automatically</b>
@@ -2618,6 +2623,11 @@ $("opt-auto").addEventListener("click", function () {
   var on = !$("opt-auto").classList.contains("on");
   $("opt-auto").classList.toggle("on", on);
   send({cmd: "autolaunch", value: on});
+});
+$("opt-start-windows").addEventListener("click", function () {
+  var on = !$("opt-start-windows").classList.contains("on");
+  $("opt-start-windows").classList.toggle("on", on);
+  send({cmd: "startWithWindows", value: on});
 });
 $("opt-auto-update").addEventListener("click", function () {
   var on = !$("opt-auto-update").classList.contains("on");
@@ -10027,6 +10037,7 @@ window.__setState = function (st) {
   if (st.phase === "updating") bar.firstElementChild.style.width = (st.percent || 0) + "%";
 
   $("opt-auto").classList.toggle("on", !!st.autoLaunch);
+  $("opt-start-windows").classList.toggle("on", !!st.startWithWindows);
   $("opt-auto-update").classList.toggle("on", !!st.autoUpdate);
   $("opt-discord").classList.toggle("on", !!st.discordRpc);
   $("fr-refresh").classList.toggle("loading", !!st.friendsLoading);

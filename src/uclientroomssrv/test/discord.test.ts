@@ -285,4 +285,75 @@ describe("discord account bridge", () => {
 		expect(missingChannel.status).toBe(404);
 		expect(await responseJson<{message: string}>(missingChannel)).toMatchObject({message: DISCORD_TEXT.noChannel});
 	});
+
+	it("connects only while the launcher and game are running", async () => {
+		const control = (extra: Record<string, string> = {}) => botRequest("/internal/discord/connect", {
+			discord_user_id: discordUserId,
+			application_id: "987654321098765432",
+			interaction_token: "interaction-token-with-enough-length",
+			...extra,
+		});
+		const accountCall = (path: string, body?: unknown, method = "GET") => {
+			const headers: Record<string, string> = {
+				authorization: `Bearer ${account.secret}`,
+				"x-uclient-install-id": account.install_id,
+			};
+			if(body !== undefined)
+				headers["content-type"] = "application/json";
+			return new Request(`https://worker.test${path}`, {
+				method,
+				headers,
+				body: body === undefined ? undefined : JSON.stringify(body),
+			});
+		};
+
+		const noLauncher = await SELF.fetch(control({address: "127.0.0.1:8303"}));
+		expect(await responseJson<{message: string}>(noLauncher)).toMatchObject({queued: false, message: DISCORD_TEXT.launcherDown});
+
+		expect((await SELF.fetch(accountCall("/discord/launcher/commands"))).status).toBe(200);
+		const noGame = await SELF.fetch(control({address: "127.0.0.1:8303"}));
+		expect(await responseJson<{message: string}>(noGame)).toMatchObject({queued: false, message: DISCORD_TEXT.gameDown});
+
+		expect((await SELF.fetch(accountCall("/discord/control"))).status).toBe(200);
+		const queued = await SELF.fetch(control({address: "127.0.0.1:8303"}));
+		expect(await responseJson<{queued: boolean; message: string}>(queued)).toMatchObject({
+			queued: true,
+			message: "Connecting to 127.0.0.1:8303...",
+		});
+		const claimed = await responseJson<{commands: Array<{id: number; kind: string; password: string; had_password: boolean}>}>(
+			await SELF.fetch(accountCall("/discord/control")),
+		);
+		expect(claimed.commands).toHaveLength(1);
+		expect(claimed.commands[0]).toMatchObject({kind: "connect", password: "", had_password: false});
+		const result = await SELF.fetch(accountCall("/discord/control/result", {
+			id: claimed.commands[0].id,
+			code: "password",
+			detail: "This server requires a password",
+		}, "POST"));
+		const resultBody = await responseJson<{message: string}>(result);
+		expect(resultBody.message).toBe("This server requires a password. Use /connect 127.0.0.1:8303 <password>.");
+
+		const withPassword = await SELF.fetch(control({address: "127.0.0.1:8303", password: "secret-pass"}));
+		expect((await responseJson<{queued: boolean}>(withPassword)).queued).toBe(true);
+		const claimedPassword = await responseJson<{commands: Array<{id: number; password: string; had_password: boolean}>}>(
+			await SELF.fetch(accountCall("/discord/control")),
+		);
+		expect(claimedPassword.commands[0]).toMatchObject({password: "secret-pass", had_password: true});
+		const rejected = await SELF.fetch(accountCall("/discord/control/result", {
+			id: claimedPassword.commands[0].id,
+			code: "password",
+			detail: "Wrong password",
+		}, "POST"));
+		const rejectedBody = await responseJson<{message: string}>(rejected);
+		expect(rejectedBody.message).toBe("Could not connect to 127.0.0.1:8303. The password was not accepted.");
+		expect(rejectedBody.message).not.toContain("secret-pass");
+	});
+
+	it("stores the launcher friend list for the linked account", async () => {
+		const saved = await SELF.fetch(jsonRequest("/discord/friends", {names: ["Under", " under ", "NEEB", ""]}, "POST", true));
+		expect(saved.status).toBe(200);
+		const row = await testEnv.DB.prepare("SELECT names_json FROM launcher_friends WHERE install_id = ?1")
+			.bind(account.install_id).first<{names_json: string}>();
+		expect(JSON.parse(row?.names_json ?? "[]")).toEqual(["Under", "NEEB"]);
+	});
 });

@@ -24,11 +24,17 @@ private:
 		INGEST,
 		POLL,
 		TOPIC,
+		CONTROL,
+		CONTROL_RESULT,
 	};
 
 	void BeginIngest();
 	void BeginPoll();
 	void BeginTopic();
+	void BeginControl();
+	void BeginControlResult();
+	void ApplyControl(int Id, const char *pKind, const char *pAddress, const char *pPassword);
+	void WatchConnect();
 	bool BuildTopic(std::string &Topic) const;
 	bool TopicDue(const std::string &Topic);
 	void FinishRequest();
@@ -45,6 +51,19 @@ private:
 	int64_t m_NextIngest = 0;
 	int64_t m_NextTopic = 0;
 	int64_t m_TopicChangedAt = 0;
+	int64_t m_NextControl = 0;
+	int64_t m_ControlDeadline = 0;
+	int64_t m_ControlNotBefore = 0;
+	int m_ControlId = 0;
+	int m_HeldId = 0;
+	bool m_Held = false;
+	std::string m_HeldKind;
+	std::string m_HeldAddress;
+	std::string m_HeldPassword;
+	bool m_AwaitingConnect = false;
+	bool m_ResultReady = false;
+	std::string m_ResultCode;
+	std::string m_ResultDetail;
 	bool m_Linked = false;
 };
 

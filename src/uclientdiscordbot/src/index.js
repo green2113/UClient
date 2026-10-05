@@ -4,6 +4,7 @@
 import {
 	ChannelType,
 	Client,
+	EmbedBuilder,
 	GatewayIntentBits,
 	MessageFlags,
 	PermissionFlagsBits,
@@ -29,7 +30,7 @@ const text = {
 	createFailed: "Could not create the channel. The bot needs permission to manage channels.",
 	deleteFailed: "Could not delete the channel.",
 	guildOnly: "Use this command in a server.",
-	sent: "Sent.",
+	sent: "The message was sent.",
 	emptyMessage: "Message is empty.",
 	modeRoomConflict: "Clear the mode, or set it to UClient, when a room is selected.",
 };
@@ -85,6 +86,38 @@ const commands = [
 	new SlashCommandBuilder()
 		.setName("delete-message-channel")
 		.setDescription("Delete your server chat channel"),
+	new SlashCommandBuilder()
+		.setName("connect")
+		.setDescription("Connect to a game server")
+		.addStringOption(option => option
+			.setName("address")
+			.setDescription("Server address as host:port")
+			.setRequired(true)
+			.setMaxLength(128))
+		.addStringOption(option => option
+			.setName("password")
+			.setDescription("Server password")
+			.setMaxLength(128)),
+	new SlashCommandBuilder()
+		.setName("disconnect")
+		.setDescription("Leave the game server"),
+	new SlashCommandBuilder()
+		.setName("start-game")
+		.setDescription("Start the game"),
+	new SlashCommandBuilder()
+		.setName("stop-game")
+		.setDescription("Stop the game"),
+	new SlashCommandBuilder()
+		.setName("플레이어-찾기")
+		.setDescription("Find which public server a player is on")
+		.addStringOption(option => option
+			.setName("이름")
+			.setDescription("Player name")
+			.setRequired(true)
+			.setMaxLength(64)),
+	new SlashCommandBuilder()
+		.setName("온라인목록")
+		.setDescription("Show online friends from the launcher"),
 	new SlashCommandBuilder()
 		.setName("send")
 		.setDescription("Send a message from your linked UClient account")
@@ -161,6 +194,51 @@ client.on("interactionCreate", async interaction => {
 				return;
 			}
 			await interaction.reply(ephemeral(`${text.openLink}\n${started.body.url}`));
+			return;
+		}
+
+		if(interaction.commandName === "플레이어-찾기") {
+			await interaction.deferReply({flags: MessageFlags.Ephemeral});
+			const name = interaction.options.getString("이름", true).trim();
+			const result = await api(`/internal/discord/player-search?name=${encodeURIComponent(name)}`, {method: "GET"});
+			await interaction.editReply(result.body.message || "Something went wrong. Try again.");
+			return;
+		}
+
+		if(interaction.commandName === "온라인목록") {
+			await interaction.deferReply({flags: MessageFlags.Ephemeral});
+			const result = await api(`/internal/discord/online-friends?discord_user_id=${encodeURIComponent(interaction.user.id)}`, {method: "GET"});
+			if(!result.body.description) {
+				await interaction.editReply(result.body.message || "Something went wrong. Try again.");
+				return;
+			}
+			await interaction.editReply({
+				embeds: [
+					new EmbedBuilder()
+						.setColor(0x5865F2)
+						.setTitle("Online friends")
+						.setDescription(String(result.body.description).slice(0, 4096)),
+				],
+			});
+			return;
+		}
+
+		if(interaction.commandName === "connect" || interaction.commandName === "disconnect" || interaction.commandName === "start-game" || interaction.commandName === "stop-game") {
+			await interaction.deferReply({flags: MessageFlags.Ephemeral});
+			const body = {
+				discord_user_id: interaction.user.id,
+				application_id: applicationId,
+				interaction_token: interaction.token,
+			};
+			if(interaction.commandName === "connect") {
+				body.address = interaction.options.getString("address", true);
+				body.password = interaction.options.getString("password") ?? "";
+			}
+			const result = await api(`/internal/discord/${interaction.commandName}`, {
+				method: "POST",
+				body: JSON.stringify(body),
+			});
+			await interaction.editReply(result.body.message || "Something went wrong. Try again.");
 			return;
 		}
 
@@ -293,8 +371,10 @@ client.on("interactionCreate", async interaction => {
 			event: "discord_command_failed",
 			message: errorValue instanceof Error ? errorValue.message : String(errorValue),
 		}));
-		if(interaction.deferred || interaction.replied)
+		if(interaction.deferred || interaction.replied) {
+			await interaction.editReply("Something went wrong. Try again.").catch(() => {});
 			return;
+		}
 		await interaction.reply(ephemeral("Something went wrong. Try again.")).catch(() => {});
 	}
 });
