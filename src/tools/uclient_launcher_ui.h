@@ -751,7 +751,8 @@ body{
   box-shadow:0 3px 14px -3px var(--accent-glow);
   filter:none;
 }
-#play:disabled{cursor:default}
+#play:disabled{cursor:default;pointer-events:none}
+#play-wrap.hint-on{cursor:default}
 #play.mode-play:disabled,#play.mode-update:disabled{
   background:rgba(255,255,255,.07);color:var(--muted);box-shadow:none;animation:none;filter:none;transform:none;
 }

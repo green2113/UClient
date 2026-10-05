@@ -44,6 +44,38 @@ inline std::wstring Widen(const std::string &Utf8)
 	return Out;
 }
 
+inline bool WriteUtf8File(const std::wstring &Path, const std::wstring &Text)
+{
+	const int Bytes = WideCharToMultiByte(CP_UTF8, 0, Text.c_str(), (int)Text.size(), nullptr, 0, nullptr, nullptr);
+	if(Bytes <= 0)
+		return false;
+	std::string Utf8((size_t)Bytes, '\0');
+	WideCharToMultiByte(CP_UTF8, 0, Text.c_str(), (int)Text.size(), &Utf8[0], Bytes, nullptr, nullptr);
+	const HANDLE File = CreateFileW(Path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if(File == INVALID_HANDLE_VALUE)
+		return false;
+	DWORD Written = 0;
+	const BOOL Ok = WriteFile(File, Utf8.data(), (DWORD)Utf8.size(), &Written, nullptr);
+	CloseHandle(File);
+	return Ok && Written == (DWORD)Utf8.size();
+}
+
+// NavigateToString gives every launch a fresh opaque origin, so localStorage
+// (friend pins, folded sections) disappears on the next start. Serving the
+// page from a fixed virtual host keeps that origin stable across restarts
+// and launcher updates.
+inline bool PrepareStableUiPage(const std::wstring &UserDataFolder, const std::wstring &Html, std::wstring &OutDir)
+{
+	std::wstring Root = UserDataFolder;
+	const size_t Slash = Root.find_last_of(L"\\/");
+	if(Slash != std::wstring::npos)
+		Root.resize(Slash);
+	OutDir = Root + L"\\ui";
+	CreateDirectoryW(Root.c_str(), nullptr);
+	CreateDirectoryW(OutDir.c_str(), nullptr);
+	return WriteUtf8File(OutDir + L"\\index.html", Html);
+}
+
 inline std::string Narrow(const wchar_t *pWide)
 {
 	if(!pWide || !*pWide)
@@ -156,10 +188,11 @@ inline bool Start(HWND hWnd, const std::wstring &UserDataFolder, const std::wstr
 
 	const std::wstring Assets = AssetFolder;
 	const std::wstring Html = pHtml ? pHtml : L"";
+	const std::wstring ProfileFolder = UserDataFolder;
 
 	const HRESULT Hr = CreateCoreWebView2EnvironmentWithOptions(nullptr, UserDataFolder.c_str(), nullptr,
 		Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-			[hWnd, Assets, Html](HRESULT Result, ICoreWebView2Environment *pEnv) -> HRESULT {
+			[hWnd, Assets, Html, ProfileFolder](HRESULT Result, ICoreWebView2Environment *pEnv) -> HRESULT {
 				if(FAILED(Result) || !pEnv)
 				{
 					detail::Fail();
@@ -167,7 +200,7 @@ inline bool Start(HWND hWnd, const std::wstring &UserDataFolder, const std::wstr
 				}
 				pEnv->CreateCoreWebView2Controller(hWnd,
 					Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-						[hWnd, Assets, Html](HRESULT Result2, ICoreWebView2Controller *pController) -> HRESULT {
+						[hWnd, Assets, Html, ProfileFolder](HRESULT Result2, ICoreWebView2Controller *pController) -> HRESULT {
 							if(FAILED(Result2) || !pController)
 							{
 								detail::Fail();
@@ -205,16 +238,22 @@ inline bool Start(HWND hWnd, const std::wstring &UserDataFolder, const std::wstr
 
 							// Lets the embedded page reference launcher art as
 							// https://uclient.local/<relative path>.
-							if(!Assets.empty())
+							ICoreWebView2_3 *pWebView3 = nullptr;
+							const bool HaveWebView3 = SUCCEEDED(pWebView->QueryInterface(IID_PPV_ARGS(&pWebView3))) && pWebView3;
+							if(HaveWebView3 && !Assets.empty())
 							{
-								ICoreWebView2_3 *pWebView3 = nullptr;
-								if(SUCCEEDED(pWebView->QueryInterface(IID_PPV_ARGS(&pWebView3))) && pWebView3)
-								{
-									pWebView3->SetVirtualHostNameToFolderMapping(L"uclient.local", Assets.c_str(),
-										COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
-									pWebView3->Release();
-								}
+								pWebView3->SetVirtualHostNameToFolderMapping(L"uclient.local", Assets.c_str(),
+									COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
 							}
+							std::wstring UiDir;
+							const bool StablePage = HaveWebView3 && detail::PrepareStableUiPage(ProfileFolder, Html, UiDir);
+							if(StablePage)
+							{
+								pWebView3->SetVirtualHostNameToFolderMapping(L"ui.uclient.local", UiDir.c_str(),
+									COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+							}
+							if(pWebView3)
+								pWebView3->Release();
 
 							EventRegistrationToken Token = {};
 							pWebView->add_WebMessageReceived(
@@ -236,7 +275,10 @@ inline bool Start(HWND hWnd, const std::wstring &UserDataFolder, const std::wstr
 							pController->put_IsVisible(TRUE);
 
 							detail::g_Ready = true;
-							pWebView->NavigateToString(Html.c_str());
+							if(StablePage)
+								pWebView->Navigate(L"https://ui.uclient.local/index.html");
+							else
+								pWebView->NavigateToString(Html.c_str());
 							return S_OK;
 						})
 						.Get());
