@@ -8,7 +8,7 @@ const JSON_HEADERS = {
 const SNOWFLAKE_RE = /^\d{5,22}$/;
 const TOKEN_RE = /^[A-Za-z0-9_-]{20,128}$/;
 const LINK_TTL_SECONDS = 10 * 60;
-const GAME_ONLINE_SECONDS = 8;
+const GAME_ONLINE_SECONDS = 20;
 const PRESENCE_SECONDS = 15;
 const MAX_INGEST_LINES = 20;
 const MAX_DISCORD_CONTENT = 2000;
@@ -37,6 +37,25 @@ export const DISCORD_TEXT = {
 	noFriends: "You have no friends in the launcher.",
 	noFriendsOnline: "No friends are online.",
 } as const;
+
+export const CHAT_STYLE_TEMPLATES = {
+	style1: "[message]",
+	style2: "[message] - This message was sent from Discord.",
+	style3: "[message] - This message was sent from Discord by [displayname] ([username]).",
+} as const;
+
+const CHAT_STYLES = new Set(["style1", "style2", "style3", "custom"]);
+
+export function formatDiscordChat(style: string, template: string, message: string, displayName: string, username: string): string {
+	const pattern = style === "custom" && template.trim() ? template : CHAT_STYLE_TEMPLATES[style as keyof typeof CHAT_STYLE_TEMPLATES] ?? CHAT_STYLE_TEMPLATES.style1;
+	const clean = (value: string) => value.replace(/[\r\n]/g, " ").trim();
+	const values: Record<string, string> = {
+		message: clean(message),
+		displayname: clean(displayName) || clean(username) || "Unknown",
+		username: clean(username) || "unknown",
+	};
+	return pattern.replace(/\[(message|displayname|username)\]/g, (_match, key: string) => values[key] ?? "").trim().slice(0, MAX_GAME_CHAT);
+}
 
 export function linkedMessage(installId: string): string {
 	return `${installId} is now linked to your UClient account.`;
@@ -380,6 +399,28 @@ function gameOnline(gameOnlineAt: number, now: number): boolean {
 	return gameOnlineAt > 0 && now - gameOnlineAt <= GAME_ONLINE_SECONDS;
 }
 
+function clientInServer(request: Request): boolean {
+	return request.headers.get("x-uclient-in-server") === "1";
+}
+
+function connectedToServer(gameOnlineAt: number, gameSeenAt: number, topic: string, now: number): boolean {
+	if(gameOnline(gameOnlineAt, now))
+		return true;
+	return presenceFresh(gameSeenAt, now) && topic.trim().length > 0;
+}
+
+async function installInServer(env: DiscordEnv, installId: string, gameOnlineAt: number, now: number): Promise<boolean> {
+	if(gameOnline(gameOnlineAt, now))
+		return true;
+	const row = await env.DB.prepare(
+		`SELECT l.game_seen_at, COALESCE(c.topic_desired, '') AS topic_desired
+		 FROM discord_links l
+		 LEFT JOIN discord_message_channels c ON c.install_id = l.install_id
+		 WHERE l.install_id = ?1`,
+	).bind(installId).first<{game_seen_at: number; topic_desired: string}>();
+	return !!row && connectedToServer(0, row.game_seen_at, row.topic_desired, now);
+}
+
 async function touchOnline(env: DiscordEnv, installId: string, now: number): Promise<void> {
 	await env.DB.prepare("UPDATE discord_links SET game_online_at = ?2 WHERE install_id = ?1").bind(installId, now).run();
 }
@@ -400,7 +441,7 @@ async function status(request: Request, env: DiscordEnv): Promise<Response> {
 		install_id: row.install_id,
 		channel_id: channelId,
 		guild_id: guildId,
-		game_online: gameOnline(row.game_online_at, nowSeconds()),
+		game_online: await installInServer(env, row.install_id, row.game_online_at, nowSeconds()),
 		message: channelId ? DISCORD_TEXT.channelExists : "",
 	});
 }
@@ -483,7 +524,7 @@ async function ingest(request: Request, env: DiscordEnv, authenticate: (request:
 	if(!link)
 		return json({ok: true, linked: false, delivered: false, accepted: 0});
 	const now = nowSeconds();
-	if(!await claimGameOwner(env, authenticated.installId, gameClient(request, now), now))
+	if(!await claimGameOwner(env, authenticated.installId, gameClient(request, now), now, clientInServer(request)))
 		return json({ok: true, linked: true, owner: false, delivered: false, accepted: 0});
 	await touchOnline(env, authenticated.installId, now);
 	const body = await readJson<{line?: string; lines?: string[]}>(request);
@@ -516,7 +557,7 @@ async function flushDiscordTopic(env: DiscordEnv, installId: string): Promise<vo
 	const token = env.DISCORD_BOT_TOKEN ?? "";
 	if(!token)
 		return;
-	const result = await discordFetch(`https://discord.com/api/v10/channels/${row.channel_id}`, token, {topic: row.topic_desired}, "PATCH");
+	const result = await discordFetch(`https://discord.com/api/v10/channels/${row.channel_id}`, token, {topic: row.topic_desired || null}, "PATCH");
 	if(result.ok) {
 		const retryAt = result.remaining === 0 ? now + result.resetAfterSeconds : 0;
 		await env.DB.prepare(
@@ -543,7 +584,7 @@ async function setTopic(request: Request, env: DiscordEnv, authenticate: (reques
 	if(!link)
 		return json({ok: true, applied: false});
 	const now = nowSeconds();
-	if(!await claimGameOwner(env, authenticated.installId, gameClient(request, now), now))
+	if(!await claimGameOwner(env, authenticated.installId, gameClient(request, now), now, clientInServer(request)))
 		return json({ok: true, applied: false, owner: false});
 	const saved = await env.DB.prepare(
 		"UPDATE discord_message_channels SET topic_desired = ?2 WHERE install_id = ?1",
@@ -562,7 +603,7 @@ async function outbound(request: Request, env: DiscordEnv, authenticate: (reques
 	if(!link)
 		return json({linked: false, messages: []});
 	const now = nowSeconds();
-	if(!await claimGameOwner(env, authenticated.installId, gameClient(request, now), now))
+	if(!await claimGameOwner(env, authenticated.installId, gameClient(request, now), now, clientInServer(request)))
 		return json({linked: true, owner: false, messages: []});
 	await touchOnline(env, authenticated.installId, now);
 	ctx.waitUntil(flushDiscordTopic(env, authenticated.installId));
@@ -646,7 +687,7 @@ async function ackSentChat(request: Request, env: DiscordEnv, authenticate: (req
 async function inbound(request: Request, env: DiscordEnv): Promise<Response> {
 	if(!await internalAuthorized(request, env))
 		return error(401, "invalid_bot_secret", "Bot authentication failed.");
-	const body = await readJson<{channel_id?: string; message_id?: string; content?: string}>(request);
+	const body = await readJson<{channel_id?: string; message_id?: string; content?: string; display_name?: string; username?: string}>(request);
 	if(!body || !SNOWFLAKE_RE.test(body.channel_id ?? "") || typeof body.content !== "string")
 		return error(400, "invalid_request", "Inbound chat is invalid.");
 	const messageId = SNOWFLAKE_RE.test(body.message_id ?? "") ? body.message_id ?? "" : "";
@@ -654,19 +695,28 @@ async function inbound(request: Request, env: DiscordEnv): Promise<Response> {
 	if(!text)
 		return json({ok: true, ignored: true});
 	const channel = await env.DB.prepare(
-		`SELECT c.install_id, l.game_online_at
+		`SELECT c.install_id, l.game_online_at, l.game_seen_at, c.topic_desired, l.chat_style, l.chat_template
 		 FROM discord_message_channels c
 		 JOIN discord_links l ON l.install_id = c.install_id
 		 WHERE c.channel_id = ?1`,
-	).bind(body.channel_id).first<{install_id: string; game_online_at: number}>();
+	).bind(body.channel_id).first<{install_id: string; game_online_at: number; game_seen_at: number; topic_desired: string; chat_style: string; chat_template: string}>();
 	if(!channel)
 		return error(404, "no_channel", DISCORD_TEXT.noChannel);
 	const now = nowSeconds();
-	if(!gameOnline(channel.game_online_at, now))
+	if(!connectedToServer(channel.game_online_at, channel.game_seen_at, channel.topic_desired, now))
 		return json({ok: false, reason: "offline", message: DISCORD_TEXT.notInGame});
+	const formatted = formatDiscordChat(
+		channel.chat_style || "style1",
+		channel.chat_template || "",
+		text,
+		typeof body.display_name === "string" ? body.display_name.slice(0, 64) : "",
+		typeof body.username === "string" ? body.username.slice(0, 64) : "",
+	);
+	if(!formatted)
+		return json({ok: true, ignored: true});
 	await env.DB.prepare(
 		"INSERT INTO discord_outbound_messages (install_id, body, created_at, mode, room_id, discord_channel_id, discord_message_id) VALUES (?1, ?2, ?3, 'all', '', ?4, ?5)",
-	).bind(channel.install_id, text, now, body.channel_id, messageId).run();
+	).bind(channel.install_id, formatted, now, body.channel_id, messageId).run();
 	return json({ok: true});
 }
 
@@ -707,7 +757,7 @@ async function sendCommand(request: Request, env: DiscordEnv): Promise<Response>
 	if(!link)
 		return error(403, "not_linked", DISCORD_TEXT.notLinked);
 	const now = nowSeconds();
-	if(!gameOnline(link.game_online_at, now))
+	if(!await installInServer(env, link.install_id, link.game_online_at, now))
 		return json({ok: false, reason: "offline", message: DISCORD_TEXT.notInGame});
 	let storedMode = mode || "all";
 	let storedRoom = "";
@@ -835,7 +885,7 @@ function gameClient(request: Request, now: number): {session: string; startedAt:
 	return {session, startedAt};
 }
 
-async function claimGameOwner(env: DiscordEnv, installId: string, client: {session: string; startedAt: number} | null, now: number): Promise<boolean> {
+async function claimGameOwner(env: DiscordEnv, installId: string, client: {session: string; startedAt: number} | null, now: number, inServer: boolean): Promise<boolean> {
 	if(!client) {
 		const row = await env.DB.prepare(
 			"SELECT game_session, game_session_seen_at FROM discord_links WHERE install_id = ?1",
@@ -844,7 +894,8 @@ async function claimGameOwner(env: DiscordEnv, installId: string, client: {sessi
 	}
 	const saved = await env.DB.prepare(
 		`UPDATE discord_links
-		 SET game_session = ?2, game_session_started_at = ?3, game_session_seen_at = ?4
+		 SET game_session = ?2, game_session_started_at = ?3, game_session_seen_at = ?4,
+		     game_online_at = CASE WHEN ?6 = 1 THEN ?4 ELSE game_online_at END
 		 WHERE install_id = ?1
 		   AND (
 		     game_session = ?2
@@ -853,7 +904,7 @@ async function claimGameOwner(env: DiscordEnv, installId: string, client: {sessi
 		     OR game_session_started_at > ?3
 		     OR (game_session_started_at = ?3 AND game_session > ?2)
 		   )`,
-	).bind(installId, client.session, client.startedAt, now, now - PRESENCE_SECONDS).run();
+	).bind(installId, client.session, client.startedAt, now, now - PRESENCE_SECONDS, inServer ? 1 : 0).run();
 	return (saved.meta.changes ?? 0) > 0;
 }
 
@@ -939,7 +990,7 @@ async function disconnectCommand(request: Request, env: DiscordEnv): Promise<Res
 	const now = nowSeconds();
 	if(!presenceFresh(link.game_seen_at, now))
 		return json({ok: false, queued: false, message: DISCORD_TEXT.gameDown});
-	if(!gameOnline(link.game_online_at, now))
+	if(!await installInServer(env, link.install_id, link.game_online_at, now))
 		return json({ok: false, queued: false, message: DISCORD_TEXT.notInGame});
 	await queueControlCommand(env, link.install_id, "game", "disconnect", "", "", parsed.applicationId, parsed.interactionToken, now);
 	return json({ok: true, queued: true, message: "Disconnecting from the server..."});
@@ -981,7 +1032,7 @@ async function stopGameCommand(request: Request, env: DiscordEnv): Promise<Respo
 	return json({ok: true, queued: true, message: "Stopping the game..."});
 }
 
-async function pollControl(request: Request, env: DiscordEnv, authenticate: (request: Request) => Promise<DiscordAuth | Response>, target: "game" | "launcher"): Promise<Response> {
+async function pollControl(request: Request, env: DiscordEnv, authenticate: (request: Request) => Promise<DiscordAuth | Response>, target: "game" | "launcher", ctx?: ExecutionContext): Promise<Response> {
 	const authenticated = await authenticate(request);
 	if(authenticated instanceof Response)
 		return authenticated;
@@ -990,8 +1041,10 @@ async function pollControl(request: Request, env: DiscordEnv, authenticate: (req
 		return json({commands: []});
 	const now = nowSeconds();
 	await touchPresence(env, authenticated.installId, target === "launcher" ? "launcher_seen_at" : "game_seen_at", now);
-	if(target === "game" && !await claimGameOwner(env, authenticated.installId, gameClient(request, now), now))
+	if(target === "game" && !await claimGameOwner(env, authenticated.installId, gameClient(request, now), now, clientInServer(request)))
 		return json({commands: [], owner: false});
+	if(target === "game" && ctx)
+		ctx.waitUntil(flushDiscordTopic(env, authenticated.installId));
 	const command = await claimControlCommand(env, authenticated.installId, target);
 	if(!command)
 		return json({commands: [], owner: target === "game"});
@@ -1070,6 +1123,45 @@ async function playerSearch(request: Request, env: DiscordEnv): Promise<Response
 	catch {
 		return json({ok: false, message: DISCORD_TEXT.serverListDown});
 	}
+}
+
+async function readChatSettings(request: Request, env: DiscordEnv): Promise<Response> {
+	if(!await internalAuthorized(request, env))
+		return error(401, "invalid_bot_secret", "Bot authentication failed.");
+	const discordUserId = new URL(request.url).searchParams.get("discord_user_id") ?? "";
+	if(!SNOWFLAKE_RE.test(discordUserId))
+		return error(400, "invalid_request", "Discord user is invalid.");
+	const row = await env.DB.prepare(
+		"SELECT chat_style, chat_template FROM discord_links WHERE discord_user_id = ?1",
+	).bind(discordUserId).first<{chat_style: string; chat_template: string}>();
+	if(!row)
+		return json({linked: false, message: DISCORD_TEXT.notLinked});
+	const style = CHAT_STYLES.has(row.chat_style) ? row.chat_style : "style1";
+	return json({linked: true, chat_style: style, chat_template: row.chat_template || ""});
+}
+
+async function saveChatSettings(request: Request, env: DiscordEnv): Promise<Response> {
+	if(!await internalAuthorized(request, env))
+		return error(401, "invalid_bot_secret", "Bot authentication failed.");
+	const body = await readJson<{discord_user_id?: string; chat_style?: string; chat_template?: string}>(request);
+	if(!body || !SNOWFLAKE_RE.test(body.discord_user_id ?? "") || !body.chat_style || !CHAT_STYLES.has(body.chat_style))
+		return error(400, "invalid_request", "Chat style is invalid.");
+	const template = typeof body.chat_template === "string" ? neutralizeMentions(body.chat_template.replace(/[\r\n]/g, " ").trim()).slice(0, 300) : "";
+	if(body.chat_style === "custom" && !template)
+		return error(400, "invalid_request", "Enter a message style.");
+	const saved = body.chat_style === "custom" ?
+		await env.DB.prepare(
+			"UPDATE discord_links SET chat_style = ?2, chat_template = ?3 WHERE discord_user_id = ?1",
+		).bind(body.discord_user_id, body.chat_style, template).run() :
+		await env.DB.prepare(
+			"UPDATE discord_links SET chat_style = ?2 WHERE discord_user_id = ?1",
+		).bind(body.discord_user_id, body.chat_style).run();
+	if((saved.meta.changes ?? 0) === 0)
+		return json({linked: false, message: DISCORD_TEXT.notLinked});
+	const row = await env.DB.prepare(
+		"SELECT chat_style, chat_template FROM discord_links WHERE discord_user_id = ?1",
+	).bind(body.discord_user_id).first<{chat_style: string; chat_template: string}>();
+	return json({linked: true, chat_style: row?.chat_style ?? body.chat_style, chat_template: row?.chat_template ?? ""});
 }
 
 async function onlineFriends(request: Request, env: DiscordEnv): Promise<Response> {
@@ -1182,6 +1274,10 @@ export async function handleDiscord(
 			return playerSearch(request, env);
 		if(segments.length === 3 && segments[2] === "online-friends" && request.method === "GET")
 			return onlineFriends(request, env);
+		if(segments.length === 3 && segments[2] === "settings" && request.method === "GET")
+			return readChatSettings(request, env);
+		if(segments.length === 3 && segments[2] === "settings" && request.method === "POST")
+			return saveChatSettings(request, env);
 		return error(404, "not_found", "Endpoint not found.");
 	}
 
@@ -1207,7 +1303,7 @@ export async function handleDiscord(
 	if(segments[1] === "chat" && segments[2] === "sent" && segments.length === 3 && request.method === "POST")
 		return ackSentChat(request, env, authenticate);
 	if(segments[1] === "control" && segments.length === 2 && request.method === "GET")
-		return pollControl(request, env, authenticate, "game");
+		return pollControl(request, env, authenticate, "game", ctx);
 	if(segments[1] === "control" && segments[2] === "result" && segments.length === 3 && request.method === "POST")
 		return controlResult(request, env, authenticate);
 	if(segments[1] === "launcher" && segments[2] === "commands" && segments.length === 3 && request.method === "GET")

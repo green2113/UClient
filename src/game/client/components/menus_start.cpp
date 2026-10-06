@@ -52,7 +52,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	ExtMenu.HSplitBottom(20.0f, &ExtMenu, &Button);
 	static CButtonContainer s_DiscordButton;
 	if(GameClient()->m_Menus.DoButton_Menu(&s_DiscordButton, Localize("Discord"), 0, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
-		Client()->ViewLink("https://discord.gg/bestclient");
+		Client()->ViewLink("https://discord.gg/EN4yYypsPs");
 
 	ExtMenu.HSplitBottom(5.0f, &ExtMenu, nullptr);
 	ExtMenu.HSplitBottom(20.0f, &ExtMenu, &Button);

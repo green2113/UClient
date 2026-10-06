@@ -65,6 +65,8 @@ void CDiscordBridge::Auth(CHttpRequest *pRequest)
 	char aStarted[32];
 	str_format(aStarted, sizeof(aStarted), "%lld", (long long)m_StartedAt);
 	pRequest->HeaderString("x-uclient-game-started", aStarted);
+	if(Client()->State() == IClient::STATE_ONLINE)
+		pRequest->HeaderString("x-uclient-in-server", "1");
 	pRequest->FailOnErrorStatus(false);
 	pRequest->LogProgress(HTTPLOG::FAILURE);
 	pRequest->Timeout(CTimeout{10000, 20000, 0, 0});
@@ -148,10 +150,13 @@ bool CDiscordBridge::TopicDue(const std::string &Topic)
 	{
 		m_StableTopic = Topic;
 		m_TopicChangedAt = time_get();
-		return false;
+		if(!Topic.empty())
+			return false;
 	}
 	if(Topic == m_SentTopic || time_get() < m_NextTopic)
 		return false;
+	if(Topic.empty())
+		return true;
 	return time_get() >= m_TopicChangedAt + 2 * time_freq();
 }
 
@@ -303,7 +308,7 @@ void CDiscordBridge::BeginPoll()
 	Auth(pRequest.get());
 	m_pRequest = std::move(pRequest);
 	m_Request = ERequest::POLL;
-	m_NextPoll = time_get() + time_freq();
+	m_NextPoll = time_get() + time_freq() / 5;
 	Http()->Run(m_pRequest);
 }
 
@@ -353,7 +358,7 @@ void CDiscordBridge::FinishRequest()
 		{
 			const json_value *pLinked = json_object_get(pRoot, "linked");
 			m_Linked = pLinked && pLinked->type == json_boolean && pLinked->u.boolean;
-			m_NextPoll = time_get() + (m_Linked ? time_freq() : 30 * time_freq());
+			m_NextPoll = time_get() + (m_Linked ? time_freq() / 5 : 30 * time_freq());
 			const json_value *pMessages = json_object_get(pRoot, "messages");
 			if(m_Linked && Client()->State() == IClient::STATE_ONLINE && pMessages && pMessages->type == json_array)
 			{
@@ -523,24 +528,42 @@ void CDiscordBridge::OnUpdate()
 		BeginControlResult();
 		return;
 	}
+	const bool CanAct = m_Owner && !m_AwaitingConnect && !m_Held;
+	std::string Topic;
+	const bool TopicReady = CanAct && BuildTopic(Topic) && TopicDue(Topic);
+	if(TopicReady && Topic.empty())
+	{
+		BeginTopic();
+		return;
+	}
 	if(!m_Held && time_get() >= m_NextControl)
 	{
 		BeginControl();
 		return;
 	}
-	if(!m_vSentDeletes.empty() && time_get() >= m_NextAck && !m_AwaitingConnect && !m_Held)
+	if(!CanAct)
+		return;
+	const bool Online = Client()->State() == IClient::STATE_ONLINE;
+	if(Online && !m_vPending.empty() && time_get() >= m_NextIngest)
+	{
+		BeginIngest();
+		return;
+	}
+	if(!m_vSentDeletes.empty() && time_get() >= m_NextAck)
 	{
 		BeginAck();
 		return;
 	}
-	if(!m_Owner || m_AwaitingConnect || m_Held)
-		return;
-	std::string Topic;
-	const bool SendTopic = BuildTopic(Topic) && TopicDue(Topic);
-	if(SendTopic)
+	if(TopicReady && time_get() >= m_TopicChangedAt + 5 * time_freq())
+	{
 		BeginTopic();
-	else if(Client()->State() == IClient::STATE_ONLINE && !m_vPending.empty() && time_get() >= m_NextIngest)
-		BeginIngest();
-	else if(Client()->State() == IClient::STATE_ONLINE && time_get() >= m_NextPoll)
+		return;
+	}
+	if(Online && time_get() >= m_NextPoll)
+	{
 		BeginPoll();
+		return;
+	}
+	if(TopicReady)
+		BeginTopic();
 }

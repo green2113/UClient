@@ -1,7 +1,7 @@
 import {applyD1Migrations, env, SELF} from "cloudflare:test";
 import {beforeAll, describe, expect, it} from "vitest";
 
-import {DISCORD_TEXT, discordChatPayload, linkedMessage, neutralizeMentions} from "../src/discord";
+import {DISCORD_TEXT, discordChatPayload, formatDiscordChat, linkedMessage, neutralizeMentions} from "../src/discord";
 
 interface TestEnv extends Cloudflare.Env {
 	ACCOUNT_PEPPER: string;
@@ -432,11 +432,77 @@ describe("discord account bridge", () => {
 		expect(pending?.message_id).toBe("222222222222222222");
 	});
 
+	it("accepts channel chat while the game is in a server", async () => {
+		const created = await SELF.fetch(botRequest("/internal/discord/channels", {
+			discord_user_id: discordUserId,
+			guild_id: "111111111111111111",
+			channel_id: "222222222222222222",
+		}));
+		expect(created.status).toBe(200);
+		const now = Math.floor(Date.now() / 1000);
+		await testEnv.DB.prepare(
+			"UPDATE discord_links SET game_online_at = 0, game_seen_at = ?2 WHERE install_id = ?1",
+		).bind(account.install_id, now).run();
+		await testEnv.DB.prepare(
+			"UPDATE discord_message_channels SET topic_desired = ?2 WHERE install_id = ?1",
+		).bind(account.install_id, "1 player: under").run();
+		const playing = await SELF.fetch(botRequest("/internal/discord/inbound", {
+			channel_id: "222222222222222222",
+			content: "still in server",
+		}));
+		expect(playing.status).toBe(200);
+		expect(await responseJson<{ok: boolean}>(playing)).toMatchObject({ok: true});
+
+		await testEnv.DB.prepare(
+			"UPDATE discord_links SET game_online_at = 0 WHERE install_id = ?1",
+		).bind(account.install_id).run();
+		await testEnv.DB.prepare(
+			"UPDATE discord_message_channels SET topic_desired = '' WHERE install_id = ?1",
+		).bind(account.install_id).run();
+		const left = await SELF.fetch(botRequest("/internal/discord/inbound", {
+			channel_id: "222222222222222222",
+			content: "left the server",
+		}));
+		expect(await responseJson<{ok: boolean; reason: string}>(left)).toMatchObject({ok: false, reason: "offline"});
+
+		const headers: Record<string, string> = {
+			authorization: `Bearer ${account.secret}`,
+			"x-uclient-install-id": account.install_id,
+			"x-uclient-game-session": "11111111111111111111111111111111",
+			"x-uclient-game-started": "1600000001",
+			"x-uclient-in-server": "1",
+		};
+		expect((await SELF.fetch(new Request("https://worker.test/discord/control", {headers}))).status).toBe(200);
+		const refreshed = await SELF.fetch(botRequest("/internal/discord/inbound", {
+			channel_id: "222222222222222222",
+			content: "back in server",
+		}));
+		expect(await responseJson<{ok: boolean}>(refreshed)).toMatchObject({ok: true});
+	});
+
+	it("formats discord chat styles", () => {
+		expect(formatDiscordChat("style1", "", "hi", "Under", "under")).toBe("hi");
+		expect(formatDiscordChat("style2", "", "hi", "Under", "under")).toBe("hi - This message was sent from Discord.");
+		expect(formatDiscordChat("style3", "", "hi", "Under", "under")).toBe("hi - This message was sent from Discord by Under (under).");
+		expect(formatDiscordChat("custom", "Hello [message] [username]", "yo", "Under", "under")).toBe("Hello yo under");
+		expect(formatDiscordChat("custom", "x [displayname]", "yo", "A [message]", "under")).toBe("x A [message]");
+	});
+
 	it("stores the launcher friend list for the linked account", async () => {
 		const saved = await SELF.fetch(jsonRequest("/discord/friends", {names: ["Under", " under ", "NEEB", ""]}, "POST", true));
 		expect(saved.status).toBe(200);
 		const row = await testEnv.DB.prepare("SELECT names_json FROM launcher_friends WHERE install_id = ?1")
 			.bind(account.install_id).first<{names_json: string}>();
 		expect(JSON.parse(row?.names_json ?? "[]")).toEqual(["Under", "NEEB"]);
+		const savedStyle = await SELF.fetch(botRequest("/internal/discord/settings", {
+			discord_user_id: discordUserId,
+			chat_style: "custom",
+			chat_template: "Hello [message] [username]",
+		}));
+		expect(savedStyle.status).toBe(200);
+		const loadedStyle = await responseJson<{chat_style: string; chat_template: string}>(
+			await SELF.fetch(botRequest(`/internal/discord/settings?discord_user_id=${discordUserId}`, undefined, "GET")),
+		);
+		expect(loadedStyle).toMatchObject({chat_style: "custom", chat_template: "Hello [message] [username]"});
 	});
 });

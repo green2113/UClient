@@ -9,7 +9,9 @@ import {
 	ButtonStyle,
 	ContainerBuilder,
 	GatewayIntentBits,
+	LabelBuilder,
 	MessageFlags,
+	ModalBuilder,
 	PermissionFlagsBits,
 	REST,
 	Routes,
@@ -17,6 +19,8 @@ import {
 	SeparatorBuilder,
 	SlashCommandBuilder,
 	TextDisplayBuilder,
+	TextInputBuilder,
+	TextInputStyle,
 } from "discord.js";
 
 const token = process.env.DISCORD_TOKEN ?? "";
@@ -177,6 +181,67 @@ function playerCard(query, hits, page) {
 	return {components, flags: MessageFlags.IsComponentsV2};
 }
 
+const chatStyles = [
+	["style1", "Style 1", "[message]"],
+	["style2", "Style 2", "[message] - This message was sent from Discord."],
+	["style3", "Style 3", "[message] - This message was sent from Discord by [displayname] ([username])."],
+];
+
+function chatSettings(style, template) {
+	const current = chatStyles.some(item => item[0] === style) || style === "custom" ? style : "style1";
+	const custom = String(template ?? "").trim();
+	const container = new ContainerBuilder().setAccentColor(0x5865F2);
+	container.addTextDisplayComponents(new TextDisplayBuilder().setContent("Please choose the message style that is sent when a message is delivered."));
+	for(const [id, title, preview] of chatStyles) {
+		container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+		container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`### ${title}\n${preview}`));
+	}
+	container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+	container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`### Custom\n${custom || "-"}`.slice(0, 4000)));
+	return {
+		components: [
+			container,
+			new ActionRowBuilder().addComponents(
+				...chatStyles.map(([id, title]) => new ButtonBuilder()
+					.setCustomId(`settings:chat:${id}`)
+					.setLabel(title)
+					.setStyle(ButtonStyle.Secondary)
+					.setDisabled(current === id)),
+				new ButtonBuilder()
+					.setCustomId("settings:chat:custom")
+					.setLabel("Custom")
+					.setStyle(ButtonStyle.Secondary)
+					.setDisabled(current === "custom"),
+			),
+		],
+		flags: MessageFlags.IsComponentsV2,
+	};
+}
+
+function customMessageModal(template) {
+	const input = new TextInputBuilder()
+		.setCustomId("template")
+		.setStyle(TextInputStyle.Paragraph)
+		.setRequired(true)
+		.setMaxLength(300)
+		.setPlaceholder("Hello [message] [username]");
+	const current = String(template ?? "").trim();
+	if(current)
+		input.setValue(current.slice(0, 300));
+	return new ModalBuilder()
+		.setCustomId("settings:chat:custom")
+		.setTitle("Custom message")
+		.addTextDisplayComponents(new TextDisplayBuilder().setContent([
+			"Please enter the message that is sent in the game when you send a message from Discord.",
+			"[message] - the message you typed",
+			"[displayname] - Discord display name",
+			"[username] - Discord username",
+		].join("\n")))
+		.addLabelComponents(new LabelBuilder()
+			.setLabel("Message style")
+			.setTextInputComponent(input));
+}
+
 const commands = [
 	new SlashCommandBuilder()
 		.setName("link")
@@ -224,6 +289,14 @@ const commands = [
 	new SlashCommandBuilder()
 		.setName("online-list")
 		.setDescription("Show online friends from the launcher"),
+	new SlashCommandBuilder()
+		.setName("settings")
+		.setDescription("Change Discord chat settings")
+		.addStringOption(option => option
+			.setName("setting")
+			.setDescription("Setting to change")
+			.setRequired(true)
+			.addChoices({name: "Chat message", value: "chat_message"})),
 	new SlashCommandBuilder()
 		.setName("send")
 		.setDescription("Send a message from your linked UClient account")
@@ -280,6 +353,74 @@ client.on("interactionCreate", async interaction => {
 				};
 			});
 		await interaction.respond(choices).catch(() => {});
+		return;
+	}
+	if(interaction.isModalSubmit() && interaction.customId === "settings:chat:custom") {
+		const template = interaction.fields.getTextInputValue("template").trim();
+		try {
+			if(!template) {
+				await interaction.reply(ephemeral("Enter a message style."));
+				return;
+			}
+			await interaction.deferUpdate();
+			const saved = await api("/internal/discord/settings", {
+				method: "POST",
+				body: JSON.stringify({
+					discord_user_id: interaction.user.id,
+					chat_style: "custom",
+					chat_template: template,
+				}),
+			});
+			if(!saved.body.linked)
+				await interaction.editReply(panel([saved.body.message || text.notLinked]));
+			else
+				await interaction.editReply(chatSettings(saved.body.chat_style, saved.body.chat_template));
+		}
+		catch(errorValue) {
+			console.error(JSON.stringify({
+				event: "discord_command_failed",
+				message: errorValue instanceof Error ? errorValue.message : String(errorValue),
+			}));
+			if(interaction.deferred || interaction.replied)
+				await interaction.editReply(panel(["Something went wrong. Try again."])).catch(() => {});
+			else
+				await interaction.reply(ephemeral("Something went wrong. Try again.")).catch(() => {});
+		}
+		return;
+	}
+	if(interaction.isButton() && interaction.customId.startsWith("settings:chat:")) {
+		const choice = interaction.customId.slice("settings:chat:".length);
+		try {
+			if(choice === "custom") {
+				const current = await api(`/internal/discord/settings?discord_user_id=${encodeURIComponent(interaction.user.id)}`, {method: "GET"});
+				await interaction.showModal(customMessageModal(current.body.chat_template || ""));
+				return;
+			}
+			if(choice !== "style1" && choice !== "style2" && choice !== "style3")
+				return;
+			await interaction.deferUpdate();
+			const saved = await api("/internal/discord/settings", {
+				method: "POST",
+				body: JSON.stringify({
+					discord_user_id: interaction.user.id,
+					chat_style: choice,
+				}),
+			});
+			if(!saved.body.linked)
+				await interaction.editReply(panel([saved.body.message || text.notLinked]));
+			else
+				await interaction.editReply(chatSettings(saved.body.chat_style, saved.body.chat_template));
+		}
+		catch(errorValue) {
+			console.error(JSON.stringify({
+				event: "discord_command_failed",
+				message: errorValue instanceof Error ? errorValue.message : String(errorValue),
+			}));
+			if(interaction.deferred || interaction.replied)
+				await interaction.editReply(panel(["Something went wrong. Try again."])).catch(() => {});
+			else
+				await interaction.reply(ephemeral("Something went wrong. Try again.")).catch(() => {});
+		}
 		return;
 	}
 	if(interaction.isButton() && interaction.customId.startsWith("find:")) {
@@ -378,11 +519,21 @@ client.on("interactionCreate", async interaction => {
 				await interaction.editReply(panel(fallback));
 				return;
 			}
-			await interaction.editReply(onlineList(groups));
-			return;
-		}
+		await interaction.editReply(onlineList(groups));
+		return;
+	}
 
-		if(interaction.commandName === "connect" || interaction.commandName === "disconnect" || interaction.commandName === "start-game" || interaction.commandName === "stop-game") {
+	if(interaction.commandName === "settings") {
+		await interaction.deferReply({flags: deferredFlags});
+		const result = await api(`/internal/discord/settings?discord_user_id=${encodeURIComponent(interaction.user.id)}`, {method: "GET"});
+		if(!result.body.linked)
+			await interaction.editReply(panel([result.body.message || text.notLinked]));
+		else
+			await interaction.editReply(chatSettings(result.body.chat_style, result.body.chat_template));
+		return;
+	}
+
+	if(interaction.commandName === "connect" || interaction.commandName === "disconnect" || interaction.commandName === "start-game" || interaction.commandName === "stop-game") {
 			await interaction.deferReply({flags: deferredFlags});
 			const body = {
 				discord_user_id: interaction.user.id,
@@ -427,7 +578,7 @@ client.on("interactionCreate", async interaction => {
 					name,
 					type: ChannelType.GuildText,
 					permissionOverwrites: [
-						{id: interaction.guildId, deny: [PermissionFlagsBits.ViewChannel]},
+						{id: interaction.guildId, deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]},
 						{
 							id: interaction.user.id,
 							allow: [
@@ -435,6 +586,7 @@ client.on("interactionCreate", async interaction => {
 								PermissionFlagsBits.SendMessages,
 								PermissionFlagsBits.ReadMessageHistory,
 								PermissionFlagsBits.ManageChannels,
+								PermissionFlagsBits.ManageRoles,
 							],
 						},
 						{
@@ -546,12 +698,18 @@ client.on("messageCreate", async message => {
 		return;
 	const result = await api("/internal/discord/inbound", {
 		method: "POST",
-		body: JSON.stringify({channel_id: message.channel.id, message_id: message.id, content}),
+		body: JSON.stringify({
+			channel_id: message.channel.id,
+			message_id: message.id,
+			content,
+			display_name: message.member?.displayName || message.author.globalName || message.author.username,
+			username: message.author.username,
+		}),
 	});
 	if(result.status === 404)
 		return;
 	if(!result.body.ok && result.body.reason === "offline") {
-		await message.channel.send({
+		await message.author.send({
 			content: result.body.message || text.notInGame,
 			allowedMentions: {parse: []},
 		}).catch(() => {});
