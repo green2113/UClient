@@ -574,8 +574,16 @@ async function outbound(request: Request, env: DiscordEnv, authenticate: (reques
 		   ORDER BY id ASC
 		   LIMIT 10
 		 )
-		 RETURNING id, body, mode, room_id`,
-	).bind(authenticated.installId).all<{id: number; body: string; mode: string; room_id: string}>();
+		 RETURNING id, body, mode, room_id, discord_channel_id, discord_message_id`,
+	).bind(authenticated.installId).all<{id: number; body: string; mode: string; room_id: string; discord_channel_id: string; discord_message_id: string}>();
+	const pending = taken.results.filter(row => SNOWFLAKE_RE.test(row.discord_channel_id) && SNOWFLAKE_RE.test(row.discord_message_id));
+	if(pending.length > 0) {
+		await env.DB.batch(pending.map(row => env.DB.prepare(
+			`INSERT INTO discord_pending_deletes (install_id, channel_id, message_id, created_at)
+			 VALUES (?1, ?2, ?3, ?4)
+			 ON CONFLICT(install_id, message_id) DO UPDATE SET channel_id = excluded.channel_id, created_at = excluded.created_at`,
+		).bind(authenticated.installId, row.discord_channel_id, row.discord_message_id, now)));
+	}
 	return json({
 		linked: true,
 		messages: taken.results.map(row => ({
@@ -583,16 +591,65 @@ async function outbound(request: Request, env: DiscordEnv, authenticate: (reques
 			body: row.body,
 			mode: row.mode || "all",
 			room_id: row.room_id || "",
+			discord_channel_id: row.discord_channel_id || "",
+			discord_message_id: row.discord_message_id || "",
 		})),
 	});
+}
+
+async function deleteDiscordMessage(token: string, channelId: string, messageId: string): Promise<boolean> {
+	try {
+		const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${messageId}`, {
+			method: "DELETE",
+			headers: {authorization: `Bot ${token}`},
+			signal: AbortSignal.timeout(8000),
+		});
+		return response.ok || response.status === 404;
+	}
+	catch(errorValue) {
+		console.error(JSON.stringify({
+			event: "discord_delete_failed",
+			message: errorValue instanceof Error ? errorValue.message : String(errorValue),
+		}));
+		return false;
+	}
+}
+
+async function ackSentChat(request: Request, env: DiscordEnv, authenticate: (request: Request) => Promise<DiscordAuth | Response>): Promise<Response> {
+	const authenticated = await authenticate(request);
+	if(authenticated instanceof Response)
+		return authenticated;
+	const body = await readJson<{messages?: Array<{channel_id?: string; message_id?: string}>}>(request);
+	const messages = Array.isArray(body?.messages) ? body.messages.slice(0, 10) : [];
+	const token = env.DISCORD_BOT_TOKEN ?? "";
+	const deleted: string[] = [];
+	for(const item of messages) {
+		const channelId = item?.channel_id ?? "";
+		const messageId = item?.message_id ?? "";
+		if(!SNOWFLAKE_RE.test(channelId) || !SNOWFLAKE_RE.test(messageId))
+			continue;
+		const pending = await env.DB.prepare(
+			"SELECT message_id FROM discord_pending_deletes WHERE install_id = ?1 AND channel_id = ?2 AND message_id = ?3",
+		).bind(authenticated.installId, channelId, messageId).first<{message_id: string}>();
+		if(!pending)
+			continue;
+		if(!token || !await deleteDiscordMessage(token, channelId, messageId))
+			continue;
+		await env.DB.prepare(
+			"DELETE FROM discord_pending_deletes WHERE install_id = ?1 AND message_id = ?2",
+		).bind(authenticated.installId, messageId).run();
+		deleted.push(messageId);
+	}
+	return json({ok: true, deleted});
 }
 
 async function inbound(request: Request, env: DiscordEnv): Promise<Response> {
 	if(!await internalAuthorized(request, env))
 		return error(401, "invalid_bot_secret", "Bot authentication failed.");
-	const body = await readJson<{channel_id?: string; content?: string}>(request);
+	const body = await readJson<{channel_id?: string; message_id?: string; content?: string}>(request);
 	if(!body || !SNOWFLAKE_RE.test(body.channel_id ?? "") || typeof body.content !== "string")
 		return error(400, "invalid_request", "Inbound chat is invalid.");
+	const messageId = SNOWFLAKE_RE.test(body.message_id ?? "") ? body.message_id ?? "" : "";
 	const text = body.content.trim().slice(0, MAX_GAME_CHAT);
 	if(!text)
 		return json({ok: true, ignored: true});
@@ -608,8 +665,8 @@ async function inbound(request: Request, env: DiscordEnv): Promise<Response> {
 	if(!gameOnline(channel.game_online_at, now))
 		return json({ok: false, reason: "offline", message: DISCORD_TEXT.notInGame});
 	await env.DB.prepare(
-		"INSERT INTO discord_outbound_messages (install_id, body, created_at, mode, room_id) VALUES (?1, ?2, ?3, 'all', '')",
-	).bind(channel.install_id, text, now).run();
+		"INSERT INTO discord_outbound_messages (install_id, body, created_at, mode, room_id, discord_channel_id, discord_message_id) VALUES (?1, ?2, ?3, 'all', '', ?4, ?5)",
+	).bind(channel.install_id, text, now, body.channel_id, messageId).run();
 	return json({ok: true});
 }
 
@@ -1147,6 +1204,8 @@ export async function handleDiscord(
 		return setTopic(request, env, authenticate, ctx);
 	if(segments[1] === "chat" && segments[2] === "outbound" && segments.length === 3 && request.method === "GET")
 		return outbound(request, env, authenticate, ctx);
+	if(segments[1] === "chat" && segments[2] === "sent" && segments.length === 3 && request.method === "POST")
+		return ackSentChat(request, env, authenticate);
 	if(segments[1] === "control" && segments.length === 2 && request.method === "GET")
 		return pollControl(request, env, authenticate, "game");
 	if(segments[1] === "control" && segments[2] === "result" && segments.length === 3 && request.method === "POST")

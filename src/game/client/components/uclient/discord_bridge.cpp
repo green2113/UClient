@@ -182,6 +182,33 @@ void CDiscordBridge::BeginControl()
 	Http()->Run(m_pRequest);
 }
 
+void CDiscordBridge::BeginAck()
+{
+	m_vAckInflight.clear();
+	const size_t Count = m_vSentDeletes.size() < 10 ? m_vSentDeletes.size() : 10;
+	m_vAckInflight.insert(m_vAckInflight.end(), m_vSentDeletes.begin(), m_vSentDeletes.begin() + Count);
+	m_vSentDeletes.erase(m_vSentDeletes.begin(), m_vSentDeletes.begin() + Count);
+	std::string Json = "{\"messages\":[";
+	for(size_t i = 0; i < m_vAckInflight.size(); ++i)
+	{
+		if(i)
+			Json += ",";
+		Json += "{\"channel_id\":\"";
+		Json += m_vAckInflight[i].m_ChannelId;
+		Json += "\",\"message_id\":\"";
+		Json += m_vAckInflight[i].m_MessageId;
+		Json += "\"}";
+	}
+	Json += "]}";
+	char aUrl[512];
+	str_format(aUrl, sizeof(aUrl), "%s/discord/chat/sent", g_Config.m_UcApiBaseUrl);
+	auto pRequest = HttpPostJson(aUrl, Json.c_str());
+	Auth(pRequest.get());
+	m_pRequest = std::move(pRequest);
+	m_Request = ERequest::ACK;
+	Http()->Run(m_pRequest);
+}
+
 void CDiscordBridge::BeginControlResult()
 {
 	std::string Json = std::string("{\"id\":") + std::to_string(m_ControlId) + ",\"code\":\"" + JsonEscape(m_ResultCode.c_str()) + "\",\"detail\":\"" + JsonEscape(m_ResultDetail.c_str()) + "\"}";
@@ -351,9 +378,56 @@ void CDiscordBridge::FinishRequest()
 						GameClient()->m_ClientIndicator.SendUClientChat(aText, pRoomId);
 					else
 						GameClient()->m_Chat.SendChat(0, aText);
+					const json_value *pDiscordChannel = json_object_get(pItem, "discord_channel_id");
+					const json_value *pDiscordMessage = json_object_get(pItem, "discord_message_id");
+					if(pDiscordChannel && pDiscordChannel->type == json_string && pDiscordChannel->u.string.ptr[0] &&
+						pDiscordMessage && pDiscordMessage->type == json_string && pDiscordMessage->u.string.ptr[0])
+					{
+						SDiscordMessage Delete;
+						Delete.m_ChannelId = pDiscordChannel->u.string.ptr;
+						Delete.m_MessageId = pDiscordMessage->u.string.ptr;
+						m_vSentDeletes.push_back(std::move(Delete));
+					}
 				}
 			}
 		}
+	}
+	else if(Request == ERequest::ACK)
+	{
+		if(!Ok)
+			m_vSentDeletes.insert(m_vSentDeletes.begin(), m_vAckInflight.begin(), m_vAckInflight.end());
+		else
+		{
+			std::vector<std::string> vDeleted;
+			const json_value *pDeleted = json_object_get(pRoot, "deleted");
+			if(pDeleted && pDeleted->type == json_array)
+			{
+				const int Count = json_array_length(pDeleted);
+				for(int i = 0; i < Count; ++i)
+				{
+					const json_value *pId = json_array_get(pDeleted, i);
+					if(pId && pId->type == json_string && pId->u.string.ptr[0])
+						vDeleted.emplace_back(pId->u.string.ptr);
+				}
+			}
+			for(const SDiscordMessage &Message : m_vAckInflight)
+			{
+				bool Gone = false;
+				for(const std::string &Id : vDeleted)
+				{
+					if(Id == Message.m_MessageId)
+					{
+						Gone = true;
+						break;
+					}
+				}
+				if(!Gone)
+					m_vSentDeletes.push_back(Message);
+			}
+		}
+		m_vAckInflight.clear();
+		if(!m_vSentDeletes.empty())
+			m_NextAck = time_get() + 2 * time_freq();
 	}
 	else if(Request == ERequest::TOPIC)
 	{
@@ -452,6 +526,11 @@ void CDiscordBridge::OnUpdate()
 	if(!m_Held && time_get() >= m_NextControl)
 	{
 		BeginControl();
+		return;
+	}
+	if(!m_vSentDeletes.empty() && time_get() >= m_NextAck && !m_AwaitingConnect && !m_Held)
+	{
+		BeginAck();
 		return;
 	}
 	if(!m_Owner || m_AwaitingConnect || m_Held)

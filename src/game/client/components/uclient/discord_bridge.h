@@ -26,6 +26,7 @@ private:
 		TOPIC,
 		CONTROL,
 		CONTROL_RESULT,
+		ACK,
 	};
 
 	void BeginIngest();
@@ -33,6 +34,7 @@ private:
 	void BeginTopic();
 	void BeginControl();
 	void BeginControlResult();
+	void BeginAck();
 	void ApplyControl(int Id, const char *pKind, const char *pAddress, const char *pPassword);
 	void WatchConnect();
 	bool BuildTopic(std::string &Topic) const;
@@ -43,12 +45,21 @@ private:
 
 	std::shared_ptr<CHttpRequest> m_pRequest;
 	ERequest m_Request = ERequest::NONE;
+	struct SDiscordMessage
+	{
+		std::string m_ChannelId;
+		std::string m_MessageId;
+	};
+
 	std::vector<std::string> m_vPending;
 	std::vector<std::string> m_vInflight;
+	std::vector<SDiscordMessage> m_vSentDeletes;
+	std::vector<SDiscordMessage> m_vAckInflight;
 	std::string m_SentTopic;
 	std::string m_StableTopic;
 	std::string m_TopicInflight;
 	int64_t m_NextPoll = 0;
+	int64_t m_NextAck = 0;
 	int64_t m_NextIngest = 0;
 	int64_t m_NextTopic = 0;
 	int64_t m_TopicChangedAt = 0;

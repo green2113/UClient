@@ -546,7 +546,7 @@ client.on("messageCreate", async message => {
 		return;
 	const result = await api("/internal/discord/inbound", {
 		method: "POST",
-		body: JSON.stringify({channel_id: message.channel.id, content}),
+		body: JSON.stringify({channel_id: message.channel.id, message_id: message.id, content}),
 	});
 	if(result.status === 404)
 		return;
@@ -555,14 +555,6 @@ client.on("messageCreate", async message => {
 			content: result.body.message || text.notInGame,
 			allowedMentions: {parse: []},
 		}).catch(() => {});
-		return;
-	}
-	if(result.body.ok) {
-		const deleted = await message.delete().then(() => true).catch(() => false);
-		if(!deleted && "permissionOverwrites" in message.channel) {
-			await message.channel.permissionOverwrites.edit(message.client.user.id, {ManageMessages: true}).catch(() => {});
-			await message.delete().catch(() => {});
-		}
 	}
 });
 

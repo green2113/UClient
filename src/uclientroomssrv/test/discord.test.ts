@@ -237,9 +237,9 @@ describe("discord account bridge", () => {
 		}));
 		const sentBody = await responseJson<{messages: Array<{body: string; mode: string; room_id: string}>}>(sentLines);
 		expect(sentBody.messages).toEqual([
-			{id: expect.any(Number), body: "team line", mode: "team", room_id: ""},
-			{id: expect.any(Number), body: "room line", mode: "room", room_id: "room-send-1"},
-			{id: expect.any(Number), body: "global line", mode: "uclient", room_id: ""},
+			{id: expect.any(Number), body: "team line", mode: "team", room_id: "", discord_channel_id: "", discord_message_id: ""},
+			{id: expect.any(Number), body: "room line", mode: "room", room_id: "room-send-1", discord_channel_id: "", discord_message_id: ""},
+			{id: expect.any(Number), body: "global line", mode: "uclient", room_id: "", discord_channel_id: "", discord_message_id: ""},
 		]);
 
 		const firstIngest = await SELF.fetch(jsonRequest("/discord/chat/ingest", {
@@ -402,6 +402,34 @@ describe("discord account bridge", () => {
 			interaction_token: "interaction-token-with-enough-length",
 		}));
 		expect(await responseJson<{message: string}>(started)).toMatchObject({message: DISCORD_TEXT.gameAlreadyRunning});
+	});
+
+	it("waits to delete a discord message until the game has it", async () => {
+		const headers = {
+			authorization: `Bearer ${account.secret}`,
+			"x-uclient-install-id": account.install_id,
+			"x-uclient-game-session": "11111111111111111111111111111111",
+			"x-uclient-game-started": "1600000001",
+		};
+		await SELF.fetch(new Request("https://worker.test/discord/control", {headers}));
+		await testEnv.DB.prepare(
+			"INSERT INTO discord_outbound_messages (install_id, body, created_at, mode, room_id, discord_channel_id, discord_message_id) VALUES (?1, 'from discord', ?2, 'all', '', ?3, ?4)",
+		).bind(account.install_id, 1_700_000_300, "111111111111111111", "222222222222222222").run();
+		const taken = await responseJson<{messages: Array<{body: string; discord_channel_id: string; discord_message_id: string}>}>(
+			await SELF.fetch(new Request("https://worker.test/discord/chat/outbound", {headers})),
+		);
+		expect(taken.messages).toEqual([{
+			id: expect.any(Number),
+			body: "from discord",
+			mode: "all",
+			room_id: "",
+			discord_channel_id: "111111111111111111",
+			discord_message_id: "222222222222222222",
+		}]);
+		const pending = await testEnv.DB.prepare(
+			"SELECT message_id FROM discord_pending_deletes WHERE install_id = ?1 AND message_id = ?2",
+		).bind(account.install_id, "222222222222222222").first<{message_id: string}>();
+		expect(pending?.message_id).toBe("222222222222222222");
 	});
 
 	it("stores the launcher friend list for the linked account", async () => {
