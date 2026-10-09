@@ -112,6 +112,7 @@ struct PresencePacket {
     player_name: String,
     client_id: i16,
     client_version: String,
+    client_base: String,
     from_server_address: Option<String>,
 }
 
@@ -122,6 +123,7 @@ struct PresenceEntry {
     player_name: String,
     client_id: i16,
     client_version: String,
+    client_base: String,
     last_seen: Instant,
     last_seen_ms: u64,
     return_addr: SocketAddr,
@@ -302,6 +304,7 @@ impl ServerState {
             player_name: packet.player_name.clone(),
             client_id: packet.client_id,
             client_version: packet.client_version.clone(),
+            client_base: packet.client_base.clone(),
             last_seen: now,
             last_seen_ms: packet.timestamp.saturating_mul(1000),
             return_addr: from,
@@ -484,6 +487,11 @@ impl ServerState {
                     } else {
                         Some(entry.client_version.as_str())
                     },
+                    base: if entry.client_base.is_empty() {
+                        None
+                    } else {
+                        Some(entry.client_base.as_str())
+                    },
                 })
                 .collect();
             let mut server_object = serde_json::Map::new();
@@ -509,6 +517,8 @@ struct PlayerSnapshot<'a> {
     last_seen: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base: Option<&'a str>,
 }
 
 #[tokio::main]
@@ -1913,6 +1923,12 @@ fn read_presence_packet(data: &[u8]) -> Option<PresencePacket> {
     } else {
         None
     };
+    // Optional trailing string so older clients, which omit it, still parse.
+    let client_base = if reader.remaining() > 0 {
+        reader.string()?
+    } else {
+        String::new()
+    };
     if reader.remaining() != 0 {
         return None;
     }
@@ -1926,6 +1942,7 @@ fn read_presence_packet(data: &[u8]) -> Option<PresencePacket> {
         player_name,
         client_id,
         client_version,
+        client_base,
         from_server_address,
     })
 }
@@ -2807,7 +2824,33 @@ mod tests {
         assert_eq!(parsed.packet_type, PACKET_JOIN);
         assert_eq!(parsed.client_id, 4);
         assert_eq!(parsed.client_version, "2.4.0");
+        assert_eq!(parsed.client_base, "");
         assert!(validate_proof("shared", &packet));
+    }
+
+    #[test]
+    fn parses_presence_packet_with_optional_base() {
+        let mut out = Vec::new();
+        out.extend_from_slice(&PROTOCOL_MAGIC);
+        out.push(PACKET_JOIN);
+        out.push(PROTOCOL_VERSION_V2);
+        write_string(&mut out, "player-1");
+        out.extend_from_slice(&[1; 16]);
+        out.extend_from_slice(&[2; 16]);
+        out.extend_from_slice(&123u64.to_be_bytes());
+        write_string(&mut out, "154.223.20.85:8304");
+        write_string(&mut out, "dev");
+        out.extend_from_slice(&8i16.to_be_bytes());
+        write_string(&mut out, "2.11.1");
+        write_string(&mut out, "BestClient");
+        let mut sha = Sha256::new();
+        sha.update("shared".as_bytes());
+        sha.update(&out);
+        out.extend_from_slice(&sha.finalize());
+        let parsed = read_presence_packet(&out).unwrap();
+        assert_eq!(parsed.server_address, "154.223.20.85:8304");
+        assert_eq!(parsed.client_base, "BestClient");
+        assert!(validate_proof("shared", &out));
     }
 
     #[test]

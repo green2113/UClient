@@ -6,6 +6,8 @@
 
 #include <engine/shared/config.h>
 
+#include <game/client/uclient_base.h>
+
 #include <algorithm>
 #include <cmath>
 
@@ -13,7 +15,7 @@ namespace BCUiAnimations
 {
 inline bool Enabled()
 {
-	return g_Config.m_BcAnimations != 0;
+	return UCLIENT_HAS_BESTCLIENT && g_Config.m_BcAnimations != 0;
 }
 
 inline float Clamp01(float v)

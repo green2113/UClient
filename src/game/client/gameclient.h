@@ -3,6 +3,7 @@
 #ifndef GAME_CLIENT_GAMECLIENT_H
 #define GAME_CLIENT_GAMECLIENT_H
 
+#include "uclient_base.h"
 #include "render.h"
 
 #include <base/color.h>

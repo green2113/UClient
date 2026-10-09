@@ -2021,7 +2021,7 @@ void CHud::OnInit()
 
 void CHud::RenderGameTimer()
 {
-	const bool MusicPlayerOccupiesTimerSlot = g_Config.m_BcMusicPlayer != 0 && !(g_Config.m_ClFocusMode && g_Config.m_ClFocusModeHideSongPlayer);
+	const bool MusicPlayerOccupiesTimerSlot = UCLIENT_HAS_BESTCLIENT && g_Config.m_BcMusicPlayer != 0 && !(g_Config.m_ClFocusMode && g_Config.m_ClFocusModeHideSongPlayer);
 	if(MusicPlayerOccupiesTimerSlot)
 		return;
 
@@ -2670,7 +2670,7 @@ void CHud::GetFrozenTeamCounts(int &NumInTeam, int &NumFrozen, int &LocalTeamId,
 
 CUIRect CHud::GetFrozenHudRect(bool ForcePreview) const
 {
-	if(!HudLayout::IsEnabled(HudLayout::MODULE_FROZEN_HUD))
+	if(!UCLIENT_HAS_TCLIENT || !HudLayout::IsEnabled(HudLayout::MODULE_FROZEN_HUD))
 		return {0.0f, 0.0f, 0.0f, 0.0f};
 
 	int NumInTeam, NumFrozen, LocalTeamId;
@@ -2709,7 +2709,7 @@ CUIRect CHud::GetFrozenHudRect(bool ForcePreview) const
 
 void CHud::RenderFrozenHud(bool ForcePreview)
 {
-	if(!HudLayout::IsEnabled(HudLayout::MODULE_FROZEN_HUD))
+	if(!UCLIENT_HAS_TCLIENT || !HudLayout::IsEnabled(HudLayout::MODULE_FROZEN_HUD))
 		return;
 
 	int NumInTeam, NumFrozen, LocalTeamId;
@@ -4701,7 +4701,7 @@ CUIRect CHud::GetLocalTimeRect(bool ForcePreview) const
 	const float x = HasOverride ? Layout.m_X : (m_Width / 7.0f) * 3.0f;
 	const float y = HasOverride ? Layout.m_Y : 0.0f;
 
-	const bool Seconds = g_Config.m_TcShowLocalTimeSeconds; // TClient
+	const bool Seconds = UCLIENT_HAS_TCLIENT && g_Config.m_TcShowLocalTimeSeconds; // TClient
 	char aTimeStr[16];
 	str_timestamp_format(aTimeStr, sizeof(aTimeStr), Seconds ? "%H:%M.%S" : "%H:%M");
 	const float FontSize = 5.0f * Scale;
@@ -4723,7 +4723,7 @@ void CHud::RenderLocalTime(bool ForcePreview)
 	const float x = HasOverride ? Layout.m_X : (m_Width / 7.0f) * 3.0f;
 	const float y = HasOverride ? Layout.m_Y : 0.0f;
 
-	const bool Seconds = g_Config.m_TcShowLocalTimeSeconds; // TClient
+	const bool Seconds = UCLIENT_HAS_TCLIENT && g_Config.m_TcShowLocalTimeSeconds; // TClient
 
 	char aTimeStr[16];
 	str_timestamp_format(aTimeStr, sizeof(aTimeStr), Seconds ? "%H:%M.%S" : "%H:%M");

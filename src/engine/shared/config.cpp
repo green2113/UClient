@@ -274,6 +274,7 @@ CConfigManager::CConfigManager()
 	{
 		m_aConfigFile[ConfigDomain] = nullptr;
 		m_aFailed[ConfigDomain] = false;
+		m_aDisabled[ConfigDomain] = false;
 	}
 }
 
@@ -288,7 +289,8 @@ void CConfigManager::Init()
 		m_vpAllVariables.push_back(pVariable);
 		if((pVariable->m_Flags & CFGFLAG_GAME) != 0)
 			m_vpGameVariables.push_back(pVariable);
-		pVariable->Register();
+		if(!m_aDisabled[ConfigDomain])
+			pVariable->Register();
 	};
 
 #define MACRO_CONFIG_INT(Name, ScriptName, Def, Min, Max, Flags, Desc) \
@@ -383,7 +385,7 @@ bool CConfigManager::Save()
 	char aaConfigFileTmp[ConfigDomain::NUM][IO_MAX_PATH_LENGTH];
 	for(ConfigDomain ConfigDomain = ConfigDomain::START; ConfigDomain < ConfigDomain::NUM; ++ConfigDomain)
 	{
-		if(s_aConfigDomains[ConfigDomain].m_aConfigPath == nullptr)
+		if(s_aConfigDomains[ConfigDomain].m_aConfigPath == nullptr || m_aDisabled[ConfigDomain])
 		{
 			m_aConfigFile[ConfigDomain] = nullptr;
 			continue;
@@ -479,6 +481,8 @@ void CConfigManager::RegisterCallback(SAVECALLBACKFUNC pfnFunc, void *pUserData,
 
 void CConfigManager::WriteLine(const char *pLine, ConfigDomain ConfigDomain)
 {
+	if(m_aDisabled[ConfigDomain])
+		return;
 	if(!m_aConfigFile[ConfigDomain] ||
 		io_write(m_aConfigFile[ConfigDomain], pLine, str_length(pLine)) != static_cast<unsigned>(str_length(pLine)) ||
 		!io_write_newline(m_aConfigFile[ConfigDomain]))

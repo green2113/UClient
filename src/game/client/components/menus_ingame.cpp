@@ -230,6 +230,7 @@ void CMenus::RenderGame(CUIRect MainView)
 				SetActive(false);
 			}
 		}
+#if UCLIENT_HAS_BESTCLIENT
 		else if(GameClient()->m_Snap.m_pLocalInfo->m_Team != TEAM_SPECTATORS)
 		{
 			// BestClient: fast practice button, shrinks when the button bar runs out of width
@@ -263,6 +264,7 @@ void CMenus::RenderGame(CUIRect MainView)
 				}
 			}
 		}
+#endif
 	}
 
 	if(GameClient()->m_Snap.m_pLocalInfo && (GameClient()->m_Snap.m_pLocalInfo->m_Team == TEAM_SPECTATORS || Paused || Spec))

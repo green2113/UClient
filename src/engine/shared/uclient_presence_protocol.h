@@ -93,6 +93,8 @@ struct CClientPresencePacket
 	int m_ClientId = -1;
 	std::string m_ClientVersion;
 	std::string m_FromServerAddress;
+	// Optional trailing field on v2 packets. Empty when the sender omitted it.
+	std::string m_ClientBase;
 };
 
 struct CPeerState

@@ -60,6 +60,8 @@ public:
 	bool IsPlayerBClient(int ClientId) { return IsPlayerBestClient(ClientId); }
 	bool IsPlayerDeveloper(int ClientId) const;
 	bool GetPlayerVersionLabel(int ClientId, char *pVersion, int VersionSize) const;
+	// Presence base for this server address and player name. nullptr when that pair has none.
+	const char *PlayerPresenceBase(const char *pServerAddress, const char *pPlayerName) const;
 
 	const std::unordered_map<std::string, std::unordered_map<std::string, std::string>> &AllPlayerVersions() const { return m_BrowserCache.PlayerVersionsByServer(); }
 
@@ -170,6 +172,7 @@ private:
 	std::shared_ptr<CHttpRequest> m_pUcPresenceTask = nullptr;
 	int64_t m_LastUcPresenceRefreshTick = 0;
 	std::unordered_map<std::string, std::unordered_set<std::string>> m_UcPresenceByServer;
+	std::unordered_map<std::string, std::unordered_map<std::string, std::string>> m_UcPresenceBaseByServer;
 	mutable char m_aUcPresenceLookupServer[NETADDR_MAXSTRSIZE] = "";
 	mutable const std::unordered_set<std::string> *m_pUcPresenceLookupNames = nullptr;
 
@@ -230,6 +233,7 @@ private:
 	void FinishBrowserCacheRefresh();
 	void ResetBrowserTask();
 	void RefreshUcPresenceCache(bool Force);
+	void PollUcPresenceList();
 	void FinishUcPresenceRefresh();
 	void ResetUcPresenceTask();
 	void FinishTokenRefresh();

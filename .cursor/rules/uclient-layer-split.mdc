@@ -1,0 +1,47 @@
+---
+description: 기능을 추가·수정하거나 BestClient 새 버전을 병합한 뒤 빌드를 가를 때 적용. 하위 빌드에서만 상위 기능을 빼고, 병합된 BestClient 기능의 동작은 완전체에서 바꾸지 않는다.
+alwaysApply: true
+---
+
+# 빌드 레이어
+
+런처가 exe 세 개를 고른다. 새 기능과 병합은 이 경계에 맞춰 넣는다.
+
+| 빌드 | exe | 포함 |
+|---|---|---|
+| DDNet + UClient | `DDNetBase.exe` | DDNet + 상위가 필요 없는 UClient |
+| TClient + UClient | `TClient.exe` | 위 + TClient |
+| BestClient + UClient | `DDNet.exe` | 위 + BestClient. 완전체 |
+
+`src/game/client/uclient_base.h`의 `UCLIENT_HAS_TCLIENT`, `UCLIENT_HAS_BESTCLIENT`로 가른다. 정의가 없으면 완전체다. 완전체 동작은 바꾸지 않는다.
+
+## 코드를 넣을 곳
+
+- UClient 기능은 `src/game/client/components/uclient/`와 `config_variables_uclient.h`(`uc_`, `ConfigDomain::UCLIENT`)에 둔다. 세 빌드에 모두 들어간다.
+- TClient 기능은 `components/tclient/`와 `config_variables_tclient.h`에 둔다. DDNet 빌드는 이 `.cpp`를 빼므로, 공유 코드에서 호출하면 스텁이 링크된다.
+- BestClient 기능은 `components/bestclient/`와 `config_variables_bestclient.h`에 둔다. `clientindicator/`만 예외로 세 빌드에 남는다.
+- DDNet 기능은 기존 DDNet 위치에 둔다.
+
+상위 레이어 파일이 있어야 동작하는 기능은 하위 빌드에서 뺀다. 채팅 링크는 BestClient 채팅 마우스가 필요해서 하위 빌드에 없다. 파일 위치만 BestClient·TClient이고 그 레이어 없이 되는 UClient 기능은 `components/uclient/`로 옮겨 세 빌드에 남긴다.
+
+## 공유 코드에서 가르기
+
+`chat.cpp`, `menus*.cpp`, `hud.cpp`, `engine/client/`, `game/editor/`처럼 세 빌드가 같이 컴파일하는 파일에서 상위 기능을 쓰면 `UCLIENT_HAS_BESTCLIENT` 또는 `UCLIENT_HAS_TCLIENT`로 막는다. 버튼, 페이지, 단축키, 콘솔 등록, 애니메이션처럼 기본값이 켜져 화면에 나오는 것도 포함한다.
+
+`engine-shared`, `engine-gfx`, `game-shared`는 `CONF_UCLIENT_BASE`를 못 본다. 그 안의 `#if UCLIENT_HAS_*`는 항상 완전체다. 프로필 분기는 타겟마다 컴파일되는 소스에만 둔다.
+
+하위 빌드는 TClient·BestClient 설정 파일을 읽지도 쓰지도 않는다. 도메인을 끄는 호출은 `CConfigManager::Init()`보다 앞이다. 그래서 공유 코드의 `bc_`/`tc_`는 기본값으로 돈다. 기본값이 켜짐이면 하위 빌드에서 그 사용처를 막는다. 공유 도메인(`settings_ddnet.cfg` 등)의 저장값을 하위 빌드가 지우게 하지 않는다. 그 파일은 완전체와 같이 쓴다.
+
+레이어 헤더의 클래스·함수가 바뀌면 `python scripts/gen_layer_stubs.py`를 다시 실행한다. 스텁은 빈 동작이다. 하위 빌드에서 실제로 동작해야 하는 기능은 스텁에 넣지 말고 `components/uclient/`에 둔다.
+
+## BestClient 병합 후 분리
+
+상위 반영은 BestClient 새 버전 병합이다. DDNet·TClient 변경은 그 안에 들어 있다. 병합으로 들어온 기능은 옮기거나 고치거나 단순화하지 않는다. 완전체(`DDNet.exe`)에서는 병합된 코드가 그대로 컴파일되고 동작해야 한다.
+
+분리는 하위 빌드에서만 한다.
+
+- `components/bestclient/`, `components/tclient/`에 추가된 `.cpp`는 그 레이어가 없는 빌드 소스에서 빠진다. 공유 코드의 새 호출은 `UCLIENT_HAS_BESTCLIENT` 또는 `UCLIENT_HAS_TCLIENT`가 0일 때만 빠지게 감싼다. 완전체에서는 감싸기 전과 같은 코드가 컴파일되어야 한다.
+- 헤더가 바뀌면 `python scripts/gen_layer_stubs.py`로 스텁만 다시 만든다. 스텁은 하위 빌드용이다.
+- 새 설정은 원래 레이어 도메인에 둔다. 공유 코드가 읽으면 하위 빌드에서만 막는다. 기본값, 저장 형식, 완전체의 읽기 결과는 병합된 그대로다.
+- 공유 UI의 새 진입점은 그 레이어가 없는 빌드에서만 숨긴다.
+- 병합된 BestClient·TClient 기능을 `components/uclient/`로 옮기지 않는다. 옮기는 대상은 원래 UClient 기능인데 상위 레이어 파일에 들어 있는 경우뿐이다.

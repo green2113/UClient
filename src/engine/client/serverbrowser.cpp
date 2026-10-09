@@ -23,6 +23,8 @@
 #include <engine/shared/serverinfo.h>
 #include <engine/storage.h>
 
+#include <game/client/uclient_base.h>
+
 #include <algorithm>
 #include <map>
 #include <set>
@@ -637,7 +639,7 @@ void CServerBrowser::Filter()
 		if(!Filtered)
 		{
 			if((!g_Config.m_BrFilterFriends || Info.m_FriendState != IFriends::FRIEND_NO) &&
-				(!g_Config.m_BrFilterBestclient || Info.m_HasBestClientPlayers))
+				(!UCLIENT_HAS_BESTCLIENT || !g_Config.m_BrFilterBestclient || Info.m_HasBestClientPlayers))
 			{
 				m_NumSortedPlayers += Info.m_NumFilteredPlayers;
 				m_vSortedServerlist.push_back(ServerIndex);

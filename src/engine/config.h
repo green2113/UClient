@@ -46,6 +46,10 @@ public:
 	virtual bool Save() = 0;
 	virtual class CConfig *Values() = 0;
 
+	// A disabled domain is neither loaded nor saved, so its file on disk stays untouched.
+	virtual void DisableDomain(ConfigDomain ConfigDomain) = 0;
+	virtual bool IsDomainDisabled(ConfigDomain ConfigDomain) const = 0;
+
 	virtual void RegisterCallback(SAVECALLBACKFUNC pfnFunc, void *pUserData, ConfigDomain ConfigDomain = ConfigDomain::DDNET) = 0;
 
 	virtual void WriteLine(const char *pLine, ConfigDomain ConfigDomain = ConfigDomain::DDNET) = 0;

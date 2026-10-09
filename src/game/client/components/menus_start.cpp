@@ -128,7 +128,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	}
 
 	{
-		const bool AnimEnabled = g_Config.m_BcMainMenuAnimation != 0;
+		const bool AnimEnabled = UCLIENT_HAS_BESTCLIENT && g_Config.m_BcMainMenuAnimation != 0;
 		int HoveredIndex = -1;
 		bool ClansHovered = false;
 		if(AnimEnabled)
@@ -192,6 +192,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 		}
 
 		// "MULTIMAPPING" badge in the editor button's top-left corner
+		if(UCLIENT_HAS_BESTCLIENT)
 		{
 			CUIRect Badge = ScaledButton;
 			Badge.VSplitLeft(90.0f, &Badge, nullptr);
@@ -228,6 +229,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	}
 
 	// Clans — small button under Settings, right-aligned
+	if(UCLIENT_HAS_BESTCLIENT)
 	{
 		CUIRect ScaledButton = ScaleButtonRect(ClansButtonRect, s_ClansButtonScale);
 		static CButtonContainer s_ClansButton;
@@ -269,7 +271,8 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	// Version labels + console button (bottom right)
 	{
 		CUIRect CurVersion, ConsoleButton;
-		MainView.HSplitBottom(74.0f, nullptr, &CurVersion);
+		const bool ShowLayerVersion = UCLIENT_HAS_TCLIENT;
+		MainView.HSplitBottom(ShowLayerVersion ? 74.0f : 56.0f, nullptr, &CurVersion);
 		CurVersion.VSplitRight(40.0f, &CurVersion, nullptr);
 		CurVersion.HSplitTop(20.0f, &ConsoleButton, &CurVersion);
 		CurVersion.HSplitTop(5.0f, nullptr, &CurVersion);
@@ -279,18 +282,25 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 		CurVersion.HSplitTop(16.0f, &VersionLine1, &CurVersion);
 		CurVersion.HSplitTop(2.0f, nullptr, &CurVersion);
 		CurVersion.HSplitTop(16.0f, &VersionLine2, &CurVersion);
-		CurVersion.HSplitTop(2.0f, nullptr, &CurVersion);
-		CurVersion.HSplitTop(16.0f, &VersionLine3, &CurVersion);
 
 		char aDDNetBuf[64];
 		char aUClientBuf[64];
-		char aBestClientBuf[64];
 		str_format(aDDNetBuf, sizeof(aDDNetBuf), "DDNet %s", GAME_RELEASE_VERSION);
 		str_format(aUClientBuf, sizeof(aUClientBuf), "UClient %s", UCLIENT_VERSION);
-		str_format(aBestClientBuf, sizeof(aBestClientBuf), "BestClient %s", BESTCLIENT_VERSION);
 		Ui()->DoLabel(&VersionLine1, aDDNetBuf, 14.0f, TEXTALIGN_MR);
 		Ui()->DoLabel(&VersionLine2, aUClientBuf, 14.0f, TEXTALIGN_MR);
-		Ui()->DoLabel(&VersionLine3, aBestClientBuf, 14.0f, TEXTALIGN_MR);
+		if(ShowLayerVersion)
+		{
+			CurVersion.HSplitTop(2.0f, nullptr, &CurVersion);
+			CurVersion.HSplitTop(16.0f, &VersionLine3, &CurVersion);
+			char aLayerBuf[64];
+#if UCLIENT_HAS_BESTCLIENT
+			str_format(aLayerBuf, sizeof(aLayerBuf), "BestClient %s", BESTCLIENT_VERSION);
+#else
+			str_format(aLayerBuf, sizeof(aLayerBuf), "TClient %s", TCLIENT_VERSION);
+#endif
+			Ui()->DoLabel(&VersionLine3, aLayerBuf, 14.0f, TEXTALIGN_MR);
+		}
 
 		static CButtonContainer s_ConsoleButton;
 		SetIconMode();

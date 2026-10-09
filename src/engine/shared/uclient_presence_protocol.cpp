@@ -607,6 +607,7 @@ bool ReadClientPresencePacket(const uint8_t *pData, int DataSize, CClientPresenc
 	Out.m_Type = Type;
 	Out.m_ClientId = ClientId;
 	Out.m_ClientVersion.clear();
+	Out.m_ClientBase.clear();
 
 	if(WireVersion >= 2 && !ReadString(pData, DataSize, Offset, Out.m_ClientVersion))
 		return false;
@@ -616,6 +617,10 @@ bool ReadClientPresencePacket(const uint8_t *pData, int DataSize, CClientPresenc
 		if(!ReadString(pData, DataSize, Offset, Out.m_FromServerAddress))
 			return false;
 	}
+
+	// Base is optional so packets from older clients still parse.
+	if(Offset + CLIENT_PACKET_PROOF_SIZE < DataSize && !ReadString(pData, DataSize, Offset, Out.m_ClientBase))
+		return false;
 
 	return Offset + CLIENT_PACKET_PROOF_SIZE == DataSize;
 }

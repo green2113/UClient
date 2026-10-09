@@ -30,6 +30,27 @@
 
 static constexpr ColorRGBA HIGHLIGHTED_TEXT_COLOR = ColorRGBA(0.4f, 0.4f, 1.0f, 1.0f);
 
+static const char *SkinBaseTooltip(CGameClient *pGameClient, const CServerInfo *pServer, const char *pPlayerName, const char *pSkin, bool IsUc, bool Active)
+{
+	static char s_aText[192];
+	if(!Active || !IsUc || !pSkin || pSkin[0] == '\0' || !pServer || !pPlayerName || pPlayerName[0] == '\0')
+		return pSkin;
+
+	const CClientIndicator &Indicator = pGameClient->m_ClientIndicator;
+	const char *pBase = Indicator.PlayerPresenceBase(pServer->m_aAddress, pPlayerName);
+	for(int AddressIndex = 0; !pBase && AddressIndex < pServer->m_NumAddresses; ++AddressIndex)
+	{
+		char aAddress[NETADDR_MAXSTRSIZE];
+		net_addr_str(&pServer->m_aAddresses[AddressIndex], aAddress, sizeof(aAddress), true);
+		pBase = Indicator.PlayerPresenceBase(aAddress, pPlayerName);
+	}
+	if(!pBase || pBase[0] == '\0')
+		return pSkin;
+
+	str_format(s_aText, sizeof(s_aText), "%s \xE2\x80\xA2 %s", pSkin, pBase);
+	return s_aText;
+}
+
 static void RenderBestClientIcon(IGraphics *pGraphics, const CUIRect &Rect, ColorRGBA Color = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f), bool Developer = false)
 {
 	pGraphics->TextureSet(g_pData->m_aImages[Developer ? IMAGE_BCDEVICON : IMAGE_BCICON].m_Id);
@@ -338,8 +359,8 @@ void CMenus::RenderServerbrowserServerList(CUIRect View, bool &WasListboxItemAct
 		{COL_NAME, IServerBrowser::SORT_NAME, Localizable("Name"), 0, 50.0f, {0}},
 		{COL_GAMETYPE, IServerBrowser::SORT_GAMETYPE, Localizable("Type"), 1, 50.0f, {0}},
 		{COL_MAP, IServerBrowser::SORT_MAP, Localizable("Map"), 1, 120.0f + (Headers.w - 502) / 8, {0}},
-		{COL_BESTCLIENT_DEV, -1, "", 1, 20.0f, {0}},
-		{COL_BESTCLIENT, IServerBrowser::SORT_NUMBESTCLIENT, "", 1, 20.0f, {0}},
+		{COL_BESTCLIENT_DEV, -1, "", 1, UCLIENT_HAS_BESTCLIENT ? 20.0f : 0.0f, {0}},
+		{COL_BESTCLIENT, IServerBrowser::SORT_NUMBESTCLIENT, "", 1, UCLIENT_HAS_BESTCLIENT ? 20.0f : 0.0f, {0}},
 		{COL_UCLIENT, IServerBrowser::SORT_NUMUCLIENT, "", 1, 20.0f, {0}},
 		{COL_FRIENDS, IServerBrowser::SORT_NUMFRIENDS, "", 1, 20.0f, {0}},
 		{COL_PLAYERS, IServerBrowser::SORT_NUMPLAYERS, Localizable("Players"), 1, 60.0f, {0}},
@@ -367,6 +388,8 @@ void CMenus::RenderServerbrowserServerList(CUIRect View, bool &WasListboxItemAct
 	{
 		if(s_aCols[i].m_Direction == 1)
 		{
+			if(s_aCols[i].m_Width <= 0.0f)
+				continue;
 			Headers.VSplitRight(s_aCols[i].m_Width, &Headers, &s_aCols[i].m_Rect);
 			Headers.VSplitRight(2.0f, &Headers, nullptr);
 		}
@@ -383,6 +406,8 @@ void CMenus::RenderServerbrowserServerList(CUIRect View, bool &WasListboxItemAct
 	// do headers
 	for(const auto &Col : s_aCols)
 	{
+		if(Col.m_Width <= 0.0f)
+			continue;
 		int Checked = g_Config.m_BrSort == Col.m_Sort;
 		if(PlayersOrPing && g_Config.m_BrSortOrder == 2 && (Col.m_Sort == IServerBrowser::SORT_NUMPLAYERS || Col.m_Sort == IServerBrowser::SORT_PING))
 			Checked = 2;
@@ -535,6 +560,8 @@ void CMenus::RenderServerbrowserServerList(CUIRect View, bool &WasListboxItemAct
 		char aTemp[64];
 		for(const auto &Col : s_aCols)
 		{
+			if(Col.m_Width <= 0.0f)
+				continue;
 			CUIRect Button;
 			Button.x = Col.m_Rect.x;
 			Button.y = ListItem.m_Rect.y;
@@ -1000,9 +1027,12 @@ void CMenus::RenderServerbrowserFilters(CUIRect View)
 	if(DoButton_CheckBox(&g_Config.m_BrFilterFriends, Localize("Show friends only"), g_Config.m_BrFilterFriends, &Button))
 		g_Config.m_BrFilterFriends ^= 1;
 
-	View.HSplitTop(RowHeight, &Button, &View);
-	if(DoButton_CheckBox(&g_Config.m_BrFilterBestclient, Localize("Show BestClient only"), g_Config.m_BrFilterBestclient, &Button))
-		ToggleBestClientServerFilter();
+	if(UCLIENT_HAS_BESTCLIENT)
+	{
+		View.HSplitTop(RowHeight, &Button, &View);
+		if(DoButton_CheckBox(&g_Config.m_BrFilterBestclient, Localize("Show BestClient only"), g_Config.m_BrFilterBestclient, &Button))
+			ToggleBestClientServerFilter();
+	}
 
 	View.HSplitTop(RowHeight, &Button, &View);
 	if(DoButton_CheckBox(&g_Config.m_BrFilterPw, Localize("No password"), g_Config.m_BrFilterPw, &Button))
@@ -1650,7 +1680,7 @@ void CMenus::RenderServerbrowserInfoScoreboard(CUIRect View, const CServerInfo *
 			const vec2 TeeRenderPos = vec2(Skin.x + TeeInfo.m_Size / 2.0f, Skin.y + Skin.h / 2.0f + OffsetToMid.y);
 			RenderTools()->RenderTee(pIdleState, &TeeInfo, CurrentClient.m_Afk ? EMOTE_BLINK : EMOTE_NORMAL, vec2(1.0f, 0.0f), TeeRenderPos);
 			Ui()->DoButtonLogic(&CurrentClient.m_aSkin, 0, &Skin, BUTTONFLAG_NONE);
-			GameClient()->m_Tooltips.DoToolTip(&CurrentClient.m_aSkin, &Skin, CurrentClient.m_aSkin);
+			GameClient()->m_Tooltips.DoToolTip(&CurrentClient.m_aSkin, &Skin, SkinBaseTooltip(GameClient(), pSelectedServer, CurrentClient.m_aName, CurrentClient.m_aSkin, CurrentClient.m_UcClient, Ui()->HotItem() == &CurrentClient.m_aSkin));
 		}
 		else if(CurrentClient.m_aaSkin7[protocol7::SKINPART_BODY][0] != '\0')
 		{
@@ -2122,38 +2152,6 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 					Rect.HSplitBottom(10.0f, &Rect, &InfoLabel);
 				Rect.HSplitTop(11.0f + 10.0f, &Rect, nullptr);
 
-				// tee
-				CUIRect Skin;
-				Rect.VSplitLeft(Rect.h, &Skin, &Rect);
-				Rect.VSplitLeft(2.0f, nullptr, &Rect);
-				if(Friend.Skin()[0] != '\0')
-				{
-					const CTeeRenderInfo TeeInfo = GetTeeRenderInfo(vec2(Skin.w, Skin.h), Friend.Skin(), Friend.CustomSkinColors(), Friend.CustomSkinColorBody(), Friend.CustomSkinColorFeet());
-					const CAnimState *pIdleState = CAnimState::GetIdle();
-					vec2 OffsetToMid;
-					CRenderTools::GetRenderTeeOffsetToRenderedTee(pIdleState, &TeeInfo, OffsetToMid);
-					const vec2 TeeRenderPos = vec2(Skin.x + Skin.w / 2.0f, Skin.y + Skin.h * 0.55f + OffsetToMid.y);
-					RenderTools()->RenderTee(pIdleState, &TeeInfo, Friend.IsAfk() ? EMOTE_BLINK : EMOTE_NORMAL, vec2(1.0f, 0.0f), TeeRenderPos);
-					Ui()->DoButtonLogic(Friend.SkinTooltipId(), 0, &Skin, BUTTONFLAG_NONE);
-					GameClient()->m_Tooltips.DoToolTip(Friend.SkinTooltipId(), &Skin, Friend.Skin());
-				}
-				else if(Friend.Skin7(protocol7::SKINPART_BODY)[0] != '\0')
-				{
-					CTeeRenderInfo TeeInfo;
-					TeeInfo.m_Size = minimum(Skin.w, Skin.h);
-					for(int Part = 0; Part < protocol7::NUM_SKINPARTS; Part++)
-					{
-						GameClient()->m_Skins7.FindSkinPart(Part, Friend.Skin7(Part), true)->ApplyTo(TeeInfo.m_aSixup[g_Config.m_ClDummy]);
-						GameClient()->m_Skins7.ApplyColorTo(TeeInfo.m_aSixup[g_Config.m_ClDummy], Friend.UseCustomSkinColor7(Part), Friend.CustomSkinColor7(Part), Part);
-					}
-					const CAnimState *pIdleState = CAnimState::GetIdle();
-					vec2 OffsetToMid;
-					CRenderTools::GetRenderTeeOffsetToRenderedTee(pIdleState, &TeeInfo, OffsetToMid);
-					const vec2 TeeRenderPos = vec2(Skin.x + Skin.w / 2.0f, Skin.y + Skin.h * 0.55f + OffsetToMid.y);
-					RenderTools()->RenderTee(pIdleState, &TeeInfo, Friend.IsAfk() ? EMOTE_BLINK : EMOTE_NORMAL, vec2(1.0f, 0.0f), TeeRenderPos);
-				}
-				Rect.HSplitTop(11.0f, &NameLabel, &ClanLabel);
-
 				const bool FriendUsesUClient = [&]() {
 					if(Friend.ServerInfo() == nullptr)
 						return false;
@@ -2172,6 +2170,39 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 					}
 					return false;
 				}();
+
+				// tee
+				CUIRect Skin;
+				Rect.VSplitLeft(Rect.h, &Skin, &Rect);
+				Rect.VSplitLeft(2.0f, nullptr, &Rect);
+				if(Friend.Skin()[0] != '\0')
+				{
+					const CTeeRenderInfo TeeInfo = GetTeeRenderInfo(vec2(Skin.w, Skin.h), Friend.Skin(), Friend.CustomSkinColors(), Friend.CustomSkinColorBody(), Friend.CustomSkinColorFeet());
+					const CAnimState *pIdleState = CAnimState::GetIdle();
+					vec2 OffsetToMid;
+					CRenderTools::GetRenderTeeOffsetToRenderedTee(pIdleState, &TeeInfo, OffsetToMid);
+					const vec2 TeeRenderPos = vec2(Skin.x + Skin.w / 2.0f, Skin.y + Skin.h * 0.55f + OffsetToMid.y);
+					RenderTools()->RenderTee(pIdleState, &TeeInfo, Friend.IsAfk() ? EMOTE_BLINK : EMOTE_NORMAL, vec2(1.0f, 0.0f), TeeRenderPos);
+					Ui()->DoButtonLogic(Friend.SkinTooltipId(), 0, &Skin, BUTTONFLAG_NONE);
+					GameClient()->m_Tooltips.DoToolTip(Friend.SkinTooltipId(), &Skin, SkinBaseTooltip(GameClient(), Friend.ServerInfo(), Friend.Name(), Friend.Skin(), FriendUsesUClient, Ui()->HotItem() == Friend.SkinTooltipId()));
+				}
+				else if(Friend.Skin7(protocol7::SKINPART_BODY)[0] != '\0')
+				{
+					CTeeRenderInfo TeeInfo;
+					TeeInfo.m_Size = minimum(Skin.w, Skin.h);
+					for(int Part = 0; Part < protocol7::NUM_SKINPARTS; Part++)
+					{
+						GameClient()->m_Skins7.FindSkinPart(Part, Friend.Skin7(Part), true)->ApplyTo(TeeInfo.m_aSixup[g_Config.m_ClDummy]);
+						GameClient()->m_Skins7.ApplyColorTo(TeeInfo.m_aSixup[g_Config.m_ClDummy], Friend.UseCustomSkinColor7(Part), Friend.CustomSkinColor7(Part), Part);
+					}
+					const CAnimState *pIdleState = CAnimState::GetIdle();
+					vec2 OffsetToMid;
+					CRenderTools::GetRenderTeeOffsetToRenderedTee(pIdleState, &TeeInfo, OffsetToMid);
+					const vec2 TeeRenderPos = vec2(Skin.x + Skin.w / 2.0f, Skin.y + Skin.h * 0.55f + OffsetToMid.y);
+					RenderTools()->RenderTee(pIdleState, &TeeInfo, Friend.IsAfk() ? EMOTE_BLINK : EMOTE_NORMAL, vec2(1.0f, 0.0f), TeeRenderPos);
+				}
+				Rect.HSplitTop(11.0f, &NameLabel, &ClanLabel);
+
 				const bool FriendUsesBestClient = [&]() {
 					if(FriendUsesUClient || Friend.ServerInfo() == nullptr)
 						return false;
@@ -2431,7 +2462,7 @@ void CMenus::RenderServerbrowserFriends(CUIRect View)
 						const vec2 TeeRenderPos = vec2(Skin.x + TeeInfo.m_Size / 2.0f, Skin.y + Skin.h / 2.0f + OffsetToMid.y);
 						RenderTools()->RenderTee(pIdleState, &TeeInfo, ClientInfo.m_Afk ? EMOTE_BLINK : EMOTE_NORMAL, vec2(1.0f, 0.0f), TeeRenderPos);
 						Ui()->DoButtonLogic(pSkinTooltipId, 0, &Skin, BUTTONFLAG_NONE);
-						GameClient()->m_Tooltips.DoToolTip(pSkinTooltipId, &Skin, ClientInfo.m_aSkin);
+						GameClient()->m_Tooltips.DoToolTip(pSkinTooltipId, &Skin, SkinBaseTooltip(GameClient(), WarItem.m_pServerInfo, ClientInfo.m_aName, ClientInfo.m_aSkin, ClientInfo.m_UcClient, Ui()->HotItem() == pSkinTooltipId));
 					}
 					else if(ClientInfo.m_aaSkin7[protocol7::SKINPART_BODY][0] != '\0')
 					{
@@ -2566,10 +2597,16 @@ enum
 
 void CMenus::RenderServerbrowserTabBar(CUIRect TabBar)
 {
+#if UCLIENT_HAS_BESTCLIENT
 	CUIRect FilterTabButton, InfoTabButton, BestClientTabButton, FriendsTabButton;
 	TabBar.VSplitLeft(TabBar.w / 4.0f, &FilterTabButton, &TabBar);
 	TabBar.VSplitLeft(TabBar.w / 3.0f, &InfoTabButton, &TabBar);
 	TabBar.VSplitLeft(TabBar.w / 2.0f, &BestClientTabButton, &FriendsTabButton);
+#else
+	CUIRect FilterTabButton, InfoTabButton, FriendsTabButton;
+	TabBar.VSplitLeft(TabBar.w / 3.0f, &FilterTabButton, &TabBar);
+	TabBar.VSplitLeft(TabBar.w / 2.0f, &InfoTabButton, &FriendsTabButton);
+#endif
 
 	const ColorRGBA ColorActive = ColorRGBA(0.0f, 0.0f, 0.0f, 0.3f);
 	const ColorRGBA ColorInactive = ColorRGBA(0.0f, 0.0f, 0.0f, 0.15f);
@@ -2578,6 +2615,10 @@ void CMenus::RenderServerbrowserTabBar(CUIRect TabBar)
 	{
 		const int Direction = Input()->ShiftIsPressed() ? -1 : 1;
 		g_Config.m_UiToolboxPage = (g_Config.m_UiToolboxPage + NUM_UI_TOOLBOX_PAGES + Direction) % NUM_UI_TOOLBOX_PAGES;
+#if !UCLIENT_HAS_BESTCLIENT
+		if(g_Config.m_UiToolboxPage == UI_TOOLBOX_PAGE_BESTCLIENT)
+			g_Config.m_UiToolboxPage = (g_Config.m_UiToolboxPage + NUM_UI_TOOLBOX_PAGES + Direction) % NUM_UI_TOOLBOX_PAGES;
+#endif
 	}
 
 	TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
@@ -2597,6 +2638,7 @@ void CMenus::RenderServerbrowserTabBar(CUIRect TabBar)
 	}
 	GameClient()->m_Tooltips.DoToolTip(&s_InfoTabButton, &InfoTabButton, Localize("Server info"));
 
+#if UCLIENT_HAS_BESTCLIENT
 	static CButtonContainer s_BestClientTabButton;
 	if(DoButton_MenuTab(&s_BestClientTabButton, "", g_Config.m_UiToolboxPage == UI_TOOLBOX_PAGE_BESTCLIENT, &BestClientTabButton, IGraphics::CORNER_T, &m_aAnimatorsSmallPage[SMALL_TAB_BROWSER_BESTCLIENT], &ColorInactive, &ColorActive))
 	{
@@ -2604,6 +2646,7 @@ void CMenus::RenderServerbrowserTabBar(CUIRect TabBar)
 	}
 	RenderCenteredBestClientTabIcon(Graphics(), BestClientTabButton, ColorRGBA(1.0f, 1.0f, 1.0f, 0.95f));
 	GameClient()->m_Tooltips.DoToolTip(&s_BestClientTabButton, &BestClientTabButton, Localize("BestClient"));
+#endif
 
 	static CButtonContainer s_FriendsTabButton;
 	if(DoButton_MenuTab(&s_FriendsTabButton, FontIcon::HEART, g_Config.m_UiToolboxPage == UI_TOOLBOX_PAGE_FRIENDS, &FriendsTabButton, IGraphics::CORNER_T, &m_aAnimatorsSmallPage[SMALL_TAB_BROWSER_FRIENDS], &ColorInactive, &ColorActive))
@@ -2619,6 +2662,11 @@ void CMenus::RenderServerbrowserTabBar(CUIRect TabBar)
 void CMenus::RenderServerbrowserToolBox(CUIRect ToolBox)
 {
 	ToolBox.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.3f), IGraphics::CORNER_B, 4.0f);
+
+#if !UCLIENT_HAS_BESTCLIENT
+	if(g_Config.m_UiToolboxPage == UI_TOOLBOX_PAGE_BESTCLIENT)
+		g_Config.m_UiToolboxPage = UI_TOOLBOX_PAGE_FILTERS;
+#endif
 
 	switch(g_Config.m_UiToolboxPage)
 	{

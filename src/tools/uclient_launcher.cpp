@@ -87,6 +87,47 @@ static const wchar_t *kWriteVersionInfoArg = L"--write-version-info";
 static const wchar_t *kLauncherUpdateEventArg = L"--uclient-launcher-update-event";
 static const wchar_t *kFromGameArg = L"--uclient-from-game";
 static const wchar_t *kGameExe = L"DDNet.exe";
+static const wchar_t *k_aProfileExe[] = {L"DDNetBase.exe", L"TClient.exe", L"DDNet.exe"};
+static const char *k_aProfileId[] = {"ddnet", "tclient", "bestclient"};
+static const wchar_t *k_aProfileLabel[] = {L"DDNet + UClient", L"TClient + UClient", L"BestClient + UClient"};
+
+enum class EClientProfile
+{
+	Ddnet = 0,
+	Tclient = 1,
+	BestClient = 2,
+};
+static EClientProfile g_ClientProfile = EClientProfile::BestClient;
+
+static const wchar_t *ClientProfileExe()
+{
+	return k_aProfileExe[(int)g_ClientProfile];
+}
+
+static const char *ClientProfileId()
+{
+	return k_aProfileId[(int)g_ClientProfile];
+}
+
+static bool IsClientProfileExeName(const wchar_t *pFile)
+{
+	for(const wchar_t *pName : k_aProfileExe)
+	{
+		if(_wcsicmp(pFile, pName) == 0)
+			return true;
+	}
+	return false;
+}
+
+static void SetClientProfileId(const std::string &Id)
+{
+	if(Id == "ddnet")
+		g_ClientProfile = EClientProfile::Ddnet;
+	else if(Id == "tclient")
+		g_ClientProfile = EClientProfile::Tclient;
+	else
+		g_ClientProfile = EClientProfile::BestClient;
+}
 static const wchar_t kPlayLabel[] = L"Play";
 static const wchar_t kRunningLabel[] = L"RUNNING";
 static const wchar_t *kClientArchiveRel = L"update\\uclient-client.zip";
@@ -326,6 +367,7 @@ static LauncherArgs *g_pArgs = nullptr;
 static std::wstring g_InstallDir;
 
 static RECT g_PlayBtnRc = {};
+static RECT g_ProfileRc[3] = {};
 static RECT g_GearRc = {};
 static RECT g_MinRc = {};
 static RECT g_CloseRc = {};
@@ -955,13 +997,19 @@ static bool LaunchGame(const LauncherArgs *pA, HANDLE *pOutProcess = nullptr)
 	// persist it through its own atomic config writer.
 	Args.emplace_back(g_DiscordRpc ? L"tc_discord_rpc 1" : L"tc_discord_rpc 0");
 
-	const std::wstring Game = JoinPath(pA->InstallDir, kGameExe);
+	const std::wstring Game = JoinPath(pA->InstallDir, ClientProfileExe());
+	if(GetFileAttributesW(Game.c_str()) == INVALID_FILE_ATTRIBUTES)
+	{
+		SetStatus(L"That client build is not installed. Update the client, then try again.");
+		g_Failed = true;
+		return false;
+	}
 	SetStatus(L"Starting UClient...");
 	SetPercent(100);
 	HANDLE hProcess = nullptr;
 	if(!LaunchProcess(Game, Args, pA->InstallDir, false, &hProcess))
 	{
-		SetStatus(L"Failed to start DDNet.exe");
+		SetStatus(L"Failed to start the selected client");
 		g_Failed = true;
 		return false;
 	}
@@ -1136,6 +1184,12 @@ static void LoadLauncherSettings(const std::wstring &InstallDir)
 			g_AutoUpdate = true;
 		else if(Text.find("auto_update=0") != std::string::npos)
 			g_AutoUpdate = false;
+		if(Text.find("client_profile=ddnet") != std::string::npos)
+			g_ClientProfile = EClientProfile::Ddnet;
+		else if(Text.find("client_profile=tclient") != std::string::npos)
+			g_ClientProfile = EClientProfile::Tclient;
+		else
+			g_ClientProfile = EClientProfile::BestClient;
 		g_AccountSignedOut = Text.find("account_signed_out=1") != std::string::npos;
 	}
 	else
@@ -1148,7 +1202,7 @@ static void LoadLauncherSettings(const std::wstring &InstallDir)
 	LoadDiscordRpcSetting();
 	ApplyStartWithWindows(g_StartWithWindows);
 
-	if(!AppPath.empty() && (!HasLauncherCfg || Text.find("discord_rpc=") == std::string::npos || Text.find("auto_update=") == std::string::npos || Text.find("start_with_windows=") == std::string::npos))
+	if(!AppPath.empty() && (!HasLauncherCfg || Text.find("discord_rpc=") == std::string::npos || Text.find("auto_update=") == std::string::npos || Text.find("start_with_windows=") == std::string::npos || Text.find("client_profile=") == std::string::npos))
 		SaveLauncherSettings(InstallDir);
 }
 
@@ -1163,6 +1217,9 @@ static void SaveLauncherSettings(const std::wstring &InstallDir)
 	Text += g_StartWithWindows ? "start_with_windows=1\n" : "start_with_windows=0\n";
 	Text += g_AutoUpdate ? "auto_update=1\n" : "auto_update=0\n";
 	Text += g_DiscordRpc ? "discord_rpc=1\n" : "discord_rpc=0\n";
+	Text += "client_profile=";
+	Text += ClientProfileId();
+	Text += "\n";
 	Text += g_AccountSignedOut ? "account_signed_out=1\n" : "account_signed_out=0\n";
 	WriteTextFile(Path, Text);
 }
@@ -5644,7 +5701,6 @@ static bool IsInstallGameRunning(const std::wstring &InstallDir)
 {
 	if(InstallDir.empty())
 		return false;
-	const std::wstring TargetExe = NormalizePathLower(JoinPath(InstallDir, kGameExe));
 	HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if(hSnap == INVALID_HANDLE_VALUE)
 		return false;
@@ -5656,15 +5712,19 @@ static bool IsInstallGameRunning(const std::wstring &InstallDir)
 	{
 		do
 		{
-			if(_wcsicmp(Entry.szExeFile, kGameExe) != 0)
+			if(!IsClientProfileExeName(Entry.szExeFile))
 				continue;
 			std::wstring ImagePath;
-			if(GetProcessImagePath(Entry.th32ProcessID, ImagePath) &&
-				NormalizePathLower(ImagePath) == TargetExe)
+			if(!GetProcessImagePath(Entry.th32ProcessID, ImagePath))
+				continue;
+			const std::wstring Image = NormalizePathLower(ImagePath);
+			for(const wchar_t *pName : k_aProfileExe)
 			{
-				Found = true;
-				break;
+				if(Image == NormalizePathLower(JoinPath(InstallDir, pName)))
+					Found = true;
 			}
+			if(Found)
+				break;
 		} while(Process32NextW(hSnap, &Entry));
 	}
 	CloseHandle(hSnap);
@@ -6562,6 +6622,7 @@ static std::string BuildStateJson()
 	Json += g_StartWithWindows ? "\"startWithWindows\":true," : "\"startWithWindows\":false,";
 	Json += g_AutoUpdate ? "\"autoUpdate\":true," : "\"autoUpdate\":false,";
 	Json += g_DiscordRpc ? "\"discordRpc\":true," : "\"discordRpc\":false,";
+	JsonAddString(Json, "clientProfile", ClientProfileId());
 	Json += FriendsLoading ? "\"friendsLoading\":true," : "\"friendsLoading\":false,";
 	Json += FriendsLoaded ? "\"friendsLoaded\":true," : "\"friendsLoaded\":false,";
 	Json += PlayBlocked ? "\"playBlocked\":true," : "\"playBlocked\":false,";
@@ -6841,6 +6902,16 @@ static void OnWebMessage(const std::string &Json)
 	{
 		SaveDiscordRpcSetting(Json.find("\"value\":true") != std::string::npos);
 		PushWebState(true);
+	}
+	else if(Cmd == "clientProfile")
+	{
+		std::string ProfileId;
+		if(ExtractJsonString(Json, "value", ProfileId))
+		{
+			SetClientProfileId(ProfileId);
+			SaveLauncherSettings(g_InstallDir);
+			PushWebState(true);
+		}
 	}
 	else if(Cmd == "refreshFriends")
 	{
@@ -7379,6 +7450,19 @@ static void Paint(HWND hWnd)
 		const int Lift = (int)((1.0f - g_AnimIntro) * 18.0f);
 		g_PlayBtnRc = {ContentL, g_WindowH - 132 + Lift, ContentL + BtnW, g_WindowH - 80 + Lift};
 	}
+	for(RECT &Rc : g_ProfileRc)
+		Rc = {};
+	if(!g_ShowSettings && g_MainTab == EMainTab::Overview)
+	{
+		const int RowH = 30;
+		const int Gap = 6;
+		int Bottom = g_PlayBtnRc.top - 36;
+		for(int i = 2; i >= 0; --i)
+		{
+			g_ProfileRc[i] = {ContentL, Bottom - RowH, ContentL + 280, Bottom};
+			Bottom -= RowH + Gap;
+		}
+	}
 
 	if(g_hMascotBmp)
 		DrawBitmapAlpha(Mem, g_hMascotBmp, RAIL_W / 2 - 14, 48, 28, 28, g_MascotW, g_MascotH);
@@ -7725,6 +7809,23 @@ static void Paint(HWND hWnd)
 			}
 		}
 
+		if(!g_ShowSettings && g_MainTab == EMainTab::Overview)
+		{
+			SelectObject(Mem, SmallFont);
+			for(int i = 0; i < 3; ++i)
+			{
+				const bool On = (int)g_ClientProfile == i;
+				FillRoundRect(Mem, g_ProfileRc[i], 14, On ? C_ACCENT : C_PANEL2);
+				StrokeRoundRect(Mem, g_ProfileRc[i], 14, On ? C_ACCENT : C_BORDER);
+				SetTextColor(Mem, On ? RGB(255, 255, 255) : C_TITLE);
+				SIZE LabelSz = {};
+				GetTextExtentPoint32W(Mem, k_aProfileLabel[i], (int)wcslen(k_aProfileLabel[i]), &LabelSz);
+				const int LabelX = g_ProfileRc[i].left + 14;
+				const int LabelY = g_ProfileRc[i].top + (g_ProfileRc[i].bottom - g_ProfileRc[i].top - LabelSz.cy) / 2;
+				TextOutW(Mem, LabelX, LabelY, k_aProfileLabel[i], (int)wcslen(k_aProfileLabel[i]));
+			}
+		}
+
 		const bool CanPlay = IsAccountReady() && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked();
 		const bool BtnActive = CanPlay;
 		const bool IsRunning = g_Phase == EUiPhase::Launching;
@@ -7852,6 +7953,11 @@ static bool IsInteractiveHit(int X, int Y)
 		return true;
 	if(PtInRectI(g_PlayBtnRc, X, Y))
 		return true;
+	for(const RECT &Rc : g_ProfileRc)
+	{
+		if(PtInRectI(Rc, X, Y))
+			return true;
+	}
 	if(FriendHitIndex(X, Y) >= 0)
 		return true;
 	return false;
@@ -7917,7 +8023,6 @@ static bool TerminateInstallGame(const std::wstring &InstallDir)
 {
 	if(InstallDir.empty())
 		return false;
-	const std::wstring TargetExe = NormalizePathLower(JoinPath(InstallDir, kGameExe));
 	HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if(hSnap == INVALID_HANDLE_VALUE)
 		return false;
@@ -7928,10 +8033,19 @@ static bool TerminateInstallGame(const std::wstring &InstallDir)
 	{
 		do
 		{
-			if(_wcsicmp(Entry.szExeFile, kGameExe) != 0)
+			if(!IsClientProfileExeName(Entry.szExeFile))
 				continue;
 			std::wstring ImagePath;
-			if(!GetProcessImagePath(Entry.th32ProcessID, ImagePath) || NormalizePathLower(ImagePath) != TargetExe)
+			if(!GetProcessImagePath(Entry.th32ProcessID, ImagePath))
+				continue;
+			const std::wstring Image = NormalizePathLower(ImagePath);
+			bool Match = false;
+			for(const wchar_t *pName : k_aProfileExe)
+			{
+				if(Image == NormalizePathLower(JoinPath(InstallDir, pName)))
+					Match = true;
+			}
+			if(!Match)
 				continue;
 			HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, Entry.th32ProcessID);
 			if(!hProcess)
@@ -8217,6 +8331,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 			Hand = true;
 		else if(PtInRectI(g_PlayBtnRc, Pt.x, Pt.y) && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked())
 			Hand = true;
+		else if(PtInRectI(g_ProfileRc[0], Pt.x, Pt.y) || PtInRectI(g_ProfileRc[1], Pt.x, Pt.y) || PtInRectI(g_ProfileRc[2], Pt.x, Pt.y))
+			Hand = true;
 		else
 		{
 			const int Fi = FriendHitIndex(Pt.x, Pt.y);
@@ -8476,6 +8592,16 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPara
 		}
 		if(FriendHitIndex(X, Y) >= 0)
 			return 0; // joining a friend needs a double-click
+		for(int i = 0; i < 3; ++i)
+		{
+			if(PtInRectI(g_ProfileRc[i], X, Y))
+			{
+				g_ClientProfile = (EClientProfile)i;
+				SaveLauncherSettings(g_InstallDir);
+				InvalidateRect(hWnd, nullptr, FALSE);
+				return 0;
+			}
+		}
 		if(PtInRectI(g_PlayBtnRc, X, Y) && g_Phase == EUiPhase::Ready && !EffectivePlayBlocked())
 			RequestLaunchGame();
 		return 0;

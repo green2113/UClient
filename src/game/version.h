@@ -22,12 +22,12 @@ extern const char *GIT_SHORTREV_HASH;
 
 // UClient
 #ifndef UCLIENT_VERSION
-#define UCLIENT_VERSION "2.11.1"
+#define UCLIENT_VERSION "2.12.0"
 #endif
 
 // UClient Launcher
 #ifndef UCLIENT_LAUNCHER_VERSION
-#define UCLIENT_LAUNCHER_VERSION "1.3.1"
+#define UCLIENT_LAUNCHER_VERSION "1.4.0"
 #endif
 
 // TClient

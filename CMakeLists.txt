@@ -277,6 +277,8 @@ set(CMAKE_MODULE_LINKER_FLAGS_DEVRELEASE "${CMAKE_MODULE_LINKER_FLAGS_RELEASE}" 
 
 option(UCLIENT_DEV_BUILD "Enable UClient developer features (uc_voice_id, uc_voice_team visible in console)" OFF)
 option(UCLIENT_LAUNCHER_DEV_BUILD "Show UClient launcher Developer Tools panel (also enabled for DevRelease builds)" OFF)
+set(UCLIENT_BASE "bestclient" CACHE STRING "Client profile: ddnet, tclient, bestclient, or all")
+set_property(CACHE UCLIENT_BASE PROPERTY STRINGS ddnet tclient bestclient all)
 
 set(DBG $<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>)
 
@@ -2848,6 +2850,7 @@ if(CLIENT)
     components/items.h
     components/key_binder.cpp
     components/key_binder.h
+    components/layer_stubs/bestclient_layer_stub.cpp
     components/local_server.cpp
     components/local_server.h
     components/mapimages.cpp
@@ -2939,6 +2942,7 @@ if(CLIENT)
     components/tclient/statusbar.h
     components/tclient/tclient.cpp
     components/tclient/tclient.h
+    components/tclient/tclient_layer_stub.cpp
     components/tclient/trails.cpp
     components/tclient/trails.h
     components/bestclient/3d_particles.cpp
@@ -3058,6 +3062,7 @@ if(CLIENT)
     sixup_translate_snapshot.cpp
     skin.cpp
     skin.h
+    uclient_base.h
     ui.cpp
     ui.h
     ui_listbox.cpp
@@ -3219,94 +3224,12 @@ if(CLIENT)
   endif()
 
   if(TARGET_OS STREQUAL "windows")
-    set(VERSION_EXECUTABLE "${CLIENT_EXECUTABLE}")
-    set(VERSION_COMPANY "${CLIENT_EXECUTABLE} Team")
-    configure_file("other/versioninfo/versioninfo.rc.in" "client.versioninfo.rc")
-    configure_file("other/manifest/client.manifest.in" "client.manifest")
     set(CLIENT_ICON "other/icons/DDNet.rc")
-    set(CLIENT_VERSIONINFO "${CMAKE_CURRENT_BINARY_DIR}/client.versioninfo.rc")
-    if(NOT MINGW)
-      set(CLIENT_MANIFEST "${CMAKE_CURRENT_BINARY_DIR}/client.manifest")
-    else()
-      set(CLIENT_MANIFEST "other/manifest/client.rc")
+    if(MINGW)
       set_target_properties(${TARGET_STEAMAPI} PROPERTIES PREFIX "")
     endif()
   else()
     set(CLIENT_ICON)
-    set(CLIENT_VERSIONINFO)
-    set(CLIENT_MANIFEST)
-  endif()
-
-  # Target
-  if(TARGET_OS STREQUAL "android")
-    add_library(game-client SHARED
-      ${CLIENT_SRC}
-      ${CLIENT_ICON}
-      ${CLIENT_VERSIONINFO}
-      ${CLIENT_MANIFEST}
-      ${DEPS_CLIENT}
-      $<TARGET_OBJECTS:engine-gfx>
-      $<TARGET_OBJECTS:engine-shared>
-      $<TARGET_OBJECTS:game-shared>
-      $<TARGET_OBJECTS:rust-bridge-shared>
-    )
-  else()
-    add_executable(game-client WIN32
-      ${CLIENT_SRC}
-      ${CLIENT_ICON}
-      ${CLIENT_VERSIONINFO}
-      ${CLIENT_MANIFEST}
-      ${DEPS_CLIENT}
-      $<TARGET_OBJECTS:engine-gfx>
-      $<TARGET_OBJECTS:engine-shared>
-      $<TARGET_OBJECTS:game-shared>
-      $<TARGET_OBJECTS:rust-bridge-shared>
-    )
-  endif()
-  set_property(TARGET game-client
-      PROPERTY OUTPUT_NAME ${CLIENT_EXECUTABLE}
-  )
-  target_link_libraries(game-client ${LIBS_CLIENT})
-
-  if(MSVC)
-    target_compile_options(game-client PRIVATE /bigobj) # TClient, required for ChaiScript
-    target_link_options(game-client PRIVATE /ENTRY:mainCRTStartup)
-  endif()
-
-  if(WIN32 AND NOT MSVC)
-    target_compile_options(game-client PRIVATE -Wa,-mbig-obj) # TClient, required for ChaiScript
-  endif()
-
-  # Silence warnings from ChaiScript
-  target_include_directories(game-client SYSTEM PRIVATE
-    ${PROJECT_SOURCE_DIR}/src/engine/external/chaiscript)
-
-  target_include_directories(game-client SYSTEM PRIVATE
-    ${FREETYPE_INCLUDE_DIRS}
-    ${GLEW_INCLUDE_DIRS}
-    ${OGG_INCLUDE_DIRS}
-    ${OPUSFILE_INCLUDE_DIRS}
-    ${OPUS_INCLUDE_DIRS}
-    ${PNG_INCLUDE_DIRS}
-    ${SDL2_INCLUDE_DIRS}
-    ${WAVPACK_INCLUDE_DIRS}
-    ${FFMPEG_INCLUDE_DIRS}
-    ${DISCORDSDK_INCLUDE_DIRS}
-
-    ${VULKAN_INCLUDE_DIRS}
-
-    ${PLATFORM_CLIENT_INCLUDE_DIRS}
-  )
-
-  if(DBUS_FOUND)
-    target_include_directories(game-client SYSTEM PRIVATE ${DBUS_INCLUDE_DIRS})
-  endif()
-  if(PULSE_SIMPLE_FOUND)
-    target_include_directories(game-client SYSTEM PRIVATE ${PULSE_SIMPLE_INCLUDE_DIRS})
-  endif()
-
-  if(STEAMAPI_KIND STREQUAL SHARED OR DISCORD_DYNAMIC)
-    set_own_rpath(game-client)
   endif()
 
   set(PARAMS "${WAVPACK_INCLUDE_DIRS};${WAVPACK_INCLUDE_DIRS}")
@@ -3322,32 +3245,157 @@ if(CLIENT)
   set(CMAKE_REQUIRED_INCLUDES ${ORIGINAL_CMAKE_REQUIRED_INCLUDES})
   set(CMAKE_REQUIRED_LIBRARIES ${ORIGINAL_CMAKE_REQUIRED_LIBRARIES})
 
-  if(WAVPACK_OPEN_FILE_INPUT_EX)
-    target_compile_definitions(game-client PRIVATE CONF_WAVPACK_OPEN_FILE_INPUT_EX)
-  endif()
+  # BASE_LEVEL: 0 DDNet+UClient, 1 TClient+UClient, 2 BestClient+UClient.
+  # Lower profiles drop that layer's .cpp files. The stub translation units stay
+  # in the list and compile to empty on the full profile.
+  function(uclient_add_game_client TARGET_NAME OUTPUT_NAME BASE_LEVEL)
+    set(ProfileSrc)
+    foreach(Src ${CLIENT_SRC})
+      set(Drop 0)
+      if(BASE_LEVEL LESS 2 AND Src MATCHES "/components/bestclient/" AND Src MATCHES "\\.cpp$" AND NOT Src MATCHES "/clientindicator/")
+        set(Drop 1)
+      endif()
+      if(BASE_LEVEL LESS 1 AND Src MATCHES "/components/tclient/" AND Src MATCHES "\\.cpp$" AND NOT Src MATCHES "tclient_layer_stub\\.cpp$")
+        set(Drop 1)
+      endif()
+      if(NOT Drop)
+        list(APPEND ProfileSrc "${Src}")
+      endif()
+    endforeach()
 
-  if(WAVPACK_CLOSE_FILE)
-    target_compile_definitions(game-client PRIVATE CONF_WAVPACK_CLOSE_FILE)
-  endif()
+    set(ProfileVersionInfo)
+    set(ProfileManifest)
+    if(TARGET_OS STREQUAL "windows")
+      set(VERSION_EXECUTABLE "${OUTPUT_NAME}")
+      set(VERSION_COMPANY "${OUTPUT_NAME} Team")
+      set(CLIENT_EXECUTABLE "${OUTPUT_NAME}")
+      configure_file("${PROJECT_SOURCE_DIR}/other/versioninfo/versioninfo.rc.in" "${TARGET_NAME}.versioninfo.rc")
+      configure_file("${PROJECT_SOURCE_DIR}/other/manifest/client.manifest.in" "${TARGET_NAME}.manifest")
+      set(ProfileVersionInfo "${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}.versioninfo.rc")
+      if(NOT MINGW)
+        set(ProfileManifest "${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}.manifest")
+      else()
+        set(ProfileManifest "other/manifest/client.rc")
+      endif()
+    endif()
 
-  if(GLEW_BUNDLED)
-    target_compile_definitions(game-client PRIVATE CONF_GLEW_HAS_CONTEXT_INIT)
-  endif()
+    if(TARGET_OS STREQUAL "android")
+      add_library(${TARGET_NAME} SHARED
+        ${ProfileSrc}
+        ${CLIENT_ICON}
+        ${ProfileVersionInfo}
+        ${ProfileManifest}
+        ${DEPS_CLIENT}
+        $<TARGET_OBJECTS:engine-gfx>
+        $<TARGET_OBJECTS:engine-shared>
+        $<TARGET_OBJECTS:game-shared>
+        $<TARGET_OBJECTS:rust-bridge-shared>
+      )
+    else()
+      add_executable(${TARGET_NAME} WIN32
+        ${ProfileSrc}
+        ${CLIENT_ICON}
+        ${ProfileVersionInfo}
+        ${ProfileManifest}
+        ${DEPS_CLIENT}
+        $<TARGET_OBJECTS:engine-gfx>
+        $<TARGET_OBJECTS:engine-shared>
+        $<TARGET_OBJECTS:game-shared>
+        $<TARGET_OBJECTS:rust-bridge-shared>
+      )
+    endif()
+    set_property(TARGET ${TARGET_NAME} PROPERTY OUTPUT_NAME ${OUTPUT_NAME})
+    target_compile_definitions(${TARGET_NAME} PRIVATE CONF_UCLIENT_BASE=${BASE_LEVEL})
+    target_link_libraries(${TARGET_NAME} ${LIBS_CLIENT})
 
-  if(VULKAN)
-    target_compile_definitions(game-client PRIVATE CONF_BACKEND_VULKAN)
-  endif()
+    if(MSVC)
+      target_compile_options(${TARGET_NAME} PRIVATE /bigobj) # TClient, required for ChaiScript
+      target_link_options(${TARGET_NAME} PRIVATE /ENTRY:mainCRTStartup)
+    endif()
 
-  if(DBUS_FOUND)
-    target_compile_definitions(game-client PRIVATE BC_MUSICPLAYER_HAS_DBUS=1)
-  else()
-    target_compile_definitions(game-client PRIVATE BC_MUSICPLAYER_HAS_DBUS=0)
+    if(WIN32 AND NOT MSVC)
+      target_compile_options(${TARGET_NAME} PRIVATE -Wa,-mbig-obj) # TClient, required for ChaiScript
+    endif()
+
+    target_include_directories(${TARGET_NAME} SYSTEM PRIVATE
+      ${PROJECT_SOURCE_DIR}/src/engine/external/chaiscript)
+
+    target_include_directories(${TARGET_NAME} SYSTEM PRIVATE
+      ${FREETYPE_INCLUDE_DIRS}
+      ${GLEW_INCLUDE_DIRS}
+      ${OGG_INCLUDE_DIRS}
+      ${OPUSFILE_INCLUDE_DIRS}
+      ${OPUS_INCLUDE_DIRS}
+      ${PNG_INCLUDE_DIRS}
+      ${SDL2_INCLUDE_DIRS}
+      ${WAVPACK_INCLUDE_DIRS}
+      ${FFMPEG_INCLUDE_DIRS}
+      ${DISCORDSDK_INCLUDE_DIRS}
+      ${VULKAN_INCLUDE_DIRS}
+      ${PLATFORM_CLIENT_INCLUDE_DIRS}
+    )
+
+    if(DBUS_FOUND)
+      target_include_directories(${TARGET_NAME} SYSTEM PRIVATE ${DBUS_INCLUDE_DIRS})
+    endif()
+    if(PULSE_SIMPLE_FOUND)
+      target_include_directories(${TARGET_NAME} SYSTEM PRIVATE ${PULSE_SIMPLE_INCLUDE_DIRS})
+    endif()
+
+    if(STEAMAPI_KIND STREQUAL SHARED OR DISCORD_DYNAMIC)
+      set_own_rpath(${TARGET_NAME})
+    endif()
+
+    if(WAVPACK_OPEN_FILE_INPUT_EX)
+      target_compile_definitions(${TARGET_NAME} PRIVATE CONF_WAVPACK_OPEN_FILE_INPUT_EX)
+    endif()
+    if(WAVPACK_CLOSE_FILE)
+      target_compile_definitions(${TARGET_NAME} PRIVATE CONF_WAVPACK_CLOSE_FILE)
+    endif()
+    if(GLEW_BUNDLED)
+      target_compile_definitions(${TARGET_NAME} PRIVATE CONF_GLEW_HAS_CONTEXT_INIT)
+    endif()
+    if(VULKAN)
+      target_compile_definitions(${TARGET_NAME} PRIVATE CONF_BACKEND_VULKAN)
+    endif()
+    if(DBUS_FOUND)
+      target_compile_definitions(${TARGET_NAME} PRIVATE BC_MUSICPLAYER_HAS_DBUS=1)
+    else()
+      target_compile_definitions(${TARGET_NAME} PRIVATE BC_MUSICPLAYER_HAS_DBUS=0)
+    endif()
+    if(PULSE_SIMPLE_FOUND)
+      target_compile_definitions(${TARGET_NAME} PRIVATE BC_MUSICPLAYER_HAS_PULSE=1)
+    else()
+      target_compile_definitions(${TARGET_NAME} PRIVATE BC_MUSICPLAYER_HAS_PULSE=0)
+    endif()
+  endfunction()
+
+  if(NOT UCLIENT_BASE MATCHES "^(ddnet|tclient|bestclient|all)$")
+    message(FATAL_ERROR "UCLIENT_BASE must be ddnet, tclient, bestclient, or all")
   endif()
-  if(PULSE_SIMPLE_FOUND)
-    target_compile_definitions(game-client PRIVATE BC_MUSICPLAYER_HAS_PULSE=1)
-  else()
-    target_compile_definitions(game-client PRIVATE BC_MUSICPLAYER_HAS_PULSE=0)
+  set(UCLIENT_PROFILE_SPECS bestclient)
+  if(UCLIENT_BASE STREQUAL "all" AND NOT TARGET_OS STREQUAL "android")
+    set(UCLIENT_PROFILE_SPECS bestclient tclient ddnet)
+  elseif(UCLIENT_BASE STREQUAL "tclient")
+    set(UCLIENT_PROFILE_SPECS tclient)
+  elseif(UCLIENT_BASE STREQUAL "ddnet")
+    set(UCLIENT_PROFILE_SPECS ddnet)
   endif()
+  foreach(UCLIENT_PROFILE ${UCLIENT_PROFILE_SPECS})
+    if(UCLIENT_PROFILE STREQUAL "bestclient")
+      uclient_add_game_client(game-client "${CLIENT_EXECUTABLE}" 2)
+    elseif(UCLIENT_PROFILE STREQUAL "tclient")
+      if(UCLIENT_BASE STREQUAL "all")
+        uclient_add_game_client(game-client-tclient "TClient" 1)
+      else()
+        uclient_add_game_client(game-client "TClient" 1)
+      endif()
+    elseif(UCLIENT_BASE STREQUAL "all")
+      uclient_add_game_client(game-client-ddnet "DDNetBase" 0)
+    else()
+      uclient_add_game_client(game-client "DDNetBase" 0)
+    endif()
+  endforeach()
 
   add_executable(bestclient-voice-server EXCLUDE_FROM_ALL
     ${DEPS}
@@ -3455,8 +3503,12 @@ if(CLIENT)
     list(APPEND TARGETS_LINK bestclient-updater)
   endif()
 
-  list(APPEND TARGETS_OWN game-client)
-  list(APPEND TARGETS_LINK game-client)
+  foreach(UCLIENT_PROFILE_TARGET game-client game-client-tclient game-client-ddnet)
+    if(TARGET ${UCLIENT_PROFILE_TARGET})
+      list(APPEND TARGETS_OWN ${UCLIENT_PROFILE_TARGET})
+      list(APPEND TARGETS_LINK ${UCLIENT_PROFILE_TARGET})
+    endif()
+  endforeach()
 endif()
 
 
@@ -4055,9 +4107,11 @@ else()
 endif()
 
 set(CPACK_TARGETS)
-if(TARGET game-client)
-  list(APPEND CPACK_TARGETS game-client)
-endif()
+foreach(UCLIENT_PROFILE_TARGET game-client game-client-tclient game-client-ddnet)
+  if(TARGET ${UCLIENT_PROFILE_TARGET})
+    list(APPEND CPACK_TARGETS ${UCLIENT_PROFILE_TARGET})
+  endif()
+endforeach()
 if(TARGET bestclient-updater)
   list(APPEND CPACK_TARGETS bestclient-updater)
 endif()

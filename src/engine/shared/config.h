@@ -262,6 +262,7 @@ class CConfigManager : public IConfigManager
 
 	IOHANDLE m_aConfigFile[ConfigDomain::NUM];
 	bool m_aFailed[ConfigDomain::NUM];
+	bool m_aDisabled[ConfigDomain::NUM];
 
 	struct SCallback
 	{
@@ -296,6 +297,9 @@ public:
 	bool Save() override;
 
 	CConfig *Values() override { return &g_Config; }
+
+	void DisableDomain(ConfigDomain ConfigDomain) override { m_aDisabled[ConfigDomain] = true; }
+	bool IsDomainDisabled(ConfigDomain ConfigDomain) const override { return m_aDisabled[ConfigDomain]; }
 
 	void RegisterCallback(SAVECALLBACKFUNC pfnFunc, void *pUserData, ConfigDomain ConfigDomain = ConfigDomain::DDNET) override;
 

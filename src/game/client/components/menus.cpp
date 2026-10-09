@@ -623,7 +623,7 @@ void CMenus::RenderMenubar(CUIRect Box, IClient::EClientState ClientState)
 		GameClient()->m_Tooltips.DoToolTip(&s_DemoButton, &Button, Localize("Demos"));
 		Box.VSplitRight(10.0f, &Box, nullptr);
 
-		if(g_Config.m_BcClansEnabled)
+		if(UCLIENT_HAS_BESTCLIENT && g_Config.m_BcClansEnabled)
 		{
 			Box.VSplitRight(33.0f, &Box, &Button);
 			ColorRGBA ClansAlert(0, 1, 0, 0.25f);
@@ -798,7 +798,7 @@ void CMenus::RenderMenubar(CUIRect Box, IClient::EClientState ClientState)
 			GameClient()->m_Tooltips.DoToolTip(&s_DemoButton, &Button, Localize("Demos"));
 			Box.VSplitRight(10.0f, &Box, nullptr);
 
-			if(g_Config.m_BcClansEnabled)
+			if(UCLIENT_HAS_BESTCLIENT && g_Config.m_BcClansEnabled)
 			{
 				Box.VSplitRight(33.0f, &Box, &Button);
 				ColorRGBA ClansAlert(0, 1, 0, 0.25f);

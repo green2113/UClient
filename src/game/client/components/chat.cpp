@@ -3305,6 +3305,22 @@ static void BuildReplyQuoteLine(ITextRender *pTextRender, float QuoteFontSize, f
 
 static void AppendTextWithUrlAndMentionColors(ITextRender *pTextRender, STextContainerIndex &TextContainerIndex, CTextCursor &Cursor, const char *pText, const std::unordered_set<std::string> &vSafeDomains, std::vector<STextBoundingBox> *pLinkBounds, std::vector<std::string> *pLinks, std::vector<float> *pFontSizes, std::vector<bool> *pAlwaysConfirm, std::vector<int> *pLinkGroups)
 {
+#if !UCLIENT_HAS_BESTCLIENT
+	// Chat links need BestClient's chat mouse. Without it, draw the text plain.
+	if(pLinkBounds)
+		pLinkBounds->clear();
+	if(pLinks)
+		pLinks->clear();
+	if(pFontSizes)
+		pFontSizes->clear();
+	if(pAlwaysConfirm)
+		pAlwaysConfirm->clear();
+	if(pLinkGroups)
+		pLinkGroups->clear();
+	if(pText != nullptr && pText[0] != '\0')
+		pTextRender->CreateOrAppendTextContainer(TextContainerIndex, &Cursor, pText);
+	return;
+#endif
 	int SegmentStart = 0;
 
 	for(int i = SegmentStart; pText[i] != '\0';)
@@ -4052,11 +4068,19 @@ bool CChat::DecodeAnimatedGif(const unsigned char *pData, size_t DataSize, const
 
 bool CChat::AnyMediaAllowed() const
 {
+#if !UCLIENT_HAS_BESTCLIENT
+	return false;
+#else
 	return g_Config.m_BcChatMediaPhotos || g_Config.m_BcChatMediaGifs;
+#endif
 }
 
 bool CChat::IsMediaKindAllowed(EMediaKind Kind) const
 {
+#if !UCLIENT_HAS_BESTCLIENT
+	(void)Kind;
+	return false;
+#else
 	switch(Kind)
 	{
 	case EMediaKind::PHOTO:
@@ -4068,6 +4092,7 @@ bool CChat::IsMediaKindAllowed(EMediaKind Kind) const
 	default:
 		return AnyMediaAllowed();
 	}
+#endif
 }
 
 bool CChat::IsMediaUrlAllowed(const char *pUrl) const
@@ -5699,6 +5724,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			return true;
 	}
 
+#if UCLIENT_HAS_BESTCLIENT
 	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 &&
 		m_HoveredServerJoinLineIndex >= 0 && m_HoveredServerJoinLineIndex < MAX_LINES)
 	{
@@ -5715,6 +5741,7 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		HandleLinkActivation(m_HoveredLink, m_HoveredLinkAlwaysConfirm);
 		return true;
 	}
+#endif
 
 	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && m_ReplyCancelButtonRectValid)
 	{
@@ -7326,6 +7353,12 @@ void CChat::ApplySettingsLinkToLine(CLine &Line, const char *pSourceText)
 	Line.m_SettingsLinkRectValid = false;
 	Line.m_SettingsShortcutRectValid = false;
 
+#if !UCLIENT_HAS_BESTCLIENT
+	// Settings cards in chat are opened with the mouse. This profile has no chat mouse.
+	(void)pSourceText;
+	return;
+#endif
+
 	int UriStart = -1, UriLen = 0;
 	char aUri[CUClientSettingsLink::MAX_URI_LENGTH];
 	if(!CUClientSettingsLink::FindUriInText(pSourceText, UriStart, UriLen, aUri, sizeof(aUri)))
@@ -8842,10 +8875,14 @@ void CChat::OnPrepareLines(float y, int StartLine, int HoveredTranslateLineIndex
 			// Skip generic URL/mention detection (server names commonly contain dots).
 			Line.m_TranslateRectValid = false;
 			Line.m_TranslateLanguageRectValid = false;
+#if UCLIENT_HAS_BESTCLIENT
 			ColoredParts.AddSplitsToCursor(LineCursor);
 			AppendServerJoinBody(TextRender(), Line.m_TextContainerIndex, LineCursor, pMessageText,
 				Line.m_aServerJoinServerName, Line.m_ServerJoinBounds, Line.m_ServerJoinBoundsValid, Line.m_ServerJoinFontSize);
 			LineCursor.m_vColorSplits.clear();
+#else
+			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &LineCursor, pMessageText);
+#endif
 		}
 		else
 		{
@@ -9193,9 +9230,11 @@ void CChat::OnRender()
 			std::vector<STextColorSplit> vTypingColorSplits;
 			if(aDisplayedInputText[0] != '\0')
 			{
+#if UCLIENT_HAS_BESTCLIENT
 				const std::vector<SUrlMatch> vInputLinks = FindClickableUrlMatches(aDisplayedInputText, m_LinkPolicyCache.m_vSafeDomains);
 				for(const SUrlMatch &Link : vInputLinks)
 					vTypingColorSplits.emplace_back(Link.m_Start, Link.m_Length, ChatLinkColor());
+#endif
 			}
 			std::vector<CChat::STypingGlyphAnim> vActiveTypingGlyphAnims;
 			if(BcChatTypingAnimEnabled && TypingAnimDuration > 0.0f && aDisplayedInputText[0] != '\0' && ChatTypingAnimSupportsText(aDisplayedInputText))
@@ -9267,9 +9306,13 @@ void CChat::OnRender()
 
 		Graphics()->ClipDisable();
 
+#if UCLIENT_HAS_BESTCLIENT
 		CUIRect GiphyButtonRect = {ClippingRect.x + ClippingRect.w + TranslateButtonGap, ClippingRect.y, TranslateButtonSize, maximum(InputCursor.m_FontSize + 4.0f, 16.0f)};
 		RenderGiphyButton(GiphyButtonRect);
 		CUIRect RoomButtonRect = {GiphyButtonRect.x + GiphyButtonRect.w + TranslateButtonGap, ClippingRect.y, TranslateButtonSize, maximum(InputCursor.m_FontSize + 4.0f, 16.0f)};
+#else
+		CUIRect RoomButtonRect = {ClippingRect.x + ClippingRect.w + TranslateButtonGap, ClippingRect.y, TranslateButtonSize, maximum(InputCursor.m_FontSize + 4.0f, 16.0f)};
+#endif
 		RenderRoomSelectButton(RoomButtonRect);
 		if(Ui()->HotItem() == &m_GiphyButton || Ui()->HotItem() == &m_RoomSelectButton ||
 			m_GiphyButtonPressed || m_RoomButtonPressed)

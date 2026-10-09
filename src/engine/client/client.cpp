@@ -63,6 +63,7 @@
 #include <generated/protocol7.h>
 #include <generated/protocolglue.h>
 
+#include <game/client/uclient_base.h>
 #include <game/localization.h>
 #include <game/version.h>
 
@@ -3214,7 +3215,7 @@ void CClient::Update()
 	else
 		GameClient()->OnUpdate();
 
-	Discord()->Update(g_Config.m_TcDiscordRPC);
+	Discord()->Update(UCLIENT_HAS_TCLIENT && g_Config.m_TcDiscordRPC);
 	Steam()->Update();
 	if(Steam()->GetConnectAddress())
 	{
@@ -5433,6 +5434,21 @@ int main(int argc, const char **argv)
 	pKernel->RegisterInterface(CreateFavorites().release());
 	pKernel->RegisterInterface(CreateGameClient());
 
+	// Lower profiles share the settings folder with the full client. Leave the
+	// missing layers' files alone so their options neither leak into shared code
+	// here nor get rewritten by this build. Must precede Init so their
+	// variables are not registered as console commands either.
+#if !UCLIENT_HAS_BESTCLIENT
+	pConfigManager->DisableDomain(ConfigDomain::BESTCLIENT);
+	pConfigManager->DisableDomain(ConfigDomain::HUDLAYOUT);
+#endif
+#if !UCLIENT_HAS_TCLIENT
+	pConfigManager->DisableDomain(ConfigDomain::TCLIENT);
+	pConfigManager->DisableDomain(ConfigDomain::TCLIENTPROFILES);
+	pConfigManager->DisableDomain(ConfigDomain::TCLIENTCHATBINDS);
+	pConfigManager->DisableDomain(ConfigDomain::TCLIENTWARLIST);
+#endif
+
 	pEngine->Init();
 	pConsole->Init();
 	pConfigManager->Init();
@@ -5450,6 +5466,8 @@ int main(int argc, const char **argv)
 	pConsole->SetUnknownCommandCallback(SaveUnknownCommandCallback, pClient);
 	for(ConfigDomain ConfigDomain = ConfigDomain::START; ConfigDomain < ConfigDomain::NUM; ++ConfigDomain)
 	{
+		if(pConfigManager->IsDomainDisabled(ConfigDomain))
+			continue;
 		if(!pStorage->FileExists(s_aConfigDomains[ConfigDomain].m_aConfigPath, IStorage::TYPE_ALL))
 			continue;
 		if(!pConsole->ExecuteFile(s_aConfigDomains[ConfigDomain].m_aConfigPath, IConsole::CLIENT_ID_UNSPECIFIED))

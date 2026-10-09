@@ -62,9 +62,10 @@ namespace
 		return true;
 	}
 
-	void ParseUcPresenceList(json_value *pJson, std::unordered_map<std::string, std::unordered_set<std::string>> &Out)
+	void ParseUcPresenceList(json_value *pJson, std::unordered_map<std::string, std::unordered_set<std::string>> &OutNames, std::unordered_map<std::string, std::unordered_map<std::string, std::string>> &OutBases)
 	{
-		Out.clear();
+		OutNames.clear();
+		OutBases.clear();
 		if(!pJson || pJson->type != json_array)
 			return;
 
@@ -89,15 +90,20 @@ namespace
 				if(!NormalizePresenceServerAddress(pServerKey, aNormalizedServer, sizeof(aNormalizedServer)))
 					continue;
 
-				auto &Names = Out[aNormalizedServer];
+				auto &Names = OutNames[aNormalizedServer];
+				auto &Bases = OutBases[aNormalizedServer];
 				for(unsigned int PlayerIndex = 0; PlayerIndex < pPlayers->u.array.length; ++PlayerIndex)
 				{
 					const json_value *pPlayer = pPlayers->u.array.values[PlayerIndex];
 					if(!pPlayer || pPlayer->type != json_object)
 						continue;
 					const json_value *pName = json_object_get(pPlayer, "name");
-					if(pName && pName->type == json_string && pName->u.string.ptr[0] != '\0')
-						Names.insert(pName->u.string.ptr);
+					if(!pName || pName->type != json_string || pName->u.string.ptr[0] == '\0')
+						continue;
+					Names.insert(pName->u.string.ptr);
+					const json_value *pBase = json_object_get(pPlayer, "base");
+					if(pBase && pBase->type == json_string && pBase->u.string.ptr[0] != '\0')
+						Bases[pName->u.string.ptr] = pBase->u.string.ptr;
 				}
 			}
 		}
@@ -323,6 +329,7 @@ void CClientIndicator::OnReset()
 	ResetTokenState();
 	ResetUcPresenceTask();
 	m_UcPresenceByServer.clear();
+	m_UcPresenceBaseByServer.clear();
 	m_UcPeersByServer.clear();
 	m_LastUcPresenceRefreshTick = 0;
 	InvalidateUcPresenceLookupCache();
@@ -481,6 +488,10 @@ void CClientIndicator::OnShutdown()
 
 bool CClientIndicator::IsPlayerBestClient(int ClientId) const
 {
+#if !UCLIENT_HAS_BESTCLIENT
+	(void)ClientId;
+	return false;
+#else
 	const CGameClient *pGameClient = GameClient();
 	if(pGameClient && pGameClient->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_OTHERS_CLIENT_INDICATOR))
 		return false;
@@ -518,10 +529,15 @@ bool CClientIndicator::IsPlayerBestClient(int ClientId) const
 	}
 
 	return false;
+#endif
 }
 
 bool CClientIndicator::IsPlayerDeveloper(int ClientId) const
 {
+#if !UCLIENT_HAS_BESTCLIENT
+	(void)ClientId;
+	return false;
+#else
 	const CGameClient *pGameClient = GameClient();
 	if(pGameClient && pGameClient->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_OTHERS_CLIENT_INDICATOR))
 		return false;
@@ -553,6 +569,7 @@ bool CClientIndicator::IsPlayerDeveloper(int ClientId) const
 	}
 
 	return false;
+#endif
 }
 
 bool CClientIndicator::GetPlayerVersionLabel(int ClientId, char *pVersion, int VersionSize) const
@@ -561,6 +578,10 @@ bool CClientIndicator::GetPlayerVersionLabel(int ClientId, char *pVersion, int V
 		return false;
 	pVersion[0] = '\0';
 
+#if !UCLIENT_HAS_BESTCLIENT
+	(void)ClientId;
+	return false;
+#else
 	const CGameClient *pGameClient = GameClient();
 	if(pGameClient && pGameClient->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_OTHERS_CLIENT_INDICATOR))
 		return false;
@@ -599,6 +620,7 @@ bool CClientIndicator::GetPlayerVersionLabel(int ClientId, char *pVersion, int V
 	}
 
 	return false;
+#endif
 }
 
 void CClientIndicator::RefreshBrowserCache(bool Force)
@@ -696,12 +718,14 @@ void CClientIndicator::OnUpdate()
 		SetPresenceBlockReason("presence update skipped: indicator disabled");
 		m_WasPresenceEnabled = false;
 		m_WasUcPresenceActive = false;
+		PollUcPresenceList();
 		return;
 	}
 
 	if(!IsBrowserSnapshotEnabled() && ShouldRunUcPresence())
 	{
 		UpdatePresence();
+		PollUcPresenceList();
 		m_LastUpdateCostTick = time_get() - PerfStart;
 		return;
 	}
@@ -763,22 +787,7 @@ void CClientIndicator::OnUpdate()
 	}
 
 	// UClient presence list for server browser (5 min HTTP fallback).
-	const int64_t UcPresenceRefreshInterval = 300 * time_freq();
-	if(g_Config.m_UcPresenceApiBaseUrl[0] != '\0' &&
-		!m_pUcPresenceTask &&
-		(m_LastUcPresenceRefreshTick == 0 || Now - m_LastUcPresenceRefreshTick >= UcPresenceRefreshInterval))
-	{
-		RefreshUcPresenceList(false);
-	}
-	if(m_pUcPresenceTask && m_pUcPresenceTask->State() == EHttpState::DONE)
-	{
-		FinishUcPresenceRefresh();
-		ResetUcPresenceTask();
-	}
-	else if(m_pUcPresenceTask && (m_pUcPresenceTask->State() == EHttpState::ERROR || m_pUcPresenceTask->State() == EHttpState::ABORTED))
-	{
-		ResetUcPresenceTask();
-	}
+	PollUcPresenceList();
 
 	if(m_pTokenTask && m_pTokenTask->State() == EHttpState::DONE)
 	{
@@ -1208,6 +1217,7 @@ void CClientIndicator::SendUcPresenceUdpPacket(int ClientId, int PacketType, con
 	UClientPresence::WriteString(vPacket, UCLIENT_VERSION);
 	if(PacketType == UClientPresence::PACKET_SWITCH)
 		UClientPresence::WriteString(vPacket, pFromServer);
+	UClientPresence::WriteString(vPacket, UClientBaseName());
 	UClientPresence::AppendProof(vPacket, g_Config.m_UcPresenceUdpSharedToken);
 
 	if(g_Config.m_DbgClientIndicator >= 2)
@@ -1996,6 +2006,8 @@ void CClientIndicator::SendPresenceHttpEvent(int ClientId, const char *pEventPat
 		Writer.WriteAttribute("version");
 		Writer.WriteStrValue(UCLIENT_VERSION);
 	}
+	Writer.WriteAttribute("base");
+	Writer.WriteStrValue(UClientBaseName());
 	Writer.WriteAttribute("clientId");
 	char aClientId[16];
 	str_format(aClientId, sizeof(aClientId), "%d", ClientId);
@@ -2054,6 +2066,8 @@ void CClientIndicator::SendPresenceHttpSwitchEvent(int ClientId, const char *pFr
 		Writer.WriteAttribute("version");
 		Writer.WriteStrValue(UCLIENT_VERSION);
 	}
+	Writer.WriteAttribute("base");
+	Writer.WriteStrValue(UClientBaseName());
 	Writer.WriteAttribute("clientId");
 	char aClientId[16];
 	str_format(aClientId, sizeof(aClientId), "%d", ClientId);
@@ -2922,6 +2936,27 @@ void CClientIndicator::RefreshUcPresenceCache(bool Force)
 	Http()->Run(m_pUcPresenceTask);
 }
 
+void CClientIndicator::PollUcPresenceList()
+{
+	const int64_t Now = time_get();
+	const int64_t UcPresenceRefreshInterval = 300 * time_freq();
+	if(g_Config.m_UcPresenceApiBaseUrl[0] != '\0' &&
+		!m_pUcPresenceTask &&
+		(m_LastUcPresenceRefreshTick == 0 || Now - m_LastUcPresenceRefreshTick >= UcPresenceRefreshInterval))
+	{
+		RefreshUcPresenceList(false);
+	}
+	if(m_pUcPresenceTask && m_pUcPresenceTask->State() == EHttpState::DONE)
+	{
+		FinishUcPresenceRefresh();
+		ResetUcPresenceTask();
+	}
+	else if(m_pUcPresenceTask && (m_pUcPresenceTask->State() == EHttpState::ERROR || m_pUcPresenceTask->State() == EHttpState::ABORTED))
+	{
+		ResetUcPresenceTask();
+	}
+}
+
 void CClientIndicator::FinishUcPresenceRefresh()
 {
 	if(!m_pUcPresenceTask)
@@ -2929,7 +2964,7 @@ void CClientIndicator::FinishUcPresenceRefresh()
 	json_value *pJson = m_pUcPresenceTask->ResultJson();
 	if(pJson)
 	{
-		ParseUcPresenceList(pJson, m_UcPresenceByServer);
+		ParseUcPresenceList(pJson, m_UcPresenceByServer, m_UcPresenceBaseByServer);
 		json_value_free(pJson);
 		InvalidateUcPresenceLookupCache();
 		DebugLogF("uc presence list loaded for %llu servers", (unsigned long long)m_UcPresenceByServer.size());
@@ -2944,6 +2979,24 @@ void CClientIndicator::ResetUcPresenceTask()
 		m_pUcPresenceTask->Abort();
 		m_pUcPresenceTask = nullptr;
 	}
+}
+
+const char *CClientIndicator::PlayerPresenceBase(const char *pServerAddress, const char *pPlayerName) const
+{
+	if(!pServerAddress || pServerAddress[0] == '\0' || !pPlayerName || pPlayerName[0] == '\0')
+		return nullptr;
+
+	char aNormalizedServer[NETADDR_MAXSTRSIZE];
+	if(!NormalizePresenceServerAddress(pServerAddress, aNormalizedServer, sizeof(aNormalizedServer)))
+		return nullptr;
+
+	const auto ItServer = m_UcPresenceBaseByServer.find(aNormalizedServer);
+	if(ItServer == m_UcPresenceBaseByServer.end())
+		return nullptr;
+	const auto ItPlayer = ItServer->second.find(pPlayerName);
+	if(ItPlayer == ItServer->second.end() || ItPlayer->second.empty())
+		return nullptr;
+	return ItPlayer->second.c_str();
 }
 
 bool CClientIndicator::IsPlayerUClient(int ClientId) const
@@ -3167,17 +3220,25 @@ bool CClientIndicator::HasPendingNetworkTask() const
 
 bool CClientIndicator::IsBrowserSnapshotEnabled() const
 {
+#if !UCLIENT_HAS_BESTCLIENT
+	return false;
+#else
 	const CGameClient *pGameClient = GameClient();
 	return g_Config.m_BcClientIndicator != 0 &&
 	       (!pGameClient || !pGameClient->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_OTHERS_CLIENT_INDICATOR));
+#endif
 }
 
 bool CClientIndicator::IsPresenceEnabled() const
 {
+#if !UCLIENT_HAS_BESTCLIENT
+	return false;
+#else
 	const CGameClient *pGameClient = GameClient();
 	return g_Config.m_BcClientIndicator != 0 &&
 	       Client()->State() == IClient::STATE_ONLINE &&
 	       (!pGameClient || !pGameClient->m_BestClient.IsComponentDisabled(CBestClient::COMPONENT_OTHERS_CLIENT_INDICATOR));
+#endif
 }
 
 bool CClientIndicator::ShouldRunUcPresence() const

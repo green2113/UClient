@@ -2594,6 +2594,14 @@ void CMenus::RenderSettings(CUIRect MainView)
 		g_Config.m_UiSettingsPage = SETTINGS_GENERAL;
 	if(g_Config.m_UiSettingsPage == SETTINGS_PLAYER)
 		g_Config.m_UiSettingsPage = SETTINGS_TEE;
+#if !UCLIENT_HAS_TCLIENT
+	if(g_Config.m_UiSettingsPage == SETTINGS_TCLIENT || g_Config.m_UiSettingsPage == SETTINGS_PROFILES || g_Config.m_UiSettingsPage == SETTINGS_CONFIGS)
+		g_Config.m_UiSettingsPage = SETTINGS_GENERAL;
+#endif
+#if !UCLIENT_HAS_BESTCLIENT
+	if(g_Config.m_UiSettingsPage == SETTINGS_BESTCLIENT)
+		g_Config.m_UiSettingsPage = SETTINGS_GENERAL;
+#endif
 
 	// Must short-circuit here, before any of the root/sub tab bar buttons below are given a
 	// chance to run their click logic this frame - otherwise clicks on the fullscreen editor
@@ -2788,13 +2796,34 @@ void CMenus::RenderSettings(CUIRect MainView)
 		};
 		static CButtonContainer s_aRootTabButtons[ROOT_TAB_LENGTH];
 		const int CurRootTab = GetRootTabByPage(g_Config.m_UiSettingsPage);
-		const float RootTabWidth = RootTabBar.w / (float)ROOT_TAB_LENGTH;
-		CUIRect RootTabs = RootTabBar;
+		bool aRootVisible[ROOT_TAB_LENGTH];
+		for(int i = 0; i < ROOT_TAB_LENGTH; ++i)
+			aRootVisible[i] = true;
+#if !UCLIENT_HAS_TCLIENT
+		aRootVisible[ROOT_TAB_TCLIENT] = false;
+#endif
+#if !UCLIENT_HAS_BESTCLIENT
+		aRootVisible[ROOT_TAB_BESTCLIENT] = false;
+#endif
+		int NumVisibleRootTabs = 0;
 		for(int i = 0; i < ROOT_TAB_LENGTH; ++i)
 		{
+			if(aRootVisible[i])
+				++NumVisibleRootTabs;
+		}
+		const float RootTabWidth = RootTabBar.w / (float)NumVisibleRootTabs;
+		CUIRect RootTabs = RootTabBar;
+		int VisibleRoot = 0;
+		for(int i = 0; i < ROOT_TAB_LENGTH; ++i)
+		{
+			if(!aRootVisible[i])
+				continue;
+			const bool FirstRoot = VisibleRoot == 0;
+			const bool LastRoot = VisibleRoot + 1 == NumVisibleRootTabs;
+			++VisibleRoot;
 			CUIRect RootTabButton;
 			RootTabs.VSplitLeft(RootTabWidth, &RootTabButton, &RootTabs);
-			const int Corners = i == 0 ? (IGraphics::CORNER_TL | IGraphics::CORNER_BL) : (i == ROOT_TAB_LENGTH - 1 ? (IGraphics::CORNER_TR | IGraphics::CORNER_BR) : IGraphics::CORNER_NONE);
+			const int Corners = FirstRoot ? (IGraphics::CORNER_TL | IGraphics::CORNER_BL) : (LastRoot ? (IGraphics::CORNER_TR | IGraphics::CORNER_BR) : IGraphics::CORNER_NONE);
 			if(DoButton_MenuTab(&s_aRootTabButtons[i], apRootTabs[i], CurRootTab == i, &RootTabButton, Corners, nullptr, nullptr, nullptr, nullptr, 4.0f))
 			{
 				if(i == ROOT_TAB_GENERAL)
@@ -2925,6 +2954,14 @@ void CMenus::RenderSettings(CUIRect MainView)
 	{
 		if(i == SETTINGS_LANGUAGE || i == SETTINGS_PLAYER)
 			continue;
+#if !UCLIENT_HAS_TCLIENT
+		if(i == SETTINGS_TCLIENT || i == SETTINGS_PROFILES || i == SETTINGS_CONFIGS)
+			continue;
+#endif
+#if !UCLIENT_HAS_BESTCLIENT
+		if(i == SETTINGS_BESTCLIENT)
+			continue;
+#endif
 		TabBar.HSplitTop(10.0f, nullptr, &TabBar);
 		TabBar.HSplitTop(26.0f, &Button, &TabBar);
 		if(DoButton_MenuTab(&s_aTabButtons[i], apTabs[i], g_Config.m_UiSettingsPage == i, &Button, IGraphics::CORNER_R, &m_aAnimatorsSettingsTab[i]))

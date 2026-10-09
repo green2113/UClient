@@ -32,7 +32,7 @@ jobs:
         # honoured by the Makefile and Ninja generators, and the Visual Studio generator
         # ignores it silently, so every Windows build used to be a cold one.
         - os: windows-latest
-          cmake-args: -G Ninja -DCMAKE_BUILD_TYPE=Release -DDISCORD=ON -DTOOLS=OFF -DAUTOUPDATE=ON -DVULKAN=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake-args: -G Ninja -DCMAKE_BUILD_TYPE=Release -DDISCORD=ON -DTOOLS=OFF -DAUTOUPDATE=ON -DVULKAN=ON -DUCLIENT_BASE=all -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake-init-env: CXXFLAGS= LDFLAGS=
           package-file: "*-win64.zip"
         # - os: windows-latest

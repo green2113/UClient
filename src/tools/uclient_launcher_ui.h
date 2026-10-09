@@ -8,7 +8,7 @@
 //               aiChat {messages, locale?}, aiChatAbort
 //
 // State fields: phase, buttonLabel, version, status, percent, failed,
-//               autoLaunch, autoUpdate, discordRpc, logoUrl, mascotUrl, friendsLoading, friendsLoaded,
+//               autoLaunch, autoUpdate, discordRpc, clientProfile, logoUrl, mascotUrl, friendsLoading, friendsLoaded,
 //               playBlocked, updateAvailable, launcherUpdateAvailable, launcherUpdateVersion,
 //               clientUpdateBusy, gameRunning, buttonHint,
 //               devBuild, devForceUpdate, devForceLauncherUpdate, devForcePlayBlocked, devForceGameRunning, devInjectNotice,
@@ -605,7 +605,7 @@ body{
 .sc-stepper-sep{width:1px;margin:6px 0;background:rgba(255,255,255,.1);flex:0 0 auto}
 .sc-stepper-pill{cursor:pointer}
 @supports (corner-shape:squircle){
-  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search-wrap,.sc-drawer-search-chip,.sc-drawer-filter-pick,.sc-chip,.sc-catalog,.sc-tile,.sc-tile-ico,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.sc-text-var-chip,.sc-text-composer .sc-text-var-inline,.modal-box,.opt,.confirm-box,.confirm-files,#share-link-url,#assistant,#ai-input,#ai-send,#ai-stop,.ai-card,.ai-qcard,.ai-qopt,.ai-qskip,.ai-qgo,.ai-msg .bubble,.ai-suggest,.onboard-box,.onboard-box .card,.choice,.field,.onboard-box .primary,.onboard-box .secondary,.on-back,.code-boxes input{corner-shape:squircle}
+  #play,#sc-editor,.sc-block,.sc-block-filters,.sc-drawer,.sc-drawer-search-wrap,.sc-drawer-search-chip,.sc-drawer-filter-pick,.sc-chip,.sc-catalog,.sc-tile,.sc-tile-ico,.sc-pop,.sc-ico,.sc-drag-ghost,.sc-drop-gap,.sc-pill,.sc-sender-chip,.sc-sender-add,.sc-smart-menu-inner,.sc-smart-menu-item,.sc-run-result,.sc-run-result-box,.sc-text-var-chip,.sc-text-composer .sc-text-var-inline,.modal-box,.opt,.confirm-box,.confirm-files,#share-link-url,#client-profile,.client-profile-menu,.client-profile-item,#assistant,#ai-input,#ai-send,#ai-stop,.ai-card,.ai-qcard,.ai-qopt,.ai-qskip,.ai-qgo,.ai-msg .bubble,.ai-suggest,.onboard-box,.onboard-box .card,.choice,.field,.onboard-box .primary,.onboard-box .secondary,.on-back,.code-boxes input{corner-shape:squircle}
   .confirm-actions .primary,.confirm-actions .secondary,.confirm-actions .danger,.confirm-box .row-actions .primary,.confirm-box .row-actions .secondary{corner-shape:squircle}
   .sc-ed-back,.sc-ed-icon,.sc-ed-delete,.sc-ed-save{corner-shape:round;border-radius:50%}
 }
@@ -857,6 +857,18 @@ body{
 .prog-label{font-size:11px;font-weight:600;text-align:left;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
 
 #play-version{color:var(--dim);font-size:14px;line-height:1.3;padding-left:2px}
+#client-profile-wrap{position:relative}
+#client-profile{display:inline-flex;align-items:center;gap:8px;appearance:none;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:999px;font:600 14px/1.2 inherit;padding:10px 14px 10px 16px;cursor:pointer;transition:border-color .15s var(--ease),background .15s var(--ease)}
+#client-profile:hover,#client-profile:focus{outline:none;border-color:rgba(124,108,240,.45)}
+#client-profile[aria-expanded="true"]{border-color:rgba(124,108,240,.7);background:rgba(124,108,240,.14)}
+.client-profile-chevron{width:14px;height:14px;flex:0 0 auto;opacity:.72;transition:transform .18s var(--ease)}
+#client-profile[aria-expanded="true"] .client-profile-chevron{transform:rotate(180deg)}
+.client-profile-menu{position:absolute;left:0;bottom:calc(100% + 8px);min-width:100%;width:max-content;z-index:40;padding:6px;border-radius:18px;background:#1e2029;border:1px solid rgba(255,255,255,.12);box-shadow:0 16px 40px rgba(0,0,0,.5);transform-origin:bottom left}
+.client-profile-item{display:flex;align-items:center;justify-content:space-between;gap:16px;width:100%;text-align:left;border:0;background:transparent;color:var(--text);font:600 14px/1.2 inherit;padding:10px 12px;border-radius:12px;cursor:pointer}
+.client-profile-item:hover,.client-profile-item:focus-visible{background:rgba(124,108,240,.16);outline:none}
+.client-profile-item.on{background:rgba(124,108,240,.24);color:#fff}
+.client-profile-check{width:14px;height:14px;flex:0 0 auto;color:var(--accent-hi);opacity:0}
+.client-profile-item.on .client-profile-check{opacity:1}
 @keyframes sweep{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
 
 /* -- alerts ------------------------------------------------------------ */
@@ -1497,7 +1509,20 @@ body.dev-build #dev-panel{display:block}
         </div>
       </div>
     </div>
-    <div id="play-version"></div>
+      <div id="client-profile-wrap">
+        <button type="button" id="client-profile" data-value="bestclient" aria-haspopup="listbox" aria-expanded="false" aria-label="Client build">
+          <span class="client-profile-label">BestClient + UClient</span>
+          <svg class="client-profile-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 6.2 8 10.2 12 6.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <div id="client-profile-menu" class="client-profile-menu" hidden role="listbox">
+          <button type="button" class="client-profile-item" data-profile="ddnet" role="option" aria-selected="false"><span>DDNet + UClient</span><svg class="client-profile-check" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 8.2 6.4 11.1 12.5 4.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button type="button" class="client-profile-item" data-profile="tclient" role="option" aria-selected="false"><span>TClient + UClient</span><svg class="client-profile-check" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 8.2 6.4 11.1 12.5 4.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button type="button" class="client-profile-item on" data-profile="bestclient" role="option" aria-selected="true"><span>BestClient + UClient</span><svg class="client-profile-check" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 8.2 6.4 11.1 12.5 4.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        </div>
+      </div>
+      <div id="play-version"></div>
     </div>
   </main>
 
@@ -2639,6 +2664,48 @@ $("opt-discord").addEventListener("click", function () {
   var on = !$("opt-discord").classList.contains("on");
   $("opt-discord").classList.toggle("on", on);
   send({cmd: "discordRpc", value: on});
+});
+function setClientProfileUi(value) {
+  var btn = $("client-profile");
+  var items = $("client-profile-menu").querySelectorAll("[data-profile]");
+  var label = "";
+  for (var i = 0; i < items.length; i++) {
+    var on = items[i].getAttribute("data-profile") === value;
+    items[i].classList.toggle("on", on);
+    items[i].setAttribute("aria-selected", on ? "true" : "false");
+    if (on) label = items[i].querySelector("span").textContent;
+  }
+  if (!label) return;
+  btn.dataset.value = value;
+  btn.querySelector(".client-profile-label").textContent = label;
+}
+function closeClientProfileMenu() {
+  $("client-profile-menu").hidden = true;
+  $("client-profile").setAttribute("aria-expanded", "false");
+}
+$("client-profile").addEventListener("click", function () {
+  var menu = $("client-profile-menu");
+  var open = menu.hidden;
+  menu.hidden = !open;
+  $("client-profile").setAttribute("aria-expanded", open ? "true" : "false");
+});
+$("client-profile-menu").addEventListener("click", function (ev) {
+  var item = ev.target.closest("[data-profile]");
+  if (!item) return;
+  var value = item.getAttribute("data-profile");
+  if ($("client-profile").dataset.value !== value) {
+    setClientProfileUi(value);
+    send({cmd: "clientProfile", value: value});
+  }
+  closeClientProfileMenu();
+});
+document.addEventListener("pointerdown", function (ev) {
+  if ($("client-profile-menu").hidden) return;
+  if (ev.target.closest("#client-profile-wrap")) return;
+  closeClientProfileMenu();
+});
+document.addEventListener("keydown", function (ev) {
+  if (ev.key === "Escape") closeClientProfileMenu();
 });
 $("fr-refresh").addEventListener("click", function () {
   if ($("fr-refresh").classList.contains("loading")) return;
@@ -10041,6 +10108,8 @@ window.__setState = function (st) {
   $("opt-start-windows").classList.toggle("on", !!st.startWithWindows);
   $("opt-auto-update").classList.toggle("on", !!st.autoUpdate);
   $("opt-discord").classList.toggle("on", !!st.discordRpc);
+  if(st.clientProfile && $("client-profile").dataset.value !== st.clientProfile)
+    setClientProfileUi(st.clientProfile);
   $("fr-refresh").classList.toggle("loading", !!st.friendsLoading);
 
   var online = 0, all = st.friends || [];

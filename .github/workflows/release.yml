@@ -183,7 +183,7 @@ jobs:
           asset-name: UClient-ubuntu-linux_x86_64.tar.xz
         - name: windows
           os: windows-latest
-          cmake-args: -A x64 -DTOOLS=OFF -DDOWNLOAD_GTEST=OFF -DVULKAN=ON
+          cmake-args: -A x64 -DTOOLS=OFF -DDOWNLOAD_GTEST=OFF -DVULKAN=ON -DUCLIENT_BASE=all
           cmake-init-env: CXXFLAGS= LDFLAGS=
           package-file: "*-win64.zip"
           artifact-name: release-windows

@@ -110,7 +110,7 @@ bool CEmoticon::OnInput(const IInput::CEvent &Event)
 	// Aiming at dead center (no emote/eye-emote selected either way) and clicking switches to
 	// the gif wheel, staying within the same held-key session.
 	const float WheelScale = std::clamp(g_Config.m_BcWheelScale / 100.0f, 0.5f, 2.0f);
-	if(Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_MOUSE_1 && length(m_SelectorMouse) < EMOTICON_CENTER_RADIUS * WheelScale)
+	if(UCLIENT_HAS_BESTCLIENT && Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_MOUSE_1 && length(m_SelectorMouse) < EMOTICON_CENTER_RADIUS * WheelScale)
 	{
 		m_PreferGifWheel = true;
 		GameClient()->m_GifWheel.Activate();
@@ -324,6 +324,7 @@ void CEmoticon::OnRender()
 
 	// Switch-to-gif-wheel button, dead center - drawn on top of the eye wheel's own small
 	// center circle when that's shown, or standalone when it's not.
+	if(UCLIENT_HAS_BESTCLIENT)
 	{
 		const float ButtonRadius = 22.0f * WheelScale;
 		Graphics()->TextureClear();

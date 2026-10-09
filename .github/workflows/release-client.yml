@@ -131,7 +131,7 @@ jobs:
             os: windows-latest
             cmake_args: >-
               -A x64 -DCMAKE_BUILD_TYPE=Release -DTOOLS=OFF
-              -DDOWNLOAD_GTEST=OFF -DAUTOUPDATE=ON -DVULKAN=ON
+              -DDOWNLOAD_GTEST=OFF -DAUTOUPDATE=ON -DVULKAN=ON -DUCLIENT_BASE=all
             package_glob: "*-win64.zip"
             asset_name: UClient-windows.zip
           - platform: linux

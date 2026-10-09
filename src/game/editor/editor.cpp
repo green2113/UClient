@@ -4412,6 +4412,7 @@ void CEditor::RenderStatusbar(CUIRect View, CUIRect *pTooltipRect)
 		m_QuickActionHistory.Call();
 	}
 
+#if UCLIENT_HAS_BESTCLIENT
 	View.VSplitRight(10.0f, &View, nullptr);
 	View.VSplitRight(110.0f, &View, &Button);
 	{
@@ -4437,6 +4438,7 @@ void CEditor::RenderStatusbar(CUIRect View, CUIRect *pTooltipRect)
 			Ui()->DoPopupMenu(&s_MultiMappingPopupId, Button.x, Button.y - PopupHeight - 2.0f, 240.0f, PopupHeight, this, CMultiMappingSession::PopupMultiMapping);
 		}
 	}
+#endif
 
 	View.VSplitRight(10.0f, pTooltipRect, nullptr);
 }

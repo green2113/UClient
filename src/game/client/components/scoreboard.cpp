@@ -1219,7 +1219,7 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 				if(NextDDTeam != DDTeam)
 					TeamRectCorners |= IGraphics::CORNER_B;
 
-				if(g_Config.m_BcScoreboardTeamGradients)
+				if(UCLIENT_HAS_BESTCLIENT && g_Config.m_BcScoreboardTeamGradients)
 				{
 					const ColorRGBA LeftColor(
 						std::clamp(TeamColor.r * 0.32f, 0.0f, 1.0f),
