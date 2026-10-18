@@ -962,14 +962,7 @@ bool CTranslate::HasPendingJobs() const
 
 bool CTranslate::CanStartRequest() const
 {
-	const int64_t Now = time();
-	if(Now < m_NextRequestTime || Now < m_RateLimitUntil)
-		return false;
-
-	int ActiveRequests = 0;
-	for(const CTranslateJob &Job : m_vJobs)
-		ActiveRequests += Job.m_pBackend != nullptr;
-	return ActiveRequests < 2;
+	return time() >= m_RateLimitUntil;
 }
 
 void CTranslate::Translate(int Id, bool ShowProgress)
@@ -1080,7 +1073,6 @@ void CTranslate::TranslateLine(CChat::CLine &Line, bool ShowProgress, bool Respe
 		GameClient()->m_Chat.Echo(Localize("Invalid translate backend"));
 		return;
 	}
-	m_NextRequestTime = time() + time_freq();
 
 	if(ShowProgress)
 	{
@@ -1131,15 +1123,14 @@ void CTranslate::OnRender()
 			return true; // Not the same line anymore
 		if(Job.m_Type == CTranslateJob::EType::OUTGOING_CHAT && !Job.m_pBackend)
 		{
-			if(!CanStartRequest())
+			if(time() < Job.m_NextTryTime || !CanStartRequest())
 				return false;
 			Job.m_pBackend = CreateBackend(Job.m_aTextToTranslate, OutgoingSourceLanguage(), OutgoingTargetLanguage());
 			if(!Job.m_pBackend)
 			{
-				m_NextRequestTime = time() + time_freq();
+				Job.m_NextTryTime = time() + time_freq();
 				return false;
 			}
-			m_NextRequestTime = time() + time_freq();
 		}
 		const std::optional<bool> Done = Job.m_pBackend->Update(*Job.m_pTranslateResponse);
 		if(!Done.has_value())
@@ -1151,8 +1142,6 @@ void CTranslate::OnRender()
 			{
 				if(Job.m_pBackend->IsRateLimited())
 					m_RateLimitUntil = time() + time_freq() * 30;
-				else
-					m_NextRequestTime = time() + time_freq();
 				if(Job.m_pTranslateResponse->m_Text[0] != '\0')
 					GameClient()->m_Chat.Echo(Job.m_pTranslateResponse->m_Text);
 				GameClient()->m_Chat.SendTranslatedChatQueued(Job.m_Team, Job.m_aOriginalText);
@@ -1165,7 +1154,7 @@ void CTranslate::OnRender()
 			if(Job.m_pTranslateResponse->m_Text[0] == '\0' ||
 				!SanitizeOutgoingTranslatedText(Job.m_aTextToTranslate, Job.m_pTranslateResponse->m_Text, aTranslated, sizeof(aTranslated)))
 			{
-				m_NextRequestTime = time() + time_freq();
+				Job.m_NextTryTime = time() + time_freq();
 				Job.m_pBackend.reset();
 				return false;
 			}

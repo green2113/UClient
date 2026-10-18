@@ -1719,6 +1719,14 @@ fn handle_draw_packet(
             if !state.allow_draw_packet(sender_key, now) {
                 return;
             }
+            if !state.draw_canvases.contains_key(server_address) {
+                if state.draw_canvases.len() >= DRAW_MAX_CANVASES {
+                    return;
+                }
+                state
+                    .draw_canvases
+                    .insert(server_address.to_string(), DrawCanvas::new(draw.map_sha, now));
+            }
             let Some(canvas) = state.draw_canvases.get_mut(server_address) else {
                 return;
             };

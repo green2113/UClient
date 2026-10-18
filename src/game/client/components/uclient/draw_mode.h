@@ -64,16 +64,30 @@ private:
 		uint8_t m_Tool = UClientPresence::DRAW_TOOL_PEN;
 		ColorRGBA m_Color;
 		float m_Width = 0.0f;
+		// One mouse press-and-release. Segments of a long line share this so the eraser removes all of them.
+		uint32_t m_GestureId = 0;
 		std::vector<vec2> m_vPoints;
 		vec2 m_Min;
 		vec2 m_Max;
+	};
+
+	enum class EHistoryKind
+	{
+		ADD,
+		REMOVE,
+	};
+
+	struct SHistoryEntry
+	{
+		EHistoryKind m_Kind = EHistoryKind::ADD;
+		std::vector<SStroke> m_vStrokes;
 	};
 
 	bool m_Active = false;
 	vec2 m_CameraCenter = vec2(0.0f, 0.0f);
 	ETool m_Tool = ETool::PEN;
 	int m_Width = 8;
-	int m_ColorIndex = 0;
+	int m_ColorIndex = 2;
 
 	std::vector<SStroke> m_vStrokes;
 	std::set<std::pair<CUuid, uint32_t>> m_StrokeKeys;
@@ -88,6 +102,15 @@ private:
 
 	std::vector<uint32_t> m_vPendingErase;
 	int64_t m_LastEraseFlush = 0;
+
+	uint32_t m_NextGestureId = 1;
+	uint32_t m_CurrentGestureId = 0;
+	std::vector<SStroke> m_vCurrentGesture;
+	std::vector<SStroke> m_vErasedGesture;
+	std::vector<SStroke> m_vResend;
+	int64_t m_LastResend = 0;
+	std::vector<SHistoryEntry> m_vUndo;
+	std::vector<SHistoryEntry> m_vRedo;
 
 	bool m_Panning = false;
 	vec2 m_LastPanMouse;
@@ -105,6 +128,8 @@ private:
 	CButtonContainer m_CrayonButton;
 	CButtonContainer m_EraserButton;
 	CButtonContainer m_ClearButton;
+	CButtonContainer m_UndoButton;
+	CButtonContainer m_RedoButton;
 	CButtonContainer m_SettingsButton;
 	CButtonContainer m_ExitButton;
 	CButtonContainer m_aColorButtons[10];
@@ -131,6 +156,16 @@ private:
 	void EraseAt(vec2 Pos);
 	void FlushErase();
 	void ClearOwnStrokes();
+	void PushHistory(EHistoryKind Kind, std::vector<SStroke> vStrokes);
+	void Undo();
+	void Redo();
+	void FinishPenGesture();
+	void FinishEraserGesture();
+	void CancelPenGesture();
+	void SendSegment(const SStroke &Stroke);
+	void SendEraseIds(const std::vector<uint32_t> &vIds);
+	void RestoreStrokes(const std::vector<SStroke> &vStrokes);
+	void DropStrokes(const std::vector<SStroke> &vStrokes);
 	void UpdateDrawing();
 
 	void RenderStroke(const SStroke &Stroke, std::vector<IGraphics::CFreeformItem> &vItems);

@@ -6193,9 +6193,12 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 		}
 	}
 
-	if(ChatInputActive && (Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_MOUSE_1 && !m_MediaViewerOpen && !m_pMapSaveRequest)
+	// Open on release. The popup treats the mouse-up that follows a press as a click
+	// outside when the cursor is still on this button, so opening on press closes it immediately.
+	if(ChatInputActive && Event.m_Key == KEY_MOUSE_1 && !m_MediaViewerOpen && !m_pMapSaveRequest)
 	{
 		const vec2 MousePos = ChatMousePos();
+		int HitLine = -1;
 		for(int i = m_BacklogCurLine; i < MAX_LINES; i++)
 		{
 			const int LineIndex = ((m_CurrentLine - i) + MAX_LINES) % MAX_LINES;
@@ -6208,7 +6211,28 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			if(MousePos.x >= Rect.m_X && MousePos.x <= Rect.m_X + Rect.m_W &&
 				MousePos.y >= Rect.m_Y && MousePos.y <= Rect.m_Y + Rect.m_H)
 			{
-				OpenMapContextMenu(LineIndex);
+				HitLine = LineIndex;
+				break;
+			}
+		}
+
+		if(Event.m_Flags & IInput::FLAG_PRESS)
+		{
+			m_MapDownloadBtnPressLine = HitLine;
+			if(HitLine >= 0)
+			{
+				m_MouseIsPress = false;
+				m_HasSelection = false;
+				return true;
+			}
+		}
+		else if(Event.m_Flags & IInput::FLAG_RELEASE)
+		{
+			const int PressLine = m_MapDownloadBtnPressLine;
+			m_MapDownloadBtnPressLine = -1;
+			if(PressLine >= 0 && PressLine == HitLine)
+			{
+				OpenMapContextMenu(PressLine);
 				return true;
 			}
 		}
@@ -6954,6 +6978,7 @@ void CChat::DisableMode()
 	{
 		CloseMediaViewer();
 		Ui()->ClosePopupMenus();
+		m_MapDownloadBtnPressLine = -1;
 		m_UcChatPaste.Reset(this);
 		ClearPendingReply();
 		m_Mode = MODE_NONE;
@@ -9100,20 +9125,28 @@ void CChat::OnRender()
 		if(!m_MediaViewerOpen && !m_ScrollbarDragging)
 		{
 			bool OverSettingsLink = false;
+			bool OverMapDownloadBtn = false;
 			for(int i = 0; i < MAX_LINES; ++i)
 			{
 				const CLine &Line = m_aLines[i];
-				if(!Line.m_SettingsLinkRectValid)
-					continue;
-				const SRenderRect &R = Line.m_SettingsLinkRect;
-				if(MousePos.x >= R.m_X && MousePos.x <= R.m_X + R.m_W &&
-					MousePos.y >= R.m_Y && MousePos.y <= R.m_Y + R.m_H)
+				if(!OverSettingsLink && Line.m_SettingsLinkRectValid)
 				{
-					OverSettingsLink = true;
-					break;
+					const SRenderRect &R = Line.m_SettingsLinkRect;
+					if(MousePos.x >= R.m_X && MousePos.x <= R.m_X + R.m_W &&
+						MousePos.y >= R.m_Y && MousePos.y <= R.m_Y + R.m_H)
+						OverSettingsLink = true;
 				}
+				if(!OverMapDownloadBtn && Line.m_MapDownloadBtnRectValid)
+				{
+					const SRenderRect &R = Line.m_MapDownloadBtnRect;
+					if(MousePos.x >= R.m_X && MousePos.x <= R.m_X + R.m_W &&
+						MousePos.y >= R.m_Y && MousePos.y <= R.m_Y + R.m_H)
+						OverMapDownloadBtn = true;
+				}
+				if(OverSettingsLink && OverMapDownloadBtn)
+					break;
 			}
-			if(!m_MouseIsPress && MouseDown && !OverSettingsLink)
+			if(!m_MouseIsPress && MouseDown && !OverSettingsLink && !OverMapDownloadBtn)
 			{
 				m_MouseIsPress = true;
 				m_MousePress = MousePos;

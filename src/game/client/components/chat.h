@@ -783,6 +783,7 @@ class CChat : public CComponent
 	SPopupMenuId m_MapContextPopupId;
 	SPopupMenuId m_MapAddPopupId;
 	int m_MapContextLineIndex = -1;
+	int m_MapDownloadBtnPressLine = -1;
 	char m_aMapContextUrl[512] = "";
 	char m_aMapContextFileName[128] = "";
 	CLineInputBuffered<64> m_MapAddNameInput;

@@ -447,7 +447,6 @@ void CGameClient::OnConsoleInit()
 					      &m_Censor,
 					      &m_Background, // render instead of m_MapLayersBackground when g_Config.m_ClOverlayEntities == 100
 					      &m_MapLayersBackground, // first to render
-					      &m_DrawMode, // UClient: shared drawings, above background tiles and behind tees
 					      &m_BgDraw, // TClient
 					      &m_Particles.m_RenderTrail,
 					      &m_Particles.m_RenderTrailExtra,
@@ -467,11 +466,12 @@ void CGameClient::OnConsoleInit()
 					      &m_WeaponTrajPolicy,
 					      &m_TimeoutReconnect,
 					      &m_TClient, // TClient (Must be before chat and players)
+					      &m_DrawMode, // UClient: shared drawings, above the map and behind tees
 					      &m_Players,
 						  &m_MovingTilesBackground, // TClient
 						  &m_FastPractice, // BestClient
 						  &m_Automation, // BestClient
-						  &m_MapLayersForeground,
+					      &m_MapLayersForeground,
 						  &m_MovingTilesForeground, // TClient
 					      &m_SelfTimeCp, // BestClient
 					      &m_Outlines,  // TClient

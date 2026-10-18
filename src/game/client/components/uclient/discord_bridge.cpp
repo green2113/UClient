@@ -90,6 +90,22 @@ void CDiscordBridge::BeginIngest()
 		Json += JsonEscape(m_vInflight[i].c_str());
 		Json += "\"";
 	}
+	Json += "],\"names\":[";
+	bool FirstName = true;
+	for(int LocalId : GameClient()->m_aLocalIds)
+	{
+		if(LocalId < 0 || LocalId >= MAX_CLIENTS)
+			continue;
+		const char *pName = GameClient()->m_aClients[LocalId].m_aName;
+		if(!pName || !pName[0])
+			continue;
+		if(!FirstName)
+			Json += ",";
+		FirstName = false;
+		Json += "\"";
+		Json += JsonEscape(pName);
+		Json += "\"";
+	}
 	Json += "]}";
 
 	char aUrl[512];

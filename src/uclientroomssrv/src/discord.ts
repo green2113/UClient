@@ -159,11 +159,81 @@ export function neutralizeMentions(text: string): string {
 	return text.replace(/@(everyone|here)/gi, "@\u200b$1");
 }
 
-export function discordChatPayload(line: string): {content: string; allowed_mentions: {parse: []}} {
-	return {
-		content: neutralizeMentions(line).slice(0, MAX_DISCORD_CONTENT),
-		allowed_mentions: {parse: []},
-	};
+function mentionBoundary(text: string, index: number, side: "before" | "after"): boolean {
+	if(side === "before")
+		return index <= 0 || text[index - 1] === " ";
+	if(index >= text.length)
+		return true;
+	return " .!,?:".includes(text[index] ?? "");
+}
+
+export function replaceNameMentions(text: string, name: string, mention: string): string {
+	const trimmed = name.trim();
+	if(!trimmed || trimmed.length > 64 || /[\r\n<>@]/.test(trimmed))
+		return text;
+	const lowerText = text.toLowerCase();
+	const lowerName = trimmed.toLowerCase();
+	let result = "";
+	let cursor = 0;
+	let searchFrom = 0;
+	while(searchFrom <= lowerText.length - lowerName.length) {
+		const found = lowerText.indexOf(lowerName, searchFrom);
+		if(found < 0)
+			break;
+		const after = found + lowerName.length;
+		if(mentionBoundary(text, found, "before") && mentionBoundary(text, after, "after")) {
+			result += text.slice(cursor, found) + mention;
+			cursor = after;
+			searchFrom = after;
+		}
+		else
+			searchFrom = found + 1;
+	}
+	return result + text.slice(cursor);
+}
+
+export function applyGameMentions(line: string, names: string[], userId: string): string {
+	if(!SNOWFLAKE_RE.test(userId))
+		return line;
+	const mention = `<@${userId}>`;
+	const sorted = names
+		.map(name => name.trim())
+		.filter(name => name.length > 0 && name.length <= 64 && !/[\r\n<>@]/.test(name))
+		.sort((left, right) => right.length - left.length);
+	if(sorted.length === 0)
+		return line;
+	const stamped = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} I )([\s\S]+)$/);
+	if(!stamped)
+		return line;
+	const rest = stamped[2] ?? "";
+	const split = rest.indexOf(": ");
+	if(split < 0 || !rest.slice(0, split).startsWith("chat/"))
+		return line;
+	const channel = rest.slice(0, split);
+	const body = rest.slice(split + 2);
+	let prefix = "";
+	let message = body;
+	if(!body.startsWith("*** ") && !body.startsWith("— ")) {
+		const authorSplit = body.indexOf(": ");
+		if(authorSplit < 0)
+			return line;
+		prefix = body.slice(0, authorSplit + 2);
+		message = body.slice(authorSplit + 2);
+	}
+	let next = message;
+	for(const name of sorted)
+		next = replaceNameMentions(next, name, mention);
+	if(next === message)
+		return line;
+	return `${stamped[1]}${channel}: ${prefix}${next}`;
+}
+
+export function discordChatPayload(line: string, mentionUserId = ""): {content: string; allowed_mentions: {parse: []; users?: string[]}} {
+	const content = neutralizeMentions(line).slice(0, MAX_DISCORD_CONTENT);
+	const allowed_mentions: {parse: []; users?: string[]} = {parse: []};
+	if(SNOWFLAKE_RE.test(mentionUserId) && content.includes(`<@${mentionUserId}>`))
+		allowed_mentions.users = [mentionUserId];
+	return {content, allowed_mentions};
 }
 
 interface DiscordHttpResult {
@@ -501,12 +571,12 @@ async function claimLines(env: DiscordEnv, installId: string, lines: string[], n
 	return fresh;
 }
 
-async function postLines(env: DiscordEnv, channelId: string, lines: string[]): Promise<boolean> {
+async function postLines(env: DiscordEnv, channelId: string, lines: string[], mentionUserId = ""): Promise<boolean> {
 	const token = env.DISCORD_BOT_TOKEN ?? "";
 	if(!token)
 		return false;
 	for(const line of lines) {
-		const payload = discordChatPayload(line);
+		const payload = discordChatPayload(line, mentionUserId);
 		if(!payload.content)
 			continue;
 		const result = await discordFetch(`https://discord.com/api/v10/channels/${channelId}/messages`, token, payload);
@@ -527,21 +597,30 @@ async function ingest(request: Request, env: DiscordEnv, authenticate: (request:
 	if(!await claimGameOwner(env, authenticated.installId, gameClient(request, now), now, clientInServer(request)))
 		return json({ok: true, linked: true, owner: false, delivered: false, accepted: 0});
 	await touchOnline(env, authenticated.installId, now);
-	const body = await readJson<{line?: string; lines?: string[]}>(request);
+	const body = await readJson<{line?: string; lines?: string[]; names?: unknown}>(request);
 	const lines = (Array.isArray(body?.lines) ? body.lines : body?.line ? [body.line] : [])
 		.filter((line): line is string => typeof line === "string" && line.trim().length > 0)
 		.slice(0, MAX_INGEST_LINES)
 		.map(line => line.slice(0, MAX_DISCORD_CONTENT));
 	if(lines.length === 0)
 		return json({ok: true, linked: true, delivered: false, accepted: 0});
+	const names = (Array.isArray(body?.names) ? body.names : [])
+		.filter((name): name is string => typeof name === "string")
+		.slice(0, 4);
 	const channel = await env.DB.prepare(
-		"SELECT channel_id FROM discord_message_channels WHERE install_id = ?1",
-	).bind(authenticated.installId).first<{channel_id: string}>();
+		`SELECT c.channel_id, l.discord_user_id, l.chat_mention
+		 FROM discord_message_channels c
+		 JOIN discord_links l ON l.install_id = c.install_id
+		 WHERE c.install_id = ?1`,
+	).bind(authenticated.installId).first<{channel_id: string; discord_user_id: string; chat_mention: number}>();
 	if(!channel)
 		return json({ok: true, linked: true, delivered: false, accepted: 0});
 	const fresh = await claimLines(env, authenticated.installId, lines, now);
-	if(fresh.length > 0)
-		ctx.waitUntil(postLines(env, channel.channel_id, fresh));
+	if(fresh.length > 0) {
+		const mentionUserId = channel.chat_mention === 1 ? channel.discord_user_id : "";
+		const outgoing = mentionUserId ? fresh.map(line => applyGameMentions(line, names, mentionUserId)) : fresh;
+		ctx.waitUntil(postLines(env, channel.channel_id, outgoing, mentionUserId));
+	}
 	return json({ok: true, linked: true, delivered: true, accepted: fresh.length});
 }
 
@@ -1131,37 +1210,60 @@ async function readChatSettings(request: Request, env: DiscordEnv): Promise<Resp
 	const discordUserId = new URL(request.url).searchParams.get("discord_user_id") ?? "";
 	if(!SNOWFLAKE_RE.test(discordUserId))
 		return error(400, "invalid_request", "Discord user is invalid.");
-	const row = await env.DB.prepare(
-		"SELECT chat_style, chat_template FROM discord_links WHERE discord_user_id = ?1",
-	).bind(discordUserId).first<{chat_style: string; chat_template: string}>();
+	const row = await chatSettingsForUser(env, discordUserId);
 	if(!row)
 		return json({linked: false, message: DISCORD_TEXT.notLinked});
+	return json(chatSettingsBody(row));
+}
+
+function chatSettingsBody(row: {chat_style: string; chat_template: string; chat_mention: number}): {linked: true; chat_style: string; chat_template: string; chat_mention: boolean} {
 	const style = CHAT_STYLES.has(row.chat_style) ? row.chat_style : "style1";
-	return json({linked: true, chat_style: style, chat_template: row.chat_template || ""});
+	return {linked: true, chat_style: style, chat_template: row.chat_template || "", chat_mention: row.chat_mention === 1};
+}
+
+async function chatSettingsForUser(env: DiscordEnv, discordUserId: string): Promise<{chat_style: string; chat_template: string; chat_mention: number} | null> {
+	return await env.DB.prepare(
+		"SELECT chat_style, chat_template, chat_mention FROM discord_links WHERE discord_user_id = ?1",
+	).bind(discordUserId).first<{chat_style: string; chat_template: string; chat_mention: number}>();
 }
 
 async function saveChatSettings(request: Request, env: DiscordEnv): Promise<Response> {
 	if(!await internalAuthorized(request, env))
 		return error(401, "invalid_bot_secret", "Bot authentication failed.");
-	const body = await readJson<{discord_user_id?: string; chat_style?: string; chat_template?: string}>(request);
-	if(!body || !SNOWFLAKE_RE.test(body.discord_user_id ?? "") || !body.chat_style || !CHAT_STYLES.has(body.chat_style))
+	const body = await readJson<{discord_user_id?: string; chat_style?: string; chat_template?: string; chat_mention?: unknown}>(request);
+	if(!body || !SNOWFLAKE_RE.test(body.discord_user_id ?? ""))
+		return error(400, "invalid_request", "Discord user is invalid.");
+	const wantsStyle = typeof body.chat_style === "string";
+	const wantsMention = typeof body.chat_mention === "boolean";
+	if(!wantsStyle && !wantsMention)
+		return error(400, "invalid_request", "Chat style is invalid.");
+	if(wantsStyle && !CHAT_STYLES.has(body.chat_style ?? ""))
 		return error(400, "invalid_request", "Chat style is invalid.");
 	const template = typeof body.chat_template === "string" ? neutralizeMentions(body.chat_template.replace(/[\r\n]/g, " ").trim()).slice(0, 300) : "";
-	if(body.chat_style === "custom" && !template)
+	if(wantsStyle && body.chat_style === "custom" && !template)
 		return error(400, "invalid_request", "Enter a message style.");
-	const saved = body.chat_style === "custom" ?
-		await env.DB.prepare(
-			"UPDATE discord_links SET chat_style = ?2, chat_template = ?3 WHERE discord_user_id = ?1",
-		).bind(body.discord_user_id, body.chat_style, template).run() :
-		await env.DB.prepare(
-			"UPDATE discord_links SET chat_style = ?2 WHERE discord_user_id = ?1",
-		).bind(body.discord_user_id, body.chat_style).run();
-	if((saved.meta.changes ?? 0) === 0)
+	if(wantsStyle) {
+		const saved = body.chat_style === "custom" ?
+			await env.DB.prepare(
+				"UPDATE discord_links SET chat_style = ?2, chat_template = ?3 WHERE discord_user_id = ?1",
+			).bind(body.discord_user_id, body.chat_style, template).run() :
+			await env.DB.prepare(
+				"UPDATE discord_links SET chat_style = ?2 WHERE discord_user_id = ?1",
+			).bind(body.discord_user_id, body.chat_style).run();
+		if((saved.meta.changes ?? 0) === 0)
+			return json({linked: false, message: DISCORD_TEXT.notLinked});
+	}
+	if(wantsMention) {
+		const saved = await env.DB.prepare(
+			"UPDATE discord_links SET chat_mention = ?2 WHERE discord_user_id = ?1",
+		).bind(body.discord_user_id, body.chat_mention ? 1 : 0).run();
+		if((saved.meta.changes ?? 0) === 0)
+			return json({linked: false, message: DISCORD_TEXT.notLinked});
+	}
+	const row = await chatSettingsForUser(env, body.discord_user_id!);
+	if(!row)
 		return json({linked: false, message: DISCORD_TEXT.notLinked});
-	const row = await env.DB.prepare(
-		"SELECT chat_style, chat_template FROM discord_links WHERE discord_user_id = ?1",
-	).bind(body.discord_user_id).first<{chat_style: string; chat_template: string}>();
-	return json({linked: true, chat_style: row?.chat_style ?? body.chat_style, chat_template: row?.chat_template ?? ""});
+	return json(chatSettingsBody(row));
 }
 
 async function onlineFriends(request: Request, env: DiscordEnv): Promise<Response> {

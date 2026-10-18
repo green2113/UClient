@@ -2461,8 +2461,8 @@ static void RecomputePlayBlocked(const std::vector<NoticeView> &Notices)
 	}
 }
 
-static bool HttpJsonRequest(const wchar_t *pMethod, const std::wstring &Url, const std::string &BodyIn, std::string &BodyOut, int &StatusOut, const std::wstring &ExtraHeaders = L"");
-static bool HttpBinaryRequest(const wchar_t *pMethod, const std::wstring &Url, const void *pData, size_t DataSize, std::vector<unsigned char> &BodyOut, int &StatusOut, const std::wstring &ExtraHeaders = L"", const wchar_t *pContentType = L"application/octet-stream");
+static bool HttpJsonRequest(const wchar_t *pMethod, const std::wstring &Url, const std::string &BodyIn, std::string &BodyOut, int &StatusOut, const std::wstring &ExtraHeaders = L"", std::string *pError = nullptr);
+static bool HttpBinaryRequest(const wchar_t *pMethod, const std::wstring &Url, const void *pData, size_t DataSize, std::vector<unsigned char> &BodyOut, int &StatusOut, const std::wstring &ExtraHeaders = L"", const wchar_t *pContentType = L"application/octet-stream", std::string *pError = nullptr);
 static bool HttpGetToString(const std::wstring &Url, std::string &OutBody);
 
 static void RefreshLauncherNotices()
@@ -3088,12 +3088,58 @@ static void RequestFriendsRefresh()
 
 // ─── HTTP (WinHTTP) ───────────────────────────────────────────────────────────
 
-static bool HttpBinaryRequest(const wchar_t *pMethod, const std::wstring &Url, const void *pData, size_t DataSize, std::vector<unsigned char> &BodyOut, int &StatusOut, const std::wstring &ExtraHeaders, const wchar_t *pContentType)
+static const char *WinHttpErrorText(DWORD Code)
+{
+	switch(Code)
+	{
+	case ERROR_WINHTTP_TIMEOUT: return "The connection timed out.";
+	case ERROR_WINHTTP_NAME_NOT_RESOLVED: return "The account server name could not be resolved.";
+	case ERROR_WINHTTP_CANNOT_CONNECT: return "Could not open a connection to the account server.";
+	case ERROR_WINHTTP_CONNECTION_ERROR: return "The connection to the account server closed.";
+	case ERROR_WINHTTP_SECURE_FAILURE: return "The TLS certificate check failed.";
+	case ERROR_WINHTTP_SECURE_CERT_DATE_INVALID: return "The TLS certificate date is not valid.";
+	case ERROR_WINHTTP_SECURE_CERT_CN_INVALID: return "The TLS certificate name does not match the server.";
+	case ERROR_WINHTTP_SECURE_INVALID_CA: return "The TLS certificate authority is not trusted.";
+	case ERROR_WINHTTP_SECURE_CERT_REV_FAILED: return "The TLS certificate revocation check failed.";
+	case ERROR_WINHTTP_SECURE_CHANNEL_ERROR: return "The TLS handshake failed.";
+	case ERROR_WINHTTP_INVALID_SERVER_RESPONSE: return "The account server sent an invalid response.";
+	case ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED: return "A client certificate was required.";
+	default: return "The account request failed before a response arrived.";
+	}
+}
+
+static void SetWinHttpError(std::string *pError, const char *pStep, DWORD Code, HINTERNET hRequest)
+{
+	if(!pError)
+		return;
+	*pError = std::string("Could not verify this account. ") + WinHttpErrorText(Code);
+	char aDetail[96];
+	sprintf(aDetail, " (WinHTTP %lu at %s", (unsigned long)Code, pStep ? pStep : "");
+	*pError += aDetail;
+	if(Code == ERROR_WINHTTP_SECURE_FAILURE && hRequest)
+	{
+		DWORD Flags = 0;
+		DWORD Size = sizeof(Flags);
+		if(WinHttpQueryOption(hRequest, WINHTTP_OPTION_SECURITY_FLAGS, &Flags, &Size))
+		{
+			sprintf(aDetail, ", flags 0x%08lX", (unsigned long)Flags);
+			*pError += aDetail;
+		}
+	}
+	*pError += ").";
+}
+
+static bool HttpBinaryRequest(const wchar_t *pMethod, const std::wstring &Url, const void *pData, size_t DataSize, std::vector<unsigned char> &BodyOut, int &StatusOut, const std::wstring &ExtraHeaders, const wchar_t *pContentType, std::string *pError)
 {
 	StatusOut = 0;
 	BodyOut.clear();
+	if(pError)
+		pError->clear();
 	if(DataSize > MAXDWORD)
+	{
+		SetWinHttpError(pError, "size", ERROR_INVALID_PARAMETER, nullptr);
 		return false;
+	}
 
 	URL_COMPONENTS Uc = {};
 	Uc.dwStructSize = sizeof(Uc);
@@ -3107,7 +3153,10 @@ static bool HttpBinaryRequest(const wchar_t *pMethod, const std::wstring &Url, c
 	Uc.lpszExtraInfo = aExtra;
 	Uc.dwExtraInfoLength = 2048;
 	if(!WinHttpCrackUrl(Url.c_str(), 0, 0, &Uc))
+	{
+		SetWinHttpError(pError, "url", GetLastError(), nullptr);
 		return false;
+	}
 	std::wstring RequestPath(aPath, Uc.dwUrlPathLength);
 	if(Uc.dwExtraInfoLength)
 		RequestPath.append(aExtra, Uc.dwExtraInfoLength);
@@ -3116,12 +3165,16 @@ static bool HttpBinaryRequest(const wchar_t *pMethod, const std::wstring &Url, c
 	HINTERNET hSession = WinHttpOpen(Ua.c_str(),
 		WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
 	if(!hSession)
+	{
+		SetWinHttpError(pError, "open", GetLastError(), nullptr);
 		return false;
+	}
 	WinHttpSetTimeouts(hSession, 10000, 10000, 30000, 30000);
 
 	HINTERNET hConnect = WinHttpConnect(hSession, aHost, Uc.nPort, 0);
 	if(!hConnect)
 	{
+		SetWinHttpError(pError, "connect", GetLastError(), nullptr);
 		WinHttpCloseHandle(hSession);
 		return false;
 	}
@@ -3131,6 +3184,7 @@ static bool HttpBinaryRequest(const wchar_t *pMethod, const std::wstring &Url, c
 		WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, Flags);
 	if(!hRequest)
 	{
+		SetWinHttpError(pError, "request", GetLastError(), nullptr);
 		WinHttpCloseHandle(hConnect);
 		WinHttpCloseHandle(hSession);
 		return false;
@@ -3143,8 +3197,14 @@ static bool HttpBinaryRequest(const wchar_t *pMethod, const std::wstring &Url, c
 	BOOL Ok = WinHttpSendRequest(hRequest, Headers.c_str(), (DWORD)-1L,
 		DataSize == 0 ? WINHTTP_NO_REQUEST_DATA : const_cast<void *>(pData),
 		(DWORD)DataSize, (DWORD)DataSize, 0);
-	if(Ok)
+	if(!Ok)
+		SetWinHttpError(pError, "send", GetLastError(), hRequest);
+	else
+	{
 		Ok = WinHttpReceiveResponse(hRequest, nullptr);
+		if(!Ok)
+			SetWinHttpError(pError, "receive", GetLastError(), hRequest);
+	}
 
 	if(Ok)
 	{
@@ -3160,6 +3220,7 @@ static bool HttpBinaryRequest(const wchar_t *pMethod, const std::wstring &Url, c
 			const size_t OldSize = BodyOut.size();
 			if(OldSize + Avail > 12 * 1024 * 1024)
 			{
+				SetWinHttpError(pError, "read", ERROR_INVALID_PARAMETER, hRequest);
 				Ok = FALSE;
 				break;
 			}
@@ -3167,6 +3228,7 @@ static bool HttpBinaryRequest(const wchar_t *pMethod, const std::wstring &Url, c
 			DWORD Read = 0;
 			if(!WinHttpReadData(hRequest, BodyOut.data() + OldSize, Avail, &Read))
 			{
+				SetWinHttpError(pError, "read", GetLastError(), hRequest);
 				Ok = FALSE;
 				break;
 			}
@@ -3180,10 +3242,10 @@ static bool HttpBinaryRequest(const wchar_t *pMethod, const std::wstring &Url, c
 	return Ok == TRUE;
 }
 
-static bool HttpJsonRequest(const wchar_t *pMethod, const std::wstring &Url, const std::string &BodyIn, std::string &BodyOut, int &StatusOut, const std::wstring &ExtraHeaders)
+static bool HttpJsonRequest(const wchar_t *pMethod, const std::wstring &Url, const std::string &BodyIn, std::string &BodyOut, int &StatusOut, const std::wstring &ExtraHeaders, std::string *pError)
 {
 	std::vector<unsigned char> Bytes;
-	if(!HttpBinaryRequest(pMethod, Url, BodyIn.data(), BodyIn.size(), Bytes, StatusOut, ExtraHeaders, L"application/json"))
+	if(!HttpBinaryRequest(pMethod, Url, BodyIn.data(), BodyIn.size(), Bytes, StatusOut, ExtraHeaders, L"application/json", pError))
 		return false;
 	BodyOut.assign((const char *)Bytes.data(), Bytes.size());
 	return true;
@@ -3937,9 +3999,10 @@ static DWORD WINAPI AccountThread(LPVOID pData)
 		}
 		Body = "{\"install_id\":\"" + JsonEscapeValue(InstallId) + "\",\"secret\":\"" + JsonEscapeValue(Secret) + "\"," +
 			LauncherVersionJsonField() + "}";
-		if(!HttpJsonRequest(L"POST", Base + L"/account/verify", Body, Response, Status))
+		std::string NetError;
+		if(!HttpJsonRequest(L"POST", Base + L"/account/verify", Body, Response, Status, L"", &NetError))
 		{
-			PublishAccount(EAccountState::Error, {}, "Could not verify this account. Check your connection.");
+			PublishAccount(EAccountState::Error, {}, NetError.empty() ? "Could not verify this account. Check your connection." : NetError);
 			return 0;
 		}
 		if(Status == 423)

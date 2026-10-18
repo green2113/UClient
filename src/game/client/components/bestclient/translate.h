@@ -43,9 +43,9 @@ class CTranslate : public CComponent
 		char m_aTextToTranslate[MAX_LINE_LENGTH] = "";
 		char m_aOutgoingPrefix[MAX_LINE_LENGTH] = "";
 		bool m_RespectIgnoredIncomingLanguages = false;
+		int64_t m_NextTryTime = 0;
 	};
 	std::vector<CTranslateJob> m_vJobs;
-	int64_t m_NextRequestTime = 0;
 	int64_t m_RateLimitUntil = 0;
 
 	static void ConTranslate(IConsole::IResult *pResult, void *pUserData);

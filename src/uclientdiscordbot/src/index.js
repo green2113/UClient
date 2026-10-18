@@ -218,6 +218,26 @@ function chatSettings(style, template) {
 	};
 }
 
+function mentionSettings(enabled) {
+	const on = !!enabled;
+	const container = new ContainerBuilder().setAccentColor(0x5865F2);
+	container.addTextDisplayComponents(new TextDisplayBuilder().setContent("Message settings"));
+	container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+	container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`### Mention when my name is called - ${on ? "ON" : "OFF"}\nWhen someone mentions you in DDNet, you are mentioned on Discord.`));
+	return {
+		components: [
+			container,
+			new ActionRowBuilder().addComponents(
+				new ButtonBuilder()
+					.setCustomId("settings:mention")
+					.setLabel("Mention")
+					.setStyle(on ? ButtonStyle.Success : ButtonStyle.Danger),
+			),
+		],
+		flags: MessageFlags.IsComponentsV2,
+	};
+}
+
 function customMessageModal(template) {
 	const input = new TextInputBuilder()
 		.setCustomId("template")
@@ -296,7 +316,10 @@ const commands = [
 			.setName("setting")
 			.setDescription("Setting to change")
 			.setRequired(true)
-			.addChoices({name: "Chat message", value: "chat_message"})),
+			.addChoices(
+				{name: "Chat message", value: "chat_message"},
+				{name: "Mention", value: "mention"},
+			)),
 	new SlashCommandBuilder()
 		.setName("send")
 		.setDescription("Send a message from your linked UClient account")
@@ -375,6 +398,38 @@ client.on("interactionCreate", async interaction => {
 				await interaction.editReply(panel([saved.body.message || text.notLinked]));
 			else
 				await interaction.editReply(chatSettings(saved.body.chat_style, saved.body.chat_template));
+		}
+		catch(errorValue) {
+			console.error(JSON.stringify({
+				event: "discord_command_failed",
+				message: errorValue instanceof Error ? errorValue.message : String(errorValue),
+			}));
+			if(interaction.deferred || interaction.replied)
+				await interaction.editReply(panel(["Something went wrong. Try again."])).catch(() => {});
+			else
+				await interaction.reply(ephemeral("Something went wrong. Try again.")).catch(() => {});
+		}
+		return;
+	}
+	if(interaction.isButton() && interaction.customId === "settings:mention") {
+		try {
+			await interaction.deferUpdate();
+			const current = await api(`/internal/discord/settings?discord_user_id=${encodeURIComponent(interaction.user.id)}`, {method: "GET"});
+			if(!current.body.linked) {
+				await interaction.editReply(panel([current.body.message || text.notLinked]));
+				return;
+			}
+			const saved = await api("/internal/discord/settings", {
+				method: "POST",
+				body: JSON.stringify({
+					discord_user_id: interaction.user.id,
+					chat_mention: !current.body.chat_mention,
+				}),
+			});
+			if(!saved.body.linked)
+				await interaction.editReply(panel([saved.body.message || text.notLinked]));
+			else
+				await interaction.editReply(mentionSettings(saved.body.chat_mention));
 		}
 		catch(errorValue) {
 			console.error(JSON.stringify({
@@ -528,6 +583,8 @@ client.on("interactionCreate", async interaction => {
 		const result = await api(`/internal/discord/settings?discord_user_id=${encodeURIComponent(interaction.user.id)}`, {method: "GET"});
 		if(!result.body.linked)
 			await interaction.editReply(panel([result.body.message || text.notLinked]));
+		else if(interaction.options.getString("setting", true) === "mention")
+			await interaction.editReply(mentionSettings(result.body.chat_mention));
 		else
 			await interaction.editReply(chatSettings(result.body.chat_style, result.body.chat_template));
 		return;

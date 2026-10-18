@@ -775,7 +775,8 @@ bool CCamera::ZoomAllowed() const
 {
 	return GameClient()->m_Snap.m_SpecInfo.m_Active ||
 	       GameClient()->m_GameInfo.m_AllowZoom ||
-	       Client()->State() == IClient::STATE_DEMOPLAYBACK;
+	       Client()->State() == IClient::STATE_DEMOPLAYBACK ||
+	       GameClient()->m_DrawMode.IsActive();
 }
 
 int CCamera::Deadzone() const

@@ -1,0 +1,1 @@
+ALTER TABLE discord_links ADD COLUMN chat_mention INTEGER NOT NULL DEFAULT 0;

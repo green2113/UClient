@@ -18,6 +18,8 @@
 namespace
 {
 constexpr int64_t SEGMENT_FLUSH_MS = 50;
+constexpr int64_t RESEND_MS = 20;
+constexpr size_t HISTORY_LIMIT = 100;
 constexpr int64_t SUBSCRIBE_RETRY_MS = 1000;
 // Catches up on live segments lost over UDP and recreates the relay canvas after it idled out.
 constexpr int64_t RESYNC_MS = 30000;
@@ -135,8 +137,9 @@ void CUClientDrawMode::SetActive(bool Active)
 	else
 	{
 		if(m_Drawing && m_Tool != ETool::ERASER)
-			FlushSegment(true);
-		FlushErase();
+			FinishPenGesture();
+		else if(m_Drawing)
+			FinishEraserGesture();
 		Ui()->ClosePopupMenus();
 	}
 	m_Active = Active;
@@ -169,6 +172,16 @@ void CUClientDrawMode::ClearStrokes()
 {
 	m_vStrokes.clear();
 	m_StrokeKeys.clear();
+	m_vUndo.clear();
+	m_vRedo.clear();
+	m_vResend.clear();
+	m_vCurrentGesture.clear();
+	m_vErasedGesture.clear();
+	m_vPendingPoints.clear();
+	m_vPendingErase.clear();
+	m_HasSegmentStart = false;
+	m_Drawing = false;
+	m_CurrentGestureId = 0;
 }
 
 void CUClientDrawMode::ResetSync()
@@ -213,6 +226,13 @@ void CUClientDrawMode::OnUpdate()
 
 	if(!m_vPendingErase.empty() && Now - m_LastEraseFlush >= SEGMENT_FLUSH_MS * time_freq() / 1000)
 		FlushErase();
+
+	if(!m_vResend.empty() && m_HasMap && (m_LastResend == 0 || Now - m_LastResend >= RESEND_MS * time_freq() / 1000))
+	{
+		SendSegment(m_vResend.front());
+		m_vResend.erase(m_vResend.begin());
+		m_LastResend = Now;
+	}
 }
 
 void CUClientDrawMode::OnDrawBroadcast(const UClientPresence::CDrawBroadcast &Draw)
@@ -328,6 +348,33 @@ void CUClientDrawMode::AddPoint(vec2 Pos)
 	m_vPendingPoints.push_back(Pos);
 }
 
+void CUClientDrawMode::SendSegment(const SStroke &Stroke)
+{
+	UClientPresence::CDrawSegment Segment;
+	Segment.m_Id = Stroke.m_Id;
+	Segment.m_Tool = Stroke.m_Tool;
+	Segment.m_Color = PackColor(Stroke.m_Color);
+	Segment.m_Width = (uint16_t)std::clamp(round_to_int(Stroke.m_Width), UClientPresence::DRAW_MIN_WIDTH, UClientPresence::DRAW_MAX_WIDTH);
+	Segment.m_vPoints.reserve(Stroke.m_vPoints.size());
+	for(const vec2 &Point : Stroke.m_vPoints)
+		Segment.m_vPoints.push_back({(int32_t)Point.x, (int32_t)Point.y});
+	std::vector<uint8_t> vPayload;
+	UClientPresence::WriteDrawSegment(vPayload, Segment, false);
+	GameClient()->m_ClientIndicator.SendUcDrawPacket(UClientPresence::DRAW_OP_SEGMENTS, m_MapSha256, vPayload);
+}
+
+void CUClientDrawMode::SendEraseIds(const std::vector<uint32_t> &vIds)
+{
+	for(size_t Start = 0; Start < vIds.size(); Start += UClientPresence::DRAW_MAX_ERASE_IDS)
+	{
+		const size_t End = minimum(vIds.size(), Start + (size_t)UClientPresence::DRAW_MAX_ERASE_IDS);
+		const std::vector<uint32_t> vChunk(vIds.begin() + Start, vIds.begin() + End);
+		std::vector<uint8_t> vPayload;
+		UClientPresence::WriteDrawErase(vPayload, vChunk);
+		GameClient()->m_ClientIndicator.SendUcDrawPacket(UClientPresence::DRAW_OP_ERASE, m_MapSha256, vPayload);
+	}
+}
+
 void CUClientDrawMode::FlushSegment(bool Final)
 {
 	std::vector<vec2> vPoints;
@@ -341,22 +388,14 @@ void CUClientDrawMode::FlushSegment(bool Final)
 	SStroke Stroke;
 	Stroke.m_Owner = GameClient()->m_ClientIndicator.ClientInstanceId();
 	Stroke.m_Id = m_NextStrokeId++;
+	Stroke.m_GestureId = m_CurrentGestureId;
 	Stroke.m_Tool = m_Tool == ETool::CRAYON ? UClientPresence::DRAW_TOOL_CRAYON : UClientPresence::DRAW_TOOL_PEN;
 	Stroke.m_Color = s_aPalette[m_ColorIndex];
 	Stroke.m_Width = m_Width;
 	Stroke.m_vPoints = vPoints;
 
-	UClientPresence::CDrawSegment Segment;
-	Segment.m_Id = Stroke.m_Id;
-	Segment.m_Tool = Stroke.m_Tool;
-	Segment.m_Color = PackColor(Stroke.m_Color);
-	Segment.m_Width = (uint16_t)m_Width;
-	for(const vec2 &Point : vPoints)
-		Segment.m_vPoints.push_back({(int32_t)Point.x, (int32_t)Point.y});
-	std::vector<uint8_t> vPayload;
-	UClientPresence::WriteDrawSegment(vPayload, Segment, false);
-	GameClient()->m_ClientIndicator.SendUcDrawPacket(UClientPresence::DRAW_OP_SEGMENTS, m_MapSha256, vPayload);
-
+	SendSegment(Stroke);
+	m_vCurrentGesture.push_back(Stroke);
 	AddStroke(std::move(Stroke));
 	m_HasSegmentStart = true;
 	m_SegmentStart = vPoints.back();
@@ -368,7 +407,8 @@ void CUClientDrawMode::EraseAt(vec2 Pos)
 {
 	const CUuid &Own = GameClient()->m_ClientIndicator.ClientInstanceId();
 	const float Radius = (float)m_Width;
-	std::vector<uint32_t> vIds;
+	std::vector<uint32_t> vGestureIds;
+	std::vector<uint32_t> vLoneIds;
 	for(const SStroke &Stroke : m_vStrokes)
 	{
 		if(!(Stroke.m_Owner == Own))
@@ -379,11 +419,37 @@ void CUClientDrawMode::EraseAt(vec2 Pos)
 		bool Hit = Stroke.m_vPoints.size() == 1 && distance(Pos, Stroke.m_vPoints[0]) <= HitDistance;
 		for(size_t i = 1; i < Stroke.m_vPoints.size() && !Hit; i++)
 			Hit = DistanceToSegment(Pos, Stroke.m_vPoints[i - 1], Stroke.m_vPoints[i]) <= HitDistance;
-		if(Hit)
-			vIds.push_back(Stroke.m_Id);
+		if(!Hit)
+			continue;
+		if(Stroke.m_GestureId != 0)
+		{
+			if(std::find(vGestureIds.begin(), vGestureIds.end(), Stroke.m_GestureId) == vGestureIds.end())
+				vGestureIds.push_back(Stroke.m_GestureId);
+		}
+		else
+		{
+			vLoneIds.push_back(Stroke.m_Id);
+		}
+	}
+	if(vGestureIds.empty() && vLoneIds.empty())
+		return;
+
+	std::vector<SStroke> vRemoved;
+	std::vector<uint32_t> vIds;
+	for(const SStroke &Stroke : m_vStrokes)
+	{
+		if(!(Stroke.m_Owner == Own))
+			continue;
+		const bool Take = (Stroke.m_GestureId != 0 && std::find(vGestureIds.begin(), vGestureIds.end(), Stroke.m_GestureId) != vGestureIds.end()) ||
+				  std::find(vLoneIds.begin(), vLoneIds.end(), Stroke.m_Id) != vLoneIds.end();
+		if(!Take)
+			continue;
+		vRemoved.push_back(Stroke);
+		vIds.push_back(Stroke.m_Id);
 	}
 	if(vIds.empty())
 		return;
+	m_vErasedGesture.insert(m_vErasedGesture.end(), vRemoved.begin(), vRemoved.end());
 	RemoveStrokes(Own, &vIds);
 	m_vPendingErase.insert(m_vPendingErase.end(), vIds.begin(), vIds.end());
 	if(m_vPendingErase.size() >= (size_t)UClientPresence::DRAW_MAX_ERASE_IDS)
@@ -404,10 +470,139 @@ void CUClientDrawMode::FlushErase()
 	m_vPendingErase.clear();
 }
 
+void CUClientDrawMode::PushHistory(EHistoryKind Kind, std::vector<SStroke> vStrokes)
+{
+	if(vStrokes.empty())
+		return;
+	m_vRedo.clear();
+	m_vUndo.push_back({Kind, std::move(vStrokes)});
+	if(m_vUndo.size() > HISTORY_LIMIT)
+		m_vUndo.erase(m_vUndo.begin());
+}
+
+void CUClientDrawMode::DropStrokes(const std::vector<SStroke> &vStrokes)
+{
+	if(vStrokes.empty())
+		return;
+	const CUuid Owner = vStrokes.front().m_Owner;
+	std::vector<uint32_t> vIds;
+	vIds.reserve(vStrokes.size());
+	for(const SStroke &Stroke : vStrokes)
+		vIds.push_back(Stroke.m_Id);
+	m_vResend.erase(std::remove_if(m_vResend.begin(), m_vResend.end(), [&](const SStroke &Stroke) {
+		return Stroke.m_Owner == Owner && std::find(vIds.begin(), vIds.end(), Stroke.m_Id) != vIds.end();
+	}),
+		m_vResend.end());
+	RemoveStrokes(Owner, &vIds);
+	SendEraseIds(vIds);
+}
+
+void CUClientDrawMode::RestoreStrokes(const std::vector<SStroke> &vStrokes)
+{
+	for(const SStroke &Stroke : vStrokes)
+	{
+		if(m_StrokeKeys.find(std::make_pair(Stroke.m_Owner, Stroke.m_Id)) != m_StrokeKeys.end())
+			continue;
+		m_vResend.push_back(Stroke);
+		AddStroke(SStroke(Stroke));
+	}
+}
+
+void CUClientDrawMode::FinishPenGesture()
+{
+	FlushSegment(true);
+	if(!m_vCurrentGesture.empty())
+		PushHistory(EHistoryKind::ADD, std::move(m_vCurrentGesture));
+	m_vCurrentGesture.clear();
+	m_vPendingPoints.clear();
+	m_HasSegmentStart = false;
+	m_Drawing = false;
+	m_CurrentGestureId = 0;
+}
+
+void CUClientDrawMode::FinishEraserGesture()
+{
+	FlushErase();
+	if(!m_vErasedGesture.empty())
+		PushHistory(EHistoryKind::REMOVE, std::move(m_vErasedGesture));
+	m_vErasedGesture.clear();
+	m_Drawing = false;
+}
+
+void CUClientDrawMode::CancelPenGesture()
+{
+	m_vPendingPoints.clear();
+	m_HasSegmentStart = false;
+	m_Drawing = false;
+	m_CurrentGestureId = 0;
+	if(!m_vCurrentGesture.empty())
+		DropStrokes(m_vCurrentGesture);
+	m_vCurrentGesture.clear();
+}
+
+void CUClientDrawMode::Undo()
+{
+	if(m_Drawing && m_Tool != ETool::ERASER)
+	{
+		CancelPenGesture();
+		return;
+	}
+	if(m_Drawing)
+	{
+		m_vPendingErase.clear();
+		RestoreStrokes(m_vErasedGesture);
+		m_vErasedGesture.clear();
+		m_Drawing = false;
+		return;
+	}
+	if(m_vUndo.empty())
+		return;
+	SHistoryEntry Entry = std::move(m_vUndo.back());
+	m_vUndo.pop_back();
+	if(Entry.m_Kind == EHistoryKind::ADD)
+		DropStrokes(Entry.m_vStrokes);
+	else
+		RestoreStrokes(Entry.m_vStrokes);
+	m_vRedo.push_back(std::move(Entry));
+}
+
+void CUClientDrawMode::Redo()
+{
+	if(m_Drawing || m_vRedo.empty())
+		return;
+	SHistoryEntry Entry = std::move(m_vRedo.back());
+	m_vRedo.pop_back();
+	if(Entry.m_Kind == EHistoryKind::ADD)
+		RestoreStrokes(Entry.m_vStrokes);
+	else
+		DropStrokes(Entry.m_vStrokes);
+	m_vUndo.push_back(std::move(Entry));
+}
+
 void CUClientDrawMode::ClearOwnStrokes()
 {
-	RemoveStrokes(GameClient()->m_ClientIndicator.ClientInstanceId(), nullptr);
+	m_vPendingPoints.clear();
+	m_HasSegmentStart = false;
+	m_Drawing = false;
+	m_CurrentGestureId = 0;
+	m_vCurrentGesture.clear();
+	m_vErasedGesture.clear();
 	m_vPendingErase.clear();
+
+	const CUuid Own = GameClient()->m_ClientIndicator.ClientInstanceId();
+	std::vector<SStroke> vOwn;
+	for(const SStroke &Stroke : m_vStrokes)
+	{
+		if(Stroke.m_Owner == Own)
+			vOwn.push_back(Stroke);
+	}
+	m_vResend.erase(std::remove_if(m_vResend.begin(), m_vResend.end(), [&](const SStroke &Stroke) {
+		return Stroke.m_Owner == Own;
+	}),
+		m_vResend.end());
+	if(!vOwn.empty())
+		PushHistory(EHistoryKind::REMOVE, std::move(vOwn));
+	RemoveStrokes(Own, nullptr);
 	GameClient()->m_ClientIndicator.SendUcDrawPacket(UClientPresence::DRAW_OP_CLEAR_OWNER, m_MapSha256, {});
 }
 
@@ -446,15 +641,24 @@ void CUClientDrawMode::UpdateDrawing()
 		m_HasSegmentStart = false;
 		m_vPendingPoints.clear();
 		m_LastSegmentFlush = time_get();
+		if(m_Tool == ETool::ERASER)
+			m_vErasedGesture.clear();
+		else
+		{
+			m_CurrentGestureId = m_NextGestureId++;
+			m_vCurrentGesture.clear();
+		}
 	}
 
 	if(m_Tool == ETool::ERASER)
 	{
-		EraseAt(World);
-		if(!Left)
+		if(!m_vCurrentGesture.empty() || !m_vPendingPoints.empty())
+			FinishPenGesture();
+		else
 		{
-			m_Drawing = false;
-			FlushErase();
+			EraseAt(World);
+			if(!Left)
+				FinishEraserGesture();
 		}
 		return;
 	}
@@ -462,10 +666,7 @@ void CUClientDrawMode::UpdateDrawing()
 	AddPoint(World);
 	if(!Left)
 	{
-		FlushSegment(true);
-		m_Drawing = false;
-		m_HasSegmentStart = false;
-		m_vPendingPoints.clear();
+		FinishPenGesture();
 	}
 	else if((int)m_vPendingPoints.size() >= UClientPresence::DRAW_MAX_POINTS_PER_SEGMENT - 1 ||
 		time_get() - m_LastSegmentFlush >= SEGMENT_FLUSH_MS * time_freq() / 1000)
@@ -531,7 +732,7 @@ void CUClientDrawMode::RenderStroke(const SStroke &Stroke, std::vector<IGraphics
 
 void CUClientDrawMode::OnRender()
 {
-	if(Client()->State() != IClient::STATE_ONLINE || !g_Config.m_UcDraw || m_vStrokes.empty())
+	if(Client()->State() != IClient::STATE_ONLINE || !g_Config.m_UcDraw || (m_vStrokes.empty() && m_vPendingPoints.empty()))
 		return;
 
 	float aPoints[4];
@@ -539,6 +740,8 @@ void CUClientDrawMode::OnRender()
 	float PrevX0, PrevY0, PrevX1, PrevY1;
 	Graphics()->GetScreen(&PrevX0, &PrevY0, &PrevX1, &PrevY1);
 	Graphics()->MapScreen(aPoints[0], aPoints[1], aPoints[2], aPoints[3]);
+	Graphics()->ClipDisable();
+	Graphics()->BlendNormal();
 	Graphics()->TextureClear();
 
 	std::vector<IGraphics::CFreeformItem> vItems;
@@ -547,6 +750,17 @@ void CUClientDrawMode::OnRender()
 		if(Stroke.m_Max.x < aPoints[0] || Stroke.m_Min.x > aPoints[2] || Stroke.m_Max.y < aPoints[1] || Stroke.m_Min.y > aPoints[3])
 			continue;
 		RenderStroke(Stroke, vItems);
+	}
+	if(m_Drawing && m_Tool != ETool::ERASER && !m_vPendingPoints.empty())
+	{
+		SStroke Preview;
+		Preview.m_Tool = m_Tool == ETool::CRAYON ? UClientPresence::DRAW_TOOL_CRAYON : UClientPresence::DRAW_TOOL_PEN;
+		Preview.m_Color = s_aPalette[m_ColorIndex];
+		Preview.m_Width = (float)m_Width;
+		if(m_HasSegmentStart)
+			Preview.m_vPoints.push_back(m_SegmentStart);
+		Preview.m_vPoints.insert(Preview.m_vPoints.end(), m_vPendingPoints.begin(), m_vPendingPoints.end());
+		RenderStroke(Preview, vItems);
 	}
 
 	Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
@@ -568,6 +782,14 @@ bool CUClientDrawMode::OnInput(const IInput::CEvent &Event)
 		return false;
 
 	Ui()->OnInput(Event);
+	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_Z && Input()->ModifierIsPressed())
+	{
+		if(Input()->ShiftIsPressed())
+			Redo();
+		else
+			Undo();
+		return true;
+	}
 	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_ESCAPE)
 	{
 		if(Ui()->IsPopupOpen())
@@ -577,8 +799,17 @@ bool CUClientDrawMode::OnInput(const IInput::CEvent &Event)
 		return true;
 	}
 	// Keyboard keys fall through so chat, binds and this mode's own toggle key keep working.
-	return Event.m_Key == KEY_MOUSE_1 || Event.m_Key == KEY_MOUSE_2 || Event.m_Key == KEY_MOUSE_3 ||
-	       Event.m_Key == KEY_MOUSE_WHEEL_UP || Event.m_Key == KEY_MOUSE_WHEEL_DOWN;
+	// The screen-size bind is also kept when it is on the wheel, which this mode otherwise takes.
+	const bool MouseButton = Event.m_Key == KEY_MOUSE_1 || Event.m_Key == KEY_MOUSE_2 || Event.m_Key == KEY_MOUSE_3 ||
+				 Event.m_Key == KEY_MOUSE_WHEEL_UP || Event.m_Key == KEY_MOUSE_WHEEL_DOWN;
+	if(!MouseButton)
+		return false;
+	const int Modifier = CBinds::GetModifierMask(Input()) & ~CBinds::GetModifierMaskOfKey(Event.m_Key);
+	const char *pBind = GameClient()->m_Binds.Get(Event.m_Key, Modifier);
+	if(pBind && (str_startswith(pBind, "zoom+") || str_startswith(pBind, "zoom-") ||
+			    (str_startswith(pBind, "zoom") && (pBind[4] == '\0' || pBind[4] == ' '))))
+		return false;
+	return true;
 }
 
 CUi::EPopupMenuFunctionResult CUClientDrawMode::PopupSettings(void *pContext, CUIRect View, bool Active)
@@ -605,7 +836,7 @@ void CUClientDrawMode::RenderToolbar()
 
 	const float Margin = 10.0f;
 	const float BottomMargin = GameClient()->m_TimeoutReconnect.ShouldShowHud() ? 30.0f : Margin;
-	CUIRect Toolbar = {Margin, Screen.h - BottomMargin - 62.0f, 400.0f, 62.0f};
+	CUIRect Toolbar = {Margin, Screen.h - BottomMargin - 62.0f, 470.0f, 62.0f};
 	Toolbar.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.5f), IGraphics::CORNER_ALL, 6.0f);
 	m_PointerOverUi = Ui()->MouseInside(&Toolbar) || Ui()->IsPopupOpen();
 
@@ -625,12 +856,20 @@ void CUClientDrawMode::RenderToolbar()
 	ToolButton(&m_CrayonButton, Localize("Crayon"), ETool::CRAYON);
 	ToolButton(&m_EraserButton, Localize("Eraser"), ETool::ERASER);
 
-	CUIRect ExitButton, SettingsButton, ClearButton;
+	CUIRect ExitButton, SettingsButton, ClearButton, RedoButton, UndoButton;
 	ToolRow.VSplitRight(ToolRow.h, &ToolRow, &ExitButton);
 	ToolRow.VSplitRight(3.0f, &ToolRow, nullptr);
 	ToolRow.VSplitRight(ToolRow.h, &ToolRow, &SettingsButton);
 	ToolRow.VSplitRight(3.0f, &ToolRow, nullptr);
 	ToolRow.VSplitRight(ToolRow.h, &ToolRow, &ClearButton);
+	ToolRow.VSplitRight(3.0f, &ToolRow, nullptr);
+	ToolRow.VSplitRight(ToolRow.h, &ToolRow, &RedoButton);
+	ToolRow.VSplitRight(3.0f, &ToolRow, nullptr);
+	ToolRow.VSplitRight(ToolRow.h, &ToolRow, &UndoButton);
+	if(Ui()->DoButton_FontIcon(&m_UndoButton, FontIcon::CHEVRON_LEFT, 0, &UndoButton, BUTTONFLAG_LEFT))
+		Undo();
+	if(Ui()->DoButton_FontIcon(&m_RedoButton, FontIcon::CHEVRON_RIGHT, 0, &RedoButton, BUTTONFLAG_LEFT))
+		Redo();
 	if(Ui()->DoButton_FontIcon(&m_ClearButton, FontIcon::TRASH, 0, &ClearButton, BUTTONFLAG_LEFT))
 	{
 		m_ClearConfirm.Reset();

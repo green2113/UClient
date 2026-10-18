@@ -1,7 +1,7 @@
 import {applyD1Migrations, env, SELF} from "cloudflare:test";
 import {beforeAll, describe, expect, it} from "vitest";
 
-import {DISCORD_TEXT, discordChatPayload, formatDiscordChat, linkedMessage, neutralizeMentions} from "../src/discord";
+import {DISCORD_TEXT, applyGameMentions, discordChatPayload, formatDiscordChat, linkedMessage, neutralizeMentions} from "../src/discord";
 
 interface TestEnv extends Cloudflare.Env {
 	ACCOUNT_PEPPER: string;
@@ -503,6 +503,22 @@ describe("discord account bridge", () => {
 		const loadedStyle = await responseJson<{chat_style: string; chat_template: string}>(
 			await SELF.fetch(botRequest(`/internal/discord/settings?discord_user_id=${discordUserId}`, undefined, "GET")),
 		);
-		expect(loadedStyle).toMatchObject({chat_style: "custom", chat_template: "Hello [message] [username]"});
+		expect(loadedStyle).toMatchObject({chat_style: "custom", chat_template: "Hello [message] [username]", chat_mention: false});
+		const enabled = await SELF.fetch(botRequest("/internal/discord/settings", {
+			discord_user_id: discordUserId,
+			chat_mention: true,
+		}));
+		expect(await responseJson<{chat_mention: boolean}>(enabled)).toMatchObject({chat_mention: true});
+	});
+
+	it("turns a ddnet name mention into a discord mention", () => {
+		const userId = "123456789012345678";
+		const line = "2026-10-10 22:39:00 I chat/all: nameless tee: 언더: 님";
+		expect(applyGameMentions(line, ["언더"], userId)).toBe("2026-10-10 22:39:00 I chat/all: nameless tee: <@123456789012345678>: 님");
+		expect(applyGameMentions("2026-10-10 22:39:00 I chat/all: 언더: hello", ["언더"], userId)).toBe("2026-10-10 22:39:00 I chat/all: 언더: hello");
+		expect(applyGameMentions("2026-10-10 22:39:00 I chat/all: tee: 언더바", ["언더"], userId)).toBe("2026-10-10 22:39:00 I chat/all: tee: 언더바");
+		const payload = discordChatPayload(applyGameMentions(line, ["언더"], userId), userId);
+		expect(payload.allowed_mentions.users).toEqual([userId]);
+		expect(discordChatPayload("say @here").allowed_mentions.users).toBeUndefined();
 	});
 });
