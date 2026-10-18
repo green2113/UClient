@@ -590,7 +590,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 
 		// Misc
 		{
-			const float ContentHeight = LineSize + MarginSmall + LineSize * 2.0f;
+			const float ContentHeight = LineSize + MarginSmall + LineSize * 3.0f;
 			CUIRect Content, Label, Button;
 			BeginBlock(Column, ContentHeight, Content);
 			Content.HSplitTop(LineSize, &Label, &Content);
@@ -598,6 +598,7 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			Content.HSplitTop(MarginSmall, nullptr, &Content);
 
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcShowSharedCursors, Localize("Show shared cursors"), &g_Config.m_UcShowSharedCursors, &Content, LineSize);
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_UcDraw, Localize("Drawing"), &g_Config.m_UcDraw, &Content, LineSize);
 
 			Content.HSplitTop(LineSize, &Button, &Content);
 			CUIRect PlayerSearchLabel, PlayerSearchDropDown;

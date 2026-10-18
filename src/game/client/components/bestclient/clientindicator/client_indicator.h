@@ -7,6 +7,7 @@
 #include "browser_cache.h"
 #include "presence_cache.h"
 
+#include <base/hash.h>
 #include <base/net.h>
 #include <base/vmath.h>
 
@@ -92,6 +93,11 @@ public:
 	// Draws the "Sharing cursor" indicator. Called from the HUD after the timer/music player so
 	// it is never hidden behind them (rendered on top, at the bottom-center of the screen).
 	void RenderLiveCursorSharingIndicator();
+
+	// Shared drawing: sends one draw op whose payload is already encoded. False when UC presence can't send.
+	bool SendUcDrawPacket(uint8_t Op, const SHA256_DIGEST &MapSha256, const std::vector<uint8_t> &vPayload);
+	// Owner id of the strokes this client draws. The relay attaches it to every stroke.
+	const CUuid &ClientInstanceId() const { return m_ClientInstanceId; }
 
 private:
 	// Live cursor sharing: while +live_cursor is held, the local aim cursor world position is

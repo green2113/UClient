@@ -124,6 +124,7 @@ void CMenusSettingsControls::OnInterfacesInit(CGameClient *pClient)
 		{EBindOptionGroup::MISCELLANEOUS, Localizable("Show entities"), "toggle cl_overlay_entities 0 100"},
 		{EBindOptionGroup::MISCELLANEOUS, Localizable("Show HUD"), "toggle cl_showhud 0 1"},
 		{EBindOptionGroup::MISCELLANEOUS, Localizable("Share cursor (UClient)"), "+live_cursor"},
+		{EBindOptionGroup::MISCELLANEOUS, Localizable("Drawing mode (UClient)"), "draw_mode"},
 	};
 	m_NumPredefinedBindOptions = m_vBindOptions.size();
 

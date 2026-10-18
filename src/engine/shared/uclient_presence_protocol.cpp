@@ -581,6 +581,143 @@ bool ReadRoomListChanged(const uint8_t *pData, int DataSize, CRoomListChanged &O
 	return Offset == DataSize;
 }
 
+void WriteDrawClientHeader(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pServerAddress, int SenderClientId, const SHA256_DIGEST &MapSha256, uint8_t Op)
+{
+	WriteHeader(vOut, PACKET_DRAW);
+	WriteString(vOut, pPlayerId);
+	WriteUuid(vOut, SessionId);
+	WriteUuid(vOut, Nonce);
+	WriteU64(vOut, Timestamp);
+	WriteString(vOut, pServerAddress);
+	WriteS16(vOut, (int16_t)SenderClientId);
+	WriteRaw(vOut, MapSha256.data, sizeof(MapSha256.data));
+	WriteU8(vOut, Op);
+}
+
+void WriteDrawSubscribe(std::vector<uint8_t> &vOut, uint64_t AfterSeq)
+{
+	WriteU64(vOut, AfterSeq);
+}
+
+void WriteDrawSegment(std::vector<uint8_t> &vOut, const CDrawSegment &Segment, bool WithOwner)
+{
+	if(WithOwner)
+		WriteUuid(vOut, Segment.m_Owner);
+	WriteI32(vOut, (int32_t)Segment.m_Id);
+	WriteU8(vOut, Segment.m_Tool);
+	WriteI32(vOut, (int32_t)Segment.m_Color);
+	WriteU16(vOut, Segment.m_Width);
+	WriteU16(vOut, (uint16_t)Segment.m_vPoints.size());
+	for(const CDrawPoint &Point : Segment.m_vPoints)
+	{
+		WriteI32(vOut, Point.m_X);
+		WriteI32(vOut, Point.m_Y);
+	}
+}
+
+void WriteDrawErase(std::vector<uint8_t> &vOut, const std::vector<uint32_t> &vIds)
+{
+	WriteU16(vOut, (uint16_t)vIds.size());
+	for(const uint32_t Id : vIds)
+		WriteI32(vOut, (int32_t)Id);
+}
+
+static bool ReadDrawSegment(const uint8_t *pData, int DataSize, int &Offset, CDrawSegment &Out)
+{
+	int32_t Id = 0;
+	int32_t Color = 0;
+	uint16_t Count = 0;
+	if(!ReadUuid(pData, DataSize, Offset, Out.m_Owner) ||
+		!ReadI32(pData, DataSize, Offset, Id) ||
+		!ReadU8(pData, DataSize, Offset, Out.m_Tool) ||
+		!ReadI32(pData, DataSize, Offset, Color) ||
+		!ReadU16(pData, DataSize, Offset, Out.m_Width) ||
+		!ReadU16(pData, DataSize, Offset, Count) ||
+		Count == 0 || Count > DRAW_MAX_POINTS_PER_SEGMENT)
+	{
+		return false;
+	}
+	Out.m_Id = (uint32_t)Id;
+	Out.m_Color = (uint32_t)Color;
+	Out.m_vPoints.resize(Count);
+	for(CDrawPoint &Point : Out.m_vPoints)
+	{
+		if(!ReadI32(pData, DataSize, Offset, Point.m_X) || !ReadI32(pData, DataSize, Offset, Point.m_Y))
+			return false;
+	}
+	return true;
+}
+
+bool ReadDrawBroadcast(const uint8_t *pData, int DataSize, CDrawBroadcast &Out)
+{
+	int Offset = 0;
+	EPacketType Type;
+	if(!ReadHeader(pData, DataSize, Type, Offset, nullptr) || Type != PACKET_DRAW_BROADCAST ||
+		!ReadString(pData, DataSize, Offset, Out.m_ServerAddress) ||
+		Offset + (int)sizeof(Out.m_MapSha256.data) > DataSize)
+	{
+		return false;
+	}
+	mem_copy(Out.m_MapSha256.data, pData + Offset, sizeof(Out.m_MapSha256.data));
+	Offset += sizeof(Out.m_MapSha256.data);
+	if(!ReadU8(pData, DataSize, Offset, Out.m_Op))
+		return false;
+
+	Out.m_vIds.clear();
+	Out.m_vSegments.clear();
+	Out.m_LastSeq = 0;
+	Out.m_Done = false;
+	switch(Out.m_Op)
+	{
+	case DRAW_OP_SNAPSHOT:
+	{
+		uint8_t Done = 0;
+		if(!ReadU64(pData, DataSize, Offset, Out.m_LastSeq) || !ReadU8(pData, DataSize, Offset, Done))
+			return false;
+		Out.m_Done = Done != 0;
+	}
+		[[fallthrough]];
+	case DRAW_OP_SEGMENTS:
+	{
+		uint8_t Count = 0;
+		if(!ReadU8(pData, DataSize, Offset, Count))
+			return false;
+		Out.m_vSegments.resize(Count);
+		for(CDrawSegment &Segment : Out.m_vSegments)
+		{
+			if(!ReadDrawSegment(pData, DataSize, Offset, Segment))
+				return false;
+		}
+		break;
+	}
+	case DRAW_OP_ERASE:
+	{
+		uint16_t Count = 0;
+		if(!ReadUuid(pData, DataSize, Offset, Out.m_Owner) || !ReadU16(pData, DataSize, Offset, Count) || Count > DRAW_MAX_ERASE_IDS)
+			return false;
+		Out.m_vIds.resize(Count);
+		for(uint32_t &Id : Out.m_vIds)
+		{
+			int32_t Value = 0;
+			if(!ReadI32(pData, DataSize, Offset, Value))
+				return false;
+			Id = (uint32_t)Value;
+		}
+		break;
+	}
+	case DRAW_OP_CLEAR_OWNER:
+		if(!ReadUuid(pData, DataSize, Offset, Out.m_Owner))
+			return false;
+		break;
+	case DRAW_OP_RESET:
+		break;
+	default:
+		return false;
+	}
+	return Offset == DataSize;
+}
+
 bool ReadClientPresencePacket(const uint8_t *pData, int DataSize, CClientPresencePacket &Out)
 {
 	int Offset = 0;

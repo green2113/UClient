@@ -447,6 +447,7 @@ void CGameClient::OnConsoleInit()
 					      &m_Censor,
 					      &m_Background, // render instead of m_MapLayersBackground when g_Config.m_ClOverlayEntities == 100
 					      &m_MapLayersBackground, // first to render
+					      &m_DrawMode, // UClient: shared drawings, above background tiles and behind tees
 					      &m_BgDraw, // TClient
 					      &m_Particles.m_RenderTrail,
 					      &m_Particles.m_RenderTrailExtra,
@@ -500,6 +501,7 @@ void CGameClient::OnConsoleInit()
 					      &m_WarList, // TClient
 					      &m_StatusBar, // TClient
 					      &m_InfoMessages,
+					      &m_DrawMode.m_Toolbar, // UClient: below chat
 					      &m_Chat,
 					      &m_Broadcast,
 					      &m_ImportantAlert,
@@ -527,6 +529,7 @@ void CGameClient::OnConsoleInit()
 						  &m_Chat, // chat has higher prio, due to that you can quit it by pressing esc
 						  &m_Scoreboard,
 						  &m_Motd, // for pressing esc to remove it
+						  &m_DrawMode, // UClient: mouse goes to the canvas while drawing
 						  &m_SpecTelePreview, // before spectator: consume wheel/click on tele preview
 						  &m_Spectator,
 						  &m_BindWheel, // TClient
@@ -1137,6 +1140,8 @@ void CGameClient::OnReset()
 	// m_MapBugs and m_aTuningList are reset in LoadMapSettings
 
 	m_LastShowDistanceZoom = 0.0f;
+	m_LastShowDistanceX = -1;
+	m_LastShowDistanceY = -1;
 	m_LastZoom = 0.0f;
 	m_LastScreenAspect = 0.0f;
 	m_LastDeadzone = 0.0f;
@@ -1278,6 +1283,22 @@ void CGameClient::OnRender()
 	const bool UseGameNoHudAspect = IsActiveGameplay && g_Config.m_BcCustomAspectRatioApplyMode == 2;
 	bool HudAspectDisabled = false;
 
+	// UClient drawing mode keeps only chat of the HUD, and can hide every tee with its weapons and effects.
+	std::vector<const CComponent *> vpDrawModeHidden;
+	if(m_DrawMode.IsActive())
+	{
+		vpDrawModeHidden = {&m_Hud, &m_InfoMessages, &m_Broadcast, &m_Scoreboard, &m_Statboard, &m_NamePlates,
+			&m_FreezeBars, &m_StatusBar, &m_MusicPlayer, &m_Spectator, &m_SpecTelePreview, &m_PlayerIndicator,
+			&m_Motd, &m_HookCombo, &m_SelfTimeCp};
+		if(m_DrawMode.HideTees())
+		{
+			vpDrawModeHidden.insert(vpDrawModeHidden.end(), {&m_Players, &m_Ghost, &m_Particles.m_RenderTrail,
+										&m_Particles.m_RenderTrailExtra, &m_Particles.m_RenderExplosions,
+										&m_Particles.m_RenderExtra, &m_Particles.m_RenderGeneral, &m_Trails,
+										&m_3DParticles, &m_DamageInd, &m_ChatBubbles, &m_GifBubbles, &m_Pet});
+		}
+	}
+
 	// render all systems
 	for(auto &pComponent : m_vpAll)
 	{
@@ -1286,6 +1307,8 @@ void CGameClient::OnRender()
 			Graphics()->SetScreenAspectOverrideEnabled(false);
 			HudAspectDisabled = true;
 		}
+		if(!vpDrawModeHidden.empty() && std::find(vpDrawModeHidden.begin(), vpDrawModeHidden.end(), pComponent) != vpDrawModeHidden.end())
+			continue;
 		pComponent->OnRender();
 	}
 
@@ -3267,13 +3290,24 @@ void CGameClient::OnNewSnapshot()
 	}
 
 	// send show distance
-	if(ShowDistanceZoom != m_LastShowDistanceZoom || Graphics()->ScreenAspect() != m_LastScreenAspect)
+	// The server clips other tees around the character, not the local camera. While drawing, grow
+	// the box so the panned view stays inside it. Steps of 256 keep a drag from sending every frame.
+	float ShowX, ShowY;
+	Graphics()->CalcScreenParams(Graphics()->ScreenAspect(), ShowDistanceZoom, &ShowX, &ShowY);
+	if(m_DrawMode.IsActive())
+	{
+		const vec2 Offset = m_DrawMode.CameraCenter() - m_LocalCharacterPos;
+		ShowX += absolute(Offset.x);
+		ShowY += absolute(Offset.y);
+	}
+	const int ShowDistanceX = m_DrawMode.IsActive() ? (round_to_int(ShowX) + 255) & ~255 : round_to_int(ShowX);
+	const int ShowDistanceY = m_DrawMode.IsActive() ? (round_to_int(ShowY) + 255) & ~255 : round_to_int(ShowY);
+	if(ShowDistanceZoom != m_LastShowDistanceZoom || Graphics()->ScreenAspect() != m_LastScreenAspect ||
+		ShowDistanceX != m_LastShowDistanceX || ShowDistanceY != m_LastShowDistanceY)
 	{
 		CNetMsg_Cl_ShowDistance Msg;
-		float x, y;
-		Graphics()->CalcScreenParams(Graphics()->ScreenAspect(), ShowDistanceZoom, &x, &y);
-		Msg.m_X = x;
-		Msg.m_Y = y;
+		Msg.m_X = ShowDistanceX;
+		Msg.m_Y = ShowDistanceY;
 		Client()->ChecksumData()->m_Zoom = ShowDistanceZoom;
 		CMsgPacker Packer(&Msg);
 		Msg.Pack(&Packer);
@@ -3281,6 +3315,8 @@ void CGameClient::OnNewSnapshot()
 		Client()->SendMsg(IClient::CONN_MAIN, &Packer, MSGFLAG_VITAL);
 		if(Client()->DummyConnected() && m_LastDummyConnected)
 			Client()->SendMsg(IClient::CONN_DUMMY, &Packer, MSGFLAG_VITAL);
+		m_LastShowDistanceX = ShowDistanceX;
+		m_LastShowDistanceY = ShowDistanceY;
 	}
 
 	// send camera info

@@ -251,6 +251,10 @@ namespace
 			return "uc_chat_reaction_broadcast";
 		case UClientPresence::PACKET_ROOM_LIST_CHANGED:
 			return "uc_room_list_changed";
+		case UClientPresence::PACKET_DRAW:
+			return "uc_draw";
+		case UClientPresence::PACKET_DRAW_BROADCAST:
+			return "uc_draw_broadcast";
 		default:
 			return "unknown";
 		}
@@ -1707,6 +1711,31 @@ void CClientIndicator::SendLiveCursor(bool Active, vec2 WorldPos)
 	net_udp_send(m_Socket, &m_UcServerAddr, vPacket.data(), (int)vPacket.size());
 }
 
+bool CClientIndicator::SendUcDrawPacket(uint8_t Op, const SHA256_DIGEST &MapSha256, const std::vector<uint8_t> &vPayload)
+{
+	if(!IsUcPresenceUdpEnabled() || !m_Socket || !m_HasUcServerAddr)
+		return false;
+
+	const int SenderClientId = GameClient()->m_Snap.m_LocalClientId;
+	if(SenderClientId < 0 || SenderClientId >= MAX_CLIENTS)
+		return false;
+
+	const char *pServerAddress = EffectivePresenceServerAddress();
+	if(pServerAddress[0] == '\0')
+		return false;
+
+	std::vector<uint8_t> vPacket;
+	vPacket.reserve(128 + vPayload.size());
+	UClientPresence::WriteDrawClientHeader(vPacket,
+		g_Config.m_UcInstallUuid, m_ClientInstanceId, RandomUuid(), (uint64_t)time_timestamp(),
+		pServerAddress, SenderClientId, MapSha256, Op);
+	vPacket.insert(vPacket.end(), vPayload.begin(), vPayload.end());
+	UClientPresence::AppendProof(vPacket, g_Config.m_UcPresenceUdpSharedToken);
+
+	net_udp_send(m_Socket, &m_UcServerAddr, vPacket.data(), (int)vPacket.size());
+	return true;
+}
+
 void CClientIndicator::UpdateLiveCursorSend(bool UcPresence)
 {
 	if(!UcPresence || !IsUcPresenceUdpEnabled())
@@ -2489,6 +2518,13 @@ void CClientIndicator::ProcessUcPresencePacket(const unsigned char *pData, int D
 		UClientPresence::CRoomServerJoinBroadcast Join;
 		if(UClientPresence::ReadRoomServerJoinBroadcast(pData, DataSize, Join))
 			ApplyUcRoomServerJoinBroadcast(Join);
+		break;
+	}
+	case UClientPresence::PACKET_DRAW_BROADCAST:
+	{
+		UClientPresence::CDrawBroadcast Draw;
+		if(UClientPresence::ReadDrawBroadcast(pData, DataSize, Draw) && UcPeerAppliesToCurrentServer(Draw.m_ServerAddress.c_str()))
+			GameClient()->m_DrawMode.OnDrawBroadcast(Draw);
 		break;
 	}
 	default:

@@ -33,6 +33,7 @@
 #include "components/uclient/account.h"
 #include "components/uclient/discord_bridge.h"
 #include "components/uclient/chat_rooms.h"
+#include "components/uclient/draw_mode.h"
 #include "components/uclient/timeout_reconnect.h"
 #include "components/uclient/uclient.h"
 #include "components/uclient/weapon_traj_policy.h"
@@ -1128,6 +1129,8 @@ private:
 	CTuningParams *TuningList() { return m_aTuningList; }
 
 	float m_LastShowDistanceZoom;
+	int m_LastShowDistanceX = -1;
+	int m_LastShowDistanceY = -1;
 	float m_LastZoom;
 	float m_LastScreenAspect;
 	float m_LastDeadzone;
@@ -1176,6 +1179,7 @@ public:
 	CUClientWeaponTrajPolicy m_WeaponTrajPolicy;
 	CUClientSpecTelePreview m_SpecTelePreview;
 	CTimeoutReconnect m_TimeoutReconnect;
+	CUClientDrawMode m_DrawMode;
 
 	bool IsWeaponTrajBlocked() const { return m_WeaponTrajPolicy.IsBlockedForCurrentServer(); }
 };

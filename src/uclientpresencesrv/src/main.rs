@@ -3,7 +3,7 @@ use hmac::{Hmac, Mac};
 use hyper::server::conn::Http;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::Infallible;
 use std::env;
 use std::fs;
@@ -61,6 +61,25 @@ const PACKET_ROOM_SERVER_JOIN_BROADCAST: u8 = 21;
 const PACKET_UCLIENT_REACTION: u8 = 22;
 const PACKET_UCLIENT_REACTION_BROADCAST: u8 = 23;
 const PACKET_ROOM_LIST_CHANGED: u8 = 24;
+const PACKET_DRAW: u8 = 25;
+const PACKET_DRAW_BROADCAST: u8 = 26;
+const DRAW_OP_SUBSCRIBE: u8 = 0;
+const DRAW_OP_SEGMENTS: u8 = 1;
+const DRAW_OP_ERASE: u8 = 2;
+const DRAW_OP_CLEAR_OWNER: u8 = 3;
+const DRAW_OP_RESET: u8 = 4;
+const DRAW_OP_SNAPSHOT: u8 = 5;
+const DRAW_TOOL_CRAYON: u8 = 1;
+const DRAW_MIN_WIDTH: u16 = 2;
+const DRAW_MAX_WIDTH: u16 = 64;
+const DRAW_MAX_POINTS_PER_SEGMENT: usize = 64;
+const DRAW_MAX_ERASE_IDS: usize = 256;
+const DRAW_MAX_CANVAS_SEGMENTS: usize = 6000;
+const DRAW_MAX_CANVAS_POINTS: usize = 40000;
+const DRAW_MAX_CANVASES: usize = 2000;
+const DRAW_CANVAS_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+/// Segment and snapshot-page packets allowed per session per second.
+const DRAW_MAX_PACKETS_PER_SECOND: u32 = 60;
 const SERVER_PRESENCE_JOIN: u8 = 0;
 const SERVER_PRESENCE_LEAVE: u8 = 1;
 const SERVER_PRESENCE_MOVE: u8 = 2;
@@ -181,7 +200,101 @@ struct ServerState {
     last_chat_send: HashMap<SessionKey, Instant>,
     last_server_join: HashMap<(SessionKey, u8), Instant>,
     invalid_rate_by_ip: HashMap<IpAddr, Instant>,
+    draw_canvases: HashMap<String, DrawCanvas>,
+    draw_rate: HashMap<SessionKey, (Instant, u32)>,
     json_path: PathBuf,
+}
+
+#[derive(Clone)]
+struct DrawSegment {
+    owner: [u8; 16],
+    owner_player: String,
+    id: u32,
+    tool: u8,
+    color: u32,
+    width: u16,
+    points: Vec<(i32, i32)>,
+}
+
+/// Shared drawing of one game server. It belongs to a single map; another map empties it.
+struct DrawCanvas {
+    map_sha: [u8; 32],
+    next_seq: u64,
+    segments: BTreeMap<u64, DrawSegment>,
+    index: HashMap<([u8; 16], u32), u64>,
+    total_points: usize,
+    last_active: Instant,
+}
+
+impl DrawCanvas {
+    fn new(map_sha: [u8; 32], now: Instant) -> Self {
+        Self {
+            map_sha,
+            next_seq: 1,
+            segments: BTreeMap::new(),
+            index: HashMap::new(),
+            total_points: 0,
+            last_active: now,
+        }
+    }
+
+    fn reset(&mut self, map_sha: [u8; 32]) {
+        self.map_sha = map_sha;
+        self.segments.clear();
+        self.index.clear();
+        self.total_points = 0;
+    }
+
+    /// Returns false when the segment is a duplicate or the canvas is full.
+    fn insert(&mut self, segment: DrawSegment) -> bool {
+        let key = (segment.owner, segment.id);
+        if self.index.contains_key(&key)
+            || self.segments.len() >= DRAW_MAX_CANVAS_SEGMENTS
+            || self.total_points + segment.points.len() > DRAW_MAX_CANVAS_POINTS
+        {
+            return false;
+        }
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        self.total_points += segment.points.len();
+        self.index.insert(key, seq);
+        self.segments.insert(seq, segment);
+        true
+    }
+
+    fn remove_owned(&mut self, owner: [u8; 16], owner_player: &str, id: u32) -> bool {
+        let Some(&seq) = self.index.get(&(owner, id)) else {
+            return false;
+        };
+        if self
+            .segments
+            .get(&seq)
+            .map_or(true, |segment| segment.owner_player != owner_player)
+        {
+            return false;
+        }
+        self.index.remove(&(owner, id));
+        if let Some(segment) = self.segments.remove(&seq) {
+            self.total_points -= segment.points.len();
+        }
+        true
+    }
+
+    fn clear_owner(&mut self, owner: [u8; 16], owner_player: &str) -> bool {
+        let seqs: Vec<u64> = self
+            .segments
+            .iter()
+            .filter(|(_, segment)| segment.owner == owner && segment.owner_player == owner_player)
+            .map(|(seq, _)| *seq)
+            .collect();
+        for seq in &seqs {
+            if let Some(segment) = self.segments.remove(seq) {
+                self.index.remove(&(segment.owner, segment.id));
+                self.total_points -= segment.points.len();
+            }
+        }
+        !seqs.is_empty()
+    }
 }
 
 #[derive(Clone)]
@@ -227,8 +340,47 @@ impl ServerState {
             last_chat_send: HashMap::new(),
             last_server_join: HashMap::new(),
             invalid_rate_by_ip: HashMap::new(),
+            draw_canvases: HashMap::new(),
+            draw_rate: HashMap::new(),
             json_path,
         }
+    }
+
+    fn allow_draw_packet(&mut self, key: &SessionKey, now: Instant) -> bool {
+        let window = self.draw_rate.entry(key.clone()).or_insert((now, 0));
+        if now.saturating_duration_since(window.0) >= Duration::from_secs(1) {
+            *window = (now, 0);
+        }
+        if window.1 >= DRAW_MAX_PACKETS_PER_SECOND {
+            return false;
+        }
+        window.1 += 1;
+        true
+    }
+
+    /// The sender must be registered on the server it draws on.
+    fn is_on_server(&self, key: &SessionKey, server_address: &str) -> bool {
+        self.entries
+            .get(key)
+            .is_some_and(|entry| entry.server_address == server_address)
+    }
+
+    fn cleanup_draw(&mut self, now: Instant) {
+        let active_servers: HashSet<&str> = self
+            .entries
+            .values()
+            .map(|entry| entry.server_address.as_str())
+            .collect();
+        for (server_address, canvas) in self.draw_canvases.iter_mut() {
+            if active_servers.contains(server_address.as_str()) {
+                canvas.last_active = now;
+            }
+        }
+        self.draw_canvases.retain(|_, canvas| {
+            now.saturating_duration_since(canvas.last_active) <= DRAW_CANVAS_IDLE_TIMEOUT
+        });
+        self.draw_rate
+            .retain(|_, window| now.saturating_duration_since(window.0) <= Duration::from_secs(10));
     }
 
     fn allow_chat_send(&mut self, key: &SessionKey, now: Instant) -> bool {
@@ -436,6 +588,7 @@ impl ServerState {
             }
         }
         self.cleanup_nonces(now);
+        self.cleanup_draw(now);
         self.invalid_rate_by_ip
             .retain(|_, last| now.saturating_duration_since(*last) <= Duration::from_secs(120));
         removed
@@ -1059,6 +1212,35 @@ fn handle_udp_packet(
         return outcome;
     }
 
+    // Shared drawing: only reaches UC peers on the same game server and the same map.
+    if packet_type == PACKET_DRAW {
+        let Some(draw) = read_draw_packet(data) else {
+            state.log_invalid(ip, now, "bad draw payload");
+            return outcome;
+        };
+        if !validate_proof(shared_token, data) {
+            state.log_invalid(ip, now, "invalid draw proof");
+            return outcome;
+        }
+        let sender_key = SessionKey {
+            player_id: draw.player_id.clone(),
+            session_id: format!("{}:{}", format_uuid(draw.session_id), draw.sender_client_id),
+        };
+        if !state.is_on_server(&sender_key, &draw.server_address) {
+            return outcome;
+        }
+        handle_draw_packet(
+            state,
+            draw,
+            &sender_key,
+            ip,
+            from,
+            now,
+            &mut outcome.outbound,
+        );
+        return outcome;
+    }
+
     // UClient chat: same-server or global relay depending on scope.
     if packet_type == PACKET_CHAT {
         let Some(chat) = read_chat_packet(data) else {
@@ -1492,6 +1674,112 @@ fn handle_udp_packet(
     outcome
 }
 
+fn handle_draw_packet(
+    state: &mut ServerState,
+    draw: DrawPacket,
+    sender_key: &SessionKey,
+    ip: IpAddr,
+    from: SocketAddr,
+    now: Instant,
+    outbound: &mut Vec<(SocketAddr, Vec<u8>)>,
+) {
+    let server_address = draw.server_address.as_str();
+    let packet = match draw.body {
+        DrawBody::Subscribe { after_seq } => {
+            if !state.allow_draw_packet(sender_key, now) {
+                return;
+            }
+            if !state.draw_canvases.contains_key(server_address) {
+                if state.draw_canvases.len() >= DRAW_MAX_CANVASES {
+                    return;
+                }
+                state.draw_canvases.insert(
+                    server_address.to_string(),
+                    DrawCanvas::new(draw.map_sha, now),
+                );
+            }
+            let Some(canvas) = state.draw_canvases.get_mut(server_address) else {
+                return;
+            };
+            canvas.last_active = now;
+            let map_changed = canvas.map_sha != draw.map_sha;
+            if map_changed {
+                canvas.reset(draw.map_sha);
+            }
+            outbound.push((
+                from,
+                encode_draw_snapshot_page(server_address, canvas, after_seq),
+            ));
+            if !map_changed {
+                return;
+            }
+            encode_draw_reset(server_address, &draw.map_sha)
+        }
+        DrawBody::Segment(segment) => {
+            if !state.allow_draw_packet(sender_key, now) {
+                return;
+            }
+            let Some(canvas) = state.draw_canvases.get_mut(server_address) else {
+                return;
+            };
+            if canvas.map_sha != draw.map_sha {
+                return;
+            }
+            let segment = DrawSegment {
+                owner: draw.session_id,
+                owner_player: draw.player_id.clone(),
+                ..segment
+            };
+            let packet = encode_draw_segments(
+                server_address,
+                &draw.map_sha,
+                std::slice::from_ref(&segment),
+            );
+            if !canvas.insert(segment) {
+                return;
+            }
+            packet
+        }
+        DrawBody::Erase(ids) => {
+            if !state.remember_nonce(draw.session_id, draw.nonce, now) {
+                state.log_invalid(ip, now, "draw nonce replay");
+                return;
+            }
+            let Some(canvas) = state.draw_canvases.get_mut(server_address) else {
+                return;
+            };
+            if canvas.map_sha != draw.map_sha {
+                return;
+            }
+            let removed: Vec<u32> = ids
+                .into_iter()
+                .filter(|id| canvas.remove_owned(draw.session_id, &draw.player_id, *id))
+                .collect();
+            if removed.is_empty() {
+                return;
+            }
+            encode_draw_erase(server_address, &draw.map_sha, draw.session_id, &removed)
+        }
+        DrawBody::ClearOwner => {
+            if !state.remember_nonce(draw.session_id, draw.nonce, now) {
+                state.log_invalid(ip, now, "draw nonce replay");
+                return;
+            }
+            let Some(canvas) = state.draw_canvases.get_mut(server_address) else {
+                return;
+            };
+            if canvas.map_sha != draw.map_sha {
+                return;
+            }
+            canvas.clear_owner(draw.session_id, &draw.player_id);
+            encode_draw_clear_owner(server_address, &draw.map_sha, draw.session_id)
+        }
+    };
+    for peer in state.peers_on_server(server_address, Some(sender_key)) {
+        outbound.push((peer.return_addr, packet.clone()));
+    }
+}
+
 fn append_peer_list_to(
     state: &ServerState,
     server_address: &str,
@@ -1822,6 +2110,103 @@ fn encode_peer_list(server_address: &str, peers: &[(i16, String)]) -> Vec<u8> {
     out
 }
 
+fn write_draw_broadcast_header(
+    out: &mut Vec<u8>,
+    server_address: &str,
+    map_sha: &[u8; 32],
+    op: u8,
+) {
+    write_header(out, PACKET_DRAW_BROADCAST);
+    write_string(out, server_address);
+    out.extend_from_slice(map_sha);
+    out.push(op);
+}
+
+fn write_draw_segment(out: &mut Vec<u8>, segment: &DrawSegment) {
+    out.extend_from_slice(&segment.owner);
+    out.extend_from_slice(&segment.id.to_be_bytes());
+    out.push(segment.tool);
+    out.extend_from_slice(&segment.color.to_be_bytes());
+    out.extend_from_slice(&segment.width.to_be_bytes());
+    write_u16(out, segment.points.len() as u16);
+    for (x, y) in &segment.points {
+        out.extend_from_slice(&x.to_be_bytes());
+        out.extend_from_slice(&y.to_be_bytes());
+    }
+}
+
+fn encode_draw_segments(
+    server_address: &str,
+    map_sha: &[u8; 32],
+    segments: &[DrawSegment],
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_draw_broadcast_header(&mut out, server_address, map_sha, DRAW_OP_SEGMENTS);
+    out.push(segments.len() as u8);
+    for segment in segments {
+        write_draw_segment(&mut out, segment);
+    }
+    out
+}
+
+fn encode_draw_erase(
+    server_address: &str,
+    map_sha: &[u8; 32],
+    owner: [u8; 16],
+    ids: &[u32],
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_draw_broadcast_header(&mut out, server_address, map_sha, DRAW_OP_ERASE);
+    out.extend_from_slice(&owner);
+    write_u16(&mut out, ids.len() as u16);
+    for id in ids {
+        out.extend_from_slice(&id.to_be_bytes());
+    }
+    out
+}
+
+fn encode_draw_clear_owner(server_address: &str, map_sha: &[u8; 32], owner: [u8; 16]) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_draw_broadcast_header(&mut out, server_address, map_sha, DRAW_OP_CLEAR_OWNER);
+    out.extend_from_slice(&owner);
+    out
+}
+
+fn encode_draw_reset(server_address: &str, map_sha: &[u8; 32]) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_draw_broadcast_header(&mut out, server_address, map_sha, DRAW_OP_RESET);
+    out
+}
+
+/// One snapshot page with the segments after `after_seq` that fit into a single UDP packet.
+/// The client asks for the next page with the returned last_seq until done is set.
+fn encode_draw_snapshot_page(server_address: &str, canvas: &DrawCanvas, after_seq: u64) -> Vec<u8> {
+    let mut segments = Vec::new();
+    let mut count: u8 = 0;
+    let mut last_seq = after_seq;
+    let mut done = true;
+    // header(6) + server string + map sha(32) + op(1) + last_seq(8) + done(1) + count(1)
+    let header_len = 6 + 2 + server_address.len() + 32 + 1 + 8 + 1 + 1;
+    for (seq, segment) in canvas.segments.range(after_seq.saturating_add(1)..) {
+        let mut encoded = Vec::new();
+        write_draw_segment(&mut encoded, segment);
+        if count == u8::MAX || header_len + segments.len() + encoded.len() > MAX_UDP_PACKET_SIZE {
+            done = false;
+            break;
+        }
+        segments.extend_from_slice(&encoded);
+        count += 1;
+        last_seq = *seq;
+    }
+    let mut out = Vec::with_capacity(header_len + segments.len());
+    write_draw_broadcast_header(&mut out, server_address, &canvas.map_sha, DRAW_OP_SNAPSHOT);
+    out.extend_from_slice(&last_seq.to_be_bytes());
+    out.push(u8::from(done));
+    out.push(count);
+    out.extend_from_slice(&segments);
+    out
+}
+
 fn write_header(out: &mut Vec<u8>, packet_type: u8) {
     out.extend_from_slice(&PROTOCOL_MAGIC);
     out.push(packet_type);
@@ -2041,6 +2426,100 @@ fn read_cursor_packet(data: &[u8]) -> Option<CursorPacket> {
         active,
         world_x,
         world_y,
+    })
+}
+
+enum DrawBody {
+    Subscribe { after_seq: u64 },
+    Segment(DrawSegment),
+    Erase(Vec<u32>),
+    ClearOwner,
+}
+
+struct DrawPacket {
+    player_id: String,
+    session_id: [u8; 16],
+    nonce: [u8; 16],
+    server_address: String,
+    sender_client_id: i16,
+    map_sha: [u8; 32],
+    body: DrawBody,
+}
+
+fn read_draw_packet(data: &[u8]) -> Option<DrawPacket> {
+    if packet_type(data)? != PACKET_DRAW || data.len() < PROOF_SIZE {
+        return None;
+    }
+    let payload_len = data.len().checked_sub(PROOF_SIZE)?;
+    let mut reader = Reader::new(&data[..payload_len]);
+    reader.skip(6)?;
+    let player_id = reader.string()?;
+    let session_id = reader.uuid()?;
+    let nonce = reader.uuid()?;
+    let _timestamp = reader.u64()?;
+    let server_address = reader.string()?;
+    let sender_client_id = reader.i16()?;
+    let map_sha: [u8; 32] = reader.bytes(32)?.try_into().ok()?;
+    let op = reader.u8()?;
+    if server_address.is_empty() || server_address.len() > 64 {
+        return None;
+    }
+    let body = match op {
+        DRAW_OP_SUBSCRIBE => DrawBody::Subscribe {
+            after_seq: reader.u64()?,
+        },
+        DRAW_OP_SEGMENTS => {
+            let id = reader.u32()?;
+            let tool = reader.u8()?;
+            let color = reader.u32()?;
+            let width = reader.u16()?;
+            let count = reader.u16()? as usize;
+            if tool > DRAW_TOOL_CRAYON
+                || !(DRAW_MIN_WIDTH..=DRAW_MAX_WIDTH).contains(&width)
+                || count == 0
+                || count > DRAW_MAX_POINTS_PER_SEGMENT
+            {
+                return None;
+            }
+            let mut points = Vec::with_capacity(count);
+            for _ in 0..count {
+                points.push((reader.i32()?, reader.i32()?));
+            }
+            DrawBody::Segment(DrawSegment {
+                owner: session_id,
+                owner_player: player_id.clone(),
+                id,
+                tool,
+                color,
+                width,
+                points,
+            })
+        }
+        DRAW_OP_ERASE => {
+            let count = reader.u16()? as usize;
+            if count == 0 || count > DRAW_MAX_ERASE_IDS {
+                return None;
+            }
+            let mut ids = Vec::with_capacity(count);
+            for _ in 0..count {
+                ids.push(reader.u32()?);
+            }
+            DrawBody::Erase(ids)
+        }
+        DRAW_OP_CLEAR_OWNER => DrawBody::ClearOwner,
+        _ => return None,
+    };
+    if reader.remaining() != 0 {
+        return None;
+    }
+    Some(DrawPacket {
+        player_id,
+        session_id,
+        nonce,
+        server_address,
+        sender_client_id,
+        map_sha,
+        body,
     })
 }
 
@@ -2433,6 +2912,10 @@ impl<'a> Reader<'a> {
 
     fn i32(&mut self) -> Option<i32> {
         Some(i32::from_be_bytes(self.bytes(4)?.try_into().ok()?))
+    }
+
+    fn u32(&mut self) -> Option<u32> {
+        Some(u32::from_be_bytes(self.bytes(4)?.try_into().ok()?))
     }
 
     fn u64(&mut self) -> Option<u64> {
@@ -2904,6 +3387,208 @@ mod tests {
         let metadata = encode_room_list_changed("room-1", "Room", Some(0x1234_5678));
         assert_eq!(&metadata[..legacy.len()], legacy.as_slice());
         assert_eq!(&metadata[legacy.len()..], &0x1234_5678u32.to_be_bytes());
+    }
+
+    fn finish_proof(mut out: Vec<u8>) -> Vec<u8> {
+        let mut sha = Sha256::new();
+        sha.update("shared".as_bytes());
+        sha.update(&out);
+        out.extend_from_slice(&sha.finalize());
+        out
+    }
+
+    fn join_packet(player: &str, session: u8) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&PROTOCOL_MAGIC);
+        out.push(PACKET_JOIN);
+        out.push(PROTOCOL_VERSION_V2);
+        write_string(&mut out, player);
+        out.extend_from_slice(&[session; 16]);
+        out.extend_from_slice(&[session, 0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        out.extend_from_slice(&123u64.to_be_bytes());
+        write_string(&mut out, "127.0.0.1:8303");
+        write_string(&mut out, player);
+        out.extend_from_slice(&(session as i16).to_be_bytes());
+        write_string(&mut out, "2.4.0");
+        finish_proof(out)
+    }
+
+    fn draw_packet(player: &str, session: u8, nonce: u8, map: u8, op: u8, body: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&PROTOCOL_MAGIC);
+        out.push(PACKET_DRAW);
+        out.push(PROTOCOL_VERSION_V2);
+        write_string(&mut out, player);
+        out.extend_from_slice(&[session; 16]);
+        out.extend_from_slice(&[nonce; 16]);
+        out.extend_from_slice(&123u64.to_be_bytes());
+        write_string(&mut out, "127.0.0.1:8303");
+        out.extend_from_slice(&(session as i16).to_be_bytes());
+        out.extend_from_slice(&[map; 32]);
+        out.push(op);
+        out.extend_from_slice(body);
+        finish_proof(out)
+    }
+
+    fn segment_body(id: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&id.to_be_bytes());
+        out.push(0);
+        out.extend_from_slice(&0xff0000ffu32.to_be_bytes());
+        out.extend_from_slice(&4u16.to_be_bytes());
+        out.extend_from_slice(&2u16.to_be_bytes());
+        for value in [0i32, 0, 320, -64] {
+            out.extend_from_slice(&value.to_be_bytes());
+        }
+        out
+    }
+
+    fn send(state: &mut ServerState, from: SocketAddr, data: &[u8]) -> Vec<(SocketAddr, Vec<u8>)> {
+        handle_udp_packet(
+            state,
+            "shared",
+            from.ip(),
+            from,
+            data,
+            Duration::ZERO,
+            false,
+        )
+        .outbound
+    }
+
+    fn draw_ops_to(outbound: &[(SocketAddr, Vec<u8>)], to: SocketAddr) -> Vec<u8> {
+        outbound
+            .iter()
+            .filter(|(addr, packet)| *addr == to && packet[4] == PACKET_DRAW_BROADCAST)
+            .map(|(_, packet)| packet[6 + 2 + "127.0.0.1:8303".len() + 32])
+            .collect()
+    }
+
+    #[test]
+    fn draw_relays_snapshots_and_owner_only_erase() {
+        let mut state = ServerState::new(PathBuf::from("unused.json"));
+        let a: SocketAddr = "127.0.0.1:41000".parse().unwrap();
+        let b: SocketAddr = "127.0.0.1:41001".parse().unwrap();
+        send(&mut state, a, &join_packet("player-a", 1));
+        send(&mut state, b, &join_packet("player-b", 2));
+
+        let out = send(
+            &mut state,
+            a,
+            &draw_packet("player-a", 1, 50, 7, DRAW_OP_SUBSCRIBE, &0u64.to_be_bytes()),
+        );
+        assert_eq!(draw_ops_to(&out, a), vec![DRAW_OP_SNAPSHOT]);
+        assert!(draw_ops_to(&out, b).is_empty());
+
+        let out = send(
+            &mut state,
+            a,
+            &draw_packet("player-a", 1, 51, 7, DRAW_OP_SEGMENTS, &segment_body(9)),
+        );
+        assert_eq!(draw_ops_to(&out, b), vec![DRAW_OP_SEGMENTS]);
+        assert!(draw_ops_to(&out, a).is_empty());
+        let out = send(
+            &mut state,
+            a,
+            &draw_packet("player-a", 1, 52, 7, DRAW_OP_SEGMENTS, &segment_body(9)),
+        );
+        assert!(out.is_empty(), "duplicate segment ids are dropped");
+
+        let out = send(
+            &mut state,
+            b,
+            &draw_packet("player-b", 2, 53, 7, DRAW_OP_SUBSCRIBE, &0u64.to_be_bytes()),
+        );
+        let snapshot = &out.iter().find(|(addr, _)| *addr == b).unwrap().1;
+        let payload = 6 + 2 + "127.0.0.1:8303".len() + 32 + 1;
+        assert_eq!(&snapshot[payload..payload + 8], &1u64.to_be_bytes());
+        assert_eq!(snapshot[payload + 8], 1, "done");
+        assert_eq!(snapshot[payload + 9], 1, "segment count");
+        assert_eq!(&snapshot[payload + 10..payload + 26], &[1u8; 16], "owner");
+
+        let mut erase = 1u16.to_be_bytes().to_vec();
+        erase.extend_from_slice(&9u32.to_be_bytes());
+        let out = send(
+            &mut state,
+            b,
+            &draw_packet("player-b", 2, 54, 7, DRAW_OP_ERASE, &erase),
+        );
+        assert!(out.is_empty(), "other players cannot erase");
+        let out = send(
+            &mut state,
+            a,
+            &draw_packet("player-a", 1, 55, 7, DRAW_OP_ERASE, &erase),
+        );
+        assert_eq!(draw_ops_to(&out, b), vec![DRAW_OP_ERASE]);
+        assert_eq!(state.draw_canvases["127.0.0.1:8303"].segments.len(), 0);
+
+        send(
+            &mut state,
+            a,
+            &draw_packet("player-a", 1, 56, 7, DRAW_OP_SEGMENTS, &segment_body(10)),
+        );
+        let out = send(
+            &mut state,
+            b,
+            &draw_packet("player-b", 2, 57, 8, DRAW_OP_SUBSCRIBE, &0u64.to_be_bytes()),
+        );
+        assert_eq!(draw_ops_to(&out, a), vec![DRAW_OP_RESET]);
+        assert_eq!(state.draw_canvases["127.0.0.1:8303"].segments.len(), 0);
+        let out = send(
+            &mut state,
+            a,
+            &draw_packet("player-a", 1, 58, 7, DRAW_OP_SEGMENTS, &segment_body(11)),
+        );
+        assert!(out.is_empty(), "segments for the old map are dropped");
+    }
+
+    #[test]
+    fn draw_rejects_unregistered_sender_and_bad_width() {
+        let mut state = ServerState::new(PathBuf::from("unused.json"));
+        let a: SocketAddr = "127.0.0.1:41000".parse().unwrap();
+        let out = send(
+            &mut state,
+            a,
+            &draw_packet("player-a", 1, 50, 7, DRAW_OP_SUBSCRIBE, &0u64.to_be_bytes()),
+        );
+        assert!(out.is_empty());
+        assert!(state.draw_canvases.is_empty());
+
+        let mut body = segment_body(1);
+        body[9..11].copy_from_slice(&200u16.to_be_bytes());
+        assert!(
+            read_draw_packet(&draw_packet("player-a", 1, 51, 7, DRAW_OP_SEGMENTS, &body)).is_none()
+        );
+    }
+
+    #[test]
+    fn draw_snapshot_pages_fit_udp_limit() {
+        let mut canvas = DrawCanvas::new([7; 32], Instant::now());
+        for id in 0..40 {
+            canvas.insert(DrawSegment {
+                owner: [1; 16],
+                owner_player: "player-a".to_string(),
+                id,
+                tool: 0,
+                color: 0,
+                width: 4,
+                points: vec![(0, 0); DRAW_MAX_POINTS_PER_SEGMENT],
+            });
+        }
+        let mut after = 0u64;
+        let mut pages = 0;
+        loop {
+            let page = encode_draw_snapshot_page("127.0.0.1:8303", &canvas, after);
+            assert!(page.len() <= MAX_UDP_PACKET_SIZE);
+            let payload = 6 + 2 + "127.0.0.1:8303".len() + 32 + 1;
+            after = u64::from_be_bytes(page[payload..payload + 8].try_into().unwrap());
+            pages += 1;
+            if page[payload + 8] == 1 {
+                break;
+            }
+        }
+        assert_eq!(after, 40);
+        assert!(pages > 1);
     }
 
     #[test]

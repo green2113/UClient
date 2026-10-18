@@ -56,6 +56,36 @@ enum EPacketType : uint8_t
 	PACKET_UCLIENT_REACTION_BROADCAST = 23, // Server -> Client
 	// Room membership/name changed; clients should refresh their room list from the rooms API.
 	PACKET_ROOM_LIST_CHANGED = 24, // Server -> Client
+	// Shared drawing canvas per game server. The operation is a field (EDrawOp), not a packet type.
+	PACKET_DRAW = 25, // Client -> Server (proof protected)
+	PACKET_DRAW_BROADCAST = 26, // Server -> Client
+};
+
+constexpr int DRAW_MAX_POINTS_PER_SEGMENT = 64;
+constexpr int DRAW_MAX_ERASE_IDS = 256;
+constexpr int DRAW_MIN_WIDTH = 2;
+constexpr int DRAW_MAX_WIDTH = 64;
+
+enum EDrawOp : uint8_t
+{
+	// C->S: after_seq:u64. Joins the canvas (resets it when the map differs) and pages its snapshot.
+	DRAW_OP_SUBSCRIBE = 0,
+	// C->S: one segment without owner. S->C: count:u8 + segments with owner.
+	DRAW_OP_SEGMENTS = 1,
+	// C->S: count:u16 + id:u32... S->C: owner:uuid + count:u16 + id:u32...
+	DRAW_OP_ERASE = 2,
+	// C->S: no payload. S->C: owner:uuid. Removes every segment of that owner.
+	DRAW_OP_CLEAR_OWNER = 3,
+	// S->C: no payload. The canvas of this server was emptied and now belongs to the given map.
+	DRAW_OP_RESET = 4,
+	// S->C: last_seq:u64 + done:u8 + count:u8 + segments with owner.
+	DRAW_OP_SNAPSHOT = 5,
+};
+
+enum EDrawTool : uint8_t
+{
+	DRAW_TOOL_PEN = 0,
+	DRAW_TOOL_CRAYON = 1,
 };
 
 enum EServerPresenceKind : uint8_t
@@ -236,6 +266,34 @@ struct CRoomListChanged
 	bool m_HasNameColor = false;
 };
 
+struct CDrawPoint
+{
+	int32_t m_X = 0;
+	int32_t m_Y = 0;
+};
+
+struct CDrawSegment
+{
+	CUuid m_Owner = UUID_ZEROED; // client instance uuid of the author
+	uint32_t m_Id = 0; // unique per owner
+	uint8_t m_Tool = DRAW_TOOL_PEN;
+	uint32_t m_Color = 0; // RGBA8, red in the high byte
+	uint16_t m_Width = DRAW_MIN_WIDTH; // world units
+	std::vector<CDrawPoint> m_vPoints;
+};
+
+struct CDrawBroadcast
+{
+	std::string m_ServerAddress;
+	SHA256_DIGEST m_MapSha256 = {};
+	uint8_t m_Op = DRAW_OP_SEGMENTS;
+	CUuid m_Owner = UUID_ZEROED; // ERASE, CLEAR_OWNER
+	std::vector<uint32_t> m_vIds; // ERASE
+	uint64_t m_LastSeq = 0; // SNAPSHOT
+	bool m_Done = false; // SNAPSHOT
+	std::vector<CDrawSegment> m_vSegments; // SEGMENTS, SNAPSHOT
+};
+
 using BestClientIndicator::AppendProof;
 using BestClientIndicator::ComputeProof;
 using BestClientIndicator::ParseAddress;
@@ -248,6 +306,7 @@ using BestClientIndicator::ReadU8;
 using BestClientIndicator::ReadUuid;
 using BestClientIndicator::ValidateProof;
 using BestClientIndicator::WriteI32;
+using BestClientIndicator::WriteRaw;
 using BestClientIndicator::WriteS16;
 using BestClientIndicator::WriteString;
 using BestClientIndicator::WriteU16;
@@ -330,6 +389,16 @@ bool ReadUClientReactionBroadcast(const uint8_t *pData, int DataSize, CUClientRe
 
 void WriteRoomListChanged(std::vector<uint8_t> &vOut, const char *pRoomId, const char *pRoomName, uint32_t NameColor = 0, bool IncludeNameColor = false);
 bool ReadRoomListChanged(const uint8_t *pData, int DataSize, CRoomListChanged &Out);
+
+// Draw packets. WriteDrawClientHeader writes the common proof-covered prefix; the caller then
+// writes the op payload (WriteDrawSubscribe / WriteDrawSegment / WriteDrawErase, nothing for
+// CLEAR_OWNER) and appends the proof.
+void WriteDrawClientHeader(std::vector<uint8_t> &vOut, const char *pPlayerId, CUuid SessionId, CUuid Nonce, uint64_t Timestamp,
+	const char *pServerAddress, int SenderClientId, const SHA256_DIGEST &MapSha256, uint8_t Op);
+void WriteDrawSubscribe(std::vector<uint8_t> &vOut, uint64_t AfterSeq);
+void WriteDrawSegment(std::vector<uint8_t> &vOut, const CDrawSegment &Segment, bool WithOwner);
+void WriteDrawErase(std::vector<uint8_t> &vOut, const std::vector<uint32_t> &vIds);
+bool ReadDrawBroadcast(const uint8_t *pData, int DataSize, CDrawBroadcast &Out);
 }
 
 #endif

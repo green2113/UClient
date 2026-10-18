@@ -536,6 +536,9 @@ void CCamera::OnRender()
 
 	// demo always count as spectating
 	m_WasSpectating = GameClient()->m_Snap.m_SpecInfo.m_Active;
+
+	if(GameClient()->m_DrawMode.IsActive())
+		m_Center = GameClient()->m_DrawMode.CameraCenter();
 }
 
 void CCamera::OnConsoleInit()
