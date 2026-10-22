@@ -22,6 +22,7 @@ private:
 	{
 		NONE,
 		INGEST,
+		NAMES,
 		POLL,
 		TOPIC,
 		CONTROL,
@@ -30,6 +31,9 @@ private:
 	};
 
 	void BeginIngest();
+	void BeginNameSync();
+	void CollectLocalNames(std::vector<std::string> &vNames, bool AfkOnly) const;
+	bool NameSyncDue() const;
 	void BeginPoll();
 	void BeginTopic();
 	void BeginControl();
@@ -53,6 +57,8 @@ private:
 
 	std::vector<std::string> m_vPending;
 	std::vector<std::string> m_vInflight;
+	std::vector<std::string> m_vSentNames;
+	std::vector<std::string> m_vNameInflight;
 	std::vector<SDiscordMessage> m_vSentDeletes;
 	std::vector<SDiscordMessage> m_vAckInflight;
 	std::string m_SentTopic;
@@ -61,6 +67,7 @@ private:
 	int64_t m_NextPoll = 0;
 	int64_t m_NextAck = 0;
 	int64_t m_NextIngest = 0;
+	int64_t m_NextName = 0;
 	int64_t m_NextTopic = 0;
 	int64_t m_TopicChangedAt = 0;
 	int64_t m_NextControl = 0;

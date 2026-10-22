@@ -192,6 +192,41 @@ export function replaceNameMentions(text: string, name: string, mention: string)
 	return result + text.slice(cursor);
 }
 
+function authorIsSelf(author: string, names: string[]): boolean {
+	let name = author.trim();
+	if(name.startsWith("→ ") || name.startsWith("← "))
+		name = name.slice(2).trim();
+	const lower = name.toLowerCase();
+	return names.some(candidate => candidate.toLowerCase() === lower);
+}
+
+export function cleanMentionNames(value: unknown): string[] {
+	const seen: string[] = [];
+	for(const name of Array.isArray(value) ? value : []) {
+		if(typeof name !== "string")
+			continue;
+		const trimmed = name.trim();
+		if(!trimmed || trimmed.length > 64 || /[\r\n<>@]/.test(trimmed))
+			continue;
+		if(seen.some(existing => existing.toLowerCase() === trimmed.toLowerCase()))
+			continue;
+		seen.push(trimmed);
+		if(seen.length >= 4)
+			break;
+	}
+	return seen;
+}
+
+export function mentionNamesForChat(stored: string[], requested: string[]): string[] {
+	if(requested.length === 0)
+		return [];
+	if(stored.length === 0)
+		return requested;
+	const wanted = new Set(requested.map(name => name.toLowerCase()));
+	const matched = stored.filter(name => wanted.has(name.toLowerCase()));
+	return matched.length > 0 ? matched : requested;
+}
+
 export function applyGameMentions(line: string, names: string[], userId: string): string {
 	if(!SNOWFLAKE_RE.test(userId))
 		return line;
@@ -211,15 +246,15 @@ export function applyGameMentions(line: string, names: string[], userId: string)
 		return line;
 	const channel = rest.slice(0, split);
 	const body = rest.slice(split + 2);
-	let prefix = "";
-	let message = body;
-	if(!body.startsWith("*** ") && !body.startsWith("— ")) {
-		const authorSplit = body.indexOf(": ");
-		if(authorSplit < 0)
-			return line;
-		prefix = body.slice(0, authorSplit + 2);
-		message = body.slice(authorSplit + 2);
-	}
+	if(channel === "chat/server" || body.startsWith("*** ") || body.startsWith("— "))
+		return line;
+	const authorSplit = body.indexOf(": ");
+	if(authorSplit < 0)
+		return line;
+	if(authorIsSelf(body.slice(0, authorSplit), sorted))
+		return line;
+	const prefix = body.slice(0, authorSplit + 2);
+	const message = body.slice(authorSplit + 2);
 	let next = message;
 	for(const name of sorted)
 		next = replaceNameMentions(next, name, mention);
@@ -604,9 +639,7 @@ async function ingest(request: Request, env: DiscordEnv, authenticate: (request:
 		.map(line => line.slice(0, MAX_DISCORD_CONTENT));
 	if(lines.length === 0)
 		return json({ok: true, linked: true, delivered: false, accepted: 0});
-	const names = (Array.isArray(body?.names) ? body.names : [])
-		.filter((name): name is string => typeof name === "string")
-		.slice(0, 4);
+	const requested = cleanMentionNames(body?.names);
 	const channel = await env.DB.prepare(
 		`SELECT c.channel_id, l.discord_user_id, l.chat_mention
 		 FROM discord_message_channels c
@@ -618,10 +651,46 @@ async function ingest(request: Request, env: DiscordEnv, authenticate: (request:
 	const fresh = await claimLines(env, authenticated.installId, lines, now);
 	if(fresh.length > 0) {
 		const mentionUserId = channel.chat_mention === 1 ? channel.discord_user_id : "";
+		const names = mentionUserId && requested.length > 0 ? mentionNamesForChat(await loadMentionNames(env, authenticated.installId), requested) : requested;
 		const outgoing = mentionUserId ? fresh.map(line => applyGameMentions(line, names, mentionUserId)) : fresh;
 		ctx.waitUntil(postLines(env, channel.channel_id, outgoing, mentionUserId));
 	}
 	return json({ok: true, linked: true, delivered: true, accepted: fresh.length});
+}
+
+async function loadMentionNames(env: DiscordEnv, installId: string): Promise<string[]> {
+	const row = await env.DB.prepare(
+		"SELECT mention_names FROM discord_links WHERE install_id = ?1",
+	).bind(installId).first<{mention_names: string}>();
+	if(!row?.mention_names)
+		return [];
+	try {
+		return cleanMentionNames(JSON.parse(row.mention_names) as unknown);
+	}
+	catch {
+		return [];
+	}
+}
+
+async function setNames(request: Request, env: DiscordEnv, authenticate: (request: Request) => Promise<DiscordAuth | Response>): Promise<Response> {
+	const authenticated = await authenticate(request);
+	if(authenticated instanceof Response)
+		return authenticated;
+	const link = await linkForInstall(env, authenticated.installId);
+	if(!link)
+		return json({ok: true, linked: false});
+	const now = nowSeconds();
+	if(!await claimGameOwner(env, authenticated.installId, gameClient(request, now), now, clientInServer(request)))
+		return json({ok: true, linked: true, owner: false});
+	await touchOnline(env, authenticated.installId, now);
+	const body = await readJson<{names?: unknown}>(request);
+	const names = cleanMentionNames(body?.names);
+	if(names.length === 0)
+		return error(400, "invalid_request", "Names are invalid.");
+	await env.DB.prepare(
+		"UPDATE discord_links SET mention_names = ?2 WHERE install_id = ?1",
+	).bind(authenticated.installId, JSON.stringify(names)).run();
+	return json({ok: true, linked: true});
 }
 
 async function flushDiscordTopic(env: DiscordEnv, installId: string): Promise<void> {
@@ -1398,6 +1467,8 @@ export async function handleDiscord(
 	}
 	if(segments[1] === "chat" && segments[2] === "ingest" && segments.length === 3 && request.method === "POST")
 		return ingest(request, env, authenticate, ctx);
+	if(segments[1] === "chat" && segments[2] === "names" && segments.length === 3 && request.method === "POST")
+		return setNames(request, env, authenticate);
 	if(segments[1] === "chat" && segments[2] === "topic" && segments.length === 3 && request.method === "POST")
 		return setTopic(request, env, authenticate, ctx);
 	if(segments[1] === "chat" && segments[2] === "outbound" && segments.length === 3 && request.method === "GET")

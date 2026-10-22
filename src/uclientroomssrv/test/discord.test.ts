@@ -1,7 +1,7 @@
 import {applyD1Migrations, env, SELF} from "cloudflare:test";
 import {beforeAll, describe, expect, it} from "vitest";
 
-import {DISCORD_TEXT, applyGameMentions, discordChatPayload, formatDiscordChat, linkedMessage, neutralizeMentions} from "../src/discord";
+import {DISCORD_TEXT, applyGameMentions, cleanMentionNames, discordChatPayload, formatDiscordChat, linkedMessage, mentionNamesForChat, neutralizeMentions} from "../src/discord";
 
 interface TestEnv extends Cloudflare.Env {
 	ACCOUNT_PEPPER: string;
@@ -516,7 +516,24 @@ describe("discord account bridge", () => {
 		const line = "2026-10-10 22:39:00 I chat/all: nameless tee: 언더: 님";
 		expect(applyGameMentions(line, ["언더"], userId)).toBe("2026-10-10 22:39:00 I chat/all: nameless tee: <@123456789012345678>: 님");
 		expect(applyGameMentions("2026-10-10 22:39:00 I chat/all: 언더: hello", ["언더"], userId)).toBe("2026-10-10 22:39:00 I chat/all: 언더: hello");
+		const self = "2026-10-10 22:39:00 I chat/all: 언더: 언더";
+		expect(applyGameMentions(self, ["언더"], userId)).toBe(self);
+		const selfSentence = "2026-10-10 22:39:00 I chat/all: 언더: 안녕 언더";
+		expect(applyGameMentions(selfSentence, ["언더"], userId)).toBe(selfSentence);
+		const whisper = "2026-10-10 22:39:00 I chat/whisper: → 언더: 언더";
+		expect(applyGameMentions(whisper, ["언더"], userId)).toBe(whisper);
 		expect(applyGameMentions("2026-10-10 22:39:00 I chat/all: tee: 언더바", ["언더"], userId)).toBe("2026-10-10 22:39:00 I chat/all: tee: 언더바");
+		const left = "2026-10-21 22:32:03 I chat/server: *** 'jackypop' has left the game";
+		expect(applyGameMentions(left, ["jackypop"], userId)).toBe(left);
+		const points = "2026-10-21 21:47:10 I chat/server: *** 18058. @UNDER Points: 2271, requested by ヤミヤミ";
+		expect(applyGameMentions(points, ["UNDER", "ヤミヤミ"], userId)).toBe(points);
+		expect(applyGameMentions("2026-10-21 22:32:03 I chat/client: — jackypop", ["jackypop"], userId)).toBe("2026-10-21 22:32:03 I chat/client: — jackypop");
+		expect(applyGameMentions("2026-10-10 22:39:00 I chat/all: tee: *** jackypop", ["jackypop"], userId)).toBe("2026-10-10 22:39:00 I chat/all: tee: *** <@123456789012345678>");
+		expect(mentionNamesForChat(["새이름"], ["새이름"])).toEqual(["새이름"]);
+		expect(mentionNamesForChat(["새이름", "더미"], ["새이름"])).toEqual(["새이름"]);
+		expect(mentionNamesForChat(["옛이름"], ["새이름"])).toEqual(["새이름"]);
+		expect(mentionNamesForChat([], [])).toEqual([]);
+		expect(cleanMentionNames([" 언더 ", "언더", ""])).toEqual(["언더"]);
 		const payload = discordChatPayload(applyGameMentions(line, ["언더"], userId), userId);
 		expect(payload.allowed_mentions.users).toEqual([userId]);
 		expect(discordChatPayload("say @here").allowed_mentions.users).toBeUndefined();

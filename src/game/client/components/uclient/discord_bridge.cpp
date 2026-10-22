@@ -32,6 +32,20 @@ std::string JsonEscape(const char *pText)
 	}
 	return Result;
 }
+
+void AppendNameJson(std::string &Json, const std::vector<std::string> &vNames)
+{
+	bool First = true;
+	for(const std::string &Name : vNames)
+	{
+		if(!First)
+			Json += ",";
+		First = false;
+		Json += "\"";
+		Json += JsonEscape(Name.c_str());
+		Json += "\"";
+	}
+}
 }
 
 void CDiscordBridge::SubmitServerLine(const char *pLine)
@@ -91,21 +105,9 @@ void CDiscordBridge::BeginIngest()
 		Json += "\"";
 	}
 	Json += "],\"names\":[";
-	bool FirstName = true;
-	for(int LocalId : GameClient()->m_aLocalIds)
-	{
-		if(LocalId < 0 || LocalId >= MAX_CLIENTS)
-			continue;
-		const char *pName = GameClient()->m_aClients[LocalId].m_aName;
-		if(!pName || !pName[0])
-			continue;
-		if(!FirstName)
-			Json += ",";
-		FirstName = false;
-		Json += "\"";
-		Json += JsonEscape(pName);
-		Json += "\"";
-	}
+	std::vector<std::string> vNames;
+	CollectLocalNames(vNames, true);
+	AppendNameJson(Json, vNames);
 	Json += "]}";
 
 	char aUrl[512];
@@ -114,6 +116,48 @@ void CDiscordBridge::BeginIngest()
 	Auth(pRequest.get());
 	m_pRequest = std::move(pRequest);
 	m_Request = ERequest::INGEST;
+	Http()->Run(m_pRequest);
+}
+
+void CDiscordBridge::CollectLocalNames(std::vector<std::string> &vNames, bool AfkOnly) const
+{
+	vNames.clear();
+	for(int LocalId : GameClient()->m_aLocalIds)
+	{
+		if(LocalId < 0 || LocalId >= MAX_CLIENTS)
+			continue;
+		const CGameClient::CClientData &ClientData = GameClient()->m_aClients[LocalId];
+		if(AfkOnly && !ClientData.m_Afk)
+			continue;
+		if(!ClientData.m_aName[0])
+			continue;
+		vNames.emplace_back(ClientData.m_aName);
+	}
+}
+
+bool CDiscordBridge::NameSyncDue() const
+{
+	if(Client()->State() != IClient::STATE_ONLINE || time_get() < m_NextName)
+		return false;
+	std::vector<std::string> vNames;
+	CollectLocalNames(vNames, false);
+	return !vNames.empty() && vNames != m_vSentNames;
+}
+
+void CDiscordBridge::BeginNameSync()
+{
+	CollectLocalNames(m_vNameInflight, false);
+	if(m_vNameInflight.empty())
+		return;
+	std::string Json = "{\"names\":[";
+	AppendNameJson(Json, m_vNameInflight);
+	Json += "]}";
+	char aUrl[512];
+	str_format(aUrl, sizeof(aUrl), "%s/discord/chat/names", g_Config.m_UcApiBaseUrl);
+	auto pRequest = HttpPostJson(aUrl, Json.c_str());
+	Auth(pRequest.get());
+	m_pRequest = std::move(pRequest);
+	m_Request = ERequest::NAMES;
 	Http()->Run(m_pRequest);
 }
 
@@ -366,6 +410,34 @@ void CDiscordBridge::FinishRequest()
 		}
 		m_vInflight.clear();
 	}
+	else if(Request == ERequest::NAMES)
+	{
+		if(!Ok)
+			m_NextName = time_get() + 2 * time_freq();
+		else
+		{
+			const json_value *pOwner = json_object_get(pRoot, "owner");
+			if(pOwner && pOwner->type == json_boolean && !pOwner->u.boolean)
+			{
+				m_Owner = false;
+				m_NextName = time_get() + 2 * time_freq();
+			}
+			else
+			{
+				const json_value *pLinked = json_object_get(pRoot, "linked");
+				if(pLinked && pLinked->type == json_boolean)
+					m_Linked = pLinked->u.boolean;
+				if(pLinked && pLinked->type == json_boolean && !pLinked->u.boolean)
+					m_NextName = time_get() + 2 * time_freq();
+				else
+				{
+					m_vSentNames = m_vNameInflight;
+					m_NextName = time_get();
+				}
+			}
+		}
+		m_vNameInflight.clear();
+	}
 	else if(Request == ERequest::POLL)
 	{
 		if(!Ok)
@@ -544,7 +616,15 @@ void CDiscordBridge::OnUpdate()
 		BeginControlResult();
 		return;
 	}
+	const bool Online = Client()->State() == IClient::STATE_ONLINE;
+	if(!Online)
+		m_vSentNames.clear();
 	const bool CanAct = m_Owner && !m_AwaitingConnect && !m_Held;
+	if(CanAct && NameSyncDue())
+	{
+		BeginNameSync();
+		return;
+	}
 	std::string Topic;
 	const bool TopicReady = CanAct && BuildTopic(Topic) && TopicDue(Topic);
 	if(TopicReady && Topic.empty())
@@ -559,7 +639,6 @@ void CDiscordBridge::OnUpdate()
 	}
 	if(!CanAct)
 		return;
-	const bool Online = Client()->State() == IClient::STATE_ONLINE;
 	if(Online && !m_vPending.empty() && time_get() >= m_NextIngest)
 	{
 		BeginIngest();
