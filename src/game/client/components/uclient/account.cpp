@@ -1,5 +1,6 @@
 #include "account.h"
 
+#include <base/secure.h>
 #include <base/system.h>
 
 #include <engine/shared/config.h>
@@ -112,7 +113,7 @@ void CUClientAccount::OnInit()
 	if(!m_HadAccountFile || (!m_Registered && !m_aGraceToken[0]))
 	{
 		SetBlocked(EState::BLOCKED_NOT_REGISTERED,
-			Localize("Open the UClient launcher and sign in or create an account before starting the game."),
+			Localize("Create an account to play, or sign in with the email you already use."),
 			"");
 	}
 	// HTTP verification is deferred to StartAuth() after asset loading.
@@ -126,11 +127,77 @@ void CUClientAccount::StartAuth()
 	if(!m_HadAccountFile || (!m_Registered && !m_aGraceToken[0]))
 	{
 		SetBlocked(EState::BLOCKED_NOT_REGISTERED,
-			Localize("Open the UClient launcher and sign in or create an account before starting the game."),
+			Localize("Create an account to play, or sign in with the email you already use."),
 			"");
 		return;
 	}
 	BeginVerify();
+}
+
+void CUClientAccount::GenerateCredentials(bool NewInstallId)
+{
+	if(NewInstallId)
+	{
+		const CUuid InstallId = RandomUuid();
+		FormatUuid(InstallId, m_aInstallId, sizeof(m_aInstallId));
+	}
+	unsigned char aSecret[32];
+	secure_random_fill(aSecret, sizeof(aSecret));
+	static const char HEX[] = "0123456789abcdef";
+	for(int i = 0; i < (int)sizeof(aSecret); i++)
+	{
+		m_aSecret[i * 2] = HEX[aSecret[i] >> 4];
+		m_aSecret[i * 2 + 1] = HEX[aSecret[i] & 0x0f];
+	}
+	m_aSecret[sizeof(aSecret) * 2] = '\0';
+}
+
+void CUClientAccount::BeginAccountRequest(const char *pPath, const char *pJson, ERequestKind Kind)
+{
+	char aUrl[384];
+	str_format(aUrl, sizeof(aUrl), "%s%s", g_Config.m_UcApiBaseUrl, pPath);
+	m_pRequest = HttpPostJson(aUrl, pJson);
+	m_pRequest->FailOnErrorStatus(false);
+	m_pRequest->Timeout(CTimeout{10000, 30000, 500, 5});
+	m_RequestKind = Kind;
+	m_State = EState::PENDING;
+	m_AuthStarted = true;
+	m_aError[0] = '\0';
+	m_aErrorCode[0] = '\0';
+	Http()->Run(m_pRequest);
+}
+
+void CUClientAccount::RegisterAnonymous()
+{
+	if(m_pRequest || m_State == EState::PENDING || m_State == EState::BLOCKED_BANNED)
+		return;
+	GenerateCredentials(true);
+	const std::string PlayerName = JsonEscape(Client()->PlayerName());
+	char aJson[768];
+	str_format(aJson, sizeof(aJson),
+		"{\"install_id\":\"%s\",\"secret\":\"%s\",\"player_name\":\"%s\",\"version\":\"%s\"}",
+		m_aInstallId, m_aSecret, PlayerName.c_str(), UCLIENT_VERSION);
+	BeginAccountRequest("/account/register", aJson, ERequestKind::REGISTER);
+}
+
+void CUClientAccount::LoginEmail(const char *pEmail, const char *pPassword)
+{
+	if(m_pRequest || m_State == EState::PENDING || m_State == EState::BLOCKED_BANNED)
+		return;
+	if(str_length(pEmail) < 3 || str_length(pPassword) < 10 || str_length(pPassword) > 128)
+	{
+		SetBlocked(EState::BLOCKED_NOT_REGISTERED,
+			Localize("Enter an email and a password of at least 10 characters."),
+			"");
+		return;
+	}
+	m_aInstallId[0] = '\0';
+	GenerateCredentials(false);
+	const std::string Json = "{\"email\":\"" + JsonEscape(pEmail) +
+		"\",\"password\":\"" + JsonEscape(pPassword) +
+		"\",\"secret\":\"" + JsonEscape(m_aSecret) +
+		"\",\"version\":\"" + JsonEscape(UCLIENT_VERSION) + "\"}";
+	BeginAccountRequest("/account/login-email", Json.c_str(), ERequestKind::LOGIN);
 }
 
 void CUClientAccount::OnShutdown()
@@ -228,6 +295,7 @@ void CUClientAccount::BeginVerify()
 	m_pRequest = HttpPostJson(aUrl, aJson);
 	m_pRequest->FailOnErrorStatus(false);
 	m_pRequest->Timeout(CTimeout{10000, 30000, 500, 5});
+	m_RequestKind = ERequestKind::VERIFY;
 	m_State = EState::PENDING;
 	m_aError[0] = '\0';
 	m_aErrorCode[0] = '\0';
@@ -256,12 +324,78 @@ void CUClientAccount::SetBlocked(EState State, const char *pMessage, const char 
 		dbg_msg("uclient_account", "account gate blocked error_code='%s'", m_aErrorCode);
 }
 
+void CUClientAccount::FinishSetupRequest(EHttpState HttpState, int Status, json_value *pRoot)
+{
+	char aErrorCode[128];
+	const auto Fail = [&](const char *pMessage, int Code) {
+		if(pRoot)
+			json_value_free(pRoot);
+		pRoot = nullptr;
+		m_aInstallId[0] = '\0';
+		m_aSecret[0] = '\0';
+		m_aGraceToken[0] = '\0';
+		m_GraceExpiresAt = 0;
+		str_format(aErrorCode, sizeof(aErrorCode), "%d", Code);
+		SetBlocked(EState::BLOCKED_NOT_REGISTERED, pMessage, Code == 0 ? "" : aErrorCode);
+	};
+
+	if(HttpState != EHttpState::DONE)
+	{
+		Fail(Localize("Could not reach the UClient account server."),
+			HttpState == EHttpState::ABORTED ? ACCOUNT_ERROR_ABORTED : ACCOUNT_ERROR_NETWORK);
+		return;
+	}
+	if((Status == 200 || Status == 201) && pRoot && pRoot->type == json_object)
+	{
+		const char *pInstallId = JsonString(pRoot, "install_id");
+		if(pInstallId[0])
+			str_copy(m_aInstallId, pInstallId, sizeof(m_aInstallId));
+		if(!m_aInstallId[0] || !m_aSecret[0])
+		{
+			Fail(Localize("The account server returned an unexpected response."), ACCOUNT_ERROR_INVALID_RESPONSE);
+			return;
+		}
+		ApplySuccess(pRoot);
+		json_value_free(pRoot);
+		return;
+	}
+	if(Status == 423 && pRoot && pRoot->type == json_object)
+	{
+		str_copy(m_aBanReason, JsonString(pRoot, "reason"), sizeof(m_aBanReason));
+		m_BanExpiresAt = JsonInteger(pRoot, "expires_at");
+		json_value_free(pRoot);
+		m_aInstallId[0] = '\0';
+		m_aSecret[0] = '\0';
+		m_aGraceToken[0] = '\0';
+		m_GraceExpiresAt = 0;
+		SetBlocked(EState::BLOCKED_BANNED, Localize("Your UClient has been blocked by an administrator."), "");
+		return;
+	}
+
+	const char *pApiError = pRoot && pRoot->type == json_object ? JsonString(pRoot, "error") : "";
+	if(!str_comp(pApiError, "invalid_credentials"))
+		Fail(Localize("The email or password is invalid."), ACCOUNT_ERROR_BAD_SECRET);
+	else if(!str_comp(pApiError, "registration_rate_limited") || !str_comp(pApiError, "auth_rate_limited"))
+		Fail(Localize("Too many attempts. Try again later."), ACCOUNT_ERROR_RATE_LIMITED);
+	else if(!str_comp(pApiError, "invalid_request"))
+		Fail(Localize("The account details were rejected."), ACCOUNT_ERROR_INVALID_REQUEST);
+	else
+		Fail(Localize("Account request failed. Check your details and try again."), ACCOUNT_ERROR_SERVER);
+}
+
 void CUClientAccount::FinishRequest()
 {
+	const ERequestKind Kind = m_RequestKind;
+	m_RequestKind = ERequestKind::VERIFY;
 	const EHttpState HttpState = m_pRequest->State();
 	const int Status = HttpState == EHttpState::DONE ? m_pRequest->StatusCode() : 0;
 	json_value *pRoot = HttpState == EHttpState::DONE ? m_pRequest->ResultJson() : nullptr;
 	m_pRequest = nullptr;
+	if(Kind != ERequestKind::VERIFY)
+	{
+		FinishSetupRequest(HttpState, Status, pRoot);
+		return;
+	}
 	char aErrorCode[128];
 	const auto FormatErrorCode = [&](int Code) {
 		str_format(aErrorCode, sizeof(aErrorCode), "%d", Code);

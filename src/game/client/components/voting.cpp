@@ -407,7 +407,7 @@ void CVoting::Render(bool ForcePreview)
 	Ui()->DoLabel(&RightColumn, aBuf, 6.0f * Scale, TEXTALIGN_MR);
 
 	Props.m_MaxWidth = LeftColumn.w;
-	Ui()->DoLabel(&LeftColumn, ForcePreview ? Localize("Change map to Kobra 3") : VoteDescription(), 6.0f * Scale, TEXTALIGN_ML, Props);
+	Ui()->DoLabel(&LeftColumn, ForcePreview ? Localize("Change map to Kobra 3") : GameClient()->m_VoteLabels.Display(VoteDescription()), 6.0f * Scale, TEXTALIGN_ML, Props);
 
 	View.HSplitTop(3.0f * Scale, nullptr, &View);
 	View.HSplitTop(6.0f * Scale, &Row, &View);

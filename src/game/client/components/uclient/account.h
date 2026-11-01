@@ -28,6 +28,8 @@ public:
 	EState State() const { return m_State; }
 	bool IsReady() const { return m_State == EState::OK; }
 	bool IsPending() const { return m_State == EState::PENDING; }
+	// True when this install has no account yet, so the menu can register or sign in.
+	bool NeedsAccountSetup() const { return m_State == EState::BLOCKED_NOT_REGISTERED && !m_Registered; }
 	const char *InstallId() const { return m_aInstallId; }
 	const char *Secret() const { return m_aSecret; }
 	const char *BanReason() const { return m_aBanReason; }
@@ -39,11 +41,26 @@ public:
 	// eaten by the long component/image init phase.
 	void StartAuth();
 
+	// Platforms without the launcher create or sign in to an account here.
+	// A successful response is stored as uclient_account.json.
+	void RegisterAnonymous();
+	void LoginEmail(const char *pEmail, const char *pPassword);
+
 private:
 	void LoadAccount();
 	void SaveAccount() const;
+	enum class ERequestKind
+	{
+		VERIFY,
+		REGISTER,
+		LOGIN,
+	};
+
+	void GenerateCredentials(bool NewInstallId);
+	void BeginAccountRequest(const char *pPath, const char *pJson, ERequestKind Kind);
 	void BeginVerify();
 	void FinishRequest();
+	void FinishSetupRequest(EHttpState HttpState, int Status, json_value *pRoot);
 	bool VerifyGraceToken() const;
 	void SetBlocked(EState State, const char *pMessage, const char *pErrorCode);
 	void ApplySuccess(const json_value *pRoot);
@@ -65,6 +82,7 @@ private:
 	// Preserve the component layout after removing the former retry flag.
 	bool m_AccountAbiFlagPadding = false;
 	bool m_AuthStarted = false;
+	ERequestKind m_RequestKind = ERequestKind::VERIFY;
 };
 
 #endif

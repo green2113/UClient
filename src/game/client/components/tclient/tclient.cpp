@@ -768,7 +768,7 @@ void CTClient::RenderMiniVoteHud()
 
 	// Vote description
 	View.HSplitTop(6.0f, &Row, &View);
-	StripStr(GameClient()->m_Voting.VoteDescription(), aBuf, aBuf + sizeof(aBuf));
+	StripStr(GameClient()->m_VoteLabels.Display(GameClient()->m_Voting.VoteDescription()), aBuf, aBuf + sizeof(aBuf));
 	Ui()->DoLabel(&Row, aBuf, 6.0f, TEXTALIGN_ML, Props);
 
 	// Vote reason

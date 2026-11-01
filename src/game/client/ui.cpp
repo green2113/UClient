@@ -963,6 +963,27 @@ bool CUi::DoEditBox(CLineInput *pLineInput, const CUIRect *pRect, float FontSize
 	pRect->VMargin(VSpacing, &Textbox);
 
 	bool JustGotActive = false;
+	// A composing IME (Korean, and others) keeps the in-progress syllable out of
+	// the buffer. Moving onto another control, or clicking it, commits that
+	// syllable so the click is not swallowed and the text is not dropped.
+	static float s_CompositionOutsideMove = 0.0f;
+	if(Active && !Inside && Input()->HasComposition())
+	{
+		s_CompositionOutsideMove += absolute(MouseDelta().x) + absolute(MouseDelta().y);
+		if(s_CompositionOutsideMove > 16.0f || MouseButtonClicked(0))
+		{
+			const char *pComposition = Input()->GetComposition();
+			if(pComposition[0] != '\0')
+				pLineInput->Insert(pComposition, pLineInput->GetCursorOffset());
+			Input()->StopTextInput();
+			if(!MouseButtonClicked(0))
+				Input()->StartTextInput();
+			s_CompositionOutsideMove = 0.0f;
+		}
+	}
+	else if(Active)
+		s_CompositionOutsideMove = 0.0f;
+
 	if(CheckActiveItem(pLineInput))
 	{
 		if(MouseButton(0))

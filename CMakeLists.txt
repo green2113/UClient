@@ -2800,6 +2800,8 @@ if(CLIENT)
     components/uclient/timeout_reconnect.h
     components/uclient/uclient.cpp
     components/uclient/uclient.h
+    components/uclient/vote_labels.cpp
+    components/uclient/vote_labels.h
     components/uclient/weapon_traj_policy.cpp
     components/uclient/weapon_traj_policy.h
     components/uclient/spec_tele_preview.cpp

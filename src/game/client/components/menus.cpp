@@ -1427,12 +1427,14 @@ bool CMenus::CanDisplayWarning() const
 
 void CMenus::RenderUClientAccountGate(CUIRect Screen)
 {
-	const CUClientAccount &Account = GameClient()->m_UClientAccount;
+	CUClientAccount &Account = GameClient()->m_UClientAccount;
+	const bool ShowSetup = Account.NeedsAccountSetup();
+	const float BoxHeight = ShowSetup ? 520.0f : 340.0f;
 	CUIRect Box = {
 		Screen.x + maximum(0.0f, (Screen.w - 520.0f) / 2.0f),
-		Screen.y + maximum(0.0f, (Screen.h - 340.0f) / 2.0f),
+		Screen.y + maximum(0.0f, (Screen.h - BoxHeight) / 2.0f),
 		minimum(Screen.w, 520.0f),
-		minimum(Screen.h, 340.0f)};
+		minimum(Screen.h, BoxHeight)};
 	Box.Draw(ColorRGBA(0.03f, 0.03f, 0.05f, 0.94f), IGraphics::CORNER_ALL, 10.0f);
 	CUIRect Content;
 	Box.Margin(24.0f, &Content);
@@ -1443,6 +1445,7 @@ void CMenus::RenderUClientAccountGate(CUIRect Screen)
 	Ui()->DoLabel(&Row,
 		Account.IsPending() ? Localize("Verifying UClient account...") :
 		Banned ? Localize("Your UClient has been blocked") :
+		ShowSetup ? Localize("UClient account") :
 		Localize("UClient account verification failed"),
 		24.0f, TEXTALIGN_MC);
 
@@ -1464,6 +1467,50 @@ void CMenus::RenderUClientAccountGate(CUIRect Screen)
 		static CButtonContainer s_CopyAccountErrorCodeButton;
 		if(DoButton_Menu(&s_CopyAccountErrorCodeButton, Localize("Copy"), 0, &CopyButton))
 			Input()->SetClipboardText(Account.ErrorCode());
+	}
+
+	if(ShowSetup)
+	{
+		static CLineInput s_EmailInput;
+		static CLineInput s_PasswordInput;
+		static char s_aEmail[256];
+		static char s_aPassword[129];
+		static bool s_InputsReady = false;
+		if(!s_InputsReady)
+		{
+			s_aEmail[0] = '\0';
+			s_aPassword[0] = '\0';
+			s_InputsReady = true;
+		}
+		s_EmailInput.SetBuffer(s_aEmail, sizeof(s_aEmail));
+		s_PasswordInput.SetBuffer(s_aPassword, sizeof(s_aPassword));
+		s_PasswordInput.SetHidden(true);
+
+		Content.HSplitTop(10.0f, nullptr, &Content);
+		Content.HSplitTop(30.0f, &Row, &Content);
+		static CButtonContainer s_CreateAccountButton;
+		if(DoButton_Menu(&s_CreateAccountButton, Localize("Create account"), 0, &Row, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.2f))
+			Account.RegisterAnonymous();
+
+		Content.HSplitTop(16.0f, nullptr, &Content);
+		Content.HSplitTop(18.0f, &Row, &Content);
+		Ui()->DoLabel(&Row, Localize("Email"), 13.0f, TEXTALIGN_ML);
+		Content.HSplitTop(4.0f, nullptr, &Content);
+		Content.HSplitTop(24.0f, &Row, &Content);
+		Ui()->DoEditBox(&s_EmailInput, &Row, 13.0f);
+
+		Content.HSplitTop(8.0f, nullptr, &Content);
+		Content.HSplitTop(18.0f, &Row, &Content);
+		Ui()->DoLabel(&Row, Localize("Password"), 13.0f, TEXTALIGN_ML);
+		Content.HSplitTop(4.0f, nullptr, &Content);
+		Content.HSplitTop(24.0f, &Row, &Content);
+		Ui()->DoEditBox(&s_PasswordInput, &Row, 13.0f);
+
+		Content.HSplitTop(10.0f, nullptr, &Content);
+		Content.HSplitTop(30.0f, &Row, &Content);
+		static CButtonContainer s_SignInButton;
+		if(DoButton_Menu(&s_SignInButton, Localize("Sign in"), 0, &Row, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.2f))
+			Account.LoginEmail(s_aEmail, s_aPassword);
 	}
 
 	if(Banned)

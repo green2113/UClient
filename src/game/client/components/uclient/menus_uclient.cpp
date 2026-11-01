@@ -395,8 +395,6 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			CUIRect Content, Label;
 			BeginBlock(Column, ContentHeight, Content);
 			Content.HSplitTop(LineSize, &Label, &Content);
-			DrawUcMenuBadge(Graphics(), Ui(), TextRender(), &Label, Localize("NEW"), 12.0f,
-				ColorRGBA(0.25f, 0.85f, 0.40f, 1.0f), ColorRGBA(0.10f, 0.60f, 0.25f, 1.0f), MarginSmall);
 			Ui()->DoLabel(&Label, Localize("Weapon trajectory"), HeadlineFontSize, TEXTALIGN_ML);
 			Content.HSplitTop(MarginSmall, nullptr, &Content);
 			PushSettingsLinkParent("uc_weapon_traj");
@@ -419,8 +417,6 @@ void CMenus::RenderSettingsUClient(CUIRect MainView)
 			CUIRect Content, Label;
 			BeginBlock(Column, ContentHeight, Content);
 			Content.HSplitTop(LineSize, &Label, &Content);
-			DrawUcMenuBadge(Graphics(), Ui(), TextRender(), &Label, Localize("NEW"), 12.0f,
-				ColorRGBA(0.25f, 0.85f, 0.40f, 1.0f), ColorRGBA(0.10f, 0.60f, 0.25f, 1.0f), MarginSmall);
 			Ui()->DoLabel(&Label, Localize("Teleport preview"), HeadlineFontSize, TEXTALIGN_ML);
 			Content.HSplitTop(MarginSmall, nullptr, &Content);
 			PushSettingsLinkParent("uc_spec_tele_preview");

@@ -890,6 +890,16 @@ void CMenus::RenderServerInfoMotd(CUIRect Motd)
 	s_ScrollRegion.End();
 }
 
+static bool VoteOptionVisible(CGameClient *pClient, const char *pDescription, const char *pFilter)
+{
+	if(pFilter[0] == '\0')
+		return true;
+	if(str_utf8_find_nocase(pDescription, pFilter))
+		return true;
+	const char *pDisplay = pClient->m_VoteLabels.Display(pDescription);
+	return pDisplay != pDescription && str_utf8_find_nocase(pDisplay, pFilter);
+}
+
 bool CMenus::RenderServerControlServer(CUIRect MainView, bool UpdateScroll)
 {
 	CUIRect List = MainView;
@@ -897,11 +907,12 @@ bool CMenus::RenderServerControlServer(CUIRect MainView, bool UpdateScroll)
 	int aIndices[MAX_VOTE_OPTIONS];
 	int Selected = -1;
 	int TotalShown = 0;
+	const char *pFilter = m_FilterInput.GetString();
 
 	int i = 0;
 	for(const CVoteOptionClient *pOption = GameClient()->m_Voting.FirstOption(); pOption; pOption = pOption->m_pNext, i++)
 	{
-		if(!m_FilterInput.IsEmpty() && !str_utf8_find_nocase(pOption->m_aDescription, m_FilterInput.GetString()))
+		if(!VoteOptionVisible(GameClient(), pOption->m_aDescription, pFilter))
 			continue;
 		if(i == m_CallvoteSelectedOption)
 			Selected = TotalShown;
@@ -911,28 +922,126 @@ bool CMenus::RenderServerControlServer(CUIRect MainView, bool UpdateScroll)
 	static CListBox s_ListBox;
 	s_ListBox.DoStart(19.0f, TotalShown, 1, 3, Selected, &List);
 
+	static bool s_Editing = false;
+	static char s_aEditingOriginal[VOTE_DESC_LENGTH];
+	static CLineInputBuffered<VOTE_DESC_LENGTH> s_EditInput;
+	static CButtonContainer s_EditButton;
+	static CButtonContainer s_ResetButton;
+	static CButtonContainer s_ConfirmButton;
+	bool BlockCall = false;
+	bool SeenEditing = false;
+	bool WantSave = false;
+
 	i = 0;
 	for(const CVoteOptionClient *pOption = GameClient()->m_Voting.FirstOption(); pOption; pOption = pOption->m_pNext, i++)
 	{
-		if(!m_FilterInput.IsEmpty() && !str_utf8_find_nocase(pOption->m_aDescription, m_FilterInput.GetString()))
+		if(!VoteOptionVisible(GameClient(), pOption->m_aDescription, pFilter))
 			continue;
 		aIndices[NumVoteOptions] = i;
 		NumVoteOptions++;
 
 		const CListboxItem Item = s_ListBox.DoNextItem(pOption);
+		const bool EditingThis = s_Editing && str_comp(s_aEditingOriginal, pOption->m_aDescription) == 0;
+		if(EditingThis)
+			SeenEditing = true;
 		if(!Item.m_Visible)
 			continue;
 
+		const bool Custom = GameClient()->m_VoteLabels.Has(pOption->m_aDescription);
+		const char *pDisplay = GameClient()->m_VoteLabels.Display(pOption->m_aDescription);
+
 		CUIRect Label;
 		Item.m_Rect.VMargin(2.0f, &Label);
-		Ui()->DoLabel(&Label, pOption->m_aDescription, 13.0f, TEXTALIGN_ML);
+		if(Custom)
+		{
+			CUIRect Dot;
+			Label.VSplitRight(10.0f, &Label, &Dot);
+			const float MarkSize = 5.0f;
+			Dot.x += (Dot.w - MarkSize) / 2.0f;
+			Dot.y += (Dot.h - MarkSize) / 2.0f;
+			Dot.w = MarkSize;
+			Dot.h = MarkSize;
+			Dot.Draw(ColorRGBA(0.45f, 0.8f, 1.0f, 1.0f), IGraphics::CORNER_ALL, MarkSize / 2.0f);
+		}
+
+		const bool Hovered = Ui()->MouseHovered(&Item.m_Rect);
+		const float ButtonSize = minimum(Label.h, 16.0f);
+		if(EditingThis)
+		{
+			CUIRect Confirm;
+			Label.VSplitRight(ButtonSize, &Label, &Confirm);
+			Label.VSplitRight(2.0f, &Label, nullptr);
+			Ui()->DoEditBox(&s_EditInput, &Label, 12.0f);
+			if(Ui()->DoButton_FontIcon(&s_ConfirmButton, FontIcon::CHECK, 0, &Confirm, BUTTONFLAG_LEFT))
+				WantSave = true;
+			BlockCall = true;
+		}
+		else
+		{
+			if(Hovered)
+			{
+				CUIRect EditButton;
+				Label.VSplitRight(ButtonSize, &Label, &EditButton);
+				if(Ui()->DoButton_FontIcon(&s_EditButton, FontIcon::PENCIL, 0, &EditButton, BUTTONFLAG_LEFT))
+				{
+					str_copy(s_aEditingOriginal, pOption->m_aDescription);
+					s_EditInput.Set(pDisplay);
+					s_EditInput.SelectAll();
+					s_Editing = true;
+					SeenEditing = true;
+					Ui()->SetActiveItem(&s_EditInput);
+				}
+				if(Ui()->MouseHovered(&EditButton))
+					BlockCall = true;
+				if(Custom)
+				{
+					CUIRect ResetButton;
+					Label.VSplitRight(2.0f, &Label, nullptr);
+					Label.VSplitRight(ButtonSize, &Label, &ResetButton);
+					if(Ui()->DoButton_FontIcon(&s_ResetButton, FontIcon::UNDO, 0, &ResetButton, BUTTONFLAG_LEFT))
+						GameClient()->m_VoteLabels.Clear(pOption->m_aDescription);
+					if(Ui()->MouseHovered(&ResetButton))
+						BlockCall = true;
+				}
+			}
+
+			SLabelProperties Props;
+			Props.m_MaxWidth = Label.w;
+			Props.m_EllipsisAtEnd = true;
+			Ui()->DoLabel(&Label, pDisplay, 13.0f, TEXTALIGN_ML, Hovered || Custom ? Props : SLabelProperties());
+		}
+	}
+
+	if(s_Editing)
+	{
+		BlockCall = true;
+		if(!SeenEditing)
+		{
+			s_Editing = false;
+			s_EditInput.Deactivate();
+		}
+		else if(Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
+		{
+			s_Editing = false;
+			s_EditInput.Deactivate();
+		}
+		else if(WantSave || (s_EditInput.IsActive() && (Input()->KeyPress(KEY_RETURN) || Input()->KeyPress(KEY_KP_ENTER))))
+		{
+			if(GameClient()->m_VoteLabels.Set(s_aEditingOriginal, s_EditInput.GetString()))
+			{
+				s_Editing = false;
+				s_EditInput.Deactivate();
+			}
+			else
+				Ui()->SetActiveItem(&s_EditInput);
+		}
 	}
 
 	Selected = s_ListBox.DoEnd();
 	if(UpdateScroll)
 		s_ListBox.ScrollToSelected();
 	m_CallvoteSelectedOption = Selected != -1 ? aIndices[Selected] : -1;
-	return s_ListBox.WasItemActivated();
+	return s_ListBox.WasItemActivated() && !BlockCall;
 }
 
 bool CMenus::RenderServerControlKick(CUIRect MainView, bool FilterSpectators, bool UpdateScroll)

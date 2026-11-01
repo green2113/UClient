@@ -36,6 +36,7 @@
 #include "components/uclient/draw_mode.h"
 #include "components/uclient/timeout_reconnect.h"
 #include "components/uclient/uclient.h"
+#include "components/uclient/vote_labels.h"
 #include "components/uclient/weapon_traj_policy.h"
 #include "components/uclient/spec_tele_preview.h"
 #include "components/binds.h"
@@ -1180,6 +1181,7 @@ public:
 	CUClientSpecTelePreview m_SpecTelePreview;
 	CTimeoutReconnect m_TimeoutReconnect;
 	CUClientDrawMode m_DrawMode;
+	CVoteLabels m_VoteLabels;
 
 	bool IsWeaponTrajBlocked() const { return m_WeaponTrajPolicy.IsBlockedForCurrentServer(); }
 };

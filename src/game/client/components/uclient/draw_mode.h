@@ -88,6 +88,10 @@ private:
 	ETool m_Tool = ETool::PEN;
 	int m_Width = 8;
 	int m_ColorIndex = 2;
+	bool m_UseCustomColor = false;
+	bool m_Eyedropper = false;
+	bool m_EyedropperHasSample = false;
+	ColorRGBA m_EyedropperColor = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
 
 	std::vector<SStroke> m_vStrokes;
 	std::set<std::pair<CUuid, uint32_t>> m_StrokeKeys;
@@ -133,6 +137,9 @@ private:
 	CButtonContainer m_SettingsButton;
 	CButtonContainer m_ExitButton;
 	CButtonContainer m_aColorButtons[10];
+	CButtonContainer m_CustomColorButton;
+	CButtonContainer m_EyedropperButton;
+	CUi::SColorPickerPopupContext m_CustomColorPicker;
 	char m_WidthScrollbar = 0;
 	char m_HideTeesCheckbox = 0;
 	SPopupMenuId m_SettingsPopupId;
@@ -170,6 +177,7 @@ private:
 
 	void RenderStroke(const SStroke &Stroke, std::vector<IGraphics::CFreeformItem> &vItems);
 	void RenderToolbar();
+	ColorRGBA CurrentColor() const;
 };
 
 #endif

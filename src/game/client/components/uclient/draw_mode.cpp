@@ -100,6 +100,13 @@ void AddCircle(std::vector<IGraphics::CFreeformItem> &vItems, vec2 Center, float
 }
 }
 
+ColorRGBA CUClientDrawMode::CurrentColor() const
+{
+	if(m_UseCustomColor)
+		return color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcDrawCustomColor, false));
+	return s_aPalette[m_ColorIndex];
+}
+
 void CUClientDrawMode::OnConsoleInit()
 {
 	Console()->Register("draw_mode", "", CFGFLAG_CLIENT, ConDrawMode, this, "Toggle UClient drawing mode");
@@ -141,6 +148,8 @@ void CUClientDrawMode::SetActive(bool Active)
 		else if(m_Drawing)
 			FinishEraserGesture();
 		Ui()->ClosePopupMenus();
+		m_Eyedropper = false;
+		m_EyedropperHasSample = false;
 	}
 	m_Active = Active;
 	m_Drawing = false;
@@ -154,6 +163,8 @@ void CUClientDrawMode::OnReset()
 	if(m_Active)
 		Ui()->ClosePopupMenus();
 	m_Active = false;
+	m_Eyedropper = false;
+	m_EyedropperHasSample = false;
 	m_Drawing = false;
 	m_Panning = false;
 	m_vPendingPoints.clear();
@@ -390,7 +401,7 @@ void CUClientDrawMode::FlushSegment(bool Final)
 	Stroke.m_Id = m_NextStrokeId++;
 	Stroke.m_GestureId = m_CurrentGestureId;
 	Stroke.m_Tool = m_Tool == ETool::CRAYON ? UClientPresence::DRAW_TOOL_CRAYON : UClientPresence::DRAW_TOOL_PEN;
-	Stroke.m_Color = s_aPalette[m_ColorIndex];
+	Stroke.m_Color = CurrentColor();
 	Stroke.m_Width = m_Width;
 	Stroke.m_vPoints = vPoints;
 
@@ -629,6 +640,34 @@ void CUClientDrawMode::UpdateDrawing()
 		m_Panning = false;
 	}
 
+	if(m_Eyedropper)
+	{
+		if(!m_PointerOverUi && !Ui()->IsPopupOpen())
+		{
+			const int PixelX = std::clamp<int>(round_to_int((Ui()->MouseX() - 1.0f) / Ui()->Screen()->w * Graphics()->ScreenWidth()), 0, Graphics()->ScreenWidth() - 1);
+			const int PixelY = std::clamp<int>(round_to_int((Ui()->MouseY() - 1.0f) / Ui()->Screen()->h * Graphics()->ScreenHeight()), 0, Graphics()->ScreenHeight() - 1);
+			Graphics()->ReadPixel(ivec2(PixelX, PixelY), &m_EyedropperColor);
+
+			const bool Left = Ui()->MouseButton(0);
+			const bool LeftClicked = Left && !m_WasLeftDown;
+			if(LeftClicked && m_EyedropperHasSample)
+			{
+				ColorRGBA Picked = m_EyedropperColor;
+				Picked.a = 1.0f;
+				g_Config.m_UcDrawCustomColor = color_cast<ColorHSLA>(Picked).Pack(false);
+				m_UseCustomColor = true;
+				if(m_Tool == ETool::ERASER)
+					m_Tool = ETool::PEN;
+				m_Eyedropper = false;
+				m_EyedropperHasSample = false;
+			}
+			else
+				m_EyedropperHasSample = true;
+		}
+		m_WasLeftDown = Ui()->MouseButton(0);
+		return;
+	}
+
 	const bool Left = Ui()->MouseButton(0);
 	const bool LeftClicked = Left && !m_WasLeftDown;
 	m_WasLeftDown = Left;
@@ -755,7 +794,7 @@ void CUClientDrawMode::OnRender()
 	{
 		SStroke Preview;
 		Preview.m_Tool = m_Tool == ETool::CRAYON ? UClientPresence::DRAW_TOOL_CRAYON : UClientPresence::DRAW_TOOL_PEN;
-		Preview.m_Color = s_aPalette[m_ColorIndex];
+		Preview.m_Color = CurrentColor();
 		Preview.m_Width = (float)m_Width;
 		if(m_HasSegmentStart)
 			Preview.m_vPoints.push_back(m_SegmentStart);
@@ -792,6 +831,12 @@ bool CUClientDrawMode::OnInput(const IInput::CEvent &Event)
 	}
 	if((Event.m_Flags & IInput::FLAG_PRESS) && Event.m_Key == KEY_ESCAPE)
 	{
+		if(m_Eyedropper)
+		{
+			m_Eyedropper = false;
+			m_EyedropperHasSample = false;
+			return true;
+		}
 		if(Ui()->IsPopupOpen())
 			Ui()->ClosePopupMenus();
 		else
@@ -892,17 +937,56 @@ void CUClientDrawMode::RenderToolbar()
 		CUIRect Swatch;
 		StyleRow.VSplitLeft(20.0f, &Swatch, &StyleRow);
 		StyleRow.VSplitLeft(3.0f, nullptr, &StyleRow);
-		if(i == m_ColorIndex)
+		if(!m_UseCustomColor && i == m_ColorIndex)
 			Swatch.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.9f), IGraphics::CORNER_ALL, 4.0f);
 		CUIRect Inner;
-		Swatch.Margin(i == m_ColorIndex ? 2.0f : 1.0f, &Inner);
+		Swatch.Margin(!m_UseCustomColor && i == m_ColorIndex ? 2.0f : 1.0f, &Inner);
 		Inner.Draw(s_aPalette[i], IGraphics::CORNER_ALL, 3.0f);
 		if(Ui()->DoButtonLogic(&m_aColorButtons[i], 0, &Swatch, BUTTONFLAG_LEFT))
 		{
 			m_ColorIndex = i;
+			m_UseCustomColor = false;
+			m_Eyedropper = false;
+			m_EyedropperHasSample = false;
 			if(m_Tool == ETool::ERASER)
 				m_Tool = ETool::PEN;
 		}
+	}
+
+	StyleRow.VSplitLeft(6.0f, nullptr, &StyleRow);
+	CUIRect Custom;
+	StyleRow.VSplitLeft(20.0f, &Custom, &StyleRow);
+	if(m_UseCustomColor)
+		Custom.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.9f), IGraphics::CORNER_ALL, 4.0f);
+	CUIRect CustomInner;
+	Custom.Margin(m_UseCustomColor ? 2.0f : 1.0f, &CustomInner);
+	CustomInner.Draw(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcDrawCustomColor, false)), IGraphics::CORNER_ALL, 3.0f);
+	GameClient()->m_Tooltips.DoToolTip(&m_CustomColorButton, &Custom, Localize("Custom color"));
+	if(Ui()->DoButtonLogic(&m_CustomColorButton, 0, &Custom, BUTTONFLAG_LEFT))
+	{
+		m_UseCustomColor = true;
+		if(m_Tool == ETool::ERASER)
+			m_Tool = ETool::PEN;
+		if(!Ui()->IsPopupOpen(&m_CustomColorPicker))
+		{
+			const ColorHSLA HslaColor = ColorHSLA(g_Config.m_UcDrawCustomColor, false);
+			m_CustomColorPicker.m_pHslaColor = &g_Config.m_UcDrawCustomColor;
+			m_CustomColorPicker.m_HslaColor = HslaColor;
+			m_CustomColorPicker.m_HsvaColor = color_cast<ColorHSVA>(HslaColor);
+			m_CustomColorPicker.m_RgbaColor = color_cast<ColorRGBA>(m_CustomColorPicker.m_HsvaColor);
+			m_CustomColorPicker.m_Alpha = false;
+			Ui()->ShowPopupColorPicker(Custom.x, Custom.y, &m_CustomColorPicker);
+		}
+	}
+
+	StyleRow.VSplitLeft(3.0f, nullptr, &StyleRow);
+	CUIRect Dropper;
+	StyleRow.VSplitLeft(20.0f, &Dropper, &StyleRow);
+	GameClient()->m_Tooltips.DoToolTip(&m_EyedropperButton, &Dropper, Localize("Eyedropper"));
+	if(Ui()->DoButton_FontIcon(&m_EyedropperButton, FontIcon::EYE_DROPPER, m_Eyedropper ? 1 : 0, &Dropper, BUTTONFLAG_LEFT))
+	{
+		m_Eyedropper = !m_Eyedropper;
+		m_EyedropperHasSample = false;
 	}
 
 	Ui()->RenderPopupMenus();
@@ -913,9 +997,16 @@ void CUClientDrawMode::RenderToolbar()
 
 	UpdateDrawing();
 
-	if(m_PointerOverUi)
+	if(m_PointerOverUi || m_Eyedropper)
 	{
 		RenderTools()->RenderCursor(Ui()->MousePos(), 24.0f);
+		if(m_Eyedropper && m_EyedropperHasSample)
+		{
+			CUIRect Preview = {Ui()->MouseX() + 18.0f, Ui()->MouseY() + 18.0f, 16.0f, 16.0f};
+			Preview.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.6f), IGraphics::CORNER_ALL, 3.0f);
+			Preview.Margin(2.0f, &Preview);
+			Preview.Draw(m_EyedropperColor.WithAlpha(1.0f), IGraphics::CORNER_ALL, 2.0f);
+		}
 	}
 	else
 	{
@@ -924,7 +1015,7 @@ void CUClientDrawMode::RenderToolbar()
 		const float UiPerWorld = Screen.w / (aPoints[2] - aPoints[0]);
 		const bool Eraser = m_Tool == ETool::ERASER;
 		const float Radius = maximum(2.0f, (Eraser ? m_Width : m_Width * 0.5f) * UiPerWorld);
-		ColorRGBA Color = Eraser ? ColorRGBA(1.0f, 1.0f, 1.0f, 0.35f) : s_aPalette[m_ColorIndex].WithAlpha(0.8f);
+		ColorRGBA Color = Eraser ? ColorRGBA(1.0f, 1.0f, 1.0f, 0.35f) : CurrentColor().WithAlpha(0.8f);
 		Graphics()->TextureClear();
 		Graphics()->QuadsBegin();
 		Graphics()->SetColor(ColorRGBA(0.0f, 0.0f, 0.0f, 0.5f));

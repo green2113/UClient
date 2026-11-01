@@ -935,7 +935,11 @@ int CInput::Update()
 
 	const auto &&AddKeyEventChecked = [&](int Key, int Flags) {
 		const bool PasteShortcut = Key == KEY_V && (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI)) != 0;
-		if(Key != KEY_UNKNOWN && !IgnoreKeys && (!(Flags & IInput::FLAG_PRESS) || !HasComposition() || PasteShortcut))
+		// Keyboard presses are left for the IME while a syllable is composing.
+		// Mouse presses must still arrive, or a click cannot leave the field
+		// (Korean IME keeps a composition until that click).
+		const bool MouseInput = Key >= KEY_MOUSE_1 && Key <= KEY_MOUSE_WHEEL_RIGHT;
+		if(Key != KEY_UNKNOWN && !IgnoreKeys && (MouseInput || !(Flags & IInput::FLAG_PRESS) || !HasComposition() || PasteShortcut))
 		{
 			AddKeyEvent(Key, Flags);
 		}
