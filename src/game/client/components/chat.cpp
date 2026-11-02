@@ -1413,61 +1413,219 @@ void CChat::OnInit()
 
 namespace
 {
+enum class ETranslateLanguageId
+{
+	UNKNOWN,
+	AUTO,
+	RU,
+	EN,
+	DE,
+	FR,
+	ES,
+	ZH,
+	PT,
+	TR,
+	KO,
+	JA,
+};
+
 struct STranslateLanguageOption
 {
 	const char *m_pCode;
 	const char *m_pLabel;
+	ETranslateLanguageId m_Id;
 };
 
-constexpr STranslateLanguageOption gs_aTranslateSourceOptions[] = {
-	{"auto", "Auto"},
-	{"ru", "Russian"},
-	{"en", "English"},
-	{"de", "German"},
-	{"fr", "French"},
-	{"es", "Spanish"},
-	{"zh", "Chinese"},
-	{"pt", "Brazilian"},
-	{"tr", "Turkish"},
-	{"ko", "Korean"},
-	{"ja", "Japanese"},
-};
-
-constexpr STranslateLanguageOption gs_aTranslateTargetOptions[] = {
-	{"ru", "Russian"},
-	{"en", "English"},
-	{"de", "German"},
-	{"fr", "French"},
-	{"es", "Spanish"},
-	{"zh", "Chinese"},
-	{"pt", "Brazilian"},
-	{"tr", "Turkish"},
-	{"ko", "Korean"},
-	{"ja", "Japanese"},
-};
-
-template<size_t N>
-int TranslateLanguageIndex(const char *pCode, const STranslateLanguageOption (&aOptions)[N])
+enum class ETranslateBackend
 {
-	for(size_t i = 0; i < N; ++i)
+	MYMEMORY,
+	GOOGLE,
+	FTAPI,
+	LIBRETRANSLATE,
+};
+
+struct STranslateBackendOption
+{
+	const char *m_pCode;
+	const char *m_pLabel;
+	ETranslateBackend m_Backend;
+};
+
+constexpr STranslateBackendOption gs_aTranslateBackends[] = {
+	{"mymemory", "MyMemory", ETranslateBackend::MYMEMORY},
+	{"google", "Google", ETranslateBackend::GOOGLE},
+	{"ftapi", "FreeTranslateAPI", ETranslateBackend::FTAPI},
+	{"libretranslate", "LibreTranslate", ETranslateBackend::LIBRETRANSLATE},
+};
+
+constexpr STranslateLanguageOption gs_aGoogleSource[] = {
+	{"auto", "Auto", ETranslateLanguageId::AUTO},
+	{"ru", "Russian", ETranslateLanguageId::RU},
+	{"en", "English", ETranslateLanguageId::EN},
+	{"de", "German", ETranslateLanguageId::DE},
+	{"fr", "French", ETranslateLanguageId::FR},
+	{"es", "Spanish", ETranslateLanguageId::ES},
+	{"zh", "Chinese", ETranslateLanguageId::ZH},
+	{"pt", "Brazilian", ETranslateLanguageId::PT},
+	{"tr", "Turkish", ETranslateLanguageId::TR},
+	{"ko", "Korean", ETranslateLanguageId::KO},
+	{"ja", "Japanese", ETranslateLanguageId::JA},
+};
+
+constexpr STranslateLanguageOption gs_aGoogleTarget[] = {
+	{"ru", "Russian", ETranslateLanguageId::RU},
+	{"en", "English", ETranslateLanguageId::EN},
+	{"de", "German", ETranslateLanguageId::DE},
+	{"fr", "French", ETranslateLanguageId::FR},
+	{"es", "Spanish", ETranslateLanguageId::ES},
+	{"zh", "Chinese", ETranslateLanguageId::ZH},
+	{"pt", "Brazilian", ETranslateLanguageId::PT},
+	{"tr", "Turkish", ETranslateLanguageId::TR},
+	{"ko", "Korean", ETranslateLanguageId::KO},
+	{"ja", "Japanese", ETranslateLanguageId::JA},
+};
+
+constexpr STranslateLanguageOption gs_aMyMemorySource[] = {
+	{"auto", "Auto", ETranslateLanguageId::AUTO},
+	{"ru", "Russian", ETranslateLanguageId::RU},
+	{"en", "English", ETranslateLanguageId::EN},
+	{"de", "German", ETranslateLanguageId::DE},
+	{"fr", "French", ETranslateLanguageId::FR},
+	{"es", "Spanish", ETranslateLanguageId::ES},
+	{"zh-CN", "Chinese (Simplified)", ETranslateLanguageId::ZH},
+	{"pt", "Brazilian", ETranslateLanguageId::PT},
+	{"tr", "Turkish", ETranslateLanguageId::TR},
+	{"ko", "Korean", ETranslateLanguageId::KO},
+	{"ja", "Japanese", ETranslateLanguageId::JA},
+};
+
+constexpr STranslateLanguageOption gs_aMyMemoryTarget[] = {
+	{"ru", "Russian", ETranslateLanguageId::RU},
+	{"en", "English", ETranslateLanguageId::EN},
+	{"de", "German", ETranslateLanguageId::DE},
+	{"fr", "French", ETranslateLanguageId::FR},
+	{"es", "Spanish", ETranslateLanguageId::ES},
+	{"zh-CN", "Chinese (Simplified)", ETranslateLanguageId::ZH},
+	{"pt", "Brazilian", ETranslateLanguageId::PT},
+	{"tr", "Turkish", ETranslateLanguageId::TR},
+	{"ko", "Korean", ETranslateLanguageId::KO},
+	{"ja", "Japanese", ETranslateLanguageId::JA},
+};
+
+constexpr STranslateLanguageOption gs_aFtapiTarget[] = {
+	{"ru", "Russian", ETranslateLanguageId::RU},
+	{"en", "English", ETranslateLanguageId::EN},
+	{"de", "German", ETranslateLanguageId::DE},
+	{"fr", "French", ETranslateLanguageId::FR},
+	{"es", "Spanish", ETranslateLanguageId::ES},
+	{"zh-cn", "Chinese (Simplified)", ETranslateLanguageId::ZH},
+	{"pt", "Brazilian", ETranslateLanguageId::PT},
+	{"tr", "Turkish", ETranslateLanguageId::TR},
+	{"ko", "Korean", ETranslateLanguageId::KO},
+	{"ja", "Japanese", ETranslateLanguageId::JA},
+};
+
+struct STranslateLanguageList
+{
+	const STranslateLanguageOption *m_pOptions;
+	int m_Count;
+};
+
+ETranslateLanguageId TranslateLanguageId(const char *pCode)
+{
+	if(!pCode || pCode[0] == '\0')
+		return ETranslateLanguageId::UNKNOWN;
+	if(str_comp_nocase(pCode, "auto") == 0)
+		return ETranslateLanguageId::AUTO;
+	if(str_comp_nocase(pCode, "zh") == 0 || str_comp_nocase(pCode, "zh-cn") == 0 || str_comp_nocase(pCode, "zh-tw") == 0 || str_comp_nocase(pCode, "zh-hant") == 0 || str_comp_nocase(pCode, "cn") == 0)
+		return ETranslateLanguageId::ZH;
+
+	char aToken[32];
+	int Out = 0;
+	for(const char *p = pCode; *p != '\0' && Out < (int)sizeof(aToken) - 1; ++p)
 	{
-		if(str_comp_nocase(pCode, aOptions[i].m_pCode) == 0)
-			return (int)i;
+		if(*p == '-' || *p == '_' || *p == ' ')
+			break;
+		aToken[Out++] = (char)std::tolower((unsigned char)*p);
+	}
+	aToken[Out] = '\0';
+
+	if(str_comp(aToken, "ru") == 0 || str_comp(aToken, "russian") == 0)
+		return ETranslateLanguageId::RU;
+	if(str_comp(aToken, "en") == 0 || str_comp(aToken, "english") == 0)
+		return ETranslateLanguageId::EN;
+	if(str_comp(aToken, "de") == 0 || str_comp(aToken, "german") == 0)
+		return ETranslateLanguageId::DE;
+	if(str_comp(aToken, "fr") == 0 || str_comp(aToken, "french") == 0)
+		return ETranslateLanguageId::FR;
+	if(str_comp(aToken, "es") == 0 || str_comp(aToken, "spanish") == 0)
+		return ETranslateLanguageId::ES;
+	if(str_comp(aToken, "pt") == 0 || str_comp(aToken, "portuguese") == 0 || str_comp(aToken, "brazilian") == 0)
+		return ETranslateLanguageId::PT;
+	if(str_comp(aToken, "tr") == 0 || str_comp(aToken, "turkish") == 0)
+		return ETranslateLanguageId::TR;
+	if(str_comp(aToken, "ko") == 0 || str_comp(aToken, "korean") == 0)
+		return ETranslateLanguageId::KO;
+	if(str_comp(aToken, "ja") == 0 || str_comp(aToken, "japanese") == 0)
+		return ETranslateLanguageId::JA;
+	return ETranslateLanguageId::UNKNOWN;
+}
+
+STranslateLanguageList TranslateLanguageOptions(ETranslateBackend Backend, bool Source)
+{
+	if(Backend == ETranslateBackend::MYMEMORY)
+		return Source ? STranslateLanguageList{gs_aMyMemorySource, (int)std::size(gs_aMyMemorySource)} : STranslateLanguageList{gs_aMyMemoryTarget, (int)std::size(gs_aMyMemoryTarget)};
+	if(Backend == ETranslateBackend::FTAPI && !Source)
+		return {gs_aFtapiTarget, (int)std::size(gs_aFtapiTarget)};
+	return Source ? STranslateLanguageList{gs_aGoogleSource, (int)std::size(gs_aGoogleSource)} : STranslateLanguageList{gs_aGoogleTarget, (int)std::size(gs_aGoogleTarget)};
+}
+
+int TranslateLanguageIndex(const char *pCode, const STranslateLanguageList &List)
+{
+	const ETranslateLanguageId Id = TranslateLanguageId(pCode);
+	if(Id != ETranslateLanguageId::UNKNOWN)
+	{
+		for(int i = 0; i < List.m_Count; ++i)
+		{
+			if(List.m_pOptions[i].m_Id == Id)
+				return i;
+		}
+	}
+	for(int i = 0; i < List.m_Count; ++i)
+	{
+		if(pCode && str_comp_nocase(pCode, List.m_pOptions[i].m_pCode) == 0)
+			return i;
 	}
 	return 0;
 }
 
-template<size_t N>
-void ApplyTranslateLanguage(char *pConfig, size_t ConfigSize, int Index, const STranslateLanguageOption (&aOptions)[N])
+void ApplyTranslateLanguage(char *pConfig, size_t ConfigSize, int Index, const STranslateLanguageList &List)
 {
-	Index = std::clamp(Index, 0, (int)N - 1);
-	str_copy(pConfig, aOptions[Index].m_pCode, ConfigSize);
+	if(List.m_Count <= 0)
+		return;
+	Index = std::clamp(Index, 0, List.m_Count - 1);
+	str_copy(pConfig, List.m_pOptions[Index].m_pCode, ConfigSize);
+}
+
+void NormalizeTranslateLanguage(char *pConfig, size_t ConfigSize, const STranslateLanguageList &List)
+{
+	const ETranslateLanguageId Id = TranslateLanguageId(pConfig);
+	if(Id == ETranslateLanguageId::UNKNOWN || List.m_Count <= 0)
+		return;
+	for(int i = 0; i < List.m_Count; ++i)
+	{
+		if(List.m_pOptions[i].m_Id != Id)
+			continue;
+		if(str_comp(pConfig, List.m_pOptions[i].m_pCode) != 0)
+			str_copy(pConfig, List.m_pOptions[i].m_pCode, ConfigSize);
+		return;
+	}
 }
 }
 
 void CChat::OpenTranslateSettingsPopup(const CUIRect &ButtonRect)
 {
-	Ui()->DoPopupMenu(&m_TranslateSettingsPopupId, ButtonRect.x, ButtonRect.y, 300.0f, 306.0f, this, PopupTranslateSettings);
+	Ui()->DoPopupMenu(&m_TranslateSettingsPopupId, ButtonRect.x, ButtonRect.y, 300.0f, 332.0f, this, PopupTranslateSettings);
 }
 
 CUi::EPopupMenuFunctionResult CChat::PopupTranslateSettings(void *pContext, CUIRect View, bool Active)
@@ -1477,16 +1635,19 @@ CUi::EPopupMenuFunctionResult CChat::PopupTranslateSettings(void *pContext, CUIR
 	const float Spacing = 5.0f;
 	const float RowHeight = 20.0f;
 	const float FontSize = 11.0f;
+	static CUi::SDropDownState s_BackendDropDown;
 	static CUi::SDropDownState s_IncomingSourceDropDown;
 	static CUi::SDropDownState s_IncomingTargetDropDown;
 	static CUi::SDropDownState s_OutgoingSourceDropDown;
 	static CUi::SDropDownState s_OutgoingTargetDropDown;
 	static CLineInput s_IncomingIgnoreLanguagesInput(g_Config.m_BcTranslateIncomingIgnoreLanguages, sizeof(g_Config.m_BcTranslateIncomingIgnoreLanguages));
+	static CScrollRegion s_BackendScroll;
 	static CScrollRegion s_IncomingSourceScroll;
 	static CScrollRegion s_IncomingTargetScroll;
 	static CScrollRegion s_OutgoingSourceScroll;
 	static CScrollRegion s_OutgoingTargetScroll;
 
+	s_BackendDropDown.m_SelectionPopupContext.m_pScrollRegion = &s_BackendScroll;
 	s_IncomingSourceDropDown.m_SelectionPopupContext.m_pScrollRegion = &s_IncomingSourceScroll;
 	s_IncomingTargetDropDown.m_SelectionPopupContext.m_pScrollRegion = &s_IncomingTargetScroll;
 	s_OutgoingSourceDropDown.m_SelectionPopupContext.m_pScrollRegion = &s_OutgoingSourceScroll;
@@ -1515,30 +1676,64 @@ CUi::EPopupMenuFunctionResult CChat::PopupTranslateSettings(void *pContext, CUIR
 		return pChat->Ui()->DoDropDown(&DropDown, CurrentIndex, ppLabels, LabelCount, DropDownState);
 	};
 
-	static const char *s_apSourceLabels[] = {
-		"Auto", "Russian", "English", "German", "French", "Spanish", "Chinese", "Brazilian", "Turkish", "Korean", "Japanese"};
-	static const char *s_apTargetLabels[] = {
-		"Russian", "English", "German", "French", "Spanish", "Chinese", "Brazilian", "Turkish", "Korean", "Japanese"};
+	const char *apBackendLabels[std::size(gs_aTranslateBackends)];
+	int BackendIndex = -1;
+	for(int i = 0; i < (int)std::size(gs_aTranslateBackends); ++i)
+	{
+		apBackendLabels[i] = gs_aTranslateBackends[i].m_pLabel;
+		if(str_comp_nocase(g_Config.m_TcTranslateBackend, gs_aTranslateBackends[i].m_pCode) == 0)
+			BackendIndex = i;
+	}
+	const int ShownBackend = BackendIndex >= 0 ? BackendIndex : 0;
+	const int NewBackendIndex = RenderLanguageField(Localize("Translator"), ShownBackend, apBackendLabels, (int)std::size(gs_aTranslateBackends), s_BackendDropDown);
+	if(NewBackendIndex != ShownBackend && NewBackendIndex >= 0 && NewBackendIndex < (int)std::size(gs_aTranslateBackends))
+		str_copy(g_Config.m_TcTranslateBackend, gs_aTranslateBackends[NewBackendIndex].m_pCode, sizeof(g_Config.m_TcTranslateBackend));
 
-	const int IncomingSourceIndex = TranslateLanguageIndex(g_Config.m_BcTranslateIncomingSource, gs_aTranslateSourceOptions);
-	const int NewIncomingSourceIndex = RenderLanguageField(Localize("Incoming from"), IncomingSourceIndex, s_apSourceLabels, std::size(s_apSourceLabels), s_IncomingSourceDropDown);
-	if(NewIncomingSourceIndex != IncomingSourceIndex)
-		ApplyTranslateLanguage(g_Config.m_BcTranslateIncomingSource, sizeof(g_Config.m_BcTranslateIncomingSource), NewIncomingSourceIndex, gs_aTranslateSourceOptions);
+	const bool KnownBackend = BackendIndex >= 0 || NewBackendIndex != ShownBackend;
+	const ETranslateBackend Backend = gs_aTranslateBackends[std::clamp(NewBackendIndex, 0, (int)std::size(gs_aTranslateBackends) - 1)].m_Backend;
+	const STranslateLanguageList Sources = TranslateLanguageOptions(Backend, true);
+	const STranslateLanguageList Targets = TranslateLanguageOptions(Backend, false);
+	const bool ShowSource = Backend != ETranslateBackend::FTAPI;
+	if(KnownBackend)
+	{
+		NormalizeTranslateLanguage(g_Config.m_BcTranslateIncomingSource, sizeof(g_Config.m_BcTranslateIncomingSource), Sources);
+		NormalizeTranslateLanguage(g_Config.m_TcTranslateTarget, sizeof(g_Config.m_TcTranslateTarget), Targets);
+		NormalizeTranslateLanguage(g_Config.m_BcTranslateOutgoingSource, sizeof(g_Config.m_BcTranslateOutgoingSource), Sources);
+		NormalizeTranslateLanguage(g_Config.m_BcTranslateOutgoingTarget, sizeof(g_Config.m_BcTranslateOutgoingTarget), Targets);
+	}
 
-	const int IncomingTargetIndex = TranslateLanguageIndex(g_Config.m_TcTranslateTarget, gs_aTranslateTargetOptions);
-	const int NewIncomingTargetIndex = RenderLanguageField(Localize("Incoming to"), IncomingTargetIndex, s_apTargetLabels, std::size(s_apTargetLabels), s_IncomingTargetDropDown);
+	const char *apSourceLabels[16];
+	const char *apTargetLabels[16];
+	for(int i = 0; i < Sources.m_Count && i < (int)std::size(apSourceLabels); ++i)
+		apSourceLabels[i] = Sources.m_pOptions[i].m_pLabel;
+	for(int i = 0; i < Targets.m_Count && i < (int)std::size(apTargetLabels); ++i)
+		apTargetLabels[i] = Targets.m_pOptions[i].m_pLabel;
+
+	if(ShowSource)
+	{
+		const int IncomingSourceIndex = TranslateLanguageIndex(g_Config.m_BcTranslateIncomingSource, Sources);
+		const int NewIncomingSourceIndex = RenderLanguageField(Localize("Incoming from"), IncomingSourceIndex, apSourceLabels, Sources.m_Count, s_IncomingSourceDropDown);
+		if(NewIncomingSourceIndex != IncomingSourceIndex)
+			ApplyTranslateLanguage(g_Config.m_BcTranslateIncomingSource, sizeof(g_Config.m_BcTranslateIncomingSource), NewIncomingSourceIndex, Sources);
+	}
+
+	const int IncomingTargetIndex = TranslateLanguageIndex(g_Config.m_TcTranslateTarget, Targets);
+	const int NewIncomingTargetIndex = RenderLanguageField(Localize("Incoming to"), IncomingTargetIndex, apTargetLabels, Targets.m_Count, s_IncomingTargetDropDown);
 	if(NewIncomingTargetIndex != IncomingTargetIndex)
-		ApplyTranslateLanguage(g_Config.m_TcTranslateTarget, sizeof(g_Config.m_TcTranslateTarget), NewIncomingTargetIndex, gs_aTranslateTargetOptions);
+		ApplyTranslateLanguage(g_Config.m_TcTranslateTarget, sizeof(g_Config.m_TcTranslateTarget), NewIncomingTargetIndex, Targets);
 
-	const int OutgoingSourceIndex = TranslateLanguageIndex(g_Config.m_BcTranslateOutgoingSource, gs_aTranslateSourceOptions);
-	const int NewOutgoingSourceIndex = RenderLanguageField(Localize("Your messages from"), OutgoingSourceIndex, s_apSourceLabels, std::size(s_apSourceLabels), s_OutgoingSourceDropDown);
-	if(NewOutgoingSourceIndex != OutgoingSourceIndex)
-		ApplyTranslateLanguage(g_Config.m_BcTranslateOutgoingSource, sizeof(g_Config.m_BcTranslateOutgoingSource), NewOutgoingSourceIndex, gs_aTranslateSourceOptions);
+	if(ShowSource)
+	{
+		const int OutgoingSourceIndex = TranslateLanguageIndex(g_Config.m_BcTranslateOutgoingSource, Sources);
+		const int NewOutgoingSourceIndex = RenderLanguageField(Localize("Your messages from"), OutgoingSourceIndex, apSourceLabels, Sources.m_Count, s_OutgoingSourceDropDown);
+		if(NewOutgoingSourceIndex != OutgoingSourceIndex)
+			ApplyTranslateLanguage(g_Config.m_BcTranslateOutgoingSource, sizeof(g_Config.m_BcTranslateOutgoingSource), NewOutgoingSourceIndex, Sources);
+	}
 
-	const int OutgoingTargetIndex = TranslateLanguageIndex(g_Config.m_BcTranslateOutgoingTarget, gs_aTranslateTargetOptions);
-	const int NewOutgoingTargetIndex = RenderLanguageField(Localize("Your messages to"), OutgoingTargetIndex, s_apTargetLabels, std::size(s_apTargetLabels), s_OutgoingTargetDropDown);
+	const int OutgoingTargetIndex = TranslateLanguageIndex(g_Config.m_BcTranslateOutgoingTarget, Targets);
+	const int NewOutgoingTargetIndex = RenderLanguageField(Localize("Your messages to"), OutgoingTargetIndex, apTargetLabels, Targets.m_Count, s_OutgoingTargetDropDown);
 	if(NewOutgoingTargetIndex != OutgoingTargetIndex)
-		ApplyTranslateLanguage(g_Config.m_BcTranslateOutgoingTarget, sizeof(g_Config.m_BcTranslateOutgoingTarget), NewOutgoingTargetIndex, gs_aTranslateTargetOptions);
+		ApplyTranslateLanguage(g_Config.m_BcTranslateOutgoingTarget, sizeof(g_Config.m_BcTranslateOutgoingTarget), NewOutgoingTargetIndex, Targets);
 
 	View.HSplitTop(Spacing, nullptr, &View);
 	View.HSplitTop(RowHeight, &Row, &View);
@@ -1606,7 +1801,7 @@ void CChat::OpenRoomSelectPopup(const CUIRect &ButtonRect)
 	const float ScaleX = pUiScreen->w / ChatWidth;
 	const float ScaleY = pUiScreen->h / ChatHeight;
 	const float PopupWidth = 330.0f;
-	const float PopupHeight = 330.0f;
+	const float PopupHeight = 360.0f;
 	const float Margin = 6.0f;
 	const float UiButtonRight = (ButtonRect.x + ButtonRect.w) * ScaleX;
 	const float UiButtonTop = ButtonRect.y * ScaleY;

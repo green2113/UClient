@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -55,6 +56,7 @@ private:
 		PEN,
 		CRAYON,
 		ERASER,
+		LASSO,
 	};
 
 	struct SStroke
@@ -75,12 +77,24 @@ private:
 	{
 		ADD,
 		REMOVE,
+		MOVE,
 	};
 
 	struct SHistoryEntry
 	{
 		EHistoryKind m_Kind = EHistoryKind::ADD;
 		std::vector<SStroke> m_vStrokes;
+		// MOVE keeps the strokes from before the drag here, and the moved copies in m_vStrokes.
+		std::vector<SStroke> m_vBefore;
+	};
+
+	// A saved drawing, stored relative to its own center.
+	struct SStampStroke
+	{
+		uint8_t m_Tool = UClientPresence::DRAW_TOOL_PEN;
+		ColorRGBA m_Color;
+		float m_Width = 0.0f;
+		std::vector<vec2> m_vPoints;
 	};
 
 	bool m_Active = false;
@@ -121,6 +135,17 @@ private:
 	bool m_PointerOverUi = false;
 	bool m_WasLeftDown = false;
 
+	bool m_LassoDrawing = false;
+	std::vector<vec2> m_vLasso;
+	std::vector<uint32_t> m_vSelectedIds;
+	bool m_Moving = false;
+	vec2 m_MoveAnchor;
+	vec2 m_MoveDelta;
+	bool m_Placing = false;
+	std::vector<SStampStroke> m_vPlace;
+	std::vector<std::string> m_vDrawingNames;
+	CLineInputBuffered<48> m_SaveNameInput;
+
 	// Snapshot download state for the current server and map.
 	SHA256_DIGEST m_MapSha256 = {};
 	bool m_HasMap = false;
@@ -131,6 +156,9 @@ private:
 	CButtonContainer m_PenButton;
 	CButtonContainer m_CrayonButton;
 	CButtonContainer m_EraserButton;
+	CButtonContainer m_LassoButton;
+	CButtonContainer m_SaveButton;
+	CButtonContainer m_LoadButton;
 	CButtonContainer m_ClearButton;
 	CButtonContainer m_UndoButton;
 	CButtonContainer m_RedoButton;
@@ -143,10 +171,16 @@ private:
 	char m_WidthScrollbar = 0;
 	char m_HideTeesCheckbox = 0;
 	SPopupMenuId m_SettingsPopupId;
+	SPopupMenuId m_SavePopupId;
+	SPopupMenuId m_LoadPopupId;
 	CUi::SConfirmPopupContext m_ClearConfirm;
+	CUi::SConfirmPopupContext m_DeleteConfirm;
+	char m_aDeleteDrawingName[128] = {};
 
 	static void ConDrawMode(IConsole::IResult *pResult, void *pUserData);
 	static CUi::EPopupMenuFunctionResult PopupSettings(void *pContext, CUIRect View, bool Active);
+	static CUi::EPopupMenuFunctionResult PopupSaveDrawing(void *pContext, CUIRect View, bool Active);
+	static CUi::EPopupMenuFunctionResult PopupLoadDrawing(void *pContext, CUIRect View, bool Active);
 
 	void SetActive(bool Active);
 	bool CanEnter() const;
@@ -163,7 +197,7 @@ private:
 	void EraseAt(vec2 Pos);
 	void FlushErase();
 	void ClearOwnStrokes();
-	void PushHistory(EHistoryKind Kind, std::vector<SStroke> vStrokes);
+	void PushHistory(EHistoryKind Kind, std::vector<SStroke> vStrokes, std::vector<SStroke> vBefore = {});
 	void Undo();
 	void Redo();
 	void FinishPenGesture();
@@ -174,6 +208,18 @@ private:
 	void RestoreStrokes(const std::vector<SStroke> &vStrokes);
 	void DropStrokes(const std::vector<SStroke> &vStrokes);
 	void UpdateDrawing();
+	void UpdateLasso(bool Left, bool LeftClicked, vec2 World);
+	void FinishLasso();
+	void ClearLasso();
+	bool IsSelected(uint32_t Id) const;
+	bool HitsSelection(vec2 Pos) const;
+	const SStroke *FindOwnStroke(uint32_t Id) const;
+	void CommitMove();
+	void RefreshDrawingList();
+	bool SaveSelection(const char *pName);
+	bool LoadDrawing(const char *pName);
+	void DeleteDrawing(const char *pName);
+	void PlaceStamp(vec2 World);
 
 	void RenderStroke(const SStroke &Stroke, std::vector<IGraphics::CFreeformItem> &vItems);
 	void RenderToolbar();

@@ -1,14 +1,19 @@
 #include "draw_mode.h"
 
 #include <base/math.h>
+#include <base/str.h>
 #include <base/system.h>
 
 #include <engine/font_icons.h>
 #include <engine/graphics.h>
 #include <engine/keys.h>
 #include <engine/shared/config.h>
+#include <engine/shared/json.h>
+#include <engine/shared/jsonwriter.h>
+#include <engine/storage.h>
 
 #include <game/client/gameclient.h>
+#include <game/client/ui_scrollregion.h>
 #include <game/localization.h>
 
 #include <algorithm>
@@ -24,6 +29,7 @@ constexpr int64_t SUBSCRIBE_RETRY_MS = 1000;
 // Catches up on live segments lost over UDP and recreates the relay canvas after it idled out.
 constexpr int64_t RESYNC_MS = 30000;
 constexpr int CAP_SEGMENTS = 12;
+constexpr const char *DRAWINGS_DIR = "uclient_drawings";
 
 const ColorRGBA s_aPalette[] = {
 	ColorRGBA(0.0f, 0.0f, 0.0f, 1.0f),
@@ -98,6 +104,97 @@ void AddCircle(std::vector<IGraphics::CFreeformItem> &vItems, vec2 Center, float
 		vItems.emplace_back(Center.x, Center.y, P1.x, P1.y, P3.x, P3.y, P2.x, P2.y);
 	}
 }
+
+bool PointInPolygon(vec2 P, const std::vector<vec2> &vPoly)
+{
+	const size_t Count = vPoly.size();
+	if(Count < 3)
+		return false;
+	bool Inside = false;
+	for(size_t i = 0, j = Count - 1; i < Count; j = i++)
+	{
+		const vec2 &A = vPoly[j];
+		const vec2 &B = vPoly[i];
+		if((A.y > P.y) != (B.y > P.y) && P.x < (B.x - A.x) * (P.y - A.y) / (B.y - A.y) + A.x)
+			Inside = !Inside;
+	}
+	return Inside;
+}
+
+bool SegmentsCross(vec2 A, vec2 B, vec2 C, vec2 D)
+{
+	const vec2 R = B - A;
+	const vec2 S = D - C;
+	const float Den = R.x * S.y - R.y * S.x;
+	if(std::fabs(Den) < 0.0001f)
+		return false;
+	const vec2 Delta = C - A;
+	const float T = (Delta.x * S.y - Delta.y * S.x) / Den;
+	const float U = (Delta.x * R.y - Delta.y * R.x) / Den;
+	return T >= 0.0f && T <= 1.0f && U >= 0.0f && U <= 1.0f;
+}
+
+bool StrokeHitsLasso(const std::vector<vec2> &vPoints, vec2 StrokeMin, vec2 StrokeMax, const std::vector<vec2> &vPoly, vec2 PolyMin, vec2 PolyMax)
+{
+	if(StrokeMax.x < PolyMin.x || StrokeMin.x > PolyMax.x || StrokeMax.y < PolyMin.y || StrokeMin.y > PolyMax.y)
+		return false;
+	for(const vec2 &Point : vPoints)
+	{
+		if(PointInPolygon(Point, vPoly))
+			return true;
+	}
+	if(vPoints.size() < 2)
+		return false;
+	for(size_t i = 1; i < vPoints.size(); i++)
+	{
+		for(size_t j = 0; j < vPoly.size(); j++)
+		{
+			if(SegmentsCross(vPoints[i - 1], vPoints[i], vPoly[j], vPoly[(j + 1) % vPoly.size()]))
+				return true;
+		}
+	}
+	return false;
+}
+
+bool DrawingFileName(const char *pName, char *pOut, int OutSize)
+{
+	if(!pName || OutSize < 2)
+		return false;
+	str_copy(pOut, pName, OutSize);
+	str_utf8_trim_right(pOut);
+	const char *pStart = str_utf8_skip_whitespaces(pOut);
+	if(pStart != pOut)
+	{
+		char aMoved[128];
+		str_copy(aMoved, pStart);
+		str_copy(pOut, aMoved, OutSize);
+	}
+	for(char *pChar = pOut; *pChar; pChar++)
+	{
+		const unsigned char C = (unsigned char)*pChar;
+		if(C < 32 || C == 127 || C == '\\' || C == '/' || C == '|' || C == ':' || C == '*' || C == '?' || C == '<' || C == '>' || C == '"')
+			*pChar = '_';
+	}
+	str_utf8_trim_right(pOut);
+	return pOut[0] != '\0' && str_comp(pOut, ".") != 0 && str_comp(pOut, "..") != 0 && str_valid_filename(pOut);
+}
+
+int ListDrawingFile(const char *pName, int IsDir, int DirType, void *pUser)
+{
+	(void)DirType;
+	if(IsDir || !pName || !str_endswith(pName, ".json"))
+		return 0;
+	const char *pBase = pName;
+	if(const char *pSlash = str_rchr(pName, '/'))
+		pBase = pSlash + 1;
+	std::string Name = pBase;
+	if(Name.size() <= 5)
+		return 0;
+	Name.resize(Name.size() - 5);
+	if(!Name.empty())
+		static_cast<std::vector<std::string> *>(pUser)->push_back(std::move(Name));
+	return 0;
+}
 }
 
 ColorRGBA CUClientDrawMode::CurrentColor() const
@@ -150,6 +247,8 @@ void CUClientDrawMode::SetActive(bool Active)
 		Ui()->ClosePopupMenus();
 		m_Eyedropper = false;
 		m_EyedropperHasSample = false;
+		ClearLasso();
+		m_SaveNameInput.Deactivate();
 	}
 	m_Active = Active;
 	m_Drawing = false;
@@ -193,6 +292,7 @@ void CUClientDrawMode::ClearStrokes()
 	m_HasSegmentStart = false;
 	m_Drawing = false;
 	m_CurrentGestureId = 0;
+	ClearLasso();
 }
 
 void CUClientDrawMode::ResetSync()
@@ -481,12 +581,16 @@ void CUClientDrawMode::FlushErase()
 	m_vPendingErase.clear();
 }
 
-void CUClientDrawMode::PushHistory(EHistoryKind Kind, std::vector<SStroke> vStrokes)
+void CUClientDrawMode::PushHistory(EHistoryKind Kind, std::vector<SStroke> vStrokes, std::vector<SStroke> vBefore)
 {
-	if(vStrokes.empty())
+	if(vStrokes.empty() && vBefore.empty())
 		return;
 	m_vRedo.clear();
-	m_vUndo.push_back({Kind, std::move(vStrokes)});
+	SHistoryEntry Entry;
+	Entry.m_Kind = Kind;
+	Entry.m_vStrokes = std::move(vStrokes);
+	Entry.m_vBefore = std::move(vBefore);
+	m_vUndo.push_back(std::move(Entry));
 	if(m_vUndo.size() > HISTORY_LIMIT)
 		m_vUndo.erase(m_vUndo.begin());
 }
@@ -553,6 +657,24 @@ void CUClientDrawMode::CancelPenGesture()
 
 void CUClientDrawMode::Undo()
 {
+	if(m_Placing)
+	{
+		m_Placing = false;
+		m_vPlace.clear();
+		return;
+	}
+	if(m_Moving)
+	{
+		m_Moving = false;
+		m_MoveDelta = vec2(0.0f, 0.0f);
+		return;
+	}
+	if(m_LassoDrawing)
+	{
+		m_LassoDrawing = false;
+		m_vLasso.clear();
+		return;
+	}
 	if(m_Drawing && m_Tool != ETool::ERASER)
 	{
 		CancelPenGesture();
@@ -572,26 +694,39 @@ void CUClientDrawMode::Undo()
 	m_vUndo.pop_back();
 	if(Entry.m_Kind == EHistoryKind::ADD)
 		DropStrokes(Entry.m_vStrokes);
+	else if(Entry.m_Kind == EHistoryKind::MOVE)
+	{
+		DropStrokes(Entry.m_vStrokes);
+		RestoreStrokes(Entry.m_vBefore);
+	}
 	else
 		RestoreStrokes(Entry.m_vStrokes);
+	m_vSelectedIds.clear();
 	m_vRedo.push_back(std::move(Entry));
 }
 
 void CUClientDrawMode::Redo()
 {
-	if(m_Drawing || m_vRedo.empty())
+	if(m_Drawing || m_LassoDrawing || m_Moving || m_Placing || m_vRedo.empty())
 		return;
 	SHistoryEntry Entry = std::move(m_vRedo.back());
 	m_vRedo.pop_back();
 	if(Entry.m_Kind == EHistoryKind::ADD)
 		RestoreStrokes(Entry.m_vStrokes);
+	else if(Entry.m_Kind == EHistoryKind::MOVE)
+	{
+		DropStrokes(Entry.m_vBefore);
+		RestoreStrokes(Entry.m_vStrokes);
+	}
 	else
 		DropStrokes(Entry.m_vStrokes);
+	m_vSelectedIds.clear();
 	m_vUndo.push_back(std::move(Entry));
 }
 
 void CUClientDrawMode::ClearOwnStrokes()
 {
+	ClearLasso();
 	m_vPendingPoints.clear();
 	m_HasSegmentStart = false;
 	m_Drawing = false;
@@ -615,6 +750,422 @@ void CUClientDrawMode::ClearOwnStrokes()
 		PushHistory(EHistoryKind::REMOVE, std::move(vOwn));
 	RemoveStrokes(Own, nullptr);
 	GameClient()->m_ClientIndicator.SendUcDrawPacket(UClientPresence::DRAW_OP_CLEAR_OWNER, m_MapSha256, {});
+}
+
+void CUClientDrawMode::ClearLasso()
+{
+	m_LassoDrawing = false;
+	m_Moving = false;
+	m_Placing = false;
+	m_vLasso.clear();
+	m_vSelectedIds.clear();
+	m_vPlace.clear();
+	m_MoveDelta = vec2(0.0f, 0.0f);
+}
+
+bool CUClientDrawMode::IsSelected(uint32_t Id) const
+{
+	return std::find(m_vSelectedIds.begin(), m_vSelectedIds.end(), Id) != m_vSelectedIds.end();
+}
+
+const CUClientDrawMode::SStroke *CUClientDrawMode::FindOwnStroke(uint32_t Id) const
+{
+	const CUuid Own = GameClient()->m_ClientIndicator.ClientInstanceId();
+	for(const SStroke &Stroke : m_vStrokes)
+	{
+		if(Stroke.m_Id == Id && Stroke.m_Owner == Own)
+			return &Stroke;
+	}
+	return nullptr;
+}
+
+bool CUClientDrawMode::HitsSelection(vec2 Pos) const
+{
+	for(uint32_t Id : m_vSelectedIds)
+	{
+		const SStroke *pStroke = FindOwnStroke(Id);
+		if(!pStroke)
+			continue;
+		const float Hit = pStroke->m_Width * 0.5f + 4.0f;
+		if(pStroke->m_vPoints.size() == 1 && distance(Pos, pStroke->m_vPoints[0]) <= Hit)
+			return true;
+		for(size_t i = 1; i < pStroke->m_vPoints.size(); i++)
+		{
+			if(DistanceToSegment(Pos, pStroke->m_vPoints[i - 1], pStroke->m_vPoints[i]) <= Hit)
+				return true;
+		}
+	}
+	return false;
+}
+
+void CUClientDrawMode::FinishLasso()
+{
+	m_LassoDrawing = false;
+	const std::vector<vec2> vPoly = std::move(m_vLasso);
+	m_vLasso.clear();
+	m_vSelectedIds.clear();
+	if(vPoly.size() < 3)
+		return;
+
+	vec2 PolyMin = vPoly[0];
+	vec2 PolyMax = vPoly[0];
+	for(const vec2 &Point : vPoly)
+	{
+		PolyMin = vec2(minimum(PolyMin.x, Point.x), minimum(PolyMin.y, Point.y));
+		PolyMax = vec2(maximum(PolyMax.x, Point.x), maximum(PolyMax.y, Point.y));
+	}
+
+	const CUuid Own = GameClient()->m_ClientIndicator.ClientInstanceId();
+	std::vector<uint32_t> vGestures;
+	for(const SStroke &Stroke : m_vStrokes)
+	{
+		if(!(Stroke.m_Owner == Own) || !StrokeHitsLasso(Stroke.m_vPoints, Stroke.m_Min, Stroke.m_Max, vPoly, PolyMin, PolyMax))
+			continue;
+		if(Stroke.m_GestureId != 0)
+		{
+			if(std::find(vGestures.begin(), vGestures.end(), Stroke.m_GestureId) == vGestures.end())
+				vGestures.push_back(Stroke.m_GestureId);
+		}
+		else
+			m_vSelectedIds.push_back(Stroke.m_Id);
+	}
+	if(vGestures.empty())
+		return;
+	for(const SStroke &Stroke : m_vStrokes)
+	{
+		if(Stroke.m_Owner == Own && Stroke.m_GestureId != 0 && std::find(vGestures.begin(), vGestures.end(), Stroke.m_GestureId) != vGestures.end())
+			m_vSelectedIds.push_back(Stroke.m_Id);
+	}
+}
+
+void CUClientDrawMode::CommitMove()
+{
+	m_Moving = false;
+	std::vector<SStroke> vOld;
+	for(uint32_t Id : m_vSelectedIds)
+	{
+		if(const SStroke *pStroke = FindOwnStroke(Id))
+			vOld.push_back(*pStroke);
+	}
+	bool Changed = false;
+	for(const SStroke &Old : vOld)
+	{
+		for(const vec2 &Point : Old.m_vPoints)
+		{
+			const vec2 Next(std::round(Point.x + m_MoveDelta.x), std::round(Point.y + m_MoveDelta.y));
+			if(Next.x != Point.x || Next.y != Point.y)
+				Changed = true;
+		}
+	}
+	if(!Changed)
+	{
+		m_MoveDelta = vec2(0.0f, 0.0f);
+		if(vOld.empty())
+			m_vSelectedIds.clear();
+		return;
+	}
+
+	std::vector<std::pair<uint32_t, uint32_t>> vGestureMap;
+	auto MapGesture = [&](uint32_t Old) {
+		if(Old == 0)
+			return 0u;
+		for(const auto &Pair : vGestureMap)
+		{
+			if(Pair.first == Old)
+				return Pair.second;
+		}
+		const uint32_t New = m_NextGestureId++;
+		vGestureMap.emplace_back(Old, New);
+		return New;
+	};
+
+	const CUuid Own = GameClient()->m_ClientIndicator.ClientInstanceId();
+	std::vector<SStroke> vNew;
+	std::vector<uint32_t> vOldIds;
+	vNew.reserve(vOld.size());
+	vOldIds.reserve(vOld.size());
+	for(const SStroke &Old : vOld)
+	{
+		SStroke Moved = Old;
+		Moved.m_Id = m_NextStrokeId++;
+		Moved.m_GestureId = MapGesture(Old.m_GestureId);
+		for(vec2 &Point : Moved.m_vPoints)
+			Point = vec2(std::round(Point.x + m_MoveDelta.x), std::round(Point.y + m_MoveDelta.y));
+		vOldIds.push_back(Old.m_Id);
+		vNew.push_back(std::move(Moved));
+	}
+
+	std::vector<SStroke> vHistory = vNew;
+	RemoveStrokes(Own, &vOldIds);
+	SendEraseIds(vOldIds);
+	for(const SStroke &Stroke : vHistory)
+		SendSegment(Stroke);
+	for(SStroke &Stroke : vNew)
+		AddStroke(std::move(Stroke));
+
+	m_vSelectedIds.clear();
+	m_vSelectedIds.reserve(vHistory.size());
+	for(const SStroke &Stroke : vHistory)
+		m_vSelectedIds.push_back(Stroke.m_Id);
+	PushHistory(EHistoryKind::MOVE, std::move(vHistory), std::move(vOld));
+	m_MoveDelta = vec2(0.0f, 0.0f);
+}
+
+void CUClientDrawMode::UpdateLasso(bool Left, bool LeftClicked, vec2 World)
+{
+	if(m_Placing)
+	{
+		if(LeftClicked && !m_PointerOverUi)
+			PlaceStamp(World);
+		return;
+	}
+	if(m_Moving)
+	{
+		m_MoveDelta = World - m_MoveAnchor;
+		if(!Left)
+			CommitMove();
+		return;
+	}
+	if(m_LassoDrawing)
+	{
+		if(Left)
+		{
+			if(m_vLasso.empty() || distance(m_vLasso.back(), World) > 4.0f)
+				m_vLasso.push_back(World);
+		}
+		else
+			FinishLasso();
+		return;
+	}
+	if(!LeftClicked || m_PointerOverUi)
+		return;
+	if(HitsSelection(World))
+	{
+		m_Moving = true;
+		m_MoveAnchor = World;
+		m_MoveDelta = vec2(0.0f, 0.0f);
+		return;
+	}
+	m_vSelectedIds.clear();
+	m_LassoDrawing = true;
+	m_vLasso.clear();
+	m_vLasso.push_back(World);
+}
+
+void CUClientDrawMode::RefreshDrawingList()
+{
+	m_vDrawingNames.clear();
+	Storage()->ListDirectory(IStorage::TYPE_SAVE, DRAWINGS_DIR, ListDrawingFile, &m_vDrawingNames);
+	std::sort(m_vDrawingNames.begin(), m_vDrawingNames.end());
+}
+
+bool CUClientDrawMode::SaveSelection(const char *pName)
+{
+	char aFile[128];
+	if(!DrawingFileName(pName, aFile, sizeof(aFile)))
+		return false;
+
+	std::vector<SStroke> vSelected;
+	vec2 Min(0.0f, 0.0f);
+	vec2 Max(0.0f, 0.0f);
+	bool Any = false;
+	for(uint32_t Id : m_vSelectedIds)
+	{
+		const SStroke *pStroke = FindOwnStroke(Id);
+		if(!pStroke || pStroke->m_vPoints.empty())
+			continue;
+		for(const vec2 &Point : pStroke->m_vPoints)
+		{
+			if(!Any)
+				Min = Max = Point;
+			Any = true;
+			Min = vec2(minimum(Min.x, Point.x), minimum(Min.y, Point.y));
+			Max = vec2(maximum(Max.x, Point.x), maximum(Max.y, Point.y));
+		}
+		vSelected.push_back(*pStroke);
+	}
+	if(!Any)
+		return false;
+	const vec2 Center = (Min + Max) * 0.5f;
+
+	Storage()->CreateFolder(DRAWINGS_DIR, IStorage::TYPE_SAVE);
+	char aPath[IO_MAX_PATH_LENGTH];
+	str_format(aPath, sizeof(aPath), "%s/%s.json", DRAWINGS_DIR, aFile);
+	IOHANDLE File = Storage()->OpenFile(aPath, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+	if(!File)
+		return false;
+
+	auto Channel = [](float Value) { return std::clamp(round_to_int(Value * 255.0f), 0, 255); };
+	CJsonFileWriter Writer(File);
+	Writer.BeginObject();
+	Writer.WriteAttribute("name");
+	Writer.WriteStrValue(aFile);
+	Writer.WriteAttribute("strokes");
+	Writer.BeginArray();
+	for(const SStroke &Stroke : vSelected)
+	{
+		Writer.BeginObject();
+		Writer.WriteAttribute("tool");
+		Writer.WriteIntValue(Stroke.m_Tool);
+		Writer.WriteAttribute("r");
+		Writer.WriteIntValue(Channel(Stroke.m_Color.r));
+		Writer.WriteAttribute("g");
+		Writer.WriteIntValue(Channel(Stroke.m_Color.g));
+		Writer.WriteAttribute("b");
+		Writer.WriteIntValue(Channel(Stroke.m_Color.b));
+		Writer.WriteAttribute("a");
+		Writer.WriteIntValue(Channel(Stroke.m_Color.a));
+		Writer.WriteAttribute("width");
+		Writer.WriteIntValue(std::clamp(round_to_int(Stroke.m_Width), UClientPresence::DRAW_MIN_WIDTH, UClientPresence::DRAW_MAX_WIDTH));
+		Writer.WriteAttribute("points");
+		Writer.BeginArray();
+		for(const vec2 &Point : Stroke.m_vPoints)
+		{
+			Writer.BeginArray();
+			Writer.WriteIntValue(round_to_int(Point.x - Center.x));
+			Writer.WriteIntValue(round_to_int(Point.y - Center.y));
+			Writer.EndArray();
+		}
+		Writer.EndArray();
+		Writer.EndObject();
+	}
+	Writer.EndArray();
+	Writer.EndObject();
+	return true;
+}
+
+bool CUClientDrawMode::LoadDrawing(const char *pName)
+{
+	char aFile[128];
+	if(!DrawingFileName(pName, aFile, sizeof(aFile)))
+		return false;
+	char aPath[IO_MAX_PATH_LENGTH];
+	str_format(aPath, sizeof(aPath), "%s/%s.json", DRAWINGS_DIR, aFile);
+	void *pData = nullptr;
+	unsigned Length = 0;
+	if(!Storage()->ReadFile(aPath, IStorage::TYPE_SAVE, &pData, &Length) || !pData)
+		return false;
+	json_settings JsonSettings{};
+	char aError[256];
+	json_value *pRoot = json_parse_ex(&JsonSettings, static_cast<const json_char *>(pData), Length, aError);
+	free(pData);
+	if(!pRoot)
+	{
+		(void)aError;
+		return false;
+	}
+
+	std::vector<SStampStroke> vPlace;
+	const json_value *pStrokes = pRoot->type == json_object ? json_object_get(pRoot, "strokes") : nullptr;
+	if(pStrokes && pStrokes->type == json_array)
+	{
+		const int Count = json_array_length(pStrokes);
+		for(int i = 0; i < Count; i++)
+		{
+			const json_value *pItem = json_array_get(pStrokes, i);
+			if(!pItem || pItem->type != json_object)
+				continue;
+			auto IntOf = [&](const char *pKey, int Fallback) {
+				const json_value *pValue = json_object_get(pItem, pKey);
+				return pValue && pValue->type == json_integer ? json_int_get(pValue) : Fallback;
+			};
+			SStampStroke Stamp;
+			Stamp.m_Tool = IntOf("tool", UClientPresence::DRAW_TOOL_PEN) == UClientPresence::DRAW_TOOL_CRAYON ? UClientPresence::DRAW_TOOL_CRAYON : UClientPresence::DRAW_TOOL_PEN;
+			Stamp.m_Width = (float)std::clamp(IntOf("width", 8), UClientPresence::DRAW_MIN_WIDTH, UClientPresence::DRAW_MAX_WIDTH);
+			Stamp.m_Color = ColorRGBA(std::clamp(IntOf("r", 255), 0, 255) / 255.0f, std::clamp(IntOf("g", 255), 0, 255) / 255.0f, std::clamp(IntOf("b", 255), 0, 255) / 255.0f, std::clamp(IntOf("a", 255), 0, 255) / 255.0f);
+			const json_value *pPoints = json_object_get(pItem, "points");
+			if(!pPoints || pPoints->type != json_array)
+				continue;
+			const int PointCount = json_array_length(pPoints);
+			for(int PointIndex = 0; PointIndex < PointCount; PointIndex++)
+			{
+				const json_value *pPoint = json_array_get(pPoints, PointIndex);
+				if(!pPoint || pPoint->type != json_array || json_array_length(pPoint) < 2)
+					continue;
+				const json_value *pX = json_array_get(pPoint, 0);
+				const json_value *pY = json_array_get(pPoint, 1);
+				if(!pX || pX->type != json_integer || !pY || pY->type != json_integer)
+					continue;
+				Stamp.m_vPoints.emplace_back((float)json_int_get(pX), (float)json_int_get(pY));
+			}
+			if(Stamp.m_vPoints.empty())
+				continue;
+			const size_t Limit = (size_t)UClientPresence::DRAW_MAX_POINTS_PER_SEGMENT;
+			if(Stamp.m_vPoints.size() <= Limit)
+			{
+				vPlace.push_back(std::move(Stamp));
+				continue;
+			}
+			for(size_t Start = 0; Start < Stamp.m_vPoints.size();)
+			{
+				const size_t End = minimum(Stamp.m_vPoints.size(), Start + Limit);
+				SStampStroke Chunk = Stamp;
+				Chunk.m_vPoints.assign(Stamp.m_vPoints.begin() + Start, Stamp.m_vPoints.begin() + End);
+				vPlace.push_back(std::move(Chunk));
+				if(End >= Stamp.m_vPoints.size())
+					break;
+				Start = End - 1;
+			}
+		}
+	}
+	json_value_free(pRoot);
+	if(vPlace.empty())
+		return false;
+
+	m_vPlace = std::move(vPlace);
+	m_Placing = true;
+	m_LassoDrawing = false;
+	m_Moving = false;
+	m_vLasso.clear();
+	m_vSelectedIds.clear();
+	m_MoveDelta = vec2(0.0f, 0.0f);
+	return true;
+}
+
+void CUClientDrawMode::DeleteDrawing(const char *pName)
+{
+	char aFile[128];
+	if(!DrawingFileName(pName, aFile, sizeof(aFile)))
+		return;
+	char aPath[IO_MAX_PATH_LENGTH];
+	str_format(aPath, sizeof(aPath), "%s/%s.json", DRAWINGS_DIR, aFile);
+	Storage()->RemoveFile(aPath, IStorage::TYPE_SAVE);
+	RefreshDrawingList();
+}
+
+void CUClientDrawMode::PlaceStamp(vec2 World)
+{
+	if(m_vPlace.empty())
+	{
+		m_Placing = false;
+		return;
+	}
+	const uint32_t Gesture = m_NextGestureId++;
+	const CUuid Own = GameClient()->m_ClientIndicator.ClientInstanceId();
+	std::vector<SStroke> vPlaced;
+	for(const SStampStroke &Stamp : m_vPlace)
+	{
+		SStroke Stroke;
+		Stroke.m_Owner = Own;
+		Stroke.m_Id = m_NextStrokeId++;
+		Stroke.m_GestureId = Gesture;
+		Stroke.m_Tool = Stamp.m_Tool;
+		Stroke.m_Color = Stamp.m_Color;
+		if(Stroke.m_Color.a <= 0.0f)
+			Stroke.m_Color.a = 1.0f;
+		Stroke.m_Width = Stamp.m_Width;
+		Stroke.m_vPoints.reserve(Stamp.m_vPoints.size());
+		for(const vec2 &Point : Stamp.m_vPoints)
+			Stroke.m_vPoints.push_back(vec2(std::round(World.x + Point.x), std::round(World.y + Point.y)));
+		vPlaced.push_back(std::move(Stroke));
+	}
+	for(const SStroke &Stroke : vPlaced)
+		SendSegment(Stroke);
+	for(const SStroke &Stroke : vPlaced)
+		AddStroke(SStroke(Stroke));
+	PushHistory(EHistoryKind::ADD, std::move(vPlaced));
+	m_Placing = false;
+	m_vPlace.clear();
 }
 
 void CUClientDrawMode::UpdateDrawing()
@@ -672,6 +1223,11 @@ void CUClientDrawMode::UpdateDrawing()
 	const bool LeftClicked = Left && !m_WasLeftDown;
 	m_WasLeftDown = Left;
 	const vec2 World = MouseWorldPos();
+	if(m_Tool == ETool::LASSO || m_Placing)
+	{
+		UpdateLasso(Left, LeftClicked, World);
+		return;
+	}
 	if(!m_Drawing)
 	{
 		if(!LeftClicked || m_PointerOverUi)
@@ -771,7 +1327,8 @@ void CUClientDrawMode::RenderStroke(const SStroke &Stroke, std::vector<IGraphics
 
 void CUClientDrawMode::OnRender()
 {
-	if(Client()->State() != IClient::STATE_ONLINE || !g_Config.m_UcDraw || (m_vStrokes.empty() && m_vPendingPoints.empty()))
+	const bool Overlay = m_Placing || !m_vLasso.empty();
+	if(Client()->State() != IClient::STATE_ONLINE || !g_Config.m_UcDraw || (m_vStrokes.empty() && m_vPendingPoints.empty() && !Overlay))
 		return;
 
 	float aPoints[4];
@@ -783,12 +1340,48 @@ void CUClientDrawMode::OnRender()
 	Graphics()->BlendNormal();
 	Graphics()->TextureClear();
 
+	auto OffScreen = [&](vec2 Min, vec2 Max) {
+		return Max.x < aPoints[0] || Min.x > aPoints[2] || Max.y < aPoints[1] || Min.y > aPoints[3];
+	};
 	std::vector<IGraphics::CFreeformItem> vItems;
+	auto RenderHighlighted = [&](const SStroke &Stroke) {
+		SStroke Halo = Stroke;
+		Halo.m_Tool = UClientPresence::DRAW_TOOL_PEN;
+		Halo.m_Color = ColorRGBA(1.0f, 1.0f, 1.0f, 0.9f);
+		Halo.m_Width = Stroke.m_Width + 3.0f;
+		RenderStroke(Halo, vItems);
+		RenderStroke(Stroke, vItems);
+	};
+
+	const CUuid Own = GameClient()->m_ClientIndicator.ClientInstanceId();
 	for(const SStroke &Stroke : m_vStrokes)
 	{
-		if(Stroke.m_Max.x < aPoints[0] || Stroke.m_Min.x > aPoints[2] || Stroke.m_Max.y < aPoints[1] || Stroke.m_Min.y > aPoints[3])
+		const bool Selected = Stroke.m_Owner == Own && IsSelected(Stroke.m_Id);
+		if(Selected && m_Moving)
 			continue;
-		RenderStroke(Stroke, vItems);
+		if(OffScreen(Stroke.m_Min, Stroke.m_Max))
+			continue;
+		if(Selected)
+			RenderHighlighted(Stroke);
+		else
+			RenderStroke(Stroke, vItems);
+	}
+	if(m_Moving)
+	{
+		for(uint32_t Id : m_vSelectedIds)
+		{
+			const SStroke *pStroke = FindOwnStroke(Id);
+			if(!pStroke)
+				continue;
+			SStroke Moved = *pStroke;
+			for(vec2 &Point : Moved.m_vPoints)
+				Point += m_MoveDelta;
+			Moved.m_Min += m_MoveDelta;
+			Moved.m_Max += m_MoveDelta;
+			if(OffScreen(Moved.m_Min, Moved.m_Max))
+				continue;
+			RenderHighlighted(Moved);
+		}
 	}
 	if(m_Drawing && m_Tool != ETool::ERASER && !m_vPendingPoints.empty())
 	{
@@ -800,6 +1393,39 @@ void CUClientDrawMode::OnRender()
 			Preview.m_vPoints.push_back(m_SegmentStart);
 		Preview.m_vPoints.insert(Preview.m_vPoints.end(), m_vPendingPoints.begin(), m_vPendingPoints.end());
 		RenderStroke(Preview, vItems);
+	}
+	if(m_Placing)
+	{
+		const vec2 Origin = MouseWorldPos();
+		for(const SStampStroke &Stamp : m_vPlace)
+		{
+			SStroke Preview;
+			Preview.m_Tool = Stamp.m_Tool;
+			Preview.m_Color = Stamp.m_Color;
+			Preview.m_Color.a *= 0.45f;
+			Preview.m_Width = Stamp.m_Width;
+			Preview.m_Id = 1;
+			Preview.m_vPoints.reserve(Stamp.m_vPoints.size());
+			for(const vec2 &Point : Stamp.m_vPoints)
+				Preview.m_vPoints.push_back(Origin + Point);
+			RenderStroke(Preview, vItems);
+		}
+	}
+	if(!m_vLasso.empty())
+	{
+		std::vector<IGraphics::CLineItem> vLines;
+		vLines.reserve(m_vLasso.size());
+		for(size_t i = 1; i < m_vLasso.size(); i++)
+			vLines.emplace_back(m_vLasso[i - 1], m_vLasso[i]);
+		if(m_LassoDrawing || m_vLasso.size() >= 2)
+			vLines.emplace_back(m_vLasso.back(), m_LassoDrawing ? MouseWorldPos() : m_vLasso.front());
+		if(!vLines.empty())
+		{
+			Graphics()->LinesBegin();
+			Graphics()->SetColor(1.0f, 1.0f, 1.0f, 0.9f);
+			Graphics()->LinesDraw(vLines.data(), vLines.size());
+			Graphics()->LinesEnd();
+		}
 	}
 
 	Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
@@ -837,8 +1463,16 @@ bool CUClientDrawMode::OnInput(const IInput::CEvent &Event)
 			m_EyedropperHasSample = false;
 			return true;
 		}
+		if(m_Placing)
+		{
+			m_Placing = false;
+			m_vPlace.clear();
+			return true;
+		}
 		if(Ui()->IsPopupOpen())
 			Ui()->ClosePopupMenus();
+		else if(m_LassoDrawing || m_Moving || !m_vSelectedIds.empty())
+			ClearLasso();
 		else
 			SetActive(false);
 		return true;
@@ -867,6 +1501,86 @@ CUi::EPopupMenuFunctionResult CUClientDrawMode::PopupSettings(void *pContext, CU
 	return CUi::POPUP_KEEP_OPEN;
 }
 
+CUi::EPopupMenuFunctionResult CUClientDrawMode::PopupSaveDrawing(void *pContext, CUIRect View, bool Active)
+{
+	(void)Active;
+	CUClientDrawMode *pSelf = static_cast<CUClientDrawMode *>(pContext);
+	static CButtonContainer s_SaveButton;
+	CUIRect Row, Button;
+	View.HSplitTop(20.0f, &Row, &View);
+	pSelf->Ui()->DoEditBox(&pSelf->m_SaveNameInput, &Row, 12.0f);
+	View.HSplitTop(6.0f, nullptr, &View);
+	View.HSplitTop(20.0f, &Button, &View);
+	const bool Clicked = pSelf->GameClient()->m_Menus.DoButton_Menu(&s_SaveButton, Localize("Save"), 0, &Button);
+	const bool Enter = pSelf->m_SaveNameInput.IsActive() && (pSelf->Input()->KeyPress(KEY_RETURN) || pSelf->Input()->KeyPress(KEY_KP_ENTER));
+	if(Clicked || Enter)
+	{
+		char aName[48];
+		str_copy(aName, pSelf->m_SaveNameInput.GetString());
+		str_utf8_trim_right(aName);
+		const char *pName = str_utf8_skip_whitespaces(aName);
+		if(pName[0] != '\0' && pSelf->SaveSelection(pName))
+			return CUi::POPUP_CLOSE_CURRENT;
+	}
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+CUi::EPopupMenuFunctionResult CUClientDrawMode::PopupLoadDrawing(void *pContext, CUIRect View, bool Active)
+{
+	(void)Active;
+	CUClientDrawMode *pSelf = static_cast<CUClientDrawMode *>(pContext);
+	static CScrollRegion s_ScrollRegion;
+	static CButtonContainer s_aLoad[64];
+	static CButtonContainer s_aDelete[64];
+	vec2 ScrollOffset(0.0f, 0.0f);
+	CScrollRegionParams ScrollParams;
+	ScrollParams.m_ScrollbarWidth = 10.0f;
+	ScrollParams.m_ScrollbarMargin = 2.0f;
+	ScrollParams.m_ScrollUnit = 20.0f;
+	s_ScrollRegion.Begin(&View, &ScrollOffset, &ScrollParams);
+	View.y += ScrollOffset.y;
+
+	if(pSelf->m_vDrawingNames.empty())
+	{
+		CUIRect Row;
+		View.HSplitTop(18.0f, &Row, &View);
+		s_ScrollRegion.AddRect(Row);
+		pSelf->Ui()->DoLabel(&Row, Localize("No drawings"), 12.0f, TEXTALIGN_ML);
+	}
+	const int Count = minimum((int)pSelf->m_vDrawingNames.size(), 64);
+	for(int i = 0; i < Count; i++)
+	{
+		CUIRect Row, Name, Delete;
+		View.HSplitTop(18.0f, &Row, &View);
+		View.HSplitTop(2.0f, nullptr, &View);
+		if(!s_ScrollRegion.AddRect(Row))
+			continue;
+		Row.VSplitRight(14.0f, &Row, nullptr);
+		Row.VSplitRight(18.0f, &Name, &Delete);
+		if(pSelf->Ui()->DoButton_FontIcon(&s_aDelete[i], FontIcon::XMARK, 0, &Delete, BUTTONFLAG_LEFT))
+		{
+			str_copy(pSelf->m_aDeleteDrawingName, pSelf->m_vDrawingNames[i].c_str(), sizeof(pSelf->m_aDeleteDrawingName));
+			pSelf->m_DeleteConfirm.Reset();
+			pSelf->m_DeleteConfirm.YesNoButtons();
+			str_format(pSelf->m_DeleteConfirm.m_aMessage, sizeof(pSelf->m_DeleteConfirm.m_aMessage), Localize("Delete saved drawing \"%s\"?"), pSelf->m_aDeleteDrawingName);
+			pSelf->Ui()->ClosePopupMenu(&pSelf->m_DeleteConfirm);
+			pSelf->Ui()->ShowPopupConfirm(Delete.x, Delete.y + Delete.h, &pSelf->m_DeleteConfirm);
+			s_ScrollRegion.End();
+			return CUi::POPUP_KEEP_OPEN;
+		}
+		if(pSelf->GameClient()->m_Menus.DoButton_Menu(&s_aLoad[i], pSelf->m_vDrawingNames[i].c_str(), 0, &Name))
+		{
+			if(pSelf->LoadDrawing(pSelf->m_vDrawingNames[i].c_str()))
+			{
+				s_ScrollRegion.End();
+				return CUi::POPUP_CLOSE_CURRENT;
+			}
+		}
+	}
+	s_ScrollRegion.End();
+	return CUi::POPUP_KEEP_OPEN;
+}
+
 void CUClientDrawMode::RenderToolbar()
 {
 	if(!m_Active || Client()->State() != IClient::STATE_ONLINE)
@@ -881,7 +1595,7 @@ void CUClientDrawMode::RenderToolbar()
 
 	const float Margin = 10.0f;
 	const float BottomMargin = GameClient()->m_TimeoutReconnect.ShouldShowHud() ? 30.0f : Margin;
-	CUIRect Toolbar = {Margin, Screen.h - BottomMargin - 62.0f, 470.0f, 62.0f};
+	CUIRect Toolbar = {Margin, Screen.h - BottomMargin - 62.0f, 537.0f, 62.0f};
 	Toolbar.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.5f), IGraphics::CORNER_ALL, 6.0f);
 	m_PointerOverUi = Ui()->MouseInside(&Toolbar) || Ui()->IsPopupOpen();
 
@@ -894,12 +1608,29 @@ void CUClientDrawMode::RenderToolbar()
 		CUIRect Button;
 		ToolRow.VSplitLeft(64.0f, &Button, &ToolRow);
 		ToolRow.VSplitLeft(3.0f, nullptr, &ToolRow);
-		if(GameClient()->m_Menus.DoButton_Menu(pButton, pLabel, m_Tool == Tool, &Button))
+		if(GameClient()->m_Menus.DoButton_Menu(pButton, pLabel, m_Tool == Tool, &Button) && m_Tool != Tool)
+		{
+			if(Tool == ETool::LASSO || m_Tool == ETool::LASSO)
+			{
+				if(m_Drawing && m_Tool != ETool::ERASER)
+					FinishPenGesture();
+				else if(m_Drawing)
+					FinishEraserGesture();
+				ClearLasso();
+				m_Eyedropper = false;
+				m_EyedropperHasSample = false;
+				Ui()->ClosePopupMenu(&m_SavePopupId);
+				Ui()->ClosePopupMenu(&m_LoadPopupId);
+				Ui()->ClosePopupMenu(&m_DeleteConfirm);
+				m_SaveNameInput.Deactivate();
+			}
 			m_Tool = Tool;
+		}
 	};
 	ToolButton(&m_PenButton, Localize("Pen"), ETool::PEN);
 	ToolButton(&m_CrayonButton, Localize("Crayon"), ETool::CRAYON);
 	ToolButton(&m_EraserButton, Localize("Eraser"), ETool::ERASER);
+	ToolButton(&m_LassoButton, Localize("Lasso"), ETool::LASSO);
 
 	CUIRect ExitButton, SettingsButton, ClearButton, RedoButton, UndoButton;
 	ToolRow.VSplitRight(ToolRow.h, &ToolRow, &ExitButton);
@@ -927,77 +1658,111 @@ void CUClientDrawMode::RenderToolbar()
 	if(Ui()->DoButton_FontIcon(&m_ExitButton, FontIcon::XMARK, 0, &ExitButton, BUTTONFLAG_LEFT))
 		Exit = true;
 
-	CUIRect WidthRect;
-	StyleRow.VSplitLeft(150.0f, &WidthRect, &StyleRow);
-	StyleRow.VSplitLeft(8.0f, nullptr, &StyleRow);
-	Ui()->DoScrollbarOption(&m_WidthScrollbar, &m_Width, &WidthRect, Localize("Width"), UClientPresence::DRAW_MIN_WIDTH, UClientPresence::DRAW_MAX_WIDTH);
-
-	for(int i = 0; i < (int)std::size(s_aPalette); i++)
+	if(m_Tool == ETool::LASSO)
 	{
-		CUIRect Swatch;
-		StyleRow.VSplitLeft(20.0f, &Swatch, &StyleRow);
-		StyleRow.VSplitLeft(3.0f, nullptr, &StyleRow);
-		if(!m_UseCustomColor && i == m_ColorIndex)
-			Swatch.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.9f), IGraphics::CORNER_ALL, 4.0f);
-		CUIRect Inner;
-		Swatch.Margin(!m_UseCustomColor && i == m_ColorIndex ? 2.0f : 1.0f, &Inner);
-		Inner.Draw(s_aPalette[i], IGraphics::CORNER_ALL, 3.0f);
-		if(Ui()->DoButtonLogic(&m_aColorButtons[i], 0, &Swatch, BUTTONFLAG_LEFT))
+		CUIRect SaveButton, LoadButton;
+		StyleRow.VSplitLeft(90.0f, &SaveButton, &StyleRow);
+		StyleRow.VSplitLeft(6.0f, nullptr, &StyleRow);
+		StyleRow.VSplitLeft(90.0f, &LoadButton, &StyleRow);
+		if(GameClient()->m_Menus.DoButton_Menu(&m_SaveButton, Localize("Save"), 0, &SaveButton) && !m_vSelectedIds.empty())
 		{
-			m_ColorIndex = i;
-			m_UseCustomColor = false;
-			m_Eyedropper = false;
-			m_EyedropperHasSample = false;
+			m_SaveNameInput.Set("Drawing");
+			m_SaveNameInput.SelectAll();
+			Ui()->SetActiveItem(&m_SaveNameInput);
+			Ui()->ClosePopupMenu(&m_LoadPopupId);
+			Ui()->DoPopupMenu(&m_SavePopupId, SaveButton.x, maximum(10.0f, SaveButton.y - 74.0f), 180.0f, 70.0f, this, PopupSaveDrawing);
+		}
+		if(GameClient()->m_Menus.DoButton_Menu(&m_LoadButton, Localize("Load"), 0, &LoadButton))
+		{
+			RefreshDrawingList();
+			Ui()->ClosePopupMenu(&m_SavePopupId);
+			m_SaveNameInput.Deactivate();
+			Ui()->DoPopupMenu(&m_LoadPopupId, LoadButton.x, maximum(10.0f, LoadButton.y - 164.0f), 220.0f, 160.0f, this, PopupLoadDrawing);
+		}
+	}
+	else
+	{
+		CUIRect WidthRect;
+		StyleRow.VSplitLeft(150.0f, &WidthRect, &StyleRow);
+		StyleRow.VSplitLeft(8.0f, nullptr, &StyleRow);
+		Ui()->DoScrollbarOption(&m_WidthScrollbar, &m_Width, &WidthRect, Localize("Width"), UClientPresence::DRAW_MIN_WIDTH, UClientPresence::DRAW_MAX_WIDTH);
+
+		for(int i = 0; i < (int)std::size(s_aPalette); i++)
+		{
+			CUIRect Swatch;
+			StyleRow.VSplitLeft(20.0f, &Swatch, &StyleRow);
+			StyleRow.VSplitLeft(3.0f, nullptr, &StyleRow);
+			if(!m_UseCustomColor && i == m_ColorIndex)
+				Swatch.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.9f), IGraphics::CORNER_ALL, 4.0f);
+			CUIRect Inner;
+			Swatch.Margin(!m_UseCustomColor && i == m_ColorIndex ? 2.0f : 1.0f, &Inner);
+			Inner.Draw(s_aPalette[i], IGraphics::CORNER_ALL, 3.0f);
+			if(Ui()->DoButtonLogic(&m_aColorButtons[i], 0, &Swatch, BUTTONFLAG_LEFT))
+			{
+				m_ColorIndex = i;
+				m_UseCustomColor = false;
+				m_Eyedropper = false;
+				m_EyedropperHasSample = false;
+				if(m_Tool == ETool::ERASER)
+					m_Tool = ETool::PEN;
+			}
+		}
+
+		StyleRow.VSplitLeft(6.0f, nullptr, &StyleRow);
+		CUIRect Custom;
+		StyleRow.VSplitLeft(20.0f, &Custom, &StyleRow);
+		if(m_UseCustomColor)
+			Custom.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.9f), IGraphics::CORNER_ALL, 4.0f);
+		CUIRect CustomInner;
+		Custom.Margin(m_UseCustomColor ? 2.0f : 1.0f, &CustomInner);
+		CustomInner.Draw(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcDrawCustomColor, false)), IGraphics::CORNER_ALL, 3.0f);
+		GameClient()->m_Tooltips.DoToolTip(&m_CustomColorButton, &Custom, Localize("Custom color"));
+		if(Ui()->DoButtonLogic(&m_CustomColorButton, 0, &Custom, BUTTONFLAG_LEFT))
+		{
+			m_UseCustomColor = true;
 			if(m_Tool == ETool::ERASER)
 				m_Tool = ETool::PEN;
+			if(!Ui()->IsPopupOpen(&m_CustomColorPicker))
+			{
+				const ColorHSLA HslaColor = ColorHSLA(g_Config.m_UcDrawCustomColor, false);
+				m_CustomColorPicker.m_pHslaColor = &g_Config.m_UcDrawCustomColor;
+				m_CustomColorPicker.m_HslaColor = HslaColor;
+				m_CustomColorPicker.m_HsvaColor = color_cast<ColorHSVA>(HslaColor);
+				m_CustomColorPicker.m_RgbaColor = color_cast<ColorRGBA>(m_CustomColorPicker.m_HsvaColor);
+				m_CustomColorPicker.m_Alpha = false;
+				Ui()->ShowPopupColorPicker(Custom.x, Custom.y, &m_CustomColorPicker);
+			}
 		}
-	}
 
-	StyleRow.VSplitLeft(6.0f, nullptr, &StyleRow);
-	CUIRect Custom;
-	StyleRow.VSplitLeft(20.0f, &Custom, &StyleRow);
-	if(m_UseCustomColor)
-		Custom.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.9f), IGraphics::CORNER_ALL, 4.0f);
-	CUIRect CustomInner;
-	Custom.Margin(m_UseCustomColor ? 2.0f : 1.0f, &CustomInner);
-	CustomInner.Draw(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_UcDrawCustomColor, false)), IGraphics::CORNER_ALL, 3.0f);
-	GameClient()->m_Tooltips.DoToolTip(&m_CustomColorButton, &Custom, Localize("Custom color"));
-	if(Ui()->DoButtonLogic(&m_CustomColorButton, 0, &Custom, BUTTONFLAG_LEFT))
-	{
-		m_UseCustomColor = true;
-		if(m_Tool == ETool::ERASER)
-			m_Tool = ETool::PEN;
-		if(!Ui()->IsPopupOpen(&m_CustomColorPicker))
+		StyleRow.VSplitLeft(3.0f, nullptr, &StyleRow);
+		CUIRect Dropper;
+		StyleRow.VSplitLeft(20.0f, &Dropper, &StyleRow);
+		GameClient()->m_Tooltips.DoToolTip(&m_EyedropperButton, &Dropper, Localize("Eyedropper"));
+		if(Ui()->DoButton_FontIcon(&m_EyedropperButton, FontIcon::EYE_DROPPER, m_Eyedropper ? 1 : 0, &Dropper, BUTTONFLAG_LEFT))
 		{
-			const ColorHSLA HslaColor = ColorHSLA(g_Config.m_UcDrawCustomColor, false);
-			m_CustomColorPicker.m_pHslaColor = &g_Config.m_UcDrawCustomColor;
-			m_CustomColorPicker.m_HslaColor = HslaColor;
-			m_CustomColorPicker.m_HsvaColor = color_cast<ColorHSVA>(HslaColor);
-			m_CustomColorPicker.m_RgbaColor = color_cast<ColorRGBA>(m_CustomColorPicker.m_HsvaColor);
-			m_CustomColorPicker.m_Alpha = false;
-			Ui()->ShowPopupColorPicker(Custom.x, Custom.y, &m_CustomColorPicker);
+			m_Eyedropper = !m_Eyedropper;
+			m_EyedropperHasSample = false;
 		}
-	}
-
-	StyleRow.VSplitLeft(3.0f, nullptr, &StyleRow);
-	CUIRect Dropper;
-	StyleRow.VSplitLeft(20.0f, &Dropper, &StyleRow);
-	GameClient()->m_Tooltips.DoToolTip(&m_EyedropperButton, &Dropper, Localize("Eyedropper"));
-	if(Ui()->DoButton_FontIcon(&m_EyedropperButton, FontIcon::EYE_DROPPER, m_Eyedropper ? 1 : 0, &Dropper, BUTTONFLAG_LEFT))
-	{
-		m_Eyedropper = !m_Eyedropper;
-		m_EyedropperHasSample = false;
 	}
 
 	Ui()->RenderPopupMenus();
+	if(!Ui()->IsPopupOpen(&m_SavePopupId) && m_SaveNameInput.IsActive())
+		m_SaveNameInput.Deactivate();
 	if(m_ClearConfirm.m_Result == CUi::SConfirmPopupContext::CONFIRMED)
 		ClearOwnStrokes();
 	if(m_ClearConfirm.m_Result != CUi::SConfirmPopupContext::UNSET)
 		m_ClearConfirm.Reset();
+	if(m_DeleteConfirm.m_Result == CUi::SConfirmPopupContext::CONFIRMED && m_aDeleteDrawingName[0] != '\0')
+		DeleteDrawing(m_aDeleteDrawingName);
+	if(m_DeleteConfirm.m_Result != CUi::SConfirmPopupContext::UNSET)
+	{
+		m_DeleteConfirm.Reset();
+		m_aDeleteDrawingName[0] = '\0';
+	}
 
 	UpdateDrawing();
 
-	if(m_PointerOverUi || m_Eyedropper)
+	if(m_PointerOverUi || m_Eyedropper || m_Tool == ETool::LASSO || m_Placing)
 	{
 		RenderTools()->RenderCursor(Ui()->MousePos(), 24.0f);
 		if(m_Eyedropper && m_EyedropperHasSample)
