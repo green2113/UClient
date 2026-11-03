@@ -247,47 +247,30 @@ bool LanguagesEqual(const char *pA, const char *pB)
 	return str_comp_nocase(pA, pB) == 0;
 }
 
-const char *MyMemoryLanguageCode(const char *pLanguage)
+void DeepLLanguageCode(const char *pLanguage, char *pOut, size_t Size, bool Target)
 {
-	if(!pLanguage || pLanguage[0] == '\0')
-		return "en";
-	if(str_comp_nocase(pLanguage, "zh") == 0 || str_comp_nocase(pLanguage, "zh-cn") == 0 || str_comp_nocase(pLanguage, "cn") == 0)
-		return "zh-CN";
-	if(str_comp_nocase(pLanguage, "zh-tw") == 0 || str_comp_nocase(pLanguage, "zh-hant") == 0)
-		return "zh-TW";
-	return pLanguage;
-}
-
-const char *GuessMyMemorySource(const char *pText)
-{
-	int Hangul = 0;
-	int Kana = 0;
-	int Cyrillic = 0;
-	int Han = 0;
-	const char *pRead = pText ? pText : "";
-	while(*pRead != '\0')
-	{
-		const int Code = str_utf8_decode(&pRead);
-		if(Code <= 0)
-			break;
-		if((Code >= 0xAC00 && Code <= 0xD7AF) || (Code >= 0x1100 && Code <= 0x11FF) || (Code >= 0x3130 && Code <= 0x318F))
-			++Hangul;
-		else if(Code >= 0x3040 && Code <= 0x30FF)
-			++Kana;
-		else if(Code >= 0x0400 && Code <= 0x04FF)
-			++Cyrillic;
-		else if((Code >= 0x3400 && Code <= 0x4DBF) || (Code >= 0x4E00 && Code <= 0x9FFF))
-			++Han;
-	}
-	if(Hangul > 0 && Hangul >= Kana && Hangul >= Cyrillic && Hangul >= Han)
-		return "ko";
-	if(Kana > 0 && Kana >= Cyrillic && Kana >= Han)
-		return "ja";
-	if(Cyrillic > 0 && Cyrillic >= Han)
-		return "ru";
-	if(Han > 0)
-		return "zh";
-	return "en";
+	char aNormalized[16] = "";
+	NormalizeLanguageCode(pLanguage, aNormalized, sizeof(aNormalized));
+	const char *pCode = "EN";
+	if(str_comp(aNormalized, "ru") == 0)
+		pCode = "RU";
+	else if(str_comp(aNormalized, "de") == 0)
+		pCode = "DE";
+	else if(str_comp(aNormalized, "fr") == 0)
+		pCode = "FR";
+	else if(str_comp(aNormalized, "es") == 0)
+		pCode = "ES";
+	else if(str_comp(aNormalized, "zh") == 0)
+		pCode = Target ? "ZH-HANS" : "ZH";
+	else if(str_comp(aNormalized, "pt") == 0)
+		pCode = Target ? "PT-BR" : "PT";
+	else if(str_comp(aNormalized, "tr") == 0)
+		pCode = "TR";
+	else if(str_comp(aNormalized, "ko") == 0)
+		pCode = "KO";
+	else if(str_comp(aNormalized, "ja") == 0)
+		pCode = "JA";
+	str_copy(pOut, pCode, Size);
 }
 
 void NormalizeDetectedLanguage(char *pLanguage, size_t Size)
@@ -863,10 +846,8 @@ public:
 	}
 };
 
-class CTranslateBackendMymemory : public ITranslateBackendHttp
+class CTranslateBackendDeepl : public ITranslateBackendHttp
 {
-	char m_aDetectedLanguage[16] = "";
-
 	bool ParseResponseJson(const json_value *pObj, CTranslateResponse &Out)
 	{
 		if(!pObj || pObj->type != json_object)
@@ -875,37 +856,35 @@ class CTranslateBackendMymemory : public ITranslateBackendHttp
 			return false;
 		}
 
-		const json_value *pData = json_object_get(pObj, "responseData");
-		if(pData == &json_value_none || pData->type != json_object)
+		const json_value *pTranslations = json_object_get(pObj, "translations");
+		if(pTranslations == &json_value_none || pTranslations->type != json_array || json_array_length(pTranslations) <= 0)
 		{
-			str_copy(Out.m_Text, "No responseData");
-			return false;
-		}
-		const json_value *pTranslatedText = json_object_get(pData, "translatedText");
-		if(pTranslatedText == &json_value_none || pTranslatedText->type != json_string)
-		{
-			str_copy(Out.m_Text, "No translatedText");
-			return false;
-		}
-		if(str_startswith_nocase(pTranslatedText->u.string.ptr, "MYMEMORY WARNING") || str_startswith_nocase(pTranslatedText->u.string.ptr, "You are about to translate the "))
-		{
-			str_copy(Out.m_Text, "MyMemory quota or service notice");
+			const json_value *pMessage = json_object_get(pObj, "message");
+			if(pMessage != &json_value_none && pMessage->type == json_string)
+				str_copy(Out.m_Text, pMessage->u.string.ptr);
+			else
+				str_copy(Out.m_Text, "No translations");
 			return false;
 		}
 
-		int Status = 200;
-		const json_value *pStatus = json_object_get(pObj, "responseStatus");
-		if(pStatus != &json_value_none && pStatus->type == json_integer)
-			Status = (int)pStatus->u.integer;
-		if(Status != 200)
+		const json_value *pItem = json_array_get(pTranslations, 0);
+		if(!pItem || pItem->type != json_object)
 		{
-			str_format(Out.m_Text, sizeof(Out.m_Text), "MyMemory status %d", Status);
+			str_copy(Out.m_Text, "Translation is not object");
+			return false;
+		}
+		const json_value *pText = json_object_get(pItem, "text");
+		if(pText == &json_value_none || pText->type != json_string || pText->u.string.ptr[0] == '\0')
+		{
+			str_copy(Out.m_Text, "Translation is empty");
 			return false;
 		}
 
-		str_copy(Out.m_Text, pTranslatedText->u.string.ptr);
+		str_copy(Out.m_Text, pText->u.string.ptr);
 		NormalizeTranslatedText(Out.m_Text, sizeof(Out.m_Text));
-		str_copy(Out.m_Language, m_aDetectedLanguage, sizeof(Out.m_Language));
+		const json_value *pDetected = json_object_get(pItem, "detected_source_language");
+		if(pDetected != &json_value_none && pDetected->type == json_string)
+			str_copy(Out.m_Language, pDetected->u.string.ptr);
 		NormalizeDetectedLanguage(Out.m_Language, sizeof(Out.m_Language));
 		return Out.m_Text[0] != '\0';
 	}
@@ -918,49 +897,60 @@ protected:
 		json_value_free(pObj);
 		return Success;
 	}
+	bool ParseHttpError() const override { return true; }
 
 public:
 	const char *Name() const override
 	{
-		return "MyMemory";
+		return "DeepL";
 	}
 
-	CTranslateBackendMymemory(IHttp &Http, const char *pText, const char *pSourceLanguage, const char *pTargetLanguage)
+	std::optional<bool> Update(CTranslateResponse &Out) override
 	{
-		const char *pSource = pSourceLanguage;
-		if(IsAutoLanguage(pSource))
-			pSource = GuessMyMemorySource(pText);
-		NormalizeLanguageCode(pSource, m_aDetectedLanguage, sizeof(m_aDetectedLanguage));
-		if(m_aDetectedLanguage[0] == '\0' || str_comp(m_aDetectedLanguage, "auto") == 0)
-			str_copy(m_aDetectedLanguage, pSource && !IsAutoLanguage(pSource) ? pSource : "en", sizeof(m_aDetectedLanguage));
-
-		char aQuery[501];
-		str_copy(aQuery, pText ? pText : "", sizeof(aQuery));
-		str_utf8_fix_truncation(aQuery);
-
-		char aBuf[4096];
-		str_copy(aBuf, "https://api.mymemory.translated.net/get?q=");
-		const int PrefixLen = str_length(aBuf);
-		if(!UrlEncode(aQuery, aBuf + PrefixLen, sizeof(aBuf) - PrefixLen))
+		if(!m_pHttpRequest)
 		{
-			log_error("translate", "MyMemory: failed to build request URL");
-			CreateHttpRequest(Http, "https://api.mymemory.translated.net/get?q=&langpair=en%7Cen");
+			str_copy(Out.m_Text, "DeepL API key is not set");
+			return false;
+		}
+		return ITranslateBackendHttp::Update(Out);
+	}
+
+	CTranslateBackendDeepl(IHttp &Http, const char *pText, const char *pSourceLanguage, const char *pTargetLanguage)
+	{
+		if(g_Config.m_TcTranslateKey[0] == '\0')
+		{
+			log_error("translate", "DeepL: API key is not set");
 			return;
 		}
-		str_append(aBuf, "&langpair=", sizeof(aBuf));
-		str_append(aBuf, MyMemoryLanguageCode(m_aDetectedLanguage), sizeof(aBuf));
-		str_append(aBuf, "%7C", sizeof(aBuf));
-		str_append(aBuf, MyMemoryLanguageCode(EncodeTarget(pTargetLanguage)), sizeof(aBuf));
-		if(g_Config.m_TcTranslateKey[0] != '\0')
+
+		char aTarget[16];
+		DeepLLanguageCode(pTargetLanguage, aTarget, sizeof(aTarget), true);
+		CJsonStringWriter Json;
+		Json.BeginObject();
+		Json.WriteAttribute("text");
+		Json.BeginArray();
+		Json.WriteStrValue(pText ? pText : "");
+		Json.EndArray();
+		if(!IsAutoLanguage(pSourceLanguage))
 		{
-			char aKey[768];
-			if(UrlEncode(g_Config.m_TcTranslateKey, aKey, sizeof(aKey)))
-			{
-				str_append(aBuf, "&key=", sizeof(aBuf));
-				str_append(aBuf, aKey, sizeof(aBuf));
-			}
+			char aSource[16];
+			DeepLLanguageCode(pSourceLanguage, aSource, sizeof(aSource), false);
+			Json.WriteAttribute("source_lang");
+			Json.WriteStrValue(aSource);
 		}
-		CreateHttpRequest(Http, aBuf);
+		Json.WriteAttribute("target_lang");
+		Json.WriteStrValue(aTarget);
+		Json.EndObject();
+
+		const char *pUrl = str_endswith(g_Config.m_TcTranslateKey, ":fx") ? "https://api-free.deepl.com/v2/translate" : "https://api.deepl.com/v2/translate";
+		if(g_Config.m_TcTranslateEndpoint[0] != '\0')
+			pUrl = g_Config.m_TcTranslateEndpoint;
+		CreateHttpRequest(Http, pUrl);
+		char aAuth[320];
+		str_format(aAuth, sizeof(aAuth), "Authorization: DeepL-Auth-Key %s", g_Config.m_TcTranslateKey);
+		m_pHttpRequest->Header(aAuth);
+		const std::string JsonStr = Json.GetOutputString();
+		m_pHttpRequest->PostJson(JsonStr.c_str());
 	}
 };
 
@@ -1001,6 +991,9 @@ void CTranslate::OnConsoleInit()
 		g_Config.m_TcTranslateAuto = 0;
 	}
 
+	if(str_comp_nocase(g_Config.m_TcTranslateBackend, "mymemory") == 0)
+		str_copy(g_Config.m_TcTranslateBackend, "google", sizeof(g_Config.m_TcTranslateBackend));
+
 	// Migration: target language can no longer be "auto".
 	if(IsAutoLanguage(g_Config.m_TcTranslateTarget))
 		str_copy(g_Config.m_TcTranslateTarget, DefaultConfig::TcTranslateTarget, sizeof(g_Config.m_TcTranslateTarget));
@@ -1017,8 +1010,8 @@ std::unique_ptr<ITranslateBackend> CTranslate::CreateBackend(const char *pText, 
 	if(IsAutoLanguage(pTargetLanguage))
 		return nullptr;
 
-	if(str_comp_nocase(g_Config.m_TcTranslateBackend, "mymemory") == 0)
-		return std::make_unique<CTranslateBackendMymemory>(*Http(), pText, pSourceLanguage, pTargetLanguage);
+	if(str_comp_nocase(g_Config.m_TcTranslateBackend, "deepl") == 0)
+		return std::make_unique<CTranslateBackendDeepl>(*Http(), pText, pSourceLanguage, pTargetLanguage);
 	if(str_comp_nocase(g_Config.m_TcTranslateBackend, "libretranslate") == 0)
 		return std::make_unique<CTranslateBackendLibretranslate>(*Http(), pText, pSourceLanguage, pTargetLanguage);
 	if(str_comp_nocase(g_Config.m_TcTranslateBackend, "ftapi") == 0)

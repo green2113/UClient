@@ -1438,8 +1438,8 @@ struct STranslateLanguageOption
 
 enum class ETranslateBackend
 {
-	MYMEMORY,
 	GOOGLE,
+	DEEPL,
 	FTAPI,
 	LIBRETRANSLATE,
 };
@@ -1452,8 +1452,8 @@ struct STranslateBackendOption
 };
 
 constexpr STranslateBackendOption gs_aTranslateBackends[] = {
-	{"mymemory", "MyMemory", ETranslateBackend::MYMEMORY},
 	{"google", "Google", ETranslateBackend::GOOGLE},
+	{"deepl", "DeepL", ETranslateBackend::DEEPL},
 	{"ftapi", "FreeTranslateAPI", ETranslateBackend::FTAPI},
 	{"libretranslate", "LibreTranslate", ETranslateBackend::LIBRETRANSLATE},
 };
@@ -1479,33 +1479,6 @@ constexpr STranslateLanguageOption gs_aGoogleTarget[] = {
 	{"fr", "French", ETranslateLanguageId::FR},
 	{"es", "Spanish", ETranslateLanguageId::ES},
 	{"zh", "Chinese", ETranslateLanguageId::ZH},
-	{"pt", "Brazilian", ETranslateLanguageId::PT},
-	{"tr", "Turkish", ETranslateLanguageId::TR},
-	{"ko", "Korean", ETranslateLanguageId::KO},
-	{"ja", "Japanese", ETranslateLanguageId::JA},
-};
-
-constexpr STranslateLanguageOption gs_aMyMemorySource[] = {
-	{"auto", "Auto", ETranslateLanguageId::AUTO},
-	{"ru", "Russian", ETranslateLanguageId::RU},
-	{"en", "English", ETranslateLanguageId::EN},
-	{"de", "German", ETranslateLanguageId::DE},
-	{"fr", "French", ETranslateLanguageId::FR},
-	{"es", "Spanish", ETranslateLanguageId::ES},
-	{"zh-CN", "Chinese (Simplified)", ETranslateLanguageId::ZH},
-	{"pt", "Brazilian", ETranslateLanguageId::PT},
-	{"tr", "Turkish", ETranslateLanguageId::TR},
-	{"ko", "Korean", ETranslateLanguageId::KO},
-	{"ja", "Japanese", ETranslateLanguageId::JA},
-};
-
-constexpr STranslateLanguageOption gs_aMyMemoryTarget[] = {
-	{"ru", "Russian", ETranslateLanguageId::RU},
-	{"en", "English", ETranslateLanguageId::EN},
-	{"de", "German", ETranslateLanguageId::DE},
-	{"fr", "French", ETranslateLanguageId::FR},
-	{"es", "Spanish", ETranslateLanguageId::ES},
-	{"zh-CN", "Chinese (Simplified)", ETranslateLanguageId::ZH},
 	{"pt", "Brazilian", ETranslateLanguageId::PT},
 	{"tr", "Turkish", ETranslateLanguageId::TR},
 	{"ko", "Korean", ETranslateLanguageId::KO},
@@ -1573,8 +1546,6 @@ ETranslateLanguageId TranslateLanguageId(const char *pCode)
 
 STranslateLanguageList TranslateLanguageOptions(ETranslateBackend Backend, bool Source)
 {
-	if(Backend == ETranslateBackend::MYMEMORY)
-		return Source ? STranslateLanguageList{gs_aMyMemorySource, (int)std::size(gs_aMyMemorySource)} : STranslateLanguageList{gs_aMyMemoryTarget, (int)std::size(gs_aMyMemoryTarget)};
 	if(Backend == ETranslateBackend::FTAPI && !Source)
 		return {gs_aFtapiTarget, (int)std::size(gs_aFtapiTarget)};
 	return Source ? STranslateLanguageList{gs_aGoogleSource, (int)std::size(gs_aGoogleSource)} : STranslateLanguageList{gs_aGoogleTarget, (int)std::size(gs_aGoogleTarget)};
@@ -1625,7 +1596,7 @@ void NormalizeTranslateLanguage(char *pConfig, size_t ConfigSize, const STransla
 
 void CChat::OpenTranslateSettingsPopup(const CUIRect &ButtonRect)
 {
-	Ui()->DoPopupMenu(&m_TranslateSettingsPopupId, ButtonRect.x, ButtonRect.y, 300.0f, 332.0f, this, PopupTranslateSettings);
+	Ui()->DoPopupMenu(&m_TranslateSettingsPopupId, ButtonRect.x, ButtonRect.y, 300.0f, 360.0f, this, PopupTranslateSettings);
 }
 
 CUi::EPopupMenuFunctionResult CChat::PopupTranslateSettings(void *pContext, CUIRect View, bool Active)
@@ -1735,6 +1706,20 @@ CUi::EPopupMenuFunctionResult CChat::PopupTranslateSettings(void *pContext, CUIR
 	if(NewOutgoingTargetIndex != OutgoingTargetIndex)
 		ApplyTranslateLanguage(g_Config.m_BcTranslateOutgoingTarget, sizeof(g_Config.m_BcTranslateOutgoingTarget), NewOutgoingTargetIndex, Targets);
 
+	if(Backend == ETranslateBackend::DEEPL)
+	{
+		static CLineInput s_DeepLKeyInput(g_Config.m_TcTranslateKey, sizeof(g_Config.m_TcTranslateKey));
+		s_DeepLKeyInput.SetHidden(true);
+		s_DeepLKeyInput.SetEmptyText("DeepL API key");
+		View.HSplitTop(Spacing, nullptr, &View);
+		View.HSplitTop(RowHeight, &Row, &View);
+		CUIRect KeyLabel, KeyEditBox;
+		Row.VSplitLeft(145.0f, &KeyLabel, &KeyEditBox);
+		pChat->Ui()->DoLabel(&KeyLabel, Localize("API key"), FontSize, TEXTALIGN_ML);
+		pChat->Ui()->DoClearableEditBox(&s_DeepLKeyInput, &KeyEditBox, 14.0f);
+		pChat->GameClient()->m_Tooltips.DoToolTip(&s_DeepLKeyInput, &KeyEditBox, Localize("DeepL API key. Free keys end with :fx."));
+	}
+
 	View.HSplitTop(Spacing, nullptr, &View);
 	View.HSplitTop(RowHeight, &Row, &View);
 	CUIRect IgnoreLabel, IgnoreEditBox;
@@ -1801,7 +1786,7 @@ void CChat::OpenRoomSelectPopup(const CUIRect &ButtonRect)
 	const float ScaleX = pUiScreen->w / ChatWidth;
 	const float ScaleY = pUiScreen->h / ChatHeight;
 	const float PopupWidth = 330.0f;
-	const float PopupHeight = 360.0f;
+	const float PopupHeight = 390.0f;
 	const float Margin = 6.0f;
 	const float UiButtonRight = (ButtonRect.x + ButtonRect.w) * ScaleX;
 	const float UiButtonTop = ButtonRect.y * ScaleY;
