@@ -501,15 +501,19 @@ protected:
 	virtual bool ParseResponse(CTranslateResponse &Out) = 0;
 	virtual bool ParseHttpError() const { return false; }
 
+	std::shared_ptr<CHttpRequest> PrepareHttpRequest(const char *pUrl)
+	{
+		auto pRequest = std::make_shared<CHttpRequest>(pUrl);
+		pRequest->LogProgress(HTTPLOG::FAILURE);
+		pRequest->FailOnErrorStatus(false);
+		pRequest->Timeout(CTimeout{10000, 0, 500, 10});
+		return pRequest;
+	}
+
 	void CreateHttpRequest(IHttp &Http, const char *pUrl)
 	{
-		auto pGet = std::make_shared<CHttpRequest>(pUrl);
-		pGet->LogProgress(HTTPLOG::FAILURE);
-		pGet->FailOnErrorStatus(false);
-		pGet->Timeout(CTimeout{10000, 0, 500, 10});
-
-		m_pHttpRequest = pGet;
-		Http.Run(pGet);
+		m_pHttpRequest = PrepareHttpRequest(pUrl);
+		Http.Run(m_pHttpRequest);
 	}
 
 public:
@@ -945,12 +949,13 @@ public:
 		const char *pUrl = str_endswith(g_Config.m_TcTranslateKey, ":fx") ? "https://api-free.deepl.com/v2/translate" : "https://api.deepl.com/v2/translate";
 		if(g_Config.m_TcTranslateEndpoint[0] != '\0')
 			pUrl = g_Config.m_TcTranslateEndpoint;
-		CreateHttpRequest(Http, pUrl);
+		m_pHttpRequest = PrepareHttpRequest(pUrl);
 		char aAuth[320];
 		str_format(aAuth, sizeof(aAuth), "Authorization: DeepL-Auth-Key %s", g_Config.m_TcTranslateKey);
 		m_pHttpRequest->Header(aAuth);
 		const std::string JsonStr = Json.GetOutputString();
 		m_pHttpRequest->PostJson(JsonStr.c_str());
+		Http.Run(m_pHttpRequest);
 	}
 };
 
