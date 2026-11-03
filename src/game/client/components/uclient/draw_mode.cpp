@@ -1344,16 +1344,29 @@ void CUClientDrawMode::OnRender()
 		return Max.x < aPoints[0] || Min.x > aPoints[2] || Max.y < aPoints[1] || Min.y > aPoints[3];
 	};
 	std::vector<IGraphics::CFreeformItem> vItems;
-	auto RenderHighlighted = [&](const SStroke &Stroke) {
-		SStroke Halo = Stroke;
-		Halo.m_Tool = UClientPresence::DRAW_TOOL_PEN;
-		Halo.m_Color = ColorRGBA(1.0f, 1.0f, 1.0f, 0.9f);
-		Halo.m_Width = Stroke.m_Width + 3.0f;
-		RenderStroke(Halo, vItems);
-		RenderStroke(Stroke, vItems);
-	};
-
 	const CUuid Own = GameClient()->m_ClientIndicator.ClientInstanceId();
+	const vec2 SelectionDelta = m_Moving ? m_MoveDelta : vec2(0.0f, 0.0f);
+	bool HaveSelection = false;
+	vec2 SelectionMin;
+	vec2 SelectionMax;
+	for(const SStroke &Stroke : m_vStrokes)
+	{
+		if(!(Stroke.m_Owner == Own) || !IsSelected(Stroke.m_Id))
+			continue;
+		const vec2 Min = Stroke.m_Min + SelectionDelta;
+		const vec2 Max = Stroke.m_Max + SelectionDelta;
+		if(!HaveSelection)
+		{
+			SelectionMin = Min;
+			SelectionMax = Max;
+			HaveSelection = true;
+		}
+		else
+		{
+			SelectionMin = vec2(minimum(SelectionMin.x, Min.x), minimum(SelectionMin.y, Min.y));
+			SelectionMax = vec2(maximum(SelectionMax.x, Max.x), maximum(SelectionMax.y, Max.y));
+		}
+	}
 	for(const SStroke &Stroke : m_vStrokes)
 	{
 		const bool Selected = Stroke.m_Owner == Own && IsSelected(Stroke.m_Id);
@@ -1361,10 +1374,7 @@ void CUClientDrawMode::OnRender()
 			continue;
 		if(OffScreen(Stroke.m_Min, Stroke.m_Max))
 			continue;
-		if(Selected)
-			RenderHighlighted(Stroke);
-		else
-			RenderStroke(Stroke, vItems);
+		RenderStroke(Stroke, vItems);
 	}
 	if(m_Moving)
 	{
@@ -1380,8 +1390,21 @@ void CUClientDrawMode::OnRender()
 			Moved.m_Max += m_MoveDelta;
 			if(OffScreen(Moved.m_Min, Moved.m_Max))
 				continue;
-			RenderHighlighted(Moved);
+			RenderStroke(Moved, vItems);
 		}
+	}
+	if(HaveSelection && !OffScreen(SelectionMin, SelectionMax))
+	{
+		const IGraphics::CLineItem aBox[4] = {
+			{SelectionMin, vec2(SelectionMax.x, SelectionMin.y)},
+			{vec2(SelectionMax.x, SelectionMin.y), SelectionMax},
+			{SelectionMax, vec2(SelectionMin.x, SelectionMax.y)},
+			{vec2(SelectionMin.x, SelectionMax.y), SelectionMin},
+		};
+		Graphics()->LinesBegin();
+		Graphics()->SetColor(1.0f, 1.0f, 1.0f, 0.95f);
+		Graphics()->LinesDraw(aBox, 4);
+		Graphics()->LinesEnd();
 	}
 	if(m_Drawing && m_Tool != ETool::ERASER && !m_vPendingPoints.empty())
 	{
