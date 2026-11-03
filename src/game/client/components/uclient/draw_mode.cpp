@@ -1595,7 +1595,8 @@ void CUClientDrawMode::RenderToolbar()
 
 	const float Margin = 10.0f;
 	const float BottomMargin = GameClient()->m_TimeoutReconnect.ShouldShowHud() ? 30.0f : Margin;
-	CUIRect Toolbar = {Margin, Screen.h - BottomMargin - 62.0f, 537.0f, 62.0f};
+	// Width fits the color row: width slider, palette, custom color, eyedropper.
+	CUIRect Toolbar = {Margin, Screen.h - BottomMargin - 62.0f, 447.0f, 62.0f};
 	Toolbar.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.5f), IGraphics::CORNER_ALL, 6.0f);
 	m_PointerOverUi = Ui()->MouseInside(&Toolbar) || Ui()->IsPopupOpen();
 
@@ -1604,11 +1605,12 @@ void CUClientDrawMode::RenderToolbar()
 	Content.HSplitMid(&ToolRow, &StyleRow, 4.0f);
 
 	bool Exit = false;
-	auto ToolButton = [&](CButtonContainer *pButton, const char *pLabel, ETool Tool) {
+	auto ToolButton = [&](CButtonContainer *pButton, const char *pIcon, const char *pTooltip, ETool Tool) {
 		CUIRect Button;
-		ToolRow.VSplitLeft(64.0f, &Button, &ToolRow);
+		ToolRow.VSplitLeft(ToolRow.h, &Button, &ToolRow);
 		ToolRow.VSplitLeft(3.0f, nullptr, &ToolRow);
-		if(GameClient()->m_Menus.DoButton_Menu(pButton, pLabel, m_Tool == Tool, &Button) && m_Tool != Tool)
+		GameClient()->m_Tooltips.DoToolTip(pButton, &Button, pTooltip);
+		if(Ui()->DoButton_FontIcon(pButton, pIcon, m_Tool == Tool ? 1 : 0, &Button, BUTTONFLAG_LEFT) && m_Tool != Tool)
 		{
 			if(Tool == ETool::LASSO || m_Tool == ETool::LASSO)
 			{
@@ -1627,10 +1629,10 @@ void CUClientDrawMode::RenderToolbar()
 			m_Tool = Tool;
 		}
 	};
-	ToolButton(&m_PenButton, Localize("Pen"), ETool::PEN);
-	ToolButton(&m_CrayonButton, Localize("Crayon"), ETool::CRAYON);
-	ToolButton(&m_EraserButton, Localize("Eraser"), ETool::ERASER);
-	ToolButton(&m_LassoButton, Localize("Lasso"), ETool::LASSO);
+	ToolButton(&m_PenButton, FontIcon::PEN, Localize("Pen"), ETool::PEN);
+	ToolButton(&m_CrayonButton, FontIcon::HIGHLIGHTER, Localize("Crayon"), ETool::CRAYON);
+	ToolButton(&m_EraserButton, FontIcon::ERASER, Localize("Eraser"), ETool::ERASER);
+	ToolButton(&m_LassoButton, FontIcon::DRAW_POLYGON, Localize("Lasso"), ETool::LASSO);
 
 	CUIRect ExitButton, SettingsButton, ClearButton, RedoButton, UndoButton;
 	ToolRow.VSplitRight(ToolRow.h, &ToolRow, &ExitButton);

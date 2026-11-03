@@ -44,6 +44,7 @@ namespace FontIcon
 	inline const char *const DICE_SIX = "\uF526";
 	inline const char *const DICE_THREE = "\uF527";
 	inline const char *const DICE_TWO = "\uF528";
+	inline const char *const DRAW_POLYGON = "\uF5EE";
 	inline const char *const EARTH_AMERICAS = "\uF57D";
 	inline const char *const ELLIPSIS = "\uF141";
 	inline const char *const ERASER = "\uF12D";
@@ -63,6 +64,7 @@ namespace FontIcon
 	inline const char *const HEADPHONES = "\uF025";
 	inline const char *const HEART = "\uF004";
 	inline const char *const HEART_CRACK = "\uF7A9";
+	inline const char *const HIGHLIGHTER = "\uF591";
 	inline const char *const HOUSE = "\uF015";
 	inline const char *const IMAGE = "\uF03E";
 	inline const char *const INFO = "\uF129";
@@ -80,6 +82,7 @@ namespace FontIcon
 	inline const char *const NETWORK_WIRED = "\uF6FF";
 	inline const char *const NEWSPAPER = "\uF1EA";
 	inline const char *const PAUSE = "\uF04C";
+	inline const char *const PEN = "\uF304";
 	inline const char *const PEN_TO_SQUARE = "\uF044";
 	inline const char *const PENCIL = "\uF303";
 	inline const char *const PLAY = "\uF04B";

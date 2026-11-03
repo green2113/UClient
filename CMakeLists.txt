@@ -4505,7 +4505,16 @@ foreach(target ${TARGETS_OWN})
   if(UCLIENT_DEV_BUILD)
     target_compile_definitions(${target} PRIVATE CONF_UCLIENT_DEV_BUILD)
   endif()
-  target_include_directories(${target} SYSTEM PRIVATE ${CURL_INCLUDE_DIRS} ${SQLite3_INCLUDE_DIRS} ${ZLIB_INCLUDE_DIRS})
+  set(UCLIENT_SYSTEM_INCLUDES ${CURL_INCLUDE_DIRS} ${SQLite3_INCLUDE_DIRS} ${ZLIB_INCLUDE_DIRS})
+  if(TARGET_OS STREQUAL "mac")
+    # Apple clang 21 errors if the SDK usr/include is passed as -isystem: that
+    # path is searched before libc++'s C wrapper headers. Those headers are
+    # already on the default system include path.
+    list(FILTER UCLIENT_SYSTEM_INCLUDES EXCLUDE REGEX "/SDKs/MacOSX[^/]*\\.sdk/usr/include$")
+  endif()
+  if(UCLIENT_SYSTEM_INCLUDES)
+    target_include_directories(${target} SYSTEM PRIVATE ${UCLIENT_SYSTEM_INCLUDES})
+  endif()
   target_compile_definitions(${target} PRIVATE GLEW_STATIC)
   target_compile_definitions(${target} PRIVATE _FILE_OFFSET_BITS=64) # Ensure off_t is 64 bit for ftello and fseeko functions
   if(CRYPTO_FOUND)
