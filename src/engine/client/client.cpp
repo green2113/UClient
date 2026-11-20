@@ -3039,7 +3039,11 @@ void CClient::Update()
 					(g_Config.m_BcInputs == BC_INPUTS_BEST && g_Config.m_BcBestInputAmount > 0) ||
 					(g_Config.m_BcInputs == BC_INPUTS_SAIKO && g_Config.m_BcSaikoInputAmount > 0) ||
 					(g_Config.m_BcInputs == BC_INPUTS_DELTA && g_Config.m_BcDeltaInputAmount > 0) ||
-					(g_Config.m_BcInputs == BC_INPUTS_F && g_Config.m_BcFInputAmount > 0);
+					(g_Config.m_BcInputs == BC_INPUTS_F && g_Config.m_BcFInputAmount > 0)
+#if UCLIENT_HAS_BESTCLIENT
+					|| (g_Config.m_BcInputs == BC_INPUTS_CLOUD && g_Config.m_BcCloudInputAmount > 0)
+#endif
+					;
 				if(HasFastInput && g_Config.m_BcInputs == BC_INPUTS_SAIKO)
 				{
 					GameClient()->CheckNewInput();

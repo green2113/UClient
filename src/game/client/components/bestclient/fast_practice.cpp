@@ -1186,8 +1186,9 @@ bool CFastPractice::OverridePredict()
 
 int CFastPractice::ApplyVisualFastInputPrediction(int FinalTickRegular, int LocalClientId, int DummyClientId, int LocalInputConn, int DummyInputConn)
 {
-	const float FastInputOffsetTicks = BcInputs::EffectiveOffsetTicks();
-	const int FastInputTicks = BcInputs::PredictionTicks(FastInputOffsetTicks);
+	const bool CloudInputMode = GameClient()->IsCloudInputMode();
+	const float FastInputOffsetTicks = CloudInputMode ? 0.0f : BcInputs::EffectiveOffsetTicks();
+	const int FastInputTicks = CloudInputMode ? GameClient()->m_CloudInput.SelfTickOffset() : BcInputs::PredictionTicks(FastInputOffsetTicks);
 	if(FastInputTicks <= 0)
 		return FinalTickRegular;
 
@@ -1202,7 +1203,7 @@ int CFastPractice::ApplyVisualFastInputPrediction(int FinalTickRegular, int Loca
 	const int FinalTickSelf = FinalTickRegular + FastInputTicks;
 	// Others (dummy) extrapolate by their own tick count, not self's - mirrors gameclient.cpp's
 	// FinalTickOthers = FinalTickRegular + FastInputTicksOthers (e.g. Saiko has no "+1" for others).
-	const int FastInputTicksOthers = BcInputs::AnyOthers() ? BcInputs::PredictionTicksOthers(FastInputOffsetTicks) : 0;
+	const int FastInputTicksOthers = CloudInputMode ? GameClient()->m_CloudInput.OthersTickOffset() : (BcInputs::AnyOthers() ? BcInputs::PredictionTicksOthers(FastInputOffsetTicks) : 0);
 	const int FinalTickOthers = FinalTickRegular + FastInputTicksOthers;
 
 	const auto ResolveInputSlotByClientId = [&](int ClientId, int FallbackSlot) {
@@ -1242,7 +1243,7 @@ int CFastPractice::ApplyVisualFastInputPrediction(int FinalTickRegular, int Loca
 		CNetObj_PlayerInput DummyFastInput = {};
 		const bool DummyFirst = pInputData && pDummyInputData && pDummyChar->GetCid() < pLocalChar->GetCid();
 
-		pInputData = &GameClient()->m_Controls.m_aFastInput[LocalTee];
+		pInputData = CloudInputMode ? &GameClient()->m_CloudInput.Input(LocalTee) : &GameClient()->m_Controls.m_aFastInput[LocalTee];
 		if(pDummyChar && g_Config.m_BcInputs != BC_INPUTS_SAIKO && GameClient()->GetDummyFastInput(DummyFastInput, pDummyInputData, pDummyChar, LocalTee, DummyTee))
 			pDummyInputData = &DummyFastInput;
 		if(pDummyChar && g_Config.m_ClDummyHammer)

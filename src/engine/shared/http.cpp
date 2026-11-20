@@ -46,6 +46,15 @@ static int CurlDebug(CURL *pHandle, curl_infotype Type, char *pData, size_t Data
 	return 0;
 }
 
+void CHttpRequest::PinAddress(const char *pHost, int Port, const char *pAddress)
+{
+	if(!pHost || !pHost[0] || !pAddress || !pAddress[0] || Port <= 0)
+		return;
+	char aEntry[256];
+	str_format(aEntry, sizeof(aEntry), "%s:%d:%s", pHost, Port, pAddress);
+	m_pResolve = curl_slist_append((curl_slist *)m_pResolve, aEntry);
+}
+
 void EscapeUrl(char *pBuf, int Size, const char *pStr)
 {
 	char *pEsc = curl_easy_escape(nullptr, pStr, 0);
@@ -71,6 +80,7 @@ CHttpRequest::~CHttpRequest()
 	dbg_assert(m_File == nullptr, "HTTP request file was not closed");
 	free(m_pBuffer);
 	curl_slist_free_all((curl_slist *)m_pHeaders);
+	curl_slist_free_all((curl_slist *)m_pResolve);
 	free(m_pBody);
 	if(m_State == EHttpState::DONE && m_ValidateBeforeOverwrite)
 	{
@@ -157,7 +167,7 @@ bool CHttpRequest::ConfigureHandle(void *pHandle)
 		curl_easy_setopt(pH, CURLOPT_DEBUGFUNCTION, CurlDebug);
 	}
 	long Protocols = CURLPROTO_HTTPS;
-	if(g_Config.m_HttpAllowInsecure)
+	if(g_Config.m_HttpAllowInsecure || m_AllowInsecure)
 	{
 		Protocols |= CURLPROTO_HTTP;
 	}
@@ -195,6 +205,8 @@ bool CHttpRequest::ConfigureHandle(void *pHandle)
 		curl_easy_setopt(pH, CURLOPT_FAILONERROR, 1L);
 	}
 	curl_easy_setopt(pH, CURLOPT_URL, m_aUrl);
+	if(m_pResolve)
+		curl_easy_setopt(pH, CURLOPT_RESOLVE, m_pResolve);
 	curl_easy_setopt(pH, CURLOPT_NOSIGNAL, 1L);
 	curl_easy_setopt(pH, CURLOPT_USERAGENT, GAME_NAME " " GAME_RELEASE_VERSION " (" CONF_PLATFORM_STRING "; " CONF_ARCH_STRING ")");
 	curl_easy_setopt(pH, CURLOPT_ACCEPT_ENCODING, ""); // Use any compression algorithm supported by libcurl.

@@ -62,6 +62,8 @@ public:
 	virtual void OnPlayerDeath();
 
 	int SnapInput(int *pData);
+	// Fast-input prediction reads the direction SnapInput already resolved. It must not update snap-tap edges.
+	int MovementDirectionForPrediction(int Dummy);
 	void ClampMousePos();
 	void ResetInput(int Dummy);
 	bool CheckNewInput();

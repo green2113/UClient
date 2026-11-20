@@ -2,6 +2,7 @@
 #include "translate.h"
 
 #include <base/log.h>
+#include <base/net.h>
 #include <base/time.h>
 
 #include <engine/shared/json.h>
@@ -271,6 +272,31 @@ void DeepLLanguageCode(const char *pLanguage, char *pOut, size_t Size, bool Targ
 	else if(str_comp(aNormalized, "ja") == 0)
 		pCode = "JA";
 	str_copy(pOut, pCode, Size);
+}
+
+const char *LocalAiLanguageName(const char *pLanguage)
+{
+	char aNormalized[16] = "";
+	NormalizeLanguageCode(pLanguage, aNormalized, sizeof(aNormalized));
+	if(str_comp(aNormalized, "ko") == 0)
+		return "Korean";
+	if(str_comp(aNormalized, "zh") == 0)
+		return "Chinese";
+	if(str_comp(aNormalized, "ja") == 0)
+		return "Japanese";
+	if(str_comp(aNormalized, "ru") == 0)
+		return "Russian";
+	if(str_comp(aNormalized, "de") == 0)
+		return "German";
+	if(str_comp(aNormalized, "fr") == 0)
+		return "French";
+	if(str_comp(aNormalized, "es") == 0)
+		return "Spanish";
+	if(str_comp(aNormalized, "pt") == 0)
+		return "Portuguese";
+	if(str_comp(aNormalized, "tr") == 0)
+		return "Turkish";
+	return "English";
 }
 
 void NormalizeDetectedLanguage(char *pLanguage, size_t Size)
@@ -959,6 +985,195 @@ public:
 	}
 };
 
+class CTranslateBackendLocalAi : public ITranslateBackendHttp
+{
+	char m_aSourceLanguage[16] = "";
+	std::shared_ptr<CHttpRequest> m_pPublic;
+	std::shared_ptr<CHttpRequest> m_pLan;
+
+	bool ParseResponseJson(const json_value *pObj, CTranslateResponse &Out)
+	{
+		if(!pObj || pObj->type != json_object)
+		{
+			str_copy(Out.m_Text, "Response is not JSON");
+			return false;
+		}
+
+		const json_value *pError = json_object_get(pObj, "error");
+		if(pError != &json_value_none)
+		{
+			if(pError->type == json_string)
+				str_copy(Out.m_Text, pError->u.string.ptr);
+			else if(pError->type == json_object)
+			{
+				const json_value *pMessage = json_object_get(pError, "message");
+				if(pMessage != &json_value_none && pMessage->type == json_string)
+					str_copy(Out.m_Text, pMessage->u.string.ptr);
+				else
+					str_copy(Out.m_Text, "AI request failed");
+			}
+			else
+				str_copy(Out.m_Text, "AI request failed");
+			return false;
+		}
+
+		const json_value *pChoices = json_object_get(pObj, "choices");
+		if(pChoices == &json_value_none || pChoices->type != json_array || json_array_length(pChoices) <= 0)
+		{
+			str_copy(Out.m_Text, "No translation");
+			return false;
+		}
+		const json_value *pChoice = json_array_get(pChoices, 0);
+		if(!pChoice || pChoice->type != json_object)
+		{
+			str_copy(Out.m_Text, "Translation is not object");
+			return false;
+		}
+		const json_value *pMessage = json_object_get(pChoice, "message");
+		const json_value *pContent = pMessage && pMessage->type == json_object ? json_object_get(pMessage, "content") : &json_value_none;
+		if(pContent == &json_value_none || pContent->type != json_string || pContent->u.string.ptr[0] == '\0')
+		{
+			str_copy(Out.m_Text, "Translation is empty");
+			return false;
+		}
+
+		const char *pText = pContent->u.string.ptr;
+		while(*pText != '\0' && std::isspace((unsigned char)*pText))
+			++pText;
+		str_copy(Out.m_Text, pText);
+		char *pEnd = Out.m_Text + str_length(Out.m_Text);
+		while(pEnd > Out.m_Text && std::isspace((unsigned char)pEnd[-1]))
+			*--pEnd = '\0';
+		NormalizeTranslatedText(Out.m_Text, sizeof(Out.m_Text));
+		if(!IsAutoLanguage(m_aSourceLanguage))
+			str_copy(Out.m_Language, m_aSourceLanguage);
+		NormalizeDetectedLanguage(Out.m_Language, sizeof(Out.m_Language));
+		return Out.m_Text[0] != '\0';
+	}
+
+protected:
+	bool ParseResponse(CTranslateResponse &Out) override
+	{
+		json_value *pObj = m_pHttpRequest->ResultJson();
+		const bool Success = ParseResponseJson(pObj, Out);
+		json_value_free(pObj);
+		return Success;
+	}
+	bool ParseHttpError() const override { return true; }
+
+public:
+	const char *Name() const override
+	{
+		return "AI";
+	}
+
+	bool TryFinish(const std::shared_ptr<CHttpRequest> &pRequest, CTranslateResponse &Out)
+	{
+		if(!pRequest || !pRequest->Done())
+			return false;
+		if(pRequest->State() != EHttpState::DONE || pRequest->StatusCodeOr(-1) != 200)
+			return false;
+		m_pHttpRequest = pRequest;
+		return ParseResponse(Out);
+	}
+
+	std::optional<bool> Update(CTranslateResponse &Out) override
+	{
+		if(TryFinish(m_pLan, Out))
+		{
+			if(m_pPublic && !m_pPublic->Done())
+				m_pPublic->Abort();
+			return true;
+		}
+		if(TryFinish(m_pPublic, Out))
+		{
+			if(m_pLan && !m_pLan->Done())
+				m_pLan->Abort();
+			return true;
+		}
+		if((m_pPublic && !m_pPublic->Done()) || (m_pLan && !m_pLan->Done()))
+			return std::nullopt;
+		m_pHttpRequest = m_pPublic ? m_pPublic : m_pLan;
+		return ITranslateBackendHttp::Update(Out);
+	}
+
+	~CTranslateBackendLocalAi() override
+	{
+		if(m_pPublic)
+			m_pPublic->Abort();
+		if(m_pLan)
+			m_pLan->Abort();
+	}
+
+	std::shared_ptr<CHttpRequest> StartRequest(IHttp &Http, const char *pJson, const NETADDR *pPin)
+	{
+		const char *pUrl = "https://translate.under1111.com/v1/chat/completions";
+		auto pRequest = PrepareHttpRequest(pUrl);
+		pRequest->LogProgress(HTTPLOG::NONE);
+		pRequest->Timeout(CTimeout{2000, 12000, 0, 0});
+		if(pPin)
+		{
+			char aAddress[NETADDR_MAXSTRSIZE];
+			net_addr_str(pPin, aAddress, sizeof(aAddress), false);
+			const int Port = pPin->port != 0 ? pPin->port : 443;
+			pRequest->PinAddress("translate.under1111.com", Port, aAddress);
+		}
+		pRequest->PostJson(pJson);
+		Http.Run(pRequest);
+		return pRequest;
+	}
+
+	CTranslateBackendLocalAi(IHttp &Http, const char *pText, const char *pSourceLanguage, const char *pTargetLanguage)
+	{
+		NormalizeLanguageCode(pSourceLanguage, m_aSourceLanguage, sizeof(m_aSourceLanguage));
+		const char *pModel = "mlx-community/Hy-MT2-7B-4bit";
+		const char *pTargetName = LocalAiLanguageName(pTargetLanguage);
+
+		char aPrompt[768];
+		if(IsAutoLanguage(pSourceLanguage))
+		{
+			str_format(aPrompt, sizeof(aPrompt),
+				"Translate the following text into %s. Note that you should only output the translated result without any additional explanation:\n\n%s",
+				pTargetName, pText ? pText : "");
+		}
+		else
+		{
+			str_format(aPrompt, sizeof(aPrompt),
+				"Translate the following text from %s into %s. Note that you should only output the translated result without any additional explanation:\n\n%s",
+				LocalAiLanguageName(pSourceLanguage), pTargetName, pText ? pText : "");
+		}
+
+		CJsonStringWriter Json;
+		Json.BeginObject();
+		Json.WriteAttribute("model");
+		Json.WriteStrValue(pModel);
+		Json.WriteAttribute("messages");
+		Json.BeginArray();
+		Json.BeginObject();
+		Json.WriteAttribute("role");
+		Json.WriteStrValue("user");
+		Json.WriteAttribute("content");
+		Json.WriteStrValue(aPrompt);
+		Json.EndObject();
+		Json.EndArray();
+		Json.WriteAttribute("temperature");
+		Json.WriteIntValue(0);
+		Json.WriteAttribute("max_tokens");
+		Json.WriteIntValue(128);
+		Json.WriteAttribute("stream");
+		Json.WriteBoolValue(false);
+		Json.EndObject();
+
+		const std::string JsonStr = Json.GetOutputString();
+		m_pPublic = StartRequest(Http, JsonStr.c_str(), nullptr);
+		m_pHttpRequest = m_pPublic;
+
+		NETADDR LanAddress;
+		if(g_Config.m_TcTranslateLan[0] != '\0' && net_addr_from_str(&LanAddress, g_Config.m_TcTranslateLan) == 0 && (LanAddress.type & NETTYPE_IPV4) != 0)
+			m_pLan = StartRequest(Http, JsonStr.c_str(), &LanAddress);
+	}
+};
+
 void CTranslate::ConTranslate(IConsole::IResult *pResult, void *pUserData)
 {
 	const char *pName;
@@ -986,6 +1201,45 @@ void CTranslate::ConToggleTranslate(IConsole::IResult *pResult, void *pUserData)
 	pThis->GameClient()->m_Chat.Echo(NewValue ? Localize("Translation enabled") : Localize("Translation disabled"));
 }
 
+void CTranslate::ConTranslateLan(IConsole::IResult *pResult, void *pUserData)
+{
+	CTranslate *pThis = static_cast<CTranslate *>(pUserData);
+	if(pResult->NumArguments() == 0)
+	{
+		if(g_Config.m_TcTranslateLan[0] == '\0')
+			pThis->GameClient()->m_Chat.Echo("AI LAN address is not set");
+		else
+		{
+			char aBuf[128];
+			str_format(aBuf, sizeof(aBuf), "AI LAN address: %s", g_Config.m_TcTranslateLan);
+			pThis->GameClient()->m_Chat.Echo(aBuf);
+		}
+		return;
+	}
+
+	const char *pAddress = pResult->GetString(0);
+	if(str_comp_nocase(pAddress, "clear") == 0)
+	{
+		g_Config.m_TcTranslateLan[0] = '\0';
+		pThis->GameClient()->m_Chat.Echo("AI LAN address cleared");
+		return;
+	}
+
+	NETADDR LanAddress;
+	if(net_addr_from_str(&LanAddress, pAddress) != 0 || (LanAddress.type & NETTYPE_IPV4) == 0)
+	{
+		pThis->GameClient()->m_Chat.Echo("AI LAN address is invalid");
+		return;
+	}
+
+	char aAddress[NETADDR_MAXSTRSIZE];
+	net_addr_str(&LanAddress, aAddress, sizeof(aAddress), LanAddress.port != 0);
+	str_copy(g_Config.m_TcTranslateLan, aAddress, sizeof(g_Config.m_TcTranslateLan));
+	char aBuf[128];
+	str_format(aBuf, sizeof(aBuf), "AI LAN address set to %s", aAddress);
+	pThis->GameClient()->m_Chat.Echo(aBuf);
+}
+
 void CTranslate::OnConsoleInit()
 {
 	// Migration from legacy single toggle (tc_translate_auto) to separate toggles.
@@ -998,6 +1252,8 @@ void CTranslate::OnConsoleInit()
 
 	if(str_comp_nocase(g_Config.m_TcTranslateBackend, "mymemory") == 0)
 		str_copy(g_Config.m_TcTranslateBackend, "google", sizeof(g_Config.m_TcTranslateBackend));
+	if(str_comp_nocase(g_Config.m_TcTranslateBackend, "localai") == 0)
+		str_copy(g_Config.m_TcTranslateBackend, "ai", sizeof(g_Config.m_TcTranslateBackend));
 
 	// Migration: target language can no longer be "auto".
 	if(IsAutoLanguage(g_Config.m_TcTranslateTarget))
@@ -1008,6 +1264,7 @@ void CTranslate::OnConsoleInit()
 	Console()->Register("translate", "?r[name]", CFGFLAG_CLIENT, ConTranslate, this, "Translate last message (of a given name)");
 	Console()->Register("translate_id", "v[id]", CFGFLAG_CLIENT, ConTranslateId, this, "Translate last message of the person with this id");
 	Console()->Register("toggle_translate", "", CFGFLAG_CLIENT, ConToggleTranslate, this, "Toggle auto-translate incoming and outgoing chat");
+	Console()->Register("translate_lan", "?s[address]", CFGFLAG_CLIENT, ConTranslateLan, this, "Set the LAN address tried together with the AI translation server");
 }
 
 std::unique_ptr<ITranslateBackend> CTranslate::CreateBackend(const char *pText, const char *pSourceLanguage, const char *pTargetLanguage) const
@@ -1023,6 +1280,8 @@ std::unique_ptr<ITranslateBackend> CTranslate::CreateBackend(const char *pText, 
 		return std::make_unique<CTranslateBackendFtapi>(*Http(), pText, pTargetLanguage);
 	if(str_comp_nocase(g_Config.m_TcTranslateBackend, "google") == 0)
 		return std::make_unique<CTranslateBackendGoogle>(*Http(), pText, pSourceLanguage, pTargetLanguage);
+	if(str_comp_nocase(g_Config.m_TcTranslateBackend, "ai") == 0 || str_comp_nocase(g_Config.m_TcTranslateBackend, "localai") == 0)
+		return std::make_unique<CTranslateBackendLocalAi>(*Http(), pText, pSourceLanguage, pTargetLanguage);
 	return nullptr;
 }
 

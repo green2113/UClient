@@ -98,6 +98,7 @@
 #include "components/bestclient/cherry_gifs.h"
 #include "components/bestclient/chat_bubbles.h"
 #include "components/bestclient/fast_actions.h"
+#include "components/bestclient/cloud_input.h"
 #include "components/bestclient/fast_practice.h"
 #include "components/bestclient/automation/automation.h"
 #include "components/bestclient/gif_bubbles.h"
@@ -256,6 +257,7 @@ public:
 	CGifBubbles m_GifBubbles; // BestClient
 	CChatBubbles m_ChatBubbles; // BestClient
 	CFastPractice m_FastPractice; // BestClient
+	CCloudInput m_CloudInput; // BestClient
 	CAutomation m_Automation; // BestClient
 	CBgDraw m_BgDraw;
 	CTClient m_TClient;
@@ -807,6 +809,7 @@ public:
 	bool m_ReceivedDDNetPlayer;
 	bool m_ReceivedDDNetPlayerFinishTimes;
 	bool m_ReceivedDDNetPlayerFinishTimesMillis;
+	bool m_ReceivedPreInput = false;
 
 	class CTeamsCore m_Teams;
 
@@ -830,6 +833,8 @@ public:
 	bool AntiPingWeapons() const { return m_FastPractice.ForcePredictWeapons() || (g_Config.m_ClAntiPing && g_Config.m_ClAntiPingWeapons && !m_Snap.m_SpecInfo.m_Active && Client()->State() != IClient::STATE_DEMOPLAYBACK); }
 	bool AntiPingGunfire() const { return m_FastPractice.ForcePredictGunfire() || (AntiPingGrenade() && AntiPingWeapons() && g_Config.m_ClAntiPingGunfire); }
 	bool Predict() const;
+	bool IsCloudInputMode() const;
+	bool IsFastInputLocalClient(int ClientId) const;
 	bool PredictDummy() const
 	{
 		// BestClient: in fast practice the predicted dummy is a fixed practice participant

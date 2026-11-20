@@ -94,7 +94,9 @@ class CHttpRequest : public IHttpRequest
 	bool m_ValidateBeforeOverwrite = false;
 	bool m_SkipByFileTime = true;
 	bool m_VerifyPeer = true;
+	bool m_AllowInsecure = false;
 	bool m_CloseConnection = false;
+	void *m_pResolve = nullptr;
 
 	CTimeout m_Timeout = CTimeout{0, 0, 0, 0};
 	int64_t m_MaxResponseSize = -1;
@@ -174,6 +176,9 @@ public:
 	void LogProgress(HTTPLOG LogProgress) { m_LogProgress = LogProgress; }
 	void IpResolve(IPRESOLVE IpResolve) { m_IpResolve = IpResolve; }
 	void VerifyPeer(bool VerifyPeer) { m_VerifyPeer = VerifyPeer; }
+	void AllowInsecure() { m_AllowInsecure = true; }
+	// Connect to this address while keeping the URL host for TLS verification.
+	void PinAddress(const char *pHost, int Port, const char *pAddress);
 	void CloseConnection(bool CloseConnection) { m_CloseConnection = CloseConnection; }
 	void FailOnErrorStatus(bool FailOnErrorStatus) { m_FailOnErrorStatus = FailOnErrorStatus; }
 	// Download to memory only. Get the result via `Result*`.

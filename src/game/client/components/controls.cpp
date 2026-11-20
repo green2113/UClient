@@ -516,6 +516,13 @@ void CControls::UpdateSnapTapState(int Dummy, bool LeftPressed, bool RightPresse
 	m_aSnapTapPrevRight[Dummy] = RightPressed ? 1 : 0;
 }
 
+int CControls::MovementDirectionForPrediction(int Dummy)
+{
+	const bool LeftPressed = m_aInputDirectionLeft[Dummy] != 0;
+	const bool RightPressed = m_aInputDirectionRight[Dummy] != 0;
+	return ResolveMovementDirection(Dummy, LeftPressed, RightPressed, false);
+}
+
 int CControls::ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightPressed, bool UpdateState)
 {
 	// Edge detection must only ever be driven by the authoritative tick-rate caller (SnapInput). Fast-input

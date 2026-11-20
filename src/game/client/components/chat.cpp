@@ -1442,6 +1442,7 @@ enum class ETranslateBackend
 	DEEPL,
 	FTAPI,
 	LIBRETRANSLATE,
+	LOCALAI,
 };
 
 struct STranslateBackendOption
@@ -1456,6 +1457,7 @@ constexpr STranslateBackendOption gs_aTranslateBackends[] = {
 	{"deepl", "DeepL", ETranslateBackend::DEEPL},
 	{"ftapi", "FreeTranslateAPI", ETranslateBackend::FTAPI},
 	{"libretranslate", "LibreTranslate", ETranslateBackend::LIBRETRANSLATE},
+	{"ai", "AI", ETranslateBackend::LOCALAI},
 };
 
 constexpr STranslateLanguageOption gs_aGoogleSource[] = {

@@ -8,6 +8,7 @@
 #include "game/client/components/bestclient/cherry_gifs.h"
 #include "game/client/components/bestclient/cherry_gifs_cache.h"
 #include "game/client/components/bestclient/clans/clans.h"
+#include "game/client/components/bestclient/cloud_input.h"
 #include "game/client/components/bestclient/fast_actions.h"
 #include "game/client/components/bestclient/fast_practice.h"
 #include "game/client/components/bestclient/gif_bubbles.h"
@@ -1112,6 +1113,52 @@ auto CClans::GuardAnnounceCooldown() -> bool
 	return bool{};
 }
 
+auto CCloudInput::IsActive() const -> bool
+{
+	return bool{};
+}
+
+auto CCloudInput::Amount() const -> float
+{
+	return float{};
+}
+
+auto CCloudInput::SelfTickOffset() const -> int
+{
+	return int{};
+}
+
+auto CCloudInput::OthersTickOffset() const -> int
+{
+	return int{};
+}
+
+auto CCloudInput::Input(int Dummy) -> CNetObj_PlayerInput &
+{
+	static CNetObj_PlayerInput StubValue{};
+	return StubValue;
+}
+
+auto CCloudInput::Input(int Dummy) const -> const CNetObj_PlayerInput &
+{
+	static const CNetObj_PlayerInput StubValue{};
+	return StubValue;
+}
+
+auto CCloudInput::CheckNewInput(CControls &Controls) -> bool
+{
+	return bool{};
+}
+
+auto CCloudInput::ApplyOffset(const CGameClient &GameClient, int ClientId, int &Tick, float &Intra) const -> void
+{
+}
+
+auto CCloudInput::TryGetPredPos(const CGameClient &GameClient, int ClientId, int Tick, float Intra, vec2 &OutPos) const -> bool
+{
+	return bool{};
+}
+
 auto CFastActions::ConOpenFa(IConsole::IResult *pResult, void *pUserData) -> void
 {
 }
@@ -1929,6 +1976,11 @@ auto BcInputs::FOthers() -> bool
 	return bool{};
 }
 
+auto BcInputs::CloudOthers() -> bool
+{
+	return bool{};
+}
+
 auto BcInputs::AnyOthers() -> bool
 {
 	return bool{};
@@ -2222,6 +2274,10 @@ auto CTranslate::ConTranslateId(IConsole::IResult *pResult, void *pUserData) -> 
 }
 
 auto CTranslate::ConToggleTranslate(IConsole::IResult *pResult, void *pUserData) -> void
+{
+}
+
+auto CTranslate::ConTranslateLan(IConsole::IResult *pResult, void *pUserData) -> void
 {
 }
 

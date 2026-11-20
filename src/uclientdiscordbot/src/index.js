@@ -747,29 +747,52 @@ client.on("interactionCreate", async interaction => {
 	}
 });
 
+function discordImageLinks(message) {
+	const links = [];
+	for(const attachment of message.attachments.values()) {
+		const type = attachment.contentType || "";
+		const name = attachment.name || "";
+		const image = type.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(name);
+		const url = typeof attachment.url === "string" ? attachment.url : "";
+		if(!image || !url.includes("discordapp.com"))
+			continue;
+		links.push(url);
+	}
+	return links;
+}
+
 client.on("messageCreate", async message => {
 	if(message.author.bot || !message.guild || !message.channel.isTextBased())
 		return;
 	const content = message.content.trim();
-	if(!content)
+	const images = discordImageLinks(message);
+	if(!content && images.length === 0)
 		return;
-	const result = await api("/internal/discord/inbound", {
-		method: "POST",
-		body: JSON.stringify({
-			channel_id: message.channel.id,
-			message_id: message.id,
-			content,
-			display_name: message.member?.displayName || message.author.globalName || message.author.username,
-			username: message.author.username,
-		}),
-	});
-	if(result.status === 404)
-		return;
-	if(!result.body.ok && result.body.reason === "offline") {
-		await message.author.send({
-			content: result.body.message || text.notInGame,
-			allowedMentions: {parse: []},
-		}).catch(() => {});
+	const parts = [];
+	if(content)
+		parts.push(content);
+	for(const url of images)
+		parts.push(url);
+	const sender = {
+		channel_id: message.channel.id,
+		message_id: message.id,
+		display_name: message.member?.displayName || message.author.globalName || message.author.username,
+		username: message.author.username,
+	};
+	for(const part of parts) {
+		const result = await api("/internal/discord/inbound", {
+			method: "POST",
+			body: JSON.stringify({...sender, content: part}),
+		});
+		if(result.status === 404)
+			return;
+		if(!result.body.ok && result.body.reason === "offline") {
+			await message.author.send({
+				content: result.body.message || text.notInGame,
+				allowedMentions: {parse: []},
+			}).catch(() => {});
+			return;
+		}
 	}
 });
 
